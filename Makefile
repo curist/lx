@@ -1,8 +1,9 @@
+# let's use https://github.com/siu/minunit to unit test some
 prepare:
 	@mkdir -p out
 
 build: prepare
-	gcc main.c -o out/clox
+	gcc *.c -o out/clox
 
 run: build
 	./out/clox

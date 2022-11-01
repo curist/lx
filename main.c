@@ -14,5 +14,6 @@ int main(int argc, const char* argv[]) {
 
   disassembleChunk(&chunk, "test chunk");
   freeChunk(&chunk);
+
   return 0;
 }

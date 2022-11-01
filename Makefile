@@ -1,3 +1,4 @@
+.DEFAULT_GOAL := build
 # let's use https://github.com/siu/minunit to unit test some
 prepare:
 	@mkdir -p out

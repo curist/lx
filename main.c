@@ -30,7 +30,11 @@ int main(int argc, const char* argv[]) {
   writeChunk(&chunk, 10, 130);
   writeChunk(&chunk, OP_MOD, 130);
 
-  writeChunk(&chunk, OP_RETURN, 123);
+  for (uint32_t i = 0; i < 2e8; ++i) {
+    writeChunk(&chunk, OP_NEGATE, 200);
+  }
+
+  writeChunk(&chunk, OP_RETURN, 200);
 
   interpret(&chunk);
   freeVM();

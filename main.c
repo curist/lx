@@ -30,8 +30,10 @@ int main(int argc, const char* argv[]) {
   writeChunk(&chunk, 10, 130);
   writeChunk(&chunk, OP_MOD, 130);
 
-  for (uint32_t i = 0; i < 2e8; ++i) {
-    writeChunk(&chunk, OP_NEGATE, 200);
+  for (uint32_t i = 0; i < 1e8; ++i) {
+    writeChunk(&chunk, OP_CONST_BYTE, 130);
+    writeChunk(&chunk, 19, 130);
+    writeChunk(&chunk, OP_ADD, 200);
   }
 
   writeChunk(&chunk, OP_RETURN, 200);

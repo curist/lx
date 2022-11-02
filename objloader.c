@@ -26,7 +26,6 @@
 double readDouble(const uint8_t* bytes) {
   double n = 0;
   memcpy(&n, bytes, sizeof(double));
-
   return n;
 }
 
@@ -64,7 +63,7 @@ bool loadObj(const uint8_t* bytes, Chunk* chunk) {
     writeChunk(chunk, code[37 + i], 1);
   }
 
-  uint8_t* constSection = &code[37 + code_size];
+  uint8_t* constSection = &code[32 + 1 + 4 + code_size + 4];
   for (int i = 0; i < code[32]; i++) {
     // we are going to ^ read this many constants
     uint8_t type = constSection[0];

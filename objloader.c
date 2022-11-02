@@ -59,6 +59,8 @@ bool loadObj(const uint8_t* bytes, Chunk* chunk) {
   }
 
   for (int i = 0; i < code_size; i++) {
+    // XXX: figure out how we can fit debug line info
+    // in the lxobj layout
     writeChunk(chunk, code[21 + i], 1);
   }
 
@@ -66,10 +68,30 @@ bool loadObj(const uint8_t* bytes, Chunk* chunk) {
   for (int i = 0; i < code[16]; i++) {
     // we are going to ^ read this many constants
     uint8_t type = constSection[0];
-    // XXX  ^ should be 0 atm, which means double
-    double value = readDouble(&constSection[1]);
-    constSection += (1 + 8); // type + double 8 bytes
-    addConstant(chunk, value);
+
+    switch (type) {
+      case VAL_BOOL: {
+        addConstant(chunk, BOOL_VAL(constSection[1]));
+        constSection += (1 + 1);
+        break;
+      }
+      case VAL_NIL: {
+        addConstant(chunk, NIL_VAL);
+        constSection += 1;
+        break;
+      }
+      case VAL_NUMBER: {
+        double value = readDouble(&constSection[1]);
+        constSection += (1 + 8); // type + double 8 bytes
+        addConstant(chunk, NUMBER_VAL(value));
+        break;
+      }
+      default: {
+        fprintf(stderr, "Invalid value type %x\n", type);
+        return false;
+      }
+    }
+
   }
 
   return true;

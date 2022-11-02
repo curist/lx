@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "common.h"
+#include "objloader.h"
 #include "debug.h"
 #include "vm.h"
 
@@ -87,8 +88,20 @@ static InterpretResult run() {
 #undef BINARY_OP
 }
 
-InterpretResult interpret(Chunk* chunk) {
-  vm.chunk = chunk;
+InterpretResult interpret(uint8_t* obj) {
+  Chunk chunk;
+  initChunk(&chunk);
+
+  if (!loadObj(obj, &chunk)) {
+    freeChunk(&chunk);
+    return INTERPRET_LOADOBJ_ERROR;
+  }
+
+  vm.chunk = &chunk;
   vm.ip = vm.chunk->code;
-  return run();
+
+  InterpretResult result = run();
+
+  freeChunk(&chunk);
+  return result;
 }

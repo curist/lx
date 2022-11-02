@@ -19,9 +19,11 @@ typedef enum {
   INTERPRET_RUNTIME_ERROR
 } InterpretResult;
 
+#define INTERPRET_LOADOBJ_ERROR INTERPRET_COMPILE_ERROR
+
 void initVM();
 void freeVM();
-InterpretResult interpret(Chunk* chunk);
+InterpretResult interpret(uint8_t* obj);
 void push(Value value);
 Value pop();
 

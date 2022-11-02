@@ -30,7 +30,7 @@ static uint8_t* readFile(const char* path) {
     exit(74);
   }
   // basic lxobj header check
-  if (fileSize < 34) {
+  if (fileSize < 20) {
     fprintf(stderr, "Invalid lxobj \"%s\".\n", path);
     exit(74);
   }

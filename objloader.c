@@ -17,8 +17,8 @@
 //      CODE: various length
 //            CODE_SECTION guaranteed to be followed by 5 bytes of CONST_SECTION header
 // CONST_SECTION: follow right after a CODE_SECTION
-//      CONST_COUNT: 1
 //      SIZE: 4  let's leave size here, so it's possible for us to jump to next chunk
+//      CONST_COUNT: 1
 //   every const is like
 //      TYPE:  1
 //      VALUE: various length
@@ -63,7 +63,7 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
   }
 
   uint8_t* constSection = &bytes[16 + 4 + code_size];
-  uint8_t constsCount = constSection[0];
+  uint8_t constsCount = constSection[5];
 
   // skip reading consts total + total consts bytes size
   constSection += (1 + 4);

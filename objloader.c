@@ -38,6 +38,13 @@ size_t getSize(const uint8_t* bytes) {
   return size;
 }
 
+uint16_t getShortSize(const uint8_t* bytes) {
+  size_t size = 0;
+  size += bytes[0];
+  size += bytes[1] << 8;
+  return size;
+}
+
 bool loadObj(uint8_t* bytes, Chunk* chunk) {
   if (!(bytes[0] == 'L' && bytes[1] == 'X')) {
     fprintf(stderr, "Invalid lxobj: malformed header.\n");
@@ -46,6 +53,9 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
   // TODO: we could check all the (code) sections size at once
 
   // XXX: we are hanlding only the first code section for now
+
+  uint8_t flags = bytes[3];
+  bool debug = (flags & 0b00000001) > 0;
 
   size_t obj_size = getSize(&bytes[4]);
   size_t code_size = getSize(&bytes[16]);
@@ -56,10 +66,31 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
     return false;
   }
 
-  for (int i = 0; i < code_size; i++) {
-    // XXX: figure out how we can fit debug line info
-    // in the lxobj layout
-    writeChunk(chunk, bytes[20 + i], 1);
+  if (!debug) {
+    for (int i = 0; i < code_size; i++) {
+      writeChunk(chunk, bytes[20 + i], 1);
+    }
+  } else {
+    // to gather debug line info, we must fastforward
+    // to debug line section first, so we can write chunk with line info
+    uint8_t* read_ptr = &bytes[16 + 4 + code_size];
+    size_t constSectionSize = getSize(read_ptr);
+    // printf("const section size %ld\n", constSectionSize);
+    // const section size (4) + actual consts size + debug lines size (4)
+    read_ptr += 4 + constSectionSize + 5;
+    // XXX: not sure why is this 5...  ^
+
+    // printf("%x %x\n", *read_ptr, *(read_ptr+1));
+    uint16_t filenameSize = getSize(read_ptr);
+    // printf("fname size:%d\n", filenameSize);
+    read_ptr += 2 + filenameSize;
+    // printf("%x %x\n", *read_ptr, *(read_ptr+1));
+    // read_ptr is now at the start of line numbers!!!
+
+    for (int i = 0; i < code_size; i++) {
+      uint16_t line = getShortSize(&read_ptr[i * 2]);
+      writeChunk(chunk, bytes[20 + i], line);
+    }
   }
 
   uint8_t* constSection = &bytes[16 + 4 + code_size];

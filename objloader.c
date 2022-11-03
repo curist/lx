@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "objloader.h"
+#include "object.h"
 #include "chunk.h"
 
 // obj layout
@@ -28,6 +29,15 @@ double readDouble(const uint8_t* bytes) {
   return n;
 }
 
+size_t getSize(const uint8_t* bytes) {
+  size_t size = 0;
+  size += bytes[0];
+  size += bytes[1] << 8;
+  size += bytes[2] << 16;
+  size += bytes[3] << 24;
+  return size;
+}
+
 bool loadObj(uint8_t* bytes, Chunk* chunk) {
   if (!(bytes[0] == 'L' && bytes[1] == 'X')) {
     fprintf(stderr, "Invalid lxobj: malformed header.\n");
@@ -37,17 +47,8 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
 
   // XXX: we are hanlding only the first code section for now
 
-  size_t obj_size = 0;
-  obj_size += bytes[4];
-  obj_size += bytes[5] << 8;
-  obj_size += bytes[6] << 16;
-  obj_size += bytes[7] << 24;
-
-  size_t code_size = 0;
-  code_size += bytes[16];
-  code_size += bytes[17] << 8;
-  code_size += bytes[18] << 16;
-  code_size += bytes[19] << 24;
+  size_t obj_size = getSize(&bytes[4]);
+  size_t code_size = getSize(&bytes[16]);
 
   // XXX: naive size check, only works for 1 code chunk/section
   if (code_size > obj_size - (16+4+5)) {
@@ -88,6 +89,24 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
       case VAL_NUMBER:
         addConstant(chunk, NUMBER_VAL(readDouble(&constSection[1])));
         constSection += (1 + 8); // type + double 8 bytes
+        break;
+
+      case VAL_OBJ:
+        {
+          ObjType objType = constSection[1];
+          switch (objType) {
+            case OBJ_STRING:
+              {
+                size_t ssize = getSize(&constSection[2]);
+                addConstant(chunk,
+                    OBJ_VAL(copyString((char*)&constSection[6], ssize)));
+              }
+              break;
+            default:
+              fprintf(stderr, "Invalid object type %x\n", objType);
+              return false;
+          }
+        }
         break;
 
       default:

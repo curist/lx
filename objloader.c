@@ -9,7 +9,8 @@
 // obj layout
 // LX:        2
 // VERSION:   1
-// FLAGS:     1 , 8 bits, TBD, could indicate if this is a debug release or not?
+// FLAGS:     1 , 8 bits
+//     0000 0001 -> debug
 // OBJSIZE:   4 little endian
 // TBD:       16 - (2+1+1+4) = 8
 // CODE_SECTION: ?
@@ -92,7 +93,7 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
   }
 
   uint8_t* constSection = &bytes[16 + 4 + code_size];
-  uint8_t constsCount = constSection[5];
+  uint8_t constsCount = constSection[4];
 
   // skip reading consts total + total consts bytes size
   constSection += (1 + 4);
@@ -108,7 +109,7 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
         constSection += (1 + 1);
         break;
 
-      case VAL_NIL: 
+      case VAL_NIL:
         // probabaly don't need this
         // since nil is encoded in bytecode already
         addConstant(chunk, NIL_VAL);

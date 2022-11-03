@@ -73,22 +73,20 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
   } else {
     // to gather debug line info, we must fastforward
     // to debug line section first, so we can write chunk with line info
-    uint8_t* read_ptr = &bytes[16 + 4 + code_size];
-    size_t constSectionSize = getSize(read_ptr);
-    // printf("const section size %ld\n", constSectionSize);
-    // const section size (4) + actual consts size + debug lines size (4)
-    read_ptr += 4 + constSectionSize + 5;
-    // XXX: not sure why is this 5...  ^
+    uint8_t* ptr = &bytes[16 + 4 + code_size];
+    size_t constSectionSize = getSize(ptr);
 
-    // printf("%x %x\n", *read_ptr, *(read_ptr+1));
-    uint16_t filenameSize = getSize(read_ptr);
-    // printf("fname size:%d\n", filenameSize);
-    read_ptr += 2 + filenameSize;
-    // printf("%x %x\n", *read_ptr, *(read_ptr+1));
-    // read_ptr is now at the start of line numbers!!!
+    // const section size (4) + const count (1) + actual consts
+    ptr += 4 + 1 + constSectionSize;
+    // debug lines size (4)
+    ptr += 4;
+
+    uint16_t filenameSize = getShortSize(ptr);
+    ptr += 2 + filenameSize;
+    // ptr is now at the start of line numbers!!!
 
     for (int i = 0; i < code_size; i++) {
-      uint16_t line = getShortSize(&read_ptr[i * 2]);
+      uint16_t line = getShortSize(&ptr[i * 2]);
       writeChunk(chunk, bytes[20 + i], line);
     }
   }
@@ -122,25 +120,24 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
         constSection += (1 + 8); // type + double 8 bytes
         break;
 
-      case VAL_OBJ:
-        {
-          ObjType objType = constSection[1];
-          switch (objType) {
-            case OBJ_STRING:
-              {
-                size_t ssize = getSize(&constSection[2]);
-                addConstant(chunk,
-                    OBJ_VAL(copyString((char*)&constSection[6], ssize)));
-                // value type + obj type + 4(ssize) + actual string
-                constSection += (1 + 1 + 4 + ssize);
-              }
-              break;
-            default:
-              fprintf(stderr, "Invalid object type %x\n", objType);
-              return false;
-          }
+      case VAL_OBJ: {
+        ObjType objType = constSection[1];
+        switch (objType) {
+          case OBJ_STRING:
+            {
+              size_t ssize = getSize(&constSection[2]);
+              addConstant(chunk,
+                  OBJ_VAL(copyString((char*)&constSection[6], ssize)));
+              // value type + obj type + 4(ssize) + actual string
+              constSection += (1 + 1 + 4 + ssize);
+            }
+            break;
+          default:
+            fprintf(stderr, "Invalid object type %x\n", objType);
+            return false;
         }
         break;
+      }
 
       default:
         fprintf(stderr, "Invalid value type %x\n", type);

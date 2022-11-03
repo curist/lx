@@ -2,6 +2,6 @@
 #define clox_objloader_h
 #include "vm.h"
 
-bool loadObj(const uint8_t* bytes, Chunk* chunk);
+bool loadObj(uint8_t* bytes, Chunk* chunk);
 
 #endif

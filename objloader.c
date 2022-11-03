@@ -100,6 +100,8 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
                 size_t ssize = getSize(&constSection[2]);
                 addConstant(chunk,
                     OBJ_VAL(copyString((char*)&constSection[6], ssize)));
+                // value type + obj type + 4(ssize) + actual string
+                constSection += (1 + 1 + 4 + ssize);
               }
               break;
             default:

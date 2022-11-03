@@ -41,10 +41,10 @@ bool loadObj(const uint8_t* bytes, Chunk* chunk) {
   uint8_t* code = (uint8_t*)bytes;
 
   size_t obj_size = 0;
-  obj_size += code[3];
-  obj_size += code[4] << 8;
-  obj_size += code[5] << 16;
-  obj_size += code[6] << 24;
+  obj_size += code[4];
+  obj_size += code[5] << 8;
+  obj_size += code[6] << 16;
+  obj_size += code[7] << 24;
 
   size_t code_size = 0;
   code_size += code[17];

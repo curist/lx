@@ -35,10 +35,10 @@ static uint8_t* readFile(const char* path) {
     exit(74);
   }
   size_t obj_size = 0;
-  obj_size += buffer[3];
-  obj_size += buffer[4] << 8;
-  obj_size += buffer[5] << 16;
-  obj_size += buffer[6] << 24;
+  obj_size += buffer[4];
+  obj_size += buffer[5] << 8;
+  obj_size += buffer[6] << 16;
+  obj_size += buffer[7] << 24;
 
   if (fileSize != obj_size) {
     fprintf(stderr, "Invalid lxobj \"%s\": size mismatch.\n", path);

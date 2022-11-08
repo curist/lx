@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "common.h"
+#include "debug.h"
 #include "objloader.h"
 #include "object.h"
 
@@ -17,7 +18,10 @@ static Chunk* currentChunk() {
 // FLAGS:     1 , 8 bits
 //     0000 0001 -> debug
 // OBJSIZE:   4 little endian
-// TBD:       16 - (2+1+1+4) = 8
+// CHUNKS:    2 little endian -> we can have up to 65536 chunks
+// TBD:       16 - (2+1+1+4+2) = 6
+// CHUNKADDR: 4 little endian, each
+// # chunk layout
 // CODE_SECTION: ?
 //      SIZE: 4 little endian
 //      CODE: various length
@@ -27,7 +31,22 @@ static Chunk* currentChunk() {
 //      CONST_COUNT: 1
 //   every const is like
 //      TYPE:  1
-//      VALUE: various length
+//      VALUE: 1 bit type + type dependent layout(length)
+//        BOOL:   1 + 1
+//        NIL:    1
+//        NUMBER: 1 + 8 (double)
+//        OBJ:    1 + 1 (obj type) + obj type dependent layout(length)
+//          STRING: 4 little endian size + actual string
+// DEBUG_SECTION:
+//      SIZE: 4 little endian
+//      FILEPATH_LENGTH: 2 file path length
+//      FILEPATH: vary length
+//      TOKEN_LINE_NUMBER: 2 bytes each (which means we would only support line no. up to 65535)
+
+// NOTE: we should use TBD to store a chunks jump table address
+// and chunks jump table will have layout like
+// CHUNKS: 2 little endian
+//   ADDR(s): 4 little endian, each
 
 double readDouble(const uint8_t* bytes) {
   double n = 0;
@@ -51,6 +70,10 @@ uint16_t getShortSize(const uint8_t* bytes) {
   return size;
 }
 
+void initFunction() {
+
+}
+
 ObjFunction* loadObj(uint8_t* bytes) {
   if (!(bytes[0] == 'L' && bytes[1] == 'X')) {
     fprintf(stderr, "Invalid lxobj: malformed header.\n");
@@ -60,6 +83,12 @@ ObjFunction* loadObj(uint8_t* bytes) {
 
   // XXX: we are hanlding only the first code section for now
   currentFunction = newFunction();
+
+  ObjFunction* func = newFunction();
+  ObjFunction* enclosing = currentFunction;
+  currentFunction = func;
+  currentFunction = enclosing;
+
 
   uint8_t flags = bytes[3];
   bool debug = (flags & 0b00000001) > 0;
@@ -130,15 +159,26 @@ ObjFunction* loadObj(uint8_t* bytes) {
       case VAL_OBJ: {
         ObjType objType = constSection[1];
         switch (objType) {
-          case OBJ_STRING:
-            {
-              size_t ssize = getSize(&constSection[2]);
-              addConstant(currentChunk(),
-                  OBJ_VAL(copyString((char*)&constSection[6], ssize)));
-              // value type + obj type + 4(ssize) + actual string
-              constSection += (1 + 1 + 4 + ssize);
-            }
+          case OBJ_STRING: {
+            size_t ssize = getSize(&constSection[2]);
+            addConstant(currentChunk(),
+                OBJ_VAL(copyString((char*)&constSection[6], ssize)));
+            // value type + obj type + 4(ssize) + actual string
+            constSection += (1 + 1 + 4 + ssize);
             break;
+          }
+          // TODO: OBJ_FUNCTION
+          // store addConstant index
+          // then scan chunk and compose function
+          // then set currentfunction.chunk.constants[index]
+          // NOTE: function chunks loading should be recursive
+          // chunks could contains other function chunk
+          // but if we load chunks using the same order we write chunks,
+          // we might have less trouble?
+          // NOTE: use clox ARRAY to store function.chunk.constants pointer
+          // and its correspond chunk number
+          // then when we finished loading chunks (into another clox ARRAY)
+          // we can go through first array, and replace the function value in place
           default:
             fprintf(stderr, "Invalid object type %x\n", objType);
             return NULL;
@@ -150,8 +190,12 @@ ObjFunction* loadObj(uint8_t* bytes) {
         fprintf(stderr, "Invalid value type %x\n", type);
         return NULL;
     }
-
   }
+
+#ifdef DEBUG_PRINT_CODE
+  disassembleChunk(currentChunk(), currentFunction->name != NULL
+      ? currentFunction->name->chars : "<script>");
+#endif
 
   return currentFunction;
 }

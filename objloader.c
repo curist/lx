@@ -46,14 +46,17 @@ uint16_t getShortSize(const uint8_t* bytes) {
   return size;
 }
 
-bool loadObj(uint8_t* bytes, Chunk* chunk) {
+ObjFunction* loadObj(uint8_t* bytes) {
   if (!(bytes[0] == 'L' && bytes[1] == 'X')) {
     fprintf(stderr, "Invalid lxobj: malformed header.\n");
-    return false;
+    return NULL;
   }
   // TODO: we could check all the (code) sections size at once
 
   // XXX: we are hanlding only the first code section for now
+  ObjFunction* function = NULL;
+  function = newFunction();
+  Chunk* chunk = &function->chunk;
 
   uint8_t flags = bytes[3];
   bool debug = (flags & 0b00000001) > 0;
@@ -64,7 +67,7 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
   // XXX: naive size check, only works for 1 code chunk/section
   if (code_size > obj_size - (16+4+5)) {
     fprintf(stderr, "Code size larger than obj size.\n");
-    return false;
+    return NULL;
   }
 
   if (!debug) {
@@ -135,17 +138,17 @@ bool loadObj(uint8_t* bytes, Chunk* chunk) {
             break;
           default:
             fprintf(stderr, "Invalid object type %x\n", objType);
-            return false;
+            return NULL;
         }
         break;
       }
 
       default:
         fprintf(stderr, "Invalid value type %x\n", type);
-        return false;
+        return NULL;
     }
 
   }
 
-  return true;
+  return function;
 }

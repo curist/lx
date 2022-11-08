@@ -241,19 +241,15 @@ static InterpretResult run() {
 }
 
 InterpretResult interpret(uint8_t* obj) {
-  Chunk chunk;
-  initChunk(&chunk);
-
-  if (!loadObj(obj, &chunk)) {
-    freeChunk(&chunk);
+  ObjFunction* function = loadObj(obj);
+  if (function == NULL) {
     return INTERPRET_LOADOBJ_ERROR;
   }
 
-  vm.chunk = &chunk;
+  vm.chunk = &function->chunk;
   vm.ip = vm.chunk->code;
 
   InterpretResult result = run();
 
-  freeChunk(&chunk);
   return result;
 }

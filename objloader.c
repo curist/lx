@@ -4,7 +4,12 @@
 #include "common.h"
 #include "objloader.h"
 #include "object.h"
-#include "chunk.h"
+
+ObjFunction* currentFunction = NULL;
+
+static Chunk* currentChunk() {
+  return &currentFunction->chunk;
+}
 
 // obj layout
 // LX:        2
@@ -54,9 +59,7 @@ ObjFunction* loadObj(uint8_t* bytes) {
   // TODO: we could check all the (code) sections size at once
 
   // XXX: we are hanlding only the first code section for now
-  ObjFunction* function = NULL;
-  function = newFunction();
-  Chunk* chunk = &function->chunk;
+  currentFunction = newFunction();
 
   uint8_t flags = bytes[3];
   bool debug = (flags & 0b00000001) > 0;
@@ -72,7 +75,7 @@ ObjFunction* loadObj(uint8_t* bytes) {
 
   if (!debug) {
     for (int i = 0; i < code_size; i++) {
-      writeChunk(chunk, bytes[20 + i], 1);
+      writeChunk(currentChunk(), bytes[20 + i], 1);
     }
   } else {
     // to gather debug line info, we must fastforward
@@ -91,7 +94,7 @@ ObjFunction* loadObj(uint8_t* bytes) {
 
     for (int i = 0; i < code_size; i++) {
       uint16_t line = getShortSize(&ptr[i * 2]);
-      writeChunk(chunk, bytes[20 + i], line);
+      writeChunk(currentChunk(), bytes[20 + i], line);
     }
   }
 
@@ -108,19 +111,19 @@ ObjFunction* loadObj(uint8_t* bytes) {
       case VAL_BOOL:
         // probabaly don't need this
         // since bool is encoded in bytecode already
-        addConstant(chunk, BOOL_VAL(constSection[1]));
+        addConstant(currentChunk(), BOOL_VAL(constSection[1]));
         constSection += (1 + 1);
         break;
 
       case VAL_NIL:
         // probabaly don't need this
         // since nil is encoded in bytecode already
-        addConstant(chunk, NIL_VAL);
+        addConstant(currentChunk(), NIL_VAL);
         constSection += 1;
         break;
 
       case VAL_NUMBER:
-        addConstant(chunk, NUMBER_VAL(readDouble(&constSection[1])));
+        addConstant(currentChunk(), NUMBER_VAL(readDouble(&constSection[1])));
         constSection += (1 + 8); // type + double 8 bytes
         break;
 
@@ -130,7 +133,7 @@ ObjFunction* loadObj(uint8_t* bytes) {
           case OBJ_STRING:
             {
               size_t ssize = getSize(&constSection[2]);
-              addConstant(chunk,
+              addConstant(currentChunk(),
                   OBJ_VAL(copyString((char*)&constSection[6], ssize)));
               // value type + obj type + 4(ssize) + actual string
               constSection += (1 + 1 + 4 + ssize);
@@ -150,5 +153,5 @@ ObjFunction* loadObj(uint8_t* bytes) {
 
   }
 
-  return function;
+  return currentFunction;
 }

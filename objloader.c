@@ -7,6 +7,7 @@
 #include "object.h"
 
 ValueArray functions;
+ValuePointers valuePointers;
 
 // obj layout
 // LX:        2
@@ -143,7 +144,7 @@ bool objIsValid(uint8_t* bytes) {
   return true;
 }
 
-ObjFunction* loadChunk(uint8_t* bytes, uint8_t flags) {
+ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   bool debug = (flags & 0b00000001) > 0;
 
   size_t code_size = getSize(&bytes[4]);
@@ -209,10 +210,13 @@ ObjFunction* loadChunk(uint8_t* bytes, uint8_t flags) {
         ObjType objType = constSection[1];
         switch (objType) {
           case OBJ_FUNCTION: {
-            // TODO: add nil constant, & save the value pointer to an array
+            // add nil constant, & save the value pointer to an array
             // after all chunks(functions) are loaded and saved to global functions var,
             // we will iterate through value pointer,
             // and do valuePointer[i] = OBJ_VAL(functions[i])
+            int index = addConstant(chunk, NIL_VAL);
+            Value* valuePointer = &chunk->constants.values[index];
+            writeValuePointers(&valuePointers, valuePointer);
             break;
           }
           case OBJ_STRING: {
@@ -244,6 +248,7 @@ ObjFunction* loadObj(uint8_t* bytes) {
   }
   ObjFunction* main = NULL;
   initValueArray(&functions);
+  initValuePointers(&valuePointers);
 
   uint8_t flags = bytes[3];
   bool debug = (flags & 0b00000001) > 0;
@@ -253,11 +258,24 @@ ObjFunction* loadObj(uint8_t* bytes) {
 
   for (int i = 0; i < chunks_count; i++) {
     size_t chunk_size = getSize(chunk_start);
-    ObjFunction* func = loadChunk(chunk_start, flags);
+    ObjFunction* func = loadFunction(chunk_start, flags);
     if (func == NULL) return NULL;
     if (i == 0) main = func;
     writeValueArray(&functions, OBJ_VAL(func));
     chunk_start += chunk_size;
+  }
+
+  if (valuePointers.count != chunks_count - 1) {
+    // minus one, cuz first chunk is main
+    fprintf(stderr, "Invalid lxobj: functions(%d)/chunks(%d) count mismatch.\n",
+        valuePointers.count, chunks_count);
+    return NULL;
+  }
+
+  for (int i = 0; i < valuePointers.count; i++) {
+    Value* valuePointer = valuePointers.values[i];
+    ObjFunction* func = AS_FUNCTION(functions.values[i]);
+    *valuePointer = OBJ_VAL(func);
   }
 
   // NOTE: write function at value index
@@ -276,5 +294,6 @@ ObjFunction* loadObj(uint8_t* bytes) {
       ? main->name->chars : "<script>");
 #endif
   freeValueArray(&functions);
+  freeValuePointers(&valuePointers);
   return main;
 }

@@ -309,8 +309,11 @@ ObjFunction* loadObj(uint8_t* bytes) {
   }
 
 #ifdef DEBUG_PRINT_CODE
-  disassembleChunk(&main->chunk, main->name != NULL
-      ? main->name->chars : "<script>");
+  for (int i = 0; i < functions.count; i++) {
+    ObjFunction* func = AS_FUNCTION(functions.values[i]);
+    disassembleChunk(&func->chunk, func->name != NULL
+        ? func->name->chars : "<script>");
+  }
 #endif
   freeValueArray(&functions);
   freeValuePointers(&valuePointers);

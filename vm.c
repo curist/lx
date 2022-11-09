@@ -23,12 +23,23 @@ static void runtimeError(const char* format, ...) {
   va_end(args);
   fputs("\n", stderr);
 
+  int skippedCount = 0;
+  bool shouldTruncate = vm.frameCount > 16;
+
   for (int i = vm.frameCount - 1; i >= 0; i--) {
+    if (shouldTruncate) {
+      if (i > 5 && vm.frameCount - i > 6) {
+        skippedCount++;
+        continue;
+      }
+      if (i == 5) {
+        fprintf(stderr, "...skipped %d lines...\n", skippedCount);
+      }
+    }
     CallFrame* frame = &vm.frames[i];
     ObjFunction* function = frame->function;
     size_t instruction = frame->ip - function->chunk.code - 1;
-    fprintf(stderr, "[line %d] in ", 
-            function->chunk.lines[instruction]);
+    fprintf(stderr, "[line %d] in ", function->chunk.lines[instruction]);
     if (function->name == NULL) {
       fprintf(stderr, "script\n");
     } else {

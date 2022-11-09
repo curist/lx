@@ -185,9 +185,10 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
     uint8_t* ptr = &code_start[code_size];
     size_t constSectionSize = getSize(ptr);
 
-    // const section size (4) + const count (1) + actual consts
-    ptr += 4 + 1 + constSectionSize;
+    // const section size (4) + actual consts
+    ptr += 4 + constSectionSize;
     // debug lines size (4)
+    size_t debugLinesSize = getSize(ptr);
     ptr += 4;
 
     uint16_t filenameSize = getShortSize(ptr);

@@ -12,9 +12,7 @@
 
 VM vm;
 
-static Value clockNative(int argCount, Value* args) {
-  return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
-}
+bool shouldResetStack = true;
 
 static void resetStack() {
   vm.stackTop = vm.stack;
@@ -51,9 +49,26 @@ static void runtimeError(const char* format, ...) {
       fprintf(stderr, "%s()\n", function->name->chars);
     }
   }
-
-  resetStack();
+  if (shouldResetStack) {
+    resetStack();
+  }
 }
+
+static Value clockNative(int argCount, Value* args) {
+  return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+}
+
+static Value printNative(int argCount, Value* args) {
+  if (argCount < 1) {
+    shouldResetStack = false; // XXX: should we wrap this in a macro?
+    runtimeError("Expected 1 arguments but got %d.", argCount);
+    return NIL_VAL;
+  }
+  printValue(args[0]);
+  printf("\n");
+  return NIL_VAL;
+}
+
 
 static void defineNative(const char* name, NativeFn function) {
   push(OBJ_VAL(copyString(name, (int)strlen(name))));
@@ -71,6 +86,7 @@ void initVM() {
   initTable(&vm.strings);
 
   defineNative("clock", clockNative);
+  defineNative("print", printNative);
 }
 
 void freeVM() {

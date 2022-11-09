@@ -34,7 +34,16 @@ void printValue(Value value) {
       printf(AS_BOOL(value) ? "true" : "false");
       break;
     case VAL_NIL: printf("nil"); break;
-    case VAL_NUMBER: printf("%g", AS_NUMBER(value)); break;
+    case VAL_NUMBER: {
+      double num = AS_NUMBER(value);
+      int val_i = num;
+      if (num == val_i) {
+        printf("%d", val_i);
+      } else {
+        printf("%f", num);
+      }
+      break;
+    }
     case VAL_OBJ: printObject(value); break;
   }
 }

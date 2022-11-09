@@ -241,6 +241,8 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
             int index = addConstant(chunk, NIL_VAL);
             Value* valuePointer = &chunk->constants.values[index];
             writeValuePointers(&valuePointers, valuePointer);
+            // value type + obj type
+            constSection += (1 + 1);
             break;
           }
           case OBJ_STRING: {
@@ -297,21 +299,10 @@ ObjFunction* loadObj(uint8_t* bytes) {
   }
 
   for (int i = 0; i < valuePointers.count; i++) {
-    Value* valuePointer = valuePointers.values[i];
-    ObjFunction* func = AS_FUNCTION(functions.values[i]);
-    *valuePointer = OBJ_VAL(func);
+    // functions[0] is main, thus i + 1
+    ObjFunction* func = AS_FUNCTION(functions.values[i + 1]);
+    *valuePointers.values[i] = OBJ_VAL(func);
   }
-
-  // NOTE: write function at value index
-  // ObjFunction* xx = AS_FUNCTION(functions.values[0]);
-  // int count = xx->chunk.constants.count;
-  // xx->chunk.constants.values[0] = OBJ_VAL(main);
-  // for (int i = 0; i < count; i++) {
-  //   Value* v = xx->chunk.constants.values;
-  //   printValue(v[i]);
-  //   printf("\n");
-  // }
-  // printValue(functions.values[0]);
 
 #ifdef DEBUG_PRINT_CODE
   disassembleChunk(&main->chunk, main->name != NULL

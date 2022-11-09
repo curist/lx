@@ -12,8 +12,6 @@
 
 VM vm;
 
-bool shouldResetStack = true;
-
 static void resetStack() {
   vm.stackTop = vm.stack;
   vm.frameCount = 0;
@@ -49,9 +47,7 @@ static void runtimeError(const char* format, ...) {
       fprintf(stderr, "%s()\n", function->name->chars);
     }
   }
-  if (shouldResetStack) {
-    resetStack();
-  }
+  resetStack();
 }
 
 static Value clockNative(int argCount, Value* args) {
@@ -59,12 +55,10 @@ static Value clockNative(int argCount, Value* args) {
 }
 
 static Value printNative(int argCount, Value* args) {
-  if (argCount < 1) {
-    shouldResetStack = false; // XXX: should we wrap this in a macro?
-    runtimeError("Expected 1 arguments but got %d.", argCount);
-    return NIL_VAL;
+  for (int i = 0; i < argCount; i++) {
+    if (i > 0) printf(" ");
+    printValue(args[i]);
   }
-  printValue(args[0]);
   printf("\n");
   return NIL_VAL;
 }

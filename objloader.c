@@ -20,8 +20,8 @@ static Chunk* currentChunk() {
 // OBJSIZE:   4 little endian
 // CHUNKS:    2 little endian -> we can have up to 65536 chunks
 // TBD:       16 - (2+1+1+4+2) = 6
-// CHUNKADDR: 4 little endian, each
 // # chunk layout
+// CHUNK_SIZE: 4 little endian
 // CODE_SECTION: ?
 //      SIZE: 4 little endian
 //      CODE: various length
@@ -94,7 +94,8 @@ ObjFunction* loadObj(uint8_t* bytes) {
   bool debug = (flags & 0b00000001) > 0;
 
   size_t obj_size = getSize(&bytes[4]);
-  size_t code_size = getSize(&bytes[16]);
+  size_t chunk_size = getSize(&bytes[16]);
+  size_t code_size = getSize(&bytes[20]);
 
   // XXX: naive size check, only works for 1 code chunk/section
   if (code_size > obj_size - (16+4+5)) {
@@ -104,12 +105,12 @@ ObjFunction* loadObj(uint8_t* bytes) {
 
   if (!debug) {
     for (int i = 0; i < code_size; i++) {
-      writeChunk(currentChunk(), bytes[20 + i], 1);
+      writeChunk(currentChunk(), bytes[16 + 4 + 4 + i], 1);
     }
   } else {
     // to gather debug line info, we must fastforward
     // to debug line section first, so we can write chunk with line info
-    uint8_t* ptr = &bytes[16 + 4 + code_size];
+    uint8_t* ptr = &bytes[16 + 4 + 4 + code_size];
     size_t constSectionSize = getSize(ptr);
 
     // const section size (4) + const count (1) + actual consts
@@ -123,11 +124,11 @@ ObjFunction* loadObj(uint8_t* bytes) {
 
     for (int i = 0; i < code_size; i++) {
       uint16_t line = getShortSize(&ptr[i * 2]);
-      writeChunk(currentChunk(), bytes[20 + i], line);
+      writeChunk(currentChunk(), bytes[16 + 4 + 4 + i], line);
     }
   }
 
-  uint8_t* constSection = &bytes[16 + 4 + code_size];
+  uint8_t* constSection = &bytes[16 + 4 + 4 + code_size];
   uint8_t constsCount = constSection[4];
 
   // skip reading consts total + total consts bytes size

@@ -19,6 +19,8 @@ ValuePointers valuePointers;
 // TBD:       16 - (2+1+1+4+2) = 6
 // # chunk layout
 // CHUNK_SIZE: 4 little endian
+//   CHUNK_NAME_SIZE: 2 little endian
+//        CHUNK_NAME: string, vary length, aka function name
 // CODE_SECTION:
 //      SIZE: 4 little endian
 //      CODE: various length
@@ -105,6 +107,15 @@ bool objIsValid(uint8_t* bytes) {
       return false;
     }
 
+    // chunk name
+    size_t chunkNameLength = getShortSize(ptr);
+    ptr += 2 + chunkNameLength;
+    chunk_size_sofar += 2 + chunkNameLength;
+    if (chunk_size_sofar > chunk_size) {
+      fprintf(stderr, "Invalid lxobj: chunk %d name length is too big(%ld).\n", i, chunkNameLength);
+      return false;
+    }
+
     size_t code_size = getSize(ptr);
     chunk_size_sofar += code_size;
     ptr += 4 + code_size;
@@ -147,19 +158,31 @@ bool objIsValid(uint8_t* bytes) {
 ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   bool debug = (flags & 0b00000001) > 0;
 
-  size_t code_size = getSize(&bytes[4]);
-
   ObjFunction* func = newFunction();
   Chunk* chunk = &func->chunk;
 
+  uint8_t* code_start = &bytes[4];
+
+  // read function name
+  size_t funcNameLength = getShortSize(code_start);
+
+  code_start += 2;
+  if (funcNameLength > 0) {
+    func->name = copyString((char*)code_start, funcNameLength);
+    code_start += funcNameLength;
+  }
+
+  size_t code_size = getSize(code_start);
+  code_start += 4;
+
   if (!debug) {
     for (int i = 0; i < code_size; i++) {
-      writeChunk(chunk, bytes[4 + 4 + i], 1);
+      writeChunk(chunk, code_start[i], 1);
     }
   } else {
     // to gather debug line info, we must fastforward
     // to debug line section first, so we can write chunk with line info
-    uint8_t* ptr = &bytes[4 + 4 + code_size];
+    uint8_t* ptr = &code_start[code_size];
     size_t constSectionSize = getSize(ptr);
 
     // const section size (4) + const count (1) + actual consts
@@ -173,11 +196,11 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
 
     for (int i = 0; i < code_size; i++) {
       uint16_t line = getShortSize(&ptr[i * 2]);
-      writeChunk(chunk, bytes[4 + 4 + i], line);
+      writeChunk(chunk, code_start[i], line);
     }
   }
 
-  uint8_t* constSection = &bytes[4 + 4 + code_size];
+  uint8_t* constSection = &code_start[code_size];
   uint8_t constsCount = constSection[4];
 
   // skip reading consts total + total consts bytes size
@@ -262,7 +285,7 @@ ObjFunction* loadObj(uint8_t* bytes) {
     if (func == NULL) return NULL;
     if (i == 0) main = func;
     writeValueArray(&functions, OBJ_VAL(func));
-    chunk_start += chunk_size;
+    chunk_start += 4 + chunk_size;
   }
 
   if (valuePointers.count != chunks_count - 1) {

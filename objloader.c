@@ -320,3 +320,4 @@ ObjFunction* loadObj(uint8_t* bytes) {
   freeChunkIndexes(&chunkIndexes);
   return main;
 }
+

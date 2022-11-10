@@ -30,7 +30,7 @@ static bool intNative(int argCount, Value* args) {
     COPY_STATIC_STRING(args[-1], "Error: first args must be a number");
     return false;
   }
-  double integer = (int)arg.as.number;
+  double integer = (int)AS_NUMBER(arg);
   args[-1] = NUMBER_VAL(integer);
   return true;
 }

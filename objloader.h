@@ -4,6 +4,8 @@
 #include "memory.h"
 #include "object.h"
 
+static bool objectLoaded = false;
+
 typedef struct {
   Chunk* chunk;
   int index;

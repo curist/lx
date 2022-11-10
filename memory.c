@@ -2,6 +2,7 @@
 
 #include "memory.h"
 #include "vm.h"
+#include "objloader.h"
 
 #ifdef DEBUG_LOG_GC
 #include <stdio.h>
@@ -183,6 +184,7 @@ static void sweep() {
 }
 
 void collectGarbage() {
+  if (!objectLoaded ) return;
 #ifdef DEBUG_LOG_GC
   printf("-- gc begin\n");
   size_t before = vm.bytesAllocated;

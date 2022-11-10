@@ -18,4 +18,16 @@ static Value printNative(int argCount, Value* args) {
   return NIL_VAL;
 }
 
+static Value intNative(int argCount, Value* args) {
+  if (argCount < 1) {
+    return NIL_VAL;
+  }
+  Value arg = args[0];
+  if (IS_NUMBER(arg)) {
+    double integer = (int)arg.as.number;
+    return NUMBER_VAL(integer);
+  }
+  return NIL_VAL;
+}
+
 #endif

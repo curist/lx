@@ -68,6 +68,7 @@ void initVM() {
 
   defineNative("clock", clockNative);
   defineNative("print", printNative);
+  defineNative("int", intNative);
 }
 
 void freeVM() {

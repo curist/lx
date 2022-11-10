@@ -18,6 +18,12 @@
 #define AS_STRING(value)       ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value)      (((ObjString*)AS_OBJ(value))->chars)
 
+#define COPY_STATIC_STRING(assignee, string) \
+  do { \
+    char s[] = string; \
+    assignee = OBJ_VAL(copyString(s, sizeof(s) - 1)); \
+  } while(false)
+
 typedef enum {
   OBJ_CLOSURE,
   OBJ_FUNCTION,
@@ -39,7 +45,7 @@ typedef struct {
   ObjString* name;
 } ObjFunction;
 
-typedef Value (*NativeFn)(int argCount, Value* args);
+typedef bool (*NativeFn)(int argCount, Value* args);
 
 typedef struct {
   Obj obj;

@@ -4,7 +4,7 @@ prepare:
 	@mkdir -p out
 
 build: prepare
-	gcc *.c -o out/clox
+	gcc -O3 *.c -o out/clox
 
 run: build
 	./out/clox

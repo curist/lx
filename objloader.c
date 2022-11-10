@@ -20,6 +20,7 @@ ChunkIndexes chunkIndexes;
 // # chunk layout
 // CHUNK_SIZE: 4 little endian
 //    FUNCTION_ARITY: 1
+//     UPVALUE_COUNT: 1
 //   CHUNK_NAME_SIZE: 2 little endian
 //        CHUNK_NAME: string, vary length, aka function name
 // CODE_SECTION:
@@ -98,9 +99,9 @@ bool objIsValid(uint8_t* bytes) {
     uint8_t* ptr = chunk_start;
     size_t chunk_size = getSize(ptr);
 
-    // chunk_size + function_arity = 4 + 1 = 5
-    size_t chunk_size_sofar = 5;
-    ptr += 5;
+    // chunk_size + function_arity + upvalue count = 4 + 1 + 1= 6
+    size_t chunk_size_sofar = 6;
+    ptr += 6;
 
     if (total_size + 4 + chunk_size > obj_size) {
       // ensure this chunk won't exceed total object size
@@ -164,7 +165,8 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
 
   uint8_t* code_start = &bytes[4];
   func->arity = code_start[0];
-  code_start += 1;
+  func->upvalueCount = code_start[1];
+  code_start += 2;
 
   // read function name
   size_t funcNameLength = getShortSize(code_start);

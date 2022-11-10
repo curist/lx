@@ -7,7 +7,7 @@
 #include "object.h"
 
 ValueArray functions;
-ValuePointers valuePointers;
+ChunkIndexes chunkIndexes;
 
 // obj layout
 // LX:        2
@@ -30,7 +30,6 @@ ValuePointers valuePointers;
 //      SIZE: 4  let's leave size here, so it's possible for us to jump to next chunk
 //      CONST_COUNT: 1
 //   every const is like
-//      TYPE:  1
 //      VALUE: 1 bit type + type dependent layout(length)
 //        BOOL:   1 + 1
 //        NIL:    1
@@ -243,8 +242,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
             // we will iterate through value pointer,
             // and do valuePointer[i] = OBJ_VAL(functions[i])
             int index = addConstant(chunk, NIL_VAL);
-            Value* valuePointer = &chunk->constants.values[index];
-            writeValuePointers(&valuePointers, valuePointer);
+            writeChunkIndexes(&chunkIndexes, (ChunkValueIndex){chunk, index});
             // value type + obj type
             constSection += (1 + 1);
             break;
@@ -278,7 +276,7 @@ ObjFunction* loadObj(uint8_t* bytes) {
   }
   ObjFunction* main = NULL;
   initValueArray(&functions);
-  initValuePointers(&valuePointers);
+  initChunkIndexes(&chunkIndexes);
 
   uint8_t flags = bytes[3];
   bool debug = (flags & 0b00000001) > 0;
@@ -295,17 +293,18 @@ ObjFunction* loadObj(uint8_t* bytes) {
     chunk_start += 4 + chunk_size;
   }
 
-  if (valuePointers.count != chunks_count - 1) {
+  if (chunkIndexes.count != chunks_count - 1) {
     // minus one, cuz first chunk is main
     fprintf(stderr, "Invalid lxobj: functions(%d)/chunks(%d) count mismatch.\n",
-        valuePointers.count, chunks_count);
+        chunkIndexes.count, chunks_count);
     return NULL;
   }
 
-  for (int i = 0; i < valuePointers.count; i++) {
+  for (int i = 0; i < chunkIndexes.count; i++) {
     // functions[0] is main, thus i + 1
     ObjFunction* func = AS_FUNCTION(functions.values[i + 1]);
-    *valuePointers.values[i] = OBJ_VAL(func);
+    ChunkValueIndex chunkIndex = chunkIndexes.values[i];
+    chunkIndex.chunk->constants.values[chunkIndex.index] = OBJ_VAL(func);
   }
 
 #ifdef DEBUG_PRINT_CODE
@@ -316,6 +315,6 @@ ObjFunction* loadObj(uint8_t* bytes) {
   }
 #endif
   freeValueArray(&functions);
-  freeValuePointers(&valuePointers);
+  freeChunkIndexes(&chunkIndexes);
   return main;
 }

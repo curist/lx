@@ -360,7 +360,7 @@ static InterpretResult run() {
 
           ValueArray* array = &AS_ARRAY(peek(1));
           Value value = NIL_VAL;
-          if (index < array->count) {
+          if (index >= 0 && index < array->count) {
             value = array->values[index];
           }
           pop();
@@ -409,8 +409,10 @@ static InterpretResult run() {
           }
 
           ValueArray* array = &AS_ARRAY(peek(2));
-          if (index < array->count) {
+          if (index >= 0 && index < array->count) {
             array->values[index] = value;
+          } else {
+            value = NIL_VAL;
           }
           pop();
           pop();

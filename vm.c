@@ -348,6 +348,18 @@ static InterpretResult run() {
         push(NUMBER_VAL(-AS_NUMBER(pop())));
         break;
       }
+      case OP_ASSOC: { 
+        // TODO:
+        break;
+      }
+      case OP_APPEND: {
+        // TODO:
+        break;
+      }
+      case OP_BUTLAST: { // TODO:
+        break; }
+      case OP_HASHMAP: push(OBJ_VAL(newHashmap())); break;
+      case OP_ARRAY: push(OBJ_VAL(newArray())); break;
       case OP_JUMP: {
         uint16_t offset = READ_SHORT();
         ip += offset;

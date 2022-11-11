@@ -7,10 +7,10 @@
 
 #define NAN_BOXING
 #define DEBUG_TRACE_EXECUTION1
-#define DEBUG_PRINT_CODE1
+#define DEBUG_PRINT_CODE
 
 #define DEBUG_STRESS_GC
-#define DEBUG_LOG_GC
+#define DEBUG_LOG_GC1
 
 #define UINT8_COUNT (UINT8_MAX + 1)
 

@@ -103,6 +103,18 @@ ObjUpvalue* newUpvalue(Value* slot) {
   return upvalue;
 }
 
+ObjHashmap* newHashmap() {
+  ObjHashmap* hashmap = ALLOCATE_OBJ(ObjHashmap, OBJ_HASHMAP);
+  initTable(&hashmap->table);
+  return hashmap;
+}
+
+ObjArray* newArray() {
+  ObjArray* array = ALLOCATE_OBJ(ObjArray, OBJ_ARRAY);
+  initValueArray(&array->array);
+  return array;
+}
+
 static void printFunction(ObjFunction* function) {
   if (function->name == NULL) {
     printf("<script>");
@@ -127,6 +139,14 @@ void printObject(Value value) {
       break;
     case OBJ_UPVALUE:
       printf("upvalue");
+      break;
+    case OBJ_HASHMAP:
+      // TODO:
+      printf("hashmap");
+      break;
+    case OBJ_ARRAY:
+      // TODO:
+      printf("array");
       break;
   }
 }

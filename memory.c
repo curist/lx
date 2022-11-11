@@ -91,6 +91,13 @@ static void blackenObject(Obj* object) {
     case OBJ_NATIVE:
     case OBJ_STRING:
       break;
+    case OBJ_HASHMAP:
+      markTable(&((ObjHashmap*)object)->table);
+      break;
+    case OBJ_ARRAY: {
+      ValueArray array = ((ObjArray*)object)->array;
+      markArray(&array);
+    }
   }
 }
 
@@ -124,6 +131,18 @@ static void freeObject(Obj* object) {
     case OBJ_UPVALUE:
       FREE(ObjUpvalue, object);
       break;
+    case OBJ_HASHMAP: {
+      Table table = ((ObjHashmap*)object)->table;
+      freeTable(&table);
+      FREE(ObjHashmap, object);
+      break;
+    }
+    case OBJ_ARRAY: {
+      ValueArray array = ((ObjArray*)object)->array;
+      freeValueArray(&array);
+      FREE(ObjArray, object);
+      break;
+    }
   }
 }
 

@@ -161,7 +161,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   bool debug = (flags & 0b00000001) > 0;
 
   ObjFunction* func = newFunction();
-  markObject((Obj*) func);
+  push(OBJ_VAL(func));
   Chunk* chunk = &func->chunk;
 
   uint8_t* code_start = &bytes[4];
@@ -274,7 +274,6 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
 }
 
 ObjFunction* loadObj(uint8_t* bytes) {
-  objectLoaded = false;
   if (!objIsValid(bytes)) {
     return NULL;
   }
@@ -294,7 +293,6 @@ ObjFunction* loadObj(uint8_t* bytes) {
     if (func == NULL) return NULL;
     if (i == 0) main = func;
     writeValueArray(&functions, OBJ_VAL(func));
-    markObject((Obj*)func);
     chunk_start += 4 + chunk_size;
   }
 
@@ -312,6 +310,8 @@ ObjFunction* loadObj(uint8_t* bytes) {
     chunkIndex.chunk->constants.values[chunkIndex.index] = OBJ_VAL(func);
   }
 
+  for (int i = 0; i < chunks_count; i++) pop();
+
 #ifdef DEBUG_PRINT_CODE
   for (int i = 0; i < functions.count; i++) {
     ObjFunction* func = AS_FUNCTION(functions.values[i]);
@@ -321,7 +321,6 @@ ObjFunction* loadObj(uint8_t* bytes) {
 #endif
   freeValueArray(&functions);
   freeChunkIndexes(&chunkIndexes);
-  objectLoaded = true;
   return main;
 }
 

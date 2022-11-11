@@ -227,7 +227,7 @@ static InterpretResult run() {
     }
     printf("]\n");
     disassembleInstruction(&frame->closure->function->chunk,
-        (int)(frame->ip - frame->closure->function->chunk.code));
+        (int)(ip - frame->closure->function->chunk.code));
 #endif
 
     uint8_t instruction;
@@ -360,7 +360,11 @@ static InterpretResult run() {
           return INTERPRET_RUNTIME_ERROR;
         }
         Table hashmap = AS_HASHMAP(peek(2));
-        tableSet(&hashmap, OBJ_VAL(peek(1)), OBJ_VAL(peek(0)));
+        if (IS_NUMBER(peek(1))) {
+          tableSet(&hashmap, NUMBER_VAL(peek(1)), OBJ_VAL(peek(0)));
+        } else {
+          tableSet(&hashmap, OBJ_VAL(peek(1)), OBJ_VAL(peek(0)));
+        }
         pop();
         pop();
         break;

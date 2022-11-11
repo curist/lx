@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define NAN_BOXING
-#define DEBUG_TRACE_EXECUTION1
+#define DEBUG_TRACE_EXECUTION
 #define DEBUG_PRINT_CODE
 
 #define DEBUG_STRESS_GC

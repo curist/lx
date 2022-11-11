@@ -142,11 +142,11 @@ void printObject(Value value) {
       break;
     case OBJ_HASHMAP:
       // TODO:
-      printf("hashmap");
+      printf("<map>");
       break;
     case OBJ_ARRAY:
       // TODO:
-      printf("array");
+      printf("<array>");
       break;
   }
 }

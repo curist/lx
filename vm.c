@@ -362,8 +362,9 @@ static InterpretResult run() {
           runtimeError("Hashmap key type must be number or string.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        Table table = AS_HASHMAP(hashmap);
-        tableSet(&table, key, value);
+        Table* table = &AS_HASHMAP(hashmap);
+        tableSet(table, key, value);
+
         pop();
         pop();
         break;

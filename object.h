@@ -51,6 +51,7 @@ typedef struct {
   int upvalueCount;
   Chunk chunk;
   ObjString* name;
+  ObjString* filename;
 } ObjFunction;
 
 typedef bool (*NativeFn)(int argCount, Value* args);

@@ -198,7 +198,9 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
     ptr += 4;
 
     uint16_t filenameSize = getShortSize(ptr);
-    ptr += 2 + filenameSize;
+    ptr += 2;
+    func->filename = copyString((char*)ptr, filenameSize);
+    ptr += filenameSize;
     // ptr is now at the start of line numbers!!!
 
     for (int i = 0; i < code_size; i++) {
@@ -315,8 +317,9 @@ ObjFunction* loadObj(uint8_t* bytes) {
 #ifdef DEBUG_PRINT_CODE
   for (int i = 0; i < functions.count; i++) {
     ObjFunction* func = AS_FUNCTION(functions.values[i]);
-    disassembleChunk(&func->chunk, func->name != NULL
-        ? func->name->chars : "<script>");
+    disassembleChunk(&func->chunk,
+        func->filename != NULL ? func->filename->chars : "<unknown>",
+        func->name != NULL ? func->name->chars : "<script>");
   }
 #endif
   freeValueArray(&functions);

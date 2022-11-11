@@ -4,8 +4,8 @@
 #include "object.h"
 #include "value.h"
 
-void disassembleChunk(Chunk* chunk, const char* name) {
-  printf("== %s ==\n", name);
+void disassembleChunk(Chunk* chunk, const char* filename, const char* name) {
+  printf("== %s == %s\n", name, filename);
 
   for (int offset = 0; offset < chunk->count;) {
     offset = disassembleInstruction(chunk, offset);

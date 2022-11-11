@@ -299,6 +299,43 @@ static InterpretResult run() {
         *frame->closure->upvalues[slot]->location = peek(0);
         break;
       }
+      case OP_GET_PROPERTY: {
+        if (!IS_HASHMAP(peek(0))) {
+          frame->ip = ip;
+          runtimeError("Only hashmap have properties.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        Table* table = &AS_HASHMAP(peek(0));
+        ObjString* name = READ_STRING();
+
+        pop(); // That hashmap
+
+        Value value;
+        if (tableGet(table, OBJ_VAL(name), &value)) {
+          push(value);
+        } else {
+          push(NIL_VAL);
+        }
+        break;
+      }
+      case OP_SET_PROPERTY: {
+        if (!IS_HASHMAP(peek(1))) {
+          frame->ip = ip;
+          runtimeError("Only hashmap can set properties.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        Table* table = &AS_HASHMAP(peek(1));
+        tableSet(table, OBJ_VAL(READ_STRING()), peek(0));
+        ObjString* name = READ_STRING();
+
+        Value value = pop();
+        pop();
+        push(value);
+
+        break;
+      }
       case OP_EQUAL: {
         Value b = pop();
         Value a = pop();

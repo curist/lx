@@ -336,6 +336,103 @@ static InterpretResult run() {
 
         break;
       }
+      case OP_GET_BY_INDEX: {
+        if (!IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1))) {
+          frame->ip = ip;
+          runtimeError("Only array or hashmap can get value by index.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        Value key = peek(0);
+        if (IS_ARRAY(peek(1))) {
+          if (!IS_NUMBER(key)) {
+            frame->ip = ip;
+            runtimeError("Can only use number index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          int index = AS_NUMBER(key);
+          if (index != AS_NUMBER(key)) {
+            // check if the number is an int
+            frame->ip = ip;
+            runtimeError("Can only use integer index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+
+          }
+
+          ValueArray* array = &AS_ARRAY(peek(1));
+          Value value = NIL_VAL;
+          if (index < array->count) {
+            value = array->values[index];
+          }
+          pop();
+          pop();
+          push(value);
+
+        } else {
+          // is hashmap
+          if (!IS_NUMBER(key) && !IS_STRING(key)) {
+            frame->ip = ip;
+            runtimeError("Hashmap key type must be number or string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* table = &AS_HASHMAP(peek(1));
+          Value value;
+          if (!tableGet(table, key, &value)) {
+            value = NIL_VAL;
+          }
+          pop();
+          pop();
+          push(value);
+        }
+        break;
+      }
+      case OP_SET_BY_INDEX: {
+        if (!IS_HASHMAP(peek(2)) && !IS_ARRAY(peek(2))) {
+          frame->ip = ip;
+          runtimeError("Only array or hashmap can get value by index.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        Value key = peek(1);
+        Value value = peek(0);
+        if (IS_ARRAY(peek(2))) {
+          if (!IS_NUMBER(key)) {
+            frame->ip = ip;
+            runtimeError("Can only use number index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          int index = AS_NUMBER(key);
+          if (index != AS_NUMBER(key)) {
+            // check if the number is an int
+            frame->ip = ip;
+            runtimeError("Can only use integer index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+
+          }
+
+          ValueArray* array = &AS_ARRAY(peek(2));
+          if (index < array->count) {
+            array->values[index] = value;
+          }
+          pop();
+          pop();
+          pop();
+          push(value);
+
+        } else {
+          // is hashmap
+          if (!IS_NUMBER(key) && !IS_STRING(key)) {
+            frame->ip = ip;
+            runtimeError("Hashmap key type must be number or string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* table = &AS_HASHMAP(peek(2));
+          tableSet(table, key, value);
+          pop();
+          pop();
+          pop();
+          push(value);
+        }
+        break;
+      }
       case OP_EQUAL: {
         Value b = pop();
         Value a = pop();
@@ -407,7 +504,17 @@ static InterpretResult run() {
         break;
       }
       case OP_APPEND: {
-        // TODO:
+        Value array = peek(1);
+        Value value = peek(0);
+        if (!IS_ARRAY(array)) {
+          frame->ip = ip;
+          runtimeError("Can only append to array.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        writeValueArray(&AS_ARRAY(array), value);
+        printf("count: %d\n", AS_ARRAY(array).count);
+        pop();
         break;
       }
       case OP_BUTLAST: { // TODO:

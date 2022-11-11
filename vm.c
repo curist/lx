@@ -349,22 +349,21 @@ static InterpretResult run() {
         break;
       }
       case OP_ASSOC: {
-        if (!IS_HASHMAP(peek(2))) {
+        Value hashmap = peek(2);
+        Value key     = peek(1);
+        Value value   = peek(0);
+        if (!IS_HASHMAP(hashmap)) {
           frame->ip = ip;
           runtimeError("Can only assoc to hashmap.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        if (!IS_NUMBER(peek(1)) && !IS_STRING(peek(1))) {
+        if (!IS_NUMBER(key) && !IS_STRING(key)) {
           frame->ip = ip;
           runtimeError("Hashmap key type must be number or string.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        Table hashmap = AS_HASHMAP(peek(2));
-        if (IS_NUMBER(peek(1))) {
-          tableSet(&hashmap, NUMBER_VAL(peek(1)), OBJ_VAL(peek(0)));
-        } else {
-          tableSet(&hashmap, OBJ_VAL(peek(1)), OBJ_VAL(peek(0)));
-        }
+        Table table = AS_HASHMAP(hashmap);
+        tableSet(&table, key, value);
         pop();
         pop();
         break;

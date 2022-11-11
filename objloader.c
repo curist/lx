@@ -318,8 +318,8 @@ ObjFunction* loadObj(uint8_t* bytes) {
   for (int i = 0; i < functions.count; i++) {
     ObjFunction* func = AS_FUNCTION(functions.values[i]);
     disassembleChunk(&func->chunk,
-        func->filename != NULL ? func->filename->chars : "<unknown>",
-        func->name != NULL ? func->name->chars : "<script>");
+        func->filename != NULL ? func->filename->chars : "[unknown]",
+        func->name != NULL ? func->name->chars : "[script]");
   }
 #endif
   freeValueArray(&functions);

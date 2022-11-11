@@ -515,7 +515,6 @@ static InterpretResult run() {
         }
 
         writeValueArray(&AS_ARRAY(array), value);
-        printf("count: %d\n", AS_ARRAY(array).count);
         pop();
         break;
       }

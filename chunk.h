@@ -42,7 +42,6 @@ typedef enum {
   OP_LOOP,
   OP_ASSOC,
   OP_APPEND,
-  OP_BUTLAST,
   OP_HASHMAP,
   OP_ARRAY,
   OP_CALL,

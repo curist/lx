@@ -56,7 +56,6 @@ static void runtimeError(const char* format, ...) {
   resetStack();
 }
 
-
 static void defineNative(const char* name, NativeFn function) {
   push(OBJ_VAL(copyString(name, (int)strlen(name))));
   push(OBJ_VAL(newNative(function)));
@@ -536,8 +535,6 @@ static InterpretResult run() {
         pop();
         break;
       }
-      case OP_BUTLAST: { // TODO:
-        break; }
       case OP_HASHMAP: push(OBJ_VAL(newHashmap())); break;
       case OP_ARRAY: push(OBJ_VAL(newArray())); break;
       case OP_JUMP: {

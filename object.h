@@ -23,11 +23,7 @@
 #define AS_HASHMAP(value)      (((ObjHashmap*)AS_OBJ(value))->table)
 #define AS_ARRAY(value)        (((ObjArray*)AS_OBJ(value))->array)
 
-#define COPY_STATIC_STRING(assignee, string) \
-  do { \
-    char s[] = string; \
-    assignee = OBJ_VAL(copyString(s, sizeof(s) - 1)); \
-  } while(false)
+#define COPY_CSTRING(string)   copyString(string, (int)strlen(string))
 
 typedef enum {
   OBJ_CLOSURE,

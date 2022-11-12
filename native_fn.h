@@ -22,12 +22,12 @@ static bool printNative(int argCount, Value* args) {
 
 static bool intNative(int argCount, Value* args) {
   if (argCount < 1) {
-    COPY_STATIC_STRING(args[-1], "Error: first args must be a number");
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: first args must be a number"));
     return false;
   }
   Value arg = args[0];
   if (!IS_NUMBER(arg)) {
-    COPY_STATIC_STRING(args[-1], "Error: first args must be a number");
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: first args must be a number"));
     return false;
   }
   double integer = (int)AS_NUMBER(arg);

@@ -256,6 +256,19 @@ static InterpretResult run() {
         for (int i = 0; i < pops; i++) pop();
         break;
       }
+      case OP_POP2: {
+        Value value = pop();
+        pop();
+        push(value);
+        break;
+      }
+      case OP_POP2N: {
+        Value value = pop();
+        uint8_t pops = READ_BYTE();
+        for (int i = 0; i < pops; i++) pop();
+        push(value);
+        break;
+      }
       case OP_DUP: push(peek(0)); break;
       case OP_GET_LOCAL: {
         uint8_t slot = READ_BYTE();

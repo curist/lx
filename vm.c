@@ -57,14 +57,6 @@ static void runtimeError(const char* format, ...) {
   resetStack();
 }
 
-static void defineNative(const char* name, NativeFn function) {
-  push(OBJ_VAL(copyString(name, (int)strlen(name))));
-  push(OBJ_VAL(newNative(function)));
-  tableSet(&vm.globals, OBJ_VAL(vm.stack[0]), vm.stack[1]);
-  pop();
-  pop();
-}
-
 void initVM() {
   resetStack();
   vm.objects = NULL;
@@ -78,9 +70,7 @@ void initVM() {
   initTable(&vm.globals);
   initTable(&vm.strings);
 
-  defineNative("clock", clockNative);
-  defineNative("print", printNative);
-  defineNative("int", intNative);
+  defineBuiltinNatives();
 }
 
 void freeVM() {

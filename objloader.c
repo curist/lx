@@ -23,7 +23,7 @@ ChunkIndexes chunkIndexes;
 //     UPVALUE_COUNT: 1
 //   CHUNK_NAME_SIZE: 2 little endian
 //        CHUNK_NAME: string, vary length, aka function name
-// CODE_SECTION:
+// CODE_SECTION: ?
 //      SIZE: 4 little endian
 //      CODE: various length
 //            CODE_SECTION guaranteed to be followed by 5 bytes of CONST_SECTION header
@@ -31,6 +31,7 @@ ChunkIndexes chunkIndexes;
 //      SIZE: 4  let's leave size here, so it's possible for us to jump to next chunk
 //      CONST_COUNT: 1
 //   every const is like
+//      TYPE:  1
 //      VALUE: 1 bit type + type dependent layout(length)
 //        BOOL:   1 + 1
 //        NIL:    1
@@ -42,7 +43,10 @@ ChunkIndexes chunkIndexes;
 //      SIZE: 4 little endian
 //      FILEPATH_LENGTH: 2 file path length
 //      FILEPATH: vary length
-//      TOKEN_LINE_NUMBER: 2 bytes each (which means we would only support line no. up to 65535)
+//      TOKEN_LINE_NUMBER: 1 + 2 byte, each
+//                first byte represent repeat times for line #
+//                next 2 bytes is the actual line number
+//                (which means we would only support line no. up to 65535)
 
 
 double readDouble(const uint8_t* bytes) {
@@ -203,9 +207,19 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
     ptr += filenameSize;
     // ptr is now at the start of line numbers!!!
 
+    uint8_t repeatTimes = ptr[0];
+    uint8_t repeated = 0;
+    ptr++;
+
     for (int i = 0; i < code_size; i++) {
-      uint16_t line = getShortSize(&ptr[i * 2]);
+      uint16_t line = getShortSize(ptr);
       writeChunk(chunk, code_start[i], line);
+      if (++repeated == repeatTimes) {
+        ptr += 2;
+        repeatTimes = ptr[0];
+        repeated = 0;
+        ptr++;
+      }
     }
   }
 

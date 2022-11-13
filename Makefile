@@ -4,8 +4,11 @@ prepare:
 	@mkdir -p out
 
 build: prepare
+	gcc -DDEBUG *.c -o out/clox
+
+release: prepare
 	gcc -O3 *.c -o out/clox
 
 run: build
-	./out/clox
+	./out/clox /tmp/current.lxobj
 

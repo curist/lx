@@ -14,6 +14,7 @@ VM vm;
 
 static void resetStack() {
   vm.stackTop = vm.stack;
+  vm.localsTop = vm.locals;
   vm.frameCount = 0;
   vm.openUpvalues = NULL;
 }
@@ -98,6 +99,16 @@ Value pop() {
   return *vm.stackTop;
 }
 
+void push_local(Value value) {
+  *vm.localsTop = value;
+  vm.localsTop++;
+}
+
+Value pop_local() {
+  vm.localsTop--;
+  return *vm.localsTop;
+}
+
 static Value peek(int distance) {
   return vm.stackTop[-1 - distance];
 }
@@ -117,7 +128,7 @@ static bool call(ObjClosure* closure, int argCount) {
   CallFrame* frame = &vm.frames[vm.frameCount++];
   frame->closure = closure;
   frame->ip = closure->function->chunk.code;
-  frame->slots = vm.stackTop - argCount - 1;
+  frame->slots = vm.localsTop - argCount - 1;
   return true;
 }
 
@@ -128,11 +139,11 @@ static bool callValue(Value callee, int argCount) {
         return call(AS_CLOSURE(callee), argCount);
       case OBJ_NATIVE: {
         NativeFn native = AS_NATIVE(callee);
-        if (native(argCount, vm.stackTop - argCount)) {
-          vm.stackTop -= argCount;
+        if (native(argCount, vm.localsTop - argCount)) {
+          vm.localsTop -= argCount;
           return true;
         } else {
-          runtimeError(AS_STRING(vm.stackTop[-argCount - 1])->chars);
+          runtimeError(AS_STRING(vm.localsTop[-argCount - 1])->chars);
           return false;
         }
       }
@@ -230,6 +241,12 @@ static InterpretResult run() {
       printf(" ");
     }
     printf("]\n");
+    printf("  Locals: [ ");
+    for (Value* slot = vm.locals; slot < vm.localsTop; slot++) {
+      printValue(*slot);
+      printf(" ");
+    }
+    printf("]\n");
     disassembleInstruction(&frame->closure->function->chunk,
         (int)(ip - frame->closure->function->chunk.code));
 #endif
@@ -252,6 +269,8 @@ static InterpretResult run() {
       case OP_FALSE: push(BOOL_VAL(false)); break;
       case OP_POP: pop(); break;
       case OP_DUP: push(peek(0)); break;
+      case OP_NEW_LOCAL: push_local(pop()); break;
+      case OP_POP_LOCAL: pop_local(); break;
       case OP_GET_LOCAL: {
         uint8_t slot = READ_BYTE();
         push(frame->slots[slot]);
@@ -567,11 +586,10 @@ static InterpretResult run() {
         break;
       }
       case OP_CLOSE_UPVALUE:
-        closeUpvalues(vm.stackTop - 1);
-        pop();
+        closeUpvalues(vm.localsTop - 1);
+        pop_local();
         break;
       case OP_RETURN: {
-        Value result = pop();
         closeUpvalues(frame->slots);
         vm.frameCount--;
         if (vm.frameCount == 0) {
@@ -579,8 +597,7 @@ static InterpretResult run() {
           return INTERPRET_OK;
         }
 
-        vm.stackTop = frame->slots;
-        push(result);
+        vm.localsTop = frame->slots;
         frame = &vm.frames[vm.frameCount - 1];
         ip = frame->ip;
         break;

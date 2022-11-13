@@ -239,20 +239,20 @@ static InterpretResult run() {
 
   for (;;) {
 #ifdef DEBUG_TRACE_EXECUTION
-    printf("        |   [ ");
+    printf("        |       [ ");
     for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
       printValue(*slot);
       printf(" ");
     }
     printf("]\n");
-    printf("        | L:[ ");
+    printf("        |     L:[ ");
     for (Value* slot = vm.locals; slot < vm.localsTop; slot++) {
       printValue(*slot);
       printf(" ");
     }
     printf("]\n");
     disassembleInstruction(&frame->closure->function->chunk,
-        (int)(ip - frame->closure->function->chunk.code));
+        (int)(ip - frame->closure->function->chunk.code), false);
 #endif
 
     uint8_t instruction;

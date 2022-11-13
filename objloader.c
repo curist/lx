@@ -319,8 +319,9 @@ ObjFunction* loadObj(uint8_t* bytes) {
     ObjFunction* func = AS_FUNCTION(functions.values[i]);
     disassembleChunk(&func->chunk,
         func->filename != NULL ? func->filename->chars : "[unknown]",
-        func->name != NULL ? func->name->chars : "[script]");
+        func->name != NULL ? func->name->chars : "[script]", true);
   }
+  printf("================================\n\n");
 #endif
   freeValueArray(&functions);
   freeChunkIndexes(&chunkIndexes);

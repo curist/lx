@@ -163,6 +163,10 @@ static void markRoots() {
     markValue(*slot);
   }
 
+  for (Value* slot = vm.locals; slot < vm.localsTop; slot++) {
+    markValue(*slot);
+  }
+
   for (int i = 0; i < vm.frameCount; i++) {
     markObject((Obj*)vm.frames[i].closure);
   }

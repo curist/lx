@@ -14,6 +14,8 @@ typedef enum {
   OP_EQUAL,
   OP_POP,
   OP_DUP,
+  OP_NEW_LOCAL,
+  OP_POP_LOCAL,
   OP_GET_LOCAL,
   OP_SET_LOCAL,
   OP_GET_GLOBAL,

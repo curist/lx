@@ -20,6 +20,9 @@ typedef struct {
 
   Value stack[STACK_MAX];
   Value* stackTop;
+  Value locals[STACK_MAX];
+  Value* localsTop;
+
   Table globals;
   Table strings;
   ObjUpvalue* openUpvalues;

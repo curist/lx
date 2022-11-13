@@ -145,6 +145,7 @@ static bool callValue(Value callee, int argCount) {
         NativeFn native = AS_NATIVE(callee);
         if (native(argCount, vm.localsTop - argCount)) {
           vm.localsTop -= argCount;
+          push(pop_local());
           return true;
         } else {
           runtimeError(AS_STRING(vm.localsTop[-argCount - 1])->chars);
@@ -574,7 +575,6 @@ static InterpretResult run() {
         if (!callValue(peek_local(argCount), argCount)) {
           return INTERPRET_RUNTIME_ERROR;
         }
-        push(pop_local());
         frame = &vm.frames[vm.frameCount - 1];
         ip = frame->ip;
         break;

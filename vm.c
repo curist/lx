@@ -99,6 +99,10 @@ Value pop() {
   return *vm.stackTop;
 }
 
+static Value peek(int distance) {
+  return vm.stackTop[-1 - distance];
+}
+
 void push_local(Value value) {
   *vm.localsTop = value;
   vm.localsTop++;
@@ -109,8 +113,8 @@ Value pop_local() {
   return *vm.localsTop;
 }
 
-static Value peek(int distance) {
-  return vm.stackTop[-1 - distance];
+static Value peek_local(int distance) {
+  return vm.localsTop[-1 - distance];
 }
 
 static bool call(ObjClosure* closure, int argCount) {
@@ -235,13 +239,13 @@ static InterpretResult run() {
 
   for (;;) {
 #ifdef DEBUG_TRACE_EXECUTION
-    printf("          [ ");
+    printf("        |   [ ");
     for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
       printValue(*slot);
       printf(" ");
     }
     printf("]\n");
-    printf("  Locals: [ ");
+    printf("        | L:[ ");
     for (Value* slot = vm.locals; slot < vm.localsTop; slot++) {
       printValue(*slot);
       printf(" ");
@@ -561,10 +565,16 @@ static InterpretResult run() {
       }
       case OP_CALL: {
         int argCount = READ_BYTE();
+        // pushing function & its args to locals stack
+        // + 1 to include the function it self
+        for (int i = argCount; i >= 0; i--) push_local(peek(i));
+        for (int i = 0; i < argCount + 1; i++) pop();
+
         frame->ip = ip;
-        if (!callValue(peek(argCount), argCount)) {
+        if (!callValue(peek_local(argCount), argCount)) {
           return INTERPRET_RUNTIME_ERROR;
         }
+        push(pop_local());
         frame = &vm.frames[vm.frameCount - 1];
         ip = frame->ip;
         break;
@@ -577,8 +587,7 @@ static InterpretResult run() {
           uint8_t isLocal = READ_BYTE();
           uint8_t index = READ_BYTE();
           if (isLocal) {
-            closure->upvalues[i] =
-                captureUpvalue(frame->slots + index);
+            closure->upvalues[i] = captureUpvalue(frame->slots + index);
           } else {
             closure->upvalues[i] = frame->closure->upvalues[index];
           }

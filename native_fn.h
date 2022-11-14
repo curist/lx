@@ -69,6 +69,20 @@ static bool keysNative(int argCount, Value* args) {
   return true;
 }
 
+static bool globalsNative(int argCount, Value* args) {
+  Table* table = &vm.globals;
+  ObjArray* array = newArray();
+  args[-1] = OBJ_VAL(array);
+
+  for (int i = table->capacity - 1; i >= 0; --i) {
+    Entry* entry = &table->entries[i];
+    if (!IS_NIL(entry->key)) {
+      writeValueArray(&array->array, entry->key);
+    }
+  }
+  return true;
+}
+
 static bool lenNative(int argCount, Value* args) {
   if (argCount != 1) {
     args[-1] = OBJ_VAL(COPY_CSTRING("Error: Arg must be string or array."));
@@ -243,6 +257,7 @@ static void defineNative(const char* name, NativeFn function) {
 }
 
 void defineBuiltinNatives() {
+  defineNative("globals", globalsNative);
   defineNative("clock", clockNative);
   defineNative("print", printNative);
   defineNative("int", intNative);

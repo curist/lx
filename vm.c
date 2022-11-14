@@ -342,7 +342,6 @@ static InterpretResult run() {
 
         Table* table = &AS_HASHMAP(peek(1));
         tableSet(table, OBJ_VAL(READ_STRING()), peek(0));
-        ObjString* name = READ_STRING();
 
         Value value = pop();
         pop();

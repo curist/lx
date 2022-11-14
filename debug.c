@@ -59,6 +59,7 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
   }
 
   uint8_t instruction = chunk->code[offset];
+  printf("%02x ", instruction);
   switch (instruction) {
     case OP_NOP:
       return simpleInstruction("OP_NOP", offset);

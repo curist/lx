@@ -161,6 +161,28 @@ bool objIsValid(uint8_t* bytes) {
   return true;
 }
 
+void initChunkIndexes(ChunkIndexes* array) {
+  array->values = NULL;
+  array->capacity = 0;
+  array->count = 0;
+}
+
+void writeChunkIndexes(ChunkIndexes* array, ChunkValueIndex value) {
+  if (array->capacity < array->count + 1) {
+    int oldCapacity = array->capacity;
+    array->capacity = GROW_CAPACITY(oldCapacity);
+    array->values = GROW_ARRAY(ChunkValueIndex, array->values,
+                               oldCapacity, array->capacity);
+  }
+  array->values[array->count] = value;
+  array->count++;
+}
+
+void freeChunkIndexes(ChunkIndexes* array) {
+  FREE_ARRAY(ChunkValueIndex, array->values, array->capacity);
+  initChunkIndexes(array);
+}
+
 ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   bool debug = (flags & 0b00000001) > 0;
 
@@ -198,7 +220,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
     // const section size (4) + actual consts
     ptr += 4 + constSectionSize;
     // debug lines size (4)
-    size_t debugLinesSize = getSize(ptr);
+    // size_t debugLinesSize = getSize(ptr);
     ptr += 4;
 
     uint16_t filenameSize = getShortSize(ptr);
@@ -299,7 +321,6 @@ ObjFunction* loadObj(uint8_t* bytes) {
   initChunkIndexes(&chunkIndexes);
 
   uint8_t flags = bytes[3];
-  bool debug = (flags & 0b00000001) > 0;
 
   uint16_t chunks_count = getShortSize(&bytes[8]);
   uint8_t* chunk_start = &bytes[16];

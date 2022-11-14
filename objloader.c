@@ -15,8 +15,8 @@ ChunkIndexes chunkIndexes;
 // FLAGS:     1 , 8 bits
 //     0000 0001 -> debug
 // OBJSIZE:   4 little endian
-// CHUNKS:    2 little endian -> we can have up to 65536 chunks
-// TBD:       16 - (2+1+1+4+2) = 6
+// CHUNKS:    4 little endian
+// TBD:       16 - (2+1+1+4+4) = 4
 // # chunk layout
 // CHUNK_SIZE: 4 little endian
 //    FUNCTION_ARITY: 1
@@ -89,7 +89,7 @@ bool objIsValid(uint8_t* bytes) {
     return false;
   }
   // we have this many of chunks
-  uint16_t chunks_count = getShortSize(&bytes[8]);
+  size_t chunks_count = getSize(&bytes[8]);
 
   if (chunks_count < 1) {
     fprintf(stderr, "Invalid lxobj: should at least have 1 chunk.\n");

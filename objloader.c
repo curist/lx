@@ -16,7 +16,7 @@ ChunkIndexes chunkIndexes;
 //     0000 0001 -> debug
 // OBJSIZE:   4 little endian
 // CHUNKS:    4 little endian
-// TBD:       16 - (2+1+1+4+4) = 4
+// TBD:       32 - (2+1+1+4+4) = 20
 // # chunk layout
 // CHUNK_SIZE: 4 little endian
 //    FUNCTION_ARITY: 1
@@ -84,7 +84,7 @@ bool objIsValid(uint8_t* bytes) {
 
   size_t total_size = 16; // header size
   size_t obj_size = getSize(&bytes[4]);
-  if (obj_size < 20) { // header size(16) + first chunk length size(4)
+  if (obj_size < 36) { // header size(32) + first chunk length size(4)
     fprintf(stderr, "Invalid lxobj: bad obj size.\n");
     return false;
   }
@@ -96,7 +96,7 @@ bool objIsValid(uint8_t* bytes) {
     return false;
   }
 
-  uint8_t* chunk_start = &bytes[16];
+  uint8_t* chunk_start = &bytes[32];
 
   for (int i = 0; i < chunks_count; i++) {
     // this chunk is this big
@@ -323,7 +323,7 @@ ObjFunction* loadObj(uint8_t* bytes) {
   uint8_t flags = bytes[3];
 
   uint16_t chunks_count = getShortSize(&bytes[8]);
-  uint8_t* chunk_start = &bytes[16];
+  uint8_t* chunk_start = &bytes[32];
 
   for (int i = 0; i < chunks_count; i++) {
     size_t chunk_size = getSize(chunk_start);

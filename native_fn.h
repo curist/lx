@@ -76,11 +76,13 @@ static bool lenNative(int argCount, Value* args) {
   }
   Value arg = args[0];
   if (IS_STRING(arg)) {
-    args[-1] = numToValue(AS_STRING(arg)->length);
+    double len = AS_STRING(arg)->length;
+    args[-1] = NUMBER_VAL(len);
     return true;
   }
   if (IS_ARRAY(arg)) {
-    args[-1] = numToValue(AS_ARRAY(arg).count);
+    double count = AS_ARRAY(arg).count;
+    args[-1] = NUMBER_VAL(count);
     return true;
   }
 
@@ -166,6 +168,26 @@ static bool popNative(int argCount, Value* args) {
   return true;
 }
 
+static bool assocNative(int argCount, Value* args) {
+  if (argCount != 3) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: assoc takes 3 args."));
+    return false;
+  }
+  if (!IS_HASHMAP(args[0])) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: Can only assoc to map."));
+    return false;
+  }
+  Value key = args[1];
+  if (!IS_NUMBER(key) && !IS_STRING(key)) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: Hashmap key type must be number or string."));
+    return false;
+  }
+  args[-1] = OBJ_VAL(newHashmap());
+  tableAddAll(&AS_HASHMAP(args[0]), &AS_HASHMAP(args[-1]));
+  tableSet(&AS_HASHMAP(args[0]), key, args[2]);
+  return true;
+}
+
 static bool strNative(int argCount, Value* args) {
   if (argCount != 1) {
     args[-1] = OBJ_VAL(COPY_CSTRING("Error: str takes 1 arg."));
@@ -215,7 +237,7 @@ static bool strNative(int argCount, Value* args) {
 static void defineNative(const char* name, NativeFn function) {
   push(OBJ_VAL(copyString(name, (int)strlen(name))));
   push(OBJ_VAL(newNative(function)));
-  tableSet(&vm.globals, OBJ_VAL(vm.stack[0]), vm.stack[1]);
+  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
   pop();
   pop();
 }
@@ -231,5 +253,6 @@ void defineBuiltinNatives() {
   defineNative("append", appendNative);
   defineNative("push", pushNative);
   defineNative("pop", popNative);
+  defineNative("assoc", assocNative);
 }
 #endif

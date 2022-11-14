@@ -207,6 +207,54 @@ static void concatenate() {
 static InterpretResult run() {
   CallFrame* frame = &vm.frames[vm.frameCount - 1];
   register uint8_t* ip = frame->ip;
+
+  static void* dispatch_table[] = {
+    &&DO_OP_NOP,
+    &&DO_OP_CONSTANT,
+    &&DO_OP_CONST_BYTE,
+    &&DO_OP_NIL,
+    &&DO_OP_TRUE,
+    &&DO_OP_FALSE,
+    &&DO_OP_EQUAL,
+    &&DO_OP_POP,
+    &&DO_OP_DUP,
+    &&DO_OP_NEW_LOCAL,
+    &&DO_OP_POP_LOCAL,
+    &&DO_OP_GET_LOCAL,
+    &&DO_OP_SET_LOCAL,
+    &&DO_OP_GET_GLOBAL,
+    &&DO_OP_DEFINE_GLOBAL,
+    &&DO_OP_SET_GLOBAL,
+    &&DO_OP_GET_UPVALUE,
+    &&DO_OP_SET_UPVALUE,
+    &&DO_OP_GET_PROPERTY,
+    &&DO_OP_SET_PROPERTY,
+    &&DO_OP_GET_BY_INDEX,
+    &&DO_OP_SET_BY_INDEX,
+    &&DO_OP_GREATER,
+    &&DO_OP_LESS,
+    &&DO_OP_ADD,
+    &&DO_OP_SUBTRACT,
+    &&DO_OP_MULTIPLY,
+    &&DO_OP_DIVIDE,
+    &&DO_OP_NOT,
+    &&DO_OP_MOD,
+    &&DO_OP_NEGATE,
+    &&DO_OP_JUMP,
+    &&DO_OP_JUMP_IF_TRUE,
+    &&DO_OP_JUMP_IF_FALSE,
+    &&DO_OP_LOOP,
+    &&DO_OP_ASSOC,
+    &&DO_OP_APPEND,
+    &&DO_OP_HASHMAP,
+    &&DO_OP_ARRAY,
+    &&DO_OP_CALL,
+    &&DO_OP_CLOSURE,
+    &&DO_OP_CLOSE_UPVALUE,
+    &&DO_OP_RETURN,
+  };
+
+#define DISPATCH() goto *dispatch_table[(*ip++)]
 #define READ_BYTE() (*ip++)
 #define READ_SHORT() \
     (ip += 2, \
@@ -228,6 +276,7 @@ static InterpretResult run() {
       push(valueType(a op b)); \
     } while (false)
 
+  DISPATCH();
   for (;;) {
 #ifdef DEBUG_TRACE_EXECUTION
     printf("        |       \x1b[1;32m[ ");
@@ -245,364 +294,361 @@ static InterpretResult run() {
     disassembleInstruction(&frame->closure->function->chunk,
         (int)(ip - frame->closure->function->chunk.code), false);
 #endif
+    DO_OP_NOP: DISPATCH();
+    DO_OP_CONSTANT: {
+      Value constant = READ_CONSTANT();
+      push(constant);
+      DISPATCH();
+    }
+    DO_OP_CONST_BYTE: {
+      Value constant = NUMBER_VAL(READ_BYTE());
+      push(constant);
+      DISPATCH();
+    }
+    DO_OP_NIL: push(NIL_VAL); DISPATCH();
+    DO_OP_TRUE: push(BOOL_VAL(true)); DISPATCH();
+    DO_OP_FALSE: push(BOOL_VAL(false)); DISPATCH();
+    DO_OP_POP: pop(); DISPATCH();
+    DO_OP_DUP: push(peek(0)); DISPATCH();
+    DO_OP_NEW_LOCAL: push_local(pop()); DISPATCH();
+    DO_OP_POP_LOCAL: pop_local(); DISPATCH();
+    DO_OP_GET_LOCAL: {
+      uint8_t slot = READ_BYTE();
+      push(frame->slots[slot]);
+      DISPATCH();
+    }
+    DO_OP_SET_LOCAL: {
+      uint8_t slot = READ_BYTE();
+      frame->slots[slot] = peek(0);
+      DISPATCH();
+    }
+    DO_OP_GET_GLOBAL: {
+      ObjString* name = READ_STRING();
+      Value value;
+      if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
+        frame->ip = ip;
+        runtimeError("Undefined variable '%s'.", name->chars);
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      push(value);
+      DISPATCH();
+    }
+    DO_OP_DEFINE_GLOBAL: {
+      ObjString* name = READ_STRING();
+      tableSet(&vm.globals, OBJ_VAL(name), peek(0));
+      pop();
+      DISPATCH();
+    }
+    DO_OP_SET_GLOBAL: {
+      ObjString* name = READ_STRING();
+      if (tableSet(&vm.globals, OBJ_VAL(name), peek(0))) {
+        tableDelete(&vm.globals, OBJ_VAL(name));
+        frame->ip = ip;
+        runtimeError("Undefined variable '%s'.", name->chars);
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      DISPATCH();
+    }
+    DO_OP_GET_UPVALUE: {
+      uint8_t slot = READ_BYTE();
+      push(*frame->closure->upvalues[slot]->location);
+      DISPATCH();
+    }
+    DO_OP_SET_UPVALUE: {
+      uint8_t slot = READ_BYTE();
+      *frame->closure->upvalues[slot]->location = peek(0);
+      DISPATCH();
+    }
+    DO_OP_GET_PROPERTY: {
+      if (!IS_HASHMAP(peek(0))) {
+        frame->ip = ip;
+        runtimeError("Only hashmap have properties.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
 
-    uint8_t instruction;
-    switch (instruction = READ_BYTE()) {
-      case OP_NOP: break;
-      case OP_CONSTANT: {
-        Value constant = READ_CONSTANT();
-        push(constant);
-        break;
-      }
-      case OP_CONST_BYTE: {
-        Value constant = NUMBER_VAL(READ_BYTE());
-        push(constant);
-        break;
-      }
-      case OP_NIL: push(NIL_VAL); break;
-      case OP_TRUE: push(BOOL_VAL(true)); break;
-      case OP_FALSE: push(BOOL_VAL(false)); break;
-      case OP_POP: pop(); break;
-      case OP_DUP: push(peek(0)); break;
-      case OP_NEW_LOCAL: push_local(pop()); break;
-      case OP_POP_LOCAL: pop_local(); break;
-      case OP_GET_LOCAL: {
-        uint8_t slot = READ_BYTE();
-        push(frame->slots[slot]);
-        break;
-      }
-      case OP_SET_LOCAL: {
-        uint8_t slot = READ_BYTE();
-        frame->slots[slot] = peek(0);
-        break;
-      }
-      case OP_GET_GLOBAL: {
-        ObjString* name = READ_STRING();
-        Value value;
-        if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
-          frame->ip = ip;
-          runtimeError("Undefined variable '%s'.", name->chars);
-          return INTERPRET_RUNTIME_ERROR;
-        }
+      Table* table = &AS_HASHMAP(peek(0));
+      ObjString* name = READ_STRING();
+
+      pop(); // That hashmap
+
+      Value value;
+      if (tableGet(table, OBJ_VAL(name), &value)) {
         push(value);
-        break;
+      } else {
+        push(NIL_VAL);
       }
-      case OP_DEFINE_GLOBAL: {
-        ObjString* name = READ_STRING();
-        tableSet(&vm.globals, OBJ_VAL(name), peek(0));
+      DISPATCH();
+    }
+    DO_OP_SET_PROPERTY: {
+      if (!IS_HASHMAP(peek(1))) {
+        frame->ip = ip;
+        runtimeError("Only hashmap can set properties.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+
+      Table* table = &AS_HASHMAP(peek(1));
+      tableSet(table, OBJ_VAL(READ_STRING()), peek(0));
+
+      Value value = pop();
+      pop();
+      push(value);
+
+      DISPATCH();
+    }
+    DO_OP_GET_BY_INDEX: {
+      if (!IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1))) {
+        frame->ip = ip;
+        runtimeError("Only array or hashmap can get value by index.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      Value key = peek(0);
+      if (IS_ARRAY(peek(1))) {
+        if (!IS_NUMBER(key)) {
+          frame->ip = ip;
+          runtimeError("Can only use number index to access array.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        int index = AS_NUMBER(key);
+        if (index != AS_NUMBER(key)) {
+          // check if the number is an int
+          frame->ip = ip;
+          runtimeError("Can only use integer index to access array.");
+          return INTERPRET_RUNTIME_ERROR;
+
+        }
+
+        ValueArray* array = &AS_ARRAY(peek(1));
+        Value value = NIL_VAL;
+        if (index >= 0 && index < array->count) {
+          value = array->values[index];
+        }
         pop();
-        break;
-      }
-      case OP_SET_GLOBAL: {
-        ObjString* name = READ_STRING();
-        if (tableSet(&vm.globals, OBJ_VAL(name), peek(0))) {
-          tableDelete(&vm.globals, OBJ_VAL(name));
-          frame->ip = ip;
-          runtimeError("Undefined variable '%s'.", name->chars);
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        break;
-      }
-      case OP_GET_UPVALUE: {
-        uint8_t slot = READ_BYTE();
-        push(*frame->closure->upvalues[slot]->location);
-        break;
-      }
-      case OP_SET_UPVALUE: {
-        uint8_t slot = READ_BYTE();
-        *frame->closure->upvalues[slot]->location = peek(0);
-        break;
-      }
-      case OP_GET_PROPERTY: {
-        if (!IS_HASHMAP(peek(0))) {
-          frame->ip = ip;
-          runtimeError("Only hashmap have properties.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-
-        Table* table = &AS_HASHMAP(peek(0));
-        ObjString* name = READ_STRING();
-
-        pop(); // That hashmap
-
-        Value value;
-        if (tableGet(table, OBJ_VAL(name), &value)) {
-          push(value);
-        } else {
-          push(NIL_VAL);
-        }
-        break;
-      }
-      case OP_SET_PROPERTY: {
-        if (!IS_HASHMAP(peek(1))) {
-          frame->ip = ip;
-          runtimeError("Only hashmap can set properties.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-
-        Table* table = &AS_HASHMAP(peek(1));
-        tableSet(table, OBJ_VAL(READ_STRING()), peek(0));
-
-        Value value = pop();
         pop();
         push(value);
 
-        break;
-      }
-      case OP_GET_BY_INDEX: {
-        if (!IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1))) {
-          frame->ip = ip;
-          runtimeError("Only array or hashmap can get value by index.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        Value key = peek(0);
-        if (IS_ARRAY(peek(1))) {
-          if (!IS_NUMBER(key)) {
-            frame->ip = ip;
-            runtimeError("Can only use number index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          int index = AS_NUMBER(key);
-          if (index != AS_NUMBER(key)) {
-            // check if the number is an int
-            frame->ip = ip;
-            runtimeError("Can only use integer index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-
-          }
-
-          ValueArray* array = &AS_ARRAY(peek(1));
-          Value value = NIL_VAL;
-          if (index >= 0 && index < array->count) {
-            value = array->values[index];
-          }
-          pop();
-          pop();
-          push(value);
-
-        } else {
-          // is hashmap
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            frame->ip = ip;
-            runtimeError("Hashmap key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_HASHMAP(peek(1));
-          Value value;
-          if (!tableGet(table, key, &value)) {
-            value = NIL_VAL;
-          }
-          pop();
-          pop();
-          push(value);
-        }
-        break;
-      }
-      case OP_SET_BY_INDEX: {
-        if (!IS_HASHMAP(peek(2)) && !IS_ARRAY(peek(2))) {
-          frame->ip = ip;
-          runtimeError("Only array or hashmap can get value by index.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        Value key = peek(1);
-        Value value = peek(0);
-        if (IS_ARRAY(peek(2))) {
-          if (!IS_NUMBER(key)) {
-            frame->ip = ip;
-            runtimeError("Can only use number index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          int index = AS_NUMBER(key);
-          if (index != AS_NUMBER(key)) {
-            // check if the number is an int
-            frame->ip = ip;
-            runtimeError("Can only use integer index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-
-          }
-
-          ValueArray* array = &AS_ARRAY(peek(2));
-          if (index >= 0 && index < array->count) {
-            array->values[index] = value;
-          } else {
-            value = NIL_VAL;
-          }
-          pop();
-          pop();
-          pop();
-          push(value);
-
-        } else {
-          // is hashmap
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            frame->ip = ip;
-            runtimeError("Hashmap key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_HASHMAP(peek(2));
-          tableSet(table, key, value);
-          pop();
-          pop();
-          pop();
-          push(value);
-        }
-        break;
-      }
-      case OP_EQUAL: {
-        Value b = pop();
-        Value a = pop();
-        push(BOOL_VAL(valuesEqual(a, b)));
-        break;
-      }
-      case OP_GREATER:  BINARY_OP(BOOL_VAL, >); break;
-      case OP_LESS:     BINARY_OP(BOOL_VAL, <); break;
-      case OP_ADD: {
-        if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
-          concatenate();
-        } else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
-          double b = AS_NUMBER(pop());
-          double a = AS_NUMBER(pop());
-          push(NUMBER_VAL(a + b));
-        } else {
-          frame->ip = ip;
-          runtimeError("Operands must be two numbers or two strings.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        break;
-      }
-      case OP_SUBTRACT: BINARY_OP(NUMBER_VAL, -); break;
-      case OP_MULTIPLY: BINARY_OP(NUMBER_VAL, *); break;
-      case OP_DIVIDE:   BINARY_OP(NUMBER_VAL, /); break;
-      case OP_MOD: {
-        if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
-          frame->ip = ip;
-          runtimeError("Operands must be numbers.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        // % only applies to int :(
-        int b = AS_NUMBER(pop());
-        int a = AS_NUMBER(pop());
-        push(NUMBER_VAL(a % b));
-        break;
-      }
-      case OP_NOT:
-        push(BOOL_VAL(isFalsey(pop())));
-        break;
-      case OP_NEGATE: {
-        if (!IS_NUMBER(peek(0))) {
-          frame->ip = ip;
-          runtimeError("Operand must be a number.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        push(NUMBER_VAL(-AS_NUMBER(pop())));
-        break;
-      }
-      case OP_ASSOC: {
-        Value hashmap = peek(2);
-        Value key     = peek(1);
-        Value value   = peek(0);
-        if (!IS_HASHMAP(hashmap)) {
-          frame->ip = ip;
-          runtimeError("Can only assoc to hashmap.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
+      } else {
+        // is hashmap
         if (!IS_NUMBER(key) && !IS_STRING(key)) {
           frame->ip = ip;
           runtimeError("Hashmap key type must be number or string.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        Table* table = &AS_HASHMAP(hashmap);
-        tableSet(table, key, value);
-
-        pop();
-        pop();
-        break;
-      }
-      case OP_APPEND: {
-        Value array = peek(1);
-        Value value = peek(0);
-        if (!IS_ARRAY(array)) {
-          frame->ip = ip;
-          runtimeError("Can only append to array.");
-          return INTERPRET_RUNTIME_ERROR;
+        Table* table = &AS_HASHMAP(peek(1));
+        Value value;
+        if (!tableGet(table, key, &value)) {
+          value = NIL_VAL;
         }
-
-        writeValueArray(&AS_ARRAY(array), value);
         pop();
-        break;
+        pop();
+        push(value);
       }
-      case OP_HASHMAP: push(OBJ_VAL(newHashmap())); break;
-      case OP_ARRAY: push(OBJ_VAL(newArray())); break;
-      case OP_JUMP: {
-        uint16_t offset = READ_SHORT();
-        ip += offset;
-        break;
-      }
-      case OP_JUMP_IF_TRUE: {
-        uint16_t offset = READ_SHORT();
-        if (!isFalsey(pop())) ip += offset;
-        break;
-      }
-      case OP_JUMP_IF_FALSE: {
-        uint16_t offset = READ_SHORT();
-        if (isFalsey(pop())) ip += offset;
-        break;
-      }
-      case OP_LOOP: {
-        uint16_t offset = READ_SHORT();
-        ip -= offset;
-        break;
-      }
-      case OP_CALL: {
-        int argCount = READ_BYTE();
-        // pushing function & its args to locals stack
-        // + 1 to include the function it self
-        for (int i = argCount; i >= 0; i--) push_local(peek(i));
-        for (int i = 0; i < argCount + 1; i++) pop();
-
+      DISPATCH();
+    }
+    DO_OP_SET_BY_INDEX: {
+      if (!IS_HASHMAP(peek(2)) && !IS_ARRAY(peek(2))) {
         frame->ip = ip;
-        if (!callValue(peek_local(argCount), argCount)) {
+        runtimeError("Only array or hashmap can get value by index.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      Value key = peek(1);
+      Value value = peek(0);
+      if (IS_ARRAY(peek(2))) {
+        if (!IS_NUMBER(key)) {
+          frame->ip = ip;
+          runtimeError("Can only use number index to access array.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        frame = &vm.frames[vm.frameCount - 1];
-        ip = frame->ip;
-        break;
-      }
-      case OP_CLOSURE: {
-        ObjFunction* function = AS_FUNCTION(READ_CONSTANT());
-        ObjClosure* closure = newClosure(function);
-        push(OBJ_VAL(closure));
-        for (int i = 0; i < closure->upvalueCount; i++) {
-          uint8_t isLocal = READ_BYTE();
-          uint8_t index = READ_BYTE();
-          if (isLocal) {
-            closure->upvalues[i] = captureUpvalue(frame->slots + index);
-          } else {
-            closure->upvalues[i] = frame->closure->upvalues[index];
-          }
-        }
-        break;
-      }
-      case OP_CLOSE_UPVALUE:
-        closeUpvalues(vm.localsTop - 1);
-        pop_local();
-        break;
-      case OP_RETURN: {
-        closeUpvalues(frame->slots);
-        vm.frameCount--;
-        if (vm.frameCount == 0) {
-          pop();
-          return INTERPRET_OK;
+        int index = AS_NUMBER(key);
+        if (index != AS_NUMBER(key)) {
+          // check if the number is an int
+          frame->ip = ip;
+          runtimeError("Can only use integer index to access array.");
+          return INTERPRET_RUNTIME_ERROR;
+
         }
 
-        vm.localsTop = frame->slots;
-        frame = &vm.frames[vm.frameCount - 1];
-        ip = frame->ip;
-        break;
+        ValueArray* array = &AS_ARRAY(peek(2));
+        if (index >= 0 && index < array->count) {
+          array->values[index] = value;
+        } else {
+          value = NIL_VAL;
+        }
+        pop();
+        pop();
+        pop();
+        push(value);
+
+      } else {
+        // is hashmap
+        if (!IS_NUMBER(key) && !IS_STRING(key)) {
+          frame->ip = ip;
+          runtimeError("Hashmap key type must be number or string.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        Table* table = &AS_HASHMAP(peek(2));
+        tableSet(table, key, value);
+        pop();
+        pop();
+        pop();
+        push(value);
       }
+      DISPATCH();
+    }
+    DO_OP_EQUAL: {
+      Value b = pop();
+      Value a = pop();
+      push(BOOL_VAL(valuesEqual(a, b)));
+      DISPATCH();
+    }
+    DO_OP_GREATER:  BINARY_OP(BOOL_VAL, >); DISPATCH();
+    DO_OP_LESS:     BINARY_OP(BOOL_VAL, <); DISPATCH();
+    DO_OP_ADD: {
+      if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
+        concatenate();
+      } else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+        double b = AS_NUMBER(pop());
+        double a = AS_NUMBER(pop());
+        push(NUMBER_VAL(a + b));
+      } else {
+        frame->ip = ip;
+        runtimeError("Operands must be two numbers or two strings.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      DISPATCH();
+    }
+    DO_OP_SUBTRACT: BINARY_OP(NUMBER_VAL, -); DISPATCH();
+    DO_OP_MULTIPLY: BINARY_OP(NUMBER_VAL, *); DISPATCH();
+    DO_OP_DIVIDE:   BINARY_OP(NUMBER_VAL, /); DISPATCH();
+    DO_OP_MOD: {
+      if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
+        frame->ip = ip;
+        runtimeError("Operands must be numbers.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      // % only applies to int :(
+      int b = AS_NUMBER(pop());
+      int a = AS_NUMBER(pop());
+      push(NUMBER_VAL(a % b));
+      DISPATCH();
+    }
+    DO_OP_NOT:
+      push(BOOL_VAL(isFalsey(pop())));
+      DISPATCH();
+    DO_OP_NEGATE: {
+      if (!IS_NUMBER(peek(0))) {
+        frame->ip = ip;
+        runtimeError("Operand must be a number.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      push(NUMBER_VAL(-AS_NUMBER(pop())));
+      DISPATCH();
+    }
+    DO_OP_ASSOC: {
+      Value hashmap = peek(2);
+      Value key     = peek(1);
+      Value value   = peek(0);
+      if (!IS_HASHMAP(hashmap)) {
+        frame->ip = ip;
+        runtimeError("Can only assoc to hashmap.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      if (!IS_NUMBER(key) && !IS_STRING(key)) {
+        frame->ip = ip;
+        runtimeError("Hashmap key type must be number or string.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      Table* table = &AS_HASHMAP(hashmap);
+      tableSet(table, key, value);
+
+      pop();
+      pop();
+      DISPATCH();
+    }
+    DO_OP_APPEND: {
+      Value array = peek(1);
+      Value value = peek(0);
+      if (!IS_ARRAY(array)) {
+        frame->ip = ip;
+        runtimeError("Can only append to array.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+
+      writeValueArray(&AS_ARRAY(array), value);
+      pop();
+      DISPATCH();
+    }
+    DO_OP_HASHMAP: push(OBJ_VAL(newHashmap())); DISPATCH();
+    DO_OP_ARRAY: push(OBJ_VAL(newArray())); DISPATCH();
+    DO_OP_JUMP: {
+      uint16_t offset = READ_SHORT();
+      ip += offset;
+      DISPATCH();
+    }
+    DO_OP_JUMP_IF_TRUE: {
+      uint16_t offset = READ_SHORT();
+      if (!isFalsey(pop())) ip += offset;
+      DISPATCH();
+    }
+    DO_OP_JUMP_IF_FALSE: {
+      uint16_t offset = READ_SHORT();
+      if (isFalsey(pop())) ip += offset;
+      DISPATCH();
+    }
+    DO_OP_LOOP: {
+      uint16_t offset = READ_SHORT();
+      ip -= offset;
+      DISPATCH();
+    }
+    DO_OP_CALL: {
+      int argCount = READ_BYTE();
+      // pushing function & its args to locals stack
+      // + 1 to include the function it self
+      for (int i = argCount; i >= 0; i--) push_local(peek(i));
+      for (int i = 0; i < argCount + 1; i++) pop();
+
+      frame->ip = ip;
+      if (!callValue(peek_local(argCount), argCount)) {
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      frame = &vm.frames[vm.frameCount - 1];
+      ip = frame->ip;
+      DISPATCH();
+    }
+    DO_OP_CLOSURE: {
+      ObjFunction* function = AS_FUNCTION(READ_CONSTANT());
+      ObjClosure* closure = newClosure(function);
+      push(OBJ_VAL(closure));
+      for (int i = 0; i < closure->upvalueCount; i++) {
+        uint8_t isLocal = READ_BYTE();
+        uint8_t index = READ_BYTE();
+        if (isLocal) {
+          closure->upvalues[i] = captureUpvalue(frame->slots + index);
+        } else {
+          closure->upvalues[i] = frame->closure->upvalues[index];
+        }
+      }
+      DISPATCH();
+    }
+    DO_OP_CLOSE_UPVALUE:
+      closeUpvalues(vm.localsTop - 1);
+      pop_local();
+      DISPATCH();
+    DO_OP_RETURN: {
+      closeUpvalues(frame->slots);
+      vm.frameCount--;
+      if (vm.frameCount == 0) {
+        pop();
+        return INTERPRET_OK;
+      }
+
+      vm.localsTop = frame->slots;
+      frame = &vm.frames[vm.frameCount - 1];
+      ip = frame->ip;
+      DISPATCH();
     }
   }
 
+#undef DISPATCH
 #undef READ_BYTE
 #undef READ_SHORT
 #undef READ_CONSTANT

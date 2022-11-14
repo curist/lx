@@ -254,7 +254,12 @@ static InterpretResult run() {
     &&DO_OP_RETURN,
   };
 
+#ifdef DEBUG_TRACE_EXECUTION
+#define DISPATCH() goto DO_DEBUG_PRINT
+#define REAL_DISPATCH() goto *dispatch_table[(*ip++)]
+#else
 #define DISPATCH() goto *dispatch_table[(*ip++)]
+#endif
 #define READ_BYTE() (*ip++)
 #define READ_SHORT() \
     (ip += 2, \
@@ -279,6 +284,7 @@ static InterpretResult run() {
   DISPATCH();
   for (;;) {
 #ifdef DEBUG_TRACE_EXECUTION
+DO_DEBUG_PRINT:
     printf("        |       \x1b[1;32m[ ");
     for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
       printValue(*slot);
@@ -293,6 +299,7 @@ static InterpretResult run() {
     printf("]\x1b[0m\n");
     disassembleInstruction(&frame->closure->function->chunk,
         (int)(ip - frame->closure->function->chunk.code), false);
+    REAL_DISPATCH();
 #endif
     DO_OP_NOP: DISPATCH();
     DO_OP_CONSTANT: {

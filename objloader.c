@@ -208,17 +208,18 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
     // ptr is now at the start of line numbers!!!
 
     uint8_t repeatTimes = ptr[0];
-    uint8_t repeated = 0;
+    uint8_t repeated = 1;
     ptr++;
+    uint16_t line = getShortSize(ptr);
 
     for (int i = 0; i < code_size; i++) {
-      uint16_t line = getShortSize(ptr);
       writeChunk(chunk, code_start[i], line);
       if (++repeated == repeatTimes) {
         ptr += 2;
         repeatTimes = ptr[0];
-        repeated = 0;
+        repeated = 1;
         ptr++;
+        line = getShortSize(ptr);
       }
     }
   }

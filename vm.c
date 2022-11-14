@@ -256,7 +256,6 @@ static InterpretResult run() {
 
 #ifdef DEBUG_TRACE_EXECUTION
 #define DISPATCH() goto DO_DEBUG_PRINT
-#define REAL_DISPATCH() goto *dispatch_table[(*ip++)]
 #else
 #define DISPATCH() goto *dispatch_table[(*ip++)]
 #endif
@@ -299,37 +298,45 @@ DO_DEBUG_PRINT:
     printf("]\x1b[0m\n");
     disassembleInstruction(&frame->closure->function->chunk,
         (int)(ip - frame->closure->function->chunk.code), false);
-    REAL_DISPATCH();
+    goto *dispatch_table[(*ip++)];
 #endif
-    DO_OP_NOP: DISPATCH();
-    DO_OP_CONSTANT: {
-      Value constant = READ_CONSTANT();
-      push(constant);
-      DISPATCH();
-    }
-    DO_OP_CONST_BYTE: {
-      Value constant = NUMBER_VAL(READ_BYTE());
-      push(constant);
-      DISPATCH();
-    }
-    DO_OP_NIL: push(NIL_VAL); DISPATCH();
-    DO_OP_TRUE: push(BOOL_VAL(true)); DISPATCH();
-    DO_OP_FALSE: push(BOOL_VAL(false)); DISPATCH();
-    DO_OP_POP: pop(); DISPATCH();
-    DO_OP_DUP: push(peek(0)); DISPATCH();
-    DO_OP_NEW_LOCAL: push_local(pop()); DISPATCH();
-    DO_OP_POP_LOCAL: pop_local(); DISPATCH();
-    DO_OP_GET_LOCAL: {
-      uint8_t slot = READ_BYTE();
-      push(frame->slots[slot]);
-      DISPATCH();
-    }
-    DO_OP_SET_LOCAL: {
-      uint8_t slot = READ_BYTE();
-      frame->slots[slot] = peek(0);
-      DISPATCH();
-    }
-    DO_OP_GET_GLOBAL: {
+DO_OP_NOP:
+    DISPATCH();
+DO_OP_CONSTANT:
+    push(READ_CONSTANT());
+    DISPATCH();
+DO_OP_CONST_BYTE:
+    push(NUMBER_VAL(READ_BYTE()));
+    DISPATCH();
+DO_OP_NIL:
+    push(NIL_VAL);
+    DISPATCH();
+DO_OP_TRUE:
+    push(BOOL_VAL(true));
+    DISPATCH();
+DO_OP_FALSE:
+    push(BOOL_VAL(false));
+    DISPATCH();
+DO_OP_POP:
+    pop();
+    DISPATCH();
+DO_OP_DUP:
+    push(peek(0));
+    DISPATCH();
+DO_OP_NEW_LOCAL:
+    push_local(pop());
+    DISPATCH();
+DO_OP_POP_LOCAL:
+    pop_local();
+    DISPATCH();
+DO_OP_GET_LOCAL:
+    push(frame->slots[READ_BYTE()]);
+    DISPATCH();
+DO_OP_SET_LOCAL:
+    frame->slots[READ_BYTE()] = peek(0);
+    DISPATCH();
+DO_OP_GET_GLOBAL:
+    {
       ObjString* name = READ_STRING();
       Value value;
       if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
@@ -340,13 +347,15 @@ DO_DEBUG_PRINT:
       push(value);
       DISPATCH();
     }
-    DO_OP_DEFINE_GLOBAL: {
+DO_OP_DEFINE_GLOBAL:
+    {
       ObjString* name = READ_STRING();
       tableSet(&vm.globals, OBJ_VAL(name), peek(0));
       pop();
       DISPATCH();
     }
-    DO_OP_SET_GLOBAL: {
+DO_OP_SET_GLOBAL:
+    {
       ObjString* name = READ_STRING();
       if (tableSet(&vm.globals, OBJ_VAL(name), peek(0))) {
         tableDelete(&vm.globals, OBJ_VAL(name));
@@ -356,17 +365,20 @@ DO_DEBUG_PRINT:
       }
       DISPATCH();
     }
-    DO_OP_GET_UPVALUE: {
+DO_OP_GET_UPVALUE:
+    {
       uint8_t slot = READ_BYTE();
       push(*frame->closure->upvalues[slot]->location);
       DISPATCH();
     }
-    DO_OP_SET_UPVALUE: {
+DO_OP_SET_UPVALUE:
+    {
       uint8_t slot = READ_BYTE();
       *frame->closure->upvalues[slot]->location = peek(0);
       DISPATCH();
     }
-    DO_OP_GET_PROPERTY: {
+DO_OP_GET_PROPERTY:
+    {
       if (!IS_HASHMAP(peek(0))) {
         frame->ip = ip;
         runtimeError("Only hashmap have properties.");
@@ -386,7 +398,8 @@ DO_DEBUG_PRINT:
       }
       DISPATCH();
     }
-    DO_OP_SET_PROPERTY: {
+DO_OP_SET_PROPERTY:
+    {
       if (!IS_HASHMAP(peek(1))) {
         frame->ip = ip;
         runtimeError("Only hashmap can set properties.");
@@ -402,7 +415,8 @@ DO_DEBUG_PRINT:
 
       DISPATCH();
     }
-    DO_OP_GET_BY_INDEX: {
+DO_OP_GET_BY_INDEX:
+    {
       if (!IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1))) {
         frame->ip = ip;
         runtimeError("Only array or hashmap can get value by index.");
@@ -451,7 +465,8 @@ DO_DEBUG_PRINT:
       }
       DISPATCH();
     }
-    DO_OP_SET_BY_INDEX: {
+DO_OP_SET_BY_INDEX:
+    {
       if (!IS_HASHMAP(peek(2)) && !IS_ARRAY(peek(2))) {
         frame->ip = ip;
         runtimeError("Only array or hashmap can get value by index.");
@@ -501,15 +516,21 @@ DO_DEBUG_PRINT:
       }
       DISPATCH();
     }
-    DO_OP_EQUAL: {
+DO_OP_EQUAL:
+    {
       Value b = pop();
       Value a = pop();
       push(BOOL_VAL(valuesEqual(a, b)));
       DISPATCH();
     }
-    DO_OP_GREATER:  BINARY_OP(BOOL_VAL, >); DISPATCH();
-    DO_OP_LESS:     BINARY_OP(BOOL_VAL, <); DISPATCH();
-    DO_OP_ADD: {
+DO_OP_GREATER:
+    BINARY_OP(BOOL_VAL, >);
+    DISPATCH();
+DO_OP_LESS:
+    BINARY_OP(BOOL_VAL, <);
+    DISPATCH();
+DO_OP_ADD:
+    {
       if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
         concatenate();
       } else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
@@ -523,10 +544,17 @@ DO_DEBUG_PRINT:
       }
       DISPATCH();
     }
-    DO_OP_SUBTRACT: BINARY_OP(NUMBER_VAL, -); DISPATCH();
-    DO_OP_MULTIPLY: BINARY_OP(NUMBER_VAL, *); DISPATCH();
-    DO_OP_DIVIDE:   BINARY_OP(NUMBER_VAL, /); DISPATCH();
-    DO_OP_MOD: {
+DO_OP_SUBTRACT:
+    BINARY_OP(NUMBER_VAL, -);
+    DISPATCH();
+DO_OP_MULTIPLY:
+    BINARY_OP(NUMBER_VAL, *);
+    DISPATCH();
+DO_OP_DIVIDE:
+    BINARY_OP(NUMBER_VAL, /);
+    DISPATCH();
+DO_OP_MOD:
+    {
       if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
         frame->ip = ip;
         runtimeError("Operands must be numbers.");
@@ -538,10 +566,11 @@ DO_DEBUG_PRINT:
       push(NUMBER_VAL(a % b));
       DISPATCH();
     }
-    DO_OP_NOT:
-      push(BOOL_VAL(isFalsey(pop())));
-      DISPATCH();
-    DO_OP_NEGATE: {
+DO_OP_NOT:
+    push(BOOL_VAL(isFalsey(pop())));
+    DISPATCH();
+DO_OP_NEGATE:
+    {
       if (!IS_NUMBER(peek(0))) {
         frame->ip = ip;
         runtimeError("Operand must be a number.");
@@ -550,7 +579,8 @@ DO_DEBUG_PRINT:
       push(NUMBER_VAL(-AS_NUMBER(pop())));
       DISPATCH();
     }
-    DO_OP_ASSOC: {
+DO_OP_ASSOC:
+    {
       Value hashmap = peek(2);
       Value key     = peek(1);
       Value value   = peek(0);
@@ -571,7 +601,8 @@ DO_DEBUG_PRINT:
       pop();
       DISPATCH();
     }
-    DO_OP_APPEND: {
+DO_OP_APPEND:
+    {
       Value array = peek(1);
       Value value = peek(0);
       if (!IS_ARRAY(array)) {
@@ -584,29 +615,38 @@ DO_DEBUG_PRINT:
       pop();
       DISPATCH();
     }
-    DO_OP_HASHMAP: push(OBJ_VAL(newHashmap())); DISPATCH();
-    DO_OP_ARRAY: push(OBJ_VAL(newArray())); DISPATCH();
-    DO_OP_JUMP: {
+DO_OP_HASHMAP:
+    push(OBJ_VAL(newHashmap()));
+    DISPATCH();
+DO_OP_ARRAY:
+    push(OBJ_VAL(newArray()));
+    DISPATCH();
+DO_OP_JUMP:
+    {
       uint16_t offset = READ_SHORT();
       ip += offset;
       DISPATCH();
     }
-    DO_OP_JUMP_IF_TRUE: {
+DO_OP_JUMP_IF_TRUE:
+    {
       uint16_t offset = READ_SHORT();
       if (!isFalsey(pop())) ip += offset;
       DISPATCH();
     }
-    DO_OP_JUMP_IF_FALSE: {
+DO_OP_JUMP_IF_FALSE:
+    {
       uint16_t offset = READ_SHORT();
       if (isFalsey(pop())) ip += offset;
       DISPATCH();
     }
-    DO_OP_LOOP: {
+DO_OP_LOOP:
+    {
       uint16_t offset = READ_SHORT();
       ip -= offset;
       DISPATCH();
     }
-    DO_OP_CALL: {
+DO_OP_CALL:
+    {
       int argCount = READ_BYTE();
       // pushing function & its args to locals stack
       // + 1 to include the function it self
@@ -621,7 +661,8 @@ DO_DEBUG_PRINT:
       ip = frame->ip;
       DISPATCH();
     }
-    DO_OP_CLOSURE: {
+DO_OP_CLOSURE:
+    {
       ObjFunction* function = AS_FUNCTION(READ_CONSTANT());
       ObjClosure* closure = newClosure(function);
       push(OBJ_VAL(closure));
@@ -636,18 +677,18 @@ DO_DEBUG_PRINT:
       }
       DISPATCH();
     }
-    DO_OP_CLOSE_UPVALUE:
-      closeUpvalues(vm.localsTop - 1);
-      pop_local();
-      DISPATCH();
-    DO_OP_RETURN: {
+DO_OP_CLOSE_UPVALUE:
+    closeUpvalues(vm.localsTop - 1);
+    pop_local();
+    DISPATCH();
+DO_OP_RETURN:
+    {
       closeUpvalues(frame->slots);
       vm.frameCount--;
       if (vm.frameCount == 0) {
         pop();
         return INTERPRET_OK;
       }
-
       vm.localsTop = frame->slots;
       frame = &vm.frames[vm.frameCount - 1];
       ip = frame->ip;

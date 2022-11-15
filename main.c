@@ -66,7 +66,7 @@ int main(int argc, const char* argv[]) {
 
   // TODO: be able to run source file
   // TODO: repl
-  if (argc == 2) {
+  if (argc >= 2) {
     runFile(argv[1]);
   } else {
     fprintf(stderr, "Usage: clox <lxobj>\n");

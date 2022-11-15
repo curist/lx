@@ -414,7 +414,7 @@ static void defineLxNatives() {
   push(OBJ_VAL(COPY_CSTRING("args")));
   push(OBJ_VAL(newArray()));
   tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
-  for (int i = 0; i < LX_ARGC; i++) {
+  for (int i = 1; i < LX_ARGC; i++) {
     push(OBJ_VAL(COPY_CSTRING(LX_ARGV[i])));
     writeValueArray(&AS_ARRAY(vm.stack[3]), vm.stack[4]);
     pop();

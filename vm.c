@@ -417,9 +417,9 @@ DO_OP_SET_PROPERTY:
     }
 DO_OP_GET_BY_INDEX:
     {
-      if (!IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1))) {
+      if (!IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1)) && !IS_STRING(peek(1))) {
         frame->ip = ip;
-        runtimeError("Only array or hashmap can get value by index.");
+        runtimeError("Only array / hashmap / string can get value by index.");
         return INTERPRET_RUNTIME_ERROR;
       }
       Value key = peek(0);
@@ -447,8 +447,7 @@ DO_OP_GET_BY_INDEX:
         pop();
         push(value);
 
-      } else {
-        // is hashmap
+      } else if (IS_HASHMAP(peek(1))){
         if (!IS_NUMBER(key) && !IS_STRING(key)) {
           frame->ip = ip;
           runtimeError("Hashmap key type must be number or string.");
@@ -462,6 +461,17 @@ DO_OP_GET_BY_INDEX:
         pop();
         pop();
         push(value);
+      } else {
+        // is string
+        if (!IS_NUMBER(key)) {
+          frame->ip = ip;
+          runtimeError("String index type must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        char ch = AS_STRING(peek(1))->chars[0];
+        pop();
+        pop();
+        push(OBJ_VAL(copyString(&ch, 1)));
       }
       DISPATCH();
     }

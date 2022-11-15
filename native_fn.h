@@ -358,12 +358,16 @@ static bool exitNative(int argCount, Value* args) {
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
 
-static void defineNative(const char* name, NativeFn function) {
+static void defineTableFunction(Table* table, const char* name, NativeFn function) {
   push(OBJ_VAL(copyString(name, (int)strlen(name))));
   push(OBJ_VAL(newNative(function)));
-  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
+  tableSet(table, vm.stackTop[-2], vm.stackTop[-1]);
   pop();
   pop();
+}
+
+static void defineNative(const char* name, NativeFn function) {
+  defineTableFunction(&vm.globals, name, function);
 }
 
 static void defineLxNatives() {
@@ -381,15 +385,8 @@ static void defineLxNatives() {
   }
   pop(); pop();
 
-  push(OBJ_VAL(COPY_CSTRING("globals")));
-  push(OBJ_VAL(newNative(globalsNative)));
-  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
-  pop(); pop();
-
-  push(OBJ_VAL(COPY_CSTRING("exit")));
-  push(OBJ_VAL(newNative(exitNative)));
-  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
-  pop(); pop();
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "exit", exitNative);
 
   pop();
   pop();

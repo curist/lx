@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 #include "vm.h"
 #include "object.h"
@@ -390,6 +391,28 @@ static bool slurpNative(int argCount, Value* args) {
   return true;
 }
 
+static bool toLowerCaseNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_STRING(args[0])) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: toLowerCase takes a string arg."));
+    return false;
+  }
+  char* p = AS_STRING(args[0])->chars;
+  for ( ; *p; ++p) *p = tolower(*p);
+  args[-1] = args[0];
+  return true;
+}
+
+static bool toUpperCaseNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_STRING(args[0])) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: toUpperCase takes a string arg."));
+    return false;
+  }
+  char* p = AS_STRING(args[0])->chars;
+  for ( ; *p; ++p) *p = toupper(*p);
+  args[-1] = args[0];
+  return true;
+}
+
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
@@ -423,6 +446,10 @@ static void defineLxNatives() {
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "exit", exitNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toLowerCase", toLowerCaseNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toUpperCase", toUpperCaseNative);
+  // TODO: doubleToUint8Array
+  // TODO: parseFloat
 
   pop();
   pop();

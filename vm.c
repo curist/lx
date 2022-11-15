@@ -468,10 +468,19 @@ DO_OP_GET_BY_INDEX:
           runtimeError("String index type must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        char ch = AS_STRING(peek(1))->chars[0];
+        ObjString* s = AS_STRING(peek(1));
+        char* ch = NULL;
+        int index = AS_NUMBER(key);
+        if (index >= 0 && index < s->length) {
+          ch = &AS_STRING(peek(1))->chars[index];
+        }
         pop();
         pop();
-        push(OBJ_VAL(copyString(&ch, 1)));
+        if (ch != NULL) {
+          push(OBJ_VAL(copyString(ch, 1)));
+        } else {
+          push(NIL_VAL);
+        }
       }
       DISPATCH();
     }

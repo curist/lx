@@ -283,7 +283,9 @@ static bool rangeNative(int argCount, Value* args) {
     if (IS_STRING(arg))  {
       ObjString* s = AS_STRING(arg);
       for (int i = 0; i < s->length; i++) {
-        writeValueArray(&AS_ARRAY(args[-1]), OBJ_VAL(COPY_CSTRING(&s->chars[i])));
+        push(OBJ_VAL(copyString(&s->chars[i], 1)));
+        writeValueArray(&AS_ARRAY(args[-1]), vm.stackTop[-1]);
+        pop();
       }
     } else if(IS_HASHMAP(arg)) {
       Table* table = &AS_HASHMAP(arg);

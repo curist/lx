@@ -423,6 +423,26 @@ static bool parseFloatNative(int argCount, Value* args) {
   return true;
 }
 
+static bool doubleToUint8ArrayNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_NUMBER(args[0])) {
+    args[-1] = OBJ_VAL(
+        COPY_CSTRING("Error: doubleToUint8ArrayNative takes a number arg."));
+    return false;
+  }
+  union { // union is awesome https://stackoverflow.com/a/24420279/3282323
+    double value;
+    uint8_t bytes[8];
+  } u;
+  u.value = AS_NUMBER(args[0]);
+
+  ObjArray* array = newArray();
+  args[-1] = OBJ_VAL(array);
+  for (int i = 0; i < 8; i++) {
+    writeValueArray(&array->array, NUMBER_VAL(u.bytes[i]));
+  }
+  return true;
+}
+
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
@@ -459,8 +479,7 @@ static void defineLxNatives() {
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toLowerCase", toLowerCaseNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toUpperCase", toUpperCaseNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "parseFloat", parseFloatNative);
-  // TODO: doubleToUint8Array
-  // TODO: parseFloat
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array", doubleToUint8ArrayNative);
 
   pop();
   pop();

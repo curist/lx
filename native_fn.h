@@ -396,8 +396,8 @@ static bool toLowerCaseNative(int argCount, Value* args) {
     args[-1] = OBJ_VAL(COPY_CSTRING("Error: toLowerCase takes a string arg."));
     return false;
   }
-  char* p = AS_STRING(args[0])->chars;
-  for ( ; *p; ++p) *p = tolower(*p);
+  char* s = AS_STRING(args[0])->chars;
+  for ( ; *s; ++s) *s = tolower(*s);
   args[-1] = args[0];
   return true;
 }
@@ -407,9 +407,19 @@ static bool toUpperCaseNative(int argCount, Value* args) {
     args[-1] = OBJ_VAL(COPY_CSTRING("Error: toUpperCase takes a string arg."));
     return false;
   }
-  char* p = AS_STRING(args[0])->chars;
-  for ( ; *p; ++p) *p = toupper(*p);
+  char* s = AS_STRING(args[0])->chars;
+  for ( ; *s; ++s) *s = toupper(*s);
   args[-1] = args[0];
+  return true;
+}
+
+static bool parseFloatNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_STRING(args[0])) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: parseFloat takes a string arg."));
+    return false;
+  }
+  char* s = AS_STRING(args[0])->chars;
+  args[-1] = NUMBER_VAL(strtod(s, NULL));
   return true;
 }
 
@@ -448,6 +458,7 @@ static void defineLxNatives() {
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "exit", exitNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toLowerCase", toLowerCaseNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toUpperCase", toUpperCaseNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "parseFloat", parseFloatNative);
   // TODO: doubleToUint8Array
   // TODO: parseFloat
 

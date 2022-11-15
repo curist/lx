@@ -202,6 +202,70 @@ static bool assocNative(int argCount, Value* args) {
   return true;
 }
 
+static bool concatNative(int argCount, Value* args) {
+  if (argCount != 2) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: concat takes 2 args."));
+    return false;
+  }
+  if (!IS_ARRAY(args[0]) || !IS_ARRAY(args[1])) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: Can only concat arrays."));
+    return false;
+  }
+  ValueArray* arr1 = &AS_ARRAY(args[0]);
+  ValueArray* arr2 = &AS_ARRAY(args[1]);
+  args[-1] = OBJ_VAL(newArray());
+  for (int i = 0; i < arr1->count; i++) {
+    writeValueArray(&AS_ARRAY(args[-1]), arr1->values[i]);
+  }
+  for (int i = 0; i < arr2->count; i++) {
+    writeValueArray(&AS_ARRAY(args[-1]), arr2->values[i]);
+  }
+  return true;
+}
+
+static bool rangeNative(int argCount, Value* args) {
+  if (argCount != 1) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: range takes 1 args."));
+    return false;
+  }
+  Value arg = args[0];
+  if (IS_ARRAY(arg)) {
+    args[-1] = arg;
+  } else if(IS_NUMBER(arg)) {
+    double dnum = AS_NUMBER(arg);
+    int num = dnum;
+    if (dnum != num || num < 0) {
+      args[-1] = OBJ_VAL(
+          COPY_CSTRING("Error: range number should be positive integer."));
+      return false;
+    }
+    args[-1] = OBJ_VAL(newArray());
+    for (int i = 0; i < num; i++) {
+      writeValueArray(&AS_ARRAY(args[-1]), NUMBER_VAL(i));
+    }
+  } else {
+    // every other value types start with an empty array
+    args[-1] = OBJ_VAL(newArray());
+
+    if (IS_STRING(arg))  {
+      ObjString* s = AS_STRING(arg);
+      for (int i = 0; i < s->length; i++) {
+        writeValueArray(&AS_ARRAY(args[-1]), OBJ_VAL(COPY_CSTRING(&s->chars[i])));
+      }
+    } else if(IS_HASHMAP(arg)) {
+      Table* table = &AS_HASHMAP(arg);
+      for (int i = table->capacity - 1; i >= 0; --i) {
+        Entry* entry = &table->entries[i];
+        if (!IS_NIL(entry->key)) {
+          writeValueArray(&AS_ARRAY(args[-1]), entry->key);
+        }
+      }
+    }
+  }
+  return true;
+}
+
+
 static bool strNative(int argCount, Value* args) {
   if (argCount != 1) {
     args[-1] = OBJ_VAL(COPY_CSTRING("Error: str takes 1 arg."));
@@ -264,10 +328,12 @@ void defineBuiltinNatives() {
   defineNative("keys", keysNative);
   defineNative("len", lenNative);
   defineNative("type", typeNative);
-  defineNative("str", strNative);
   defineNative("append", appendNative);
   defineNative("push", pushNative);
   defineNative("pop", popNative);
   defineNative("assoc", assocNative);
+  defineNative("concat", concatNative);
+  defineNative("range", rangeNative);
+  defineNative("str", strNative);
 }
 #endif

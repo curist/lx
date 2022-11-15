@@ -122,7 +122,10 @@ static bool call(ObjClosure* closure, int argCount) {
   CallFrame* frame = &vm.frames[vm.frameCount++];
   frame->closure = closure;
   frame->ip = closure->function->chunk.code;
-  frame->slots = vm.localsTop - argCount - 1;
+  for (int i = 0; i < argCount - closure->function->arity; i++) {
+    pop_local();
+  }
+  frame->slots = vm.localsTop - closure->function->arity - 1;
   return true;
 }
 

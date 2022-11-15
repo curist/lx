@@ -354,6 +354,42 @@ static bool exitNative(int argCount, Value* args) {
   return true;
 }
 
+static bool slurpNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_STRING(args[0])) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: slurp takes a string arg."));
+    return false;
+  }
+  char* path = AS_STRING(args[0])->chars;
+  FILE* file = fopen(path, "rb");
+  if (file == NULL) {
+    // XXX: more unified error reporting
+    fprintf(stderr, "Could not open file \"%s\".\n", path);
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: failed to open file."));
+    return false;
+  }
+
+  fseek(file, 0L, SEEK_END);
+  size_t fileSize = ftell(file);
+  rewind(file);
+
+  char* buffer = (char*)malloc(fileSize);
+  if (buffer == NULL) {
+    fprintf(stderr, "Not enough memory to read \"%s\".\n", path);
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: failed to open file."));
+    return false;
+  }
+
+  size_t bytesRead = fread(buffer, sizeof(char), fileSize, file);
+  if (bytesRead < fileSize) {
+    fprintf(stderr, "Could not read file \"%s\".\n", path);
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: failed to read file."));
+    return false;
+  }
+  args[-1] = OBJ_VAL(takeString(buffer, fileSize));
+
+  return true;
+}
+
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
@@ -410,6 +446,6 @@ void defineBuiltinNatives() {
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
-  // TODO: slurp
+  defineNative("slurp", slurpNative);
 }
 #endif

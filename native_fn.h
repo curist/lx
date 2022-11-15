@@ -46,6 +46,21 @@ static bool intNative(int argCount, Value* args) {
   return true;
 }
 
+static bool ordNative(int argCount, Value* args) {
+  if (argCount < 1) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: Arg must be a char."));
+    return false;
+  }
+  Value arg = args[0];
+  if (!IS_STRING(arg) || AS_STRING(arg)->length != 1) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: Arg must be a char."));
+    return false;
+  }
+  char ch = AS_STRING(arg)->chars[0];
+  args[-1] = NUMBER_VAL(ch);
+  return true;
+}
+
 static bool keysNative(int argCount, Value* args) {
   if (argCount != 1) {
     args[-1] = OBJ_VAL(COPY_CSTRING("Error: Arg must be a map."));
@@ -147,6 +162,23 @@ static bool appendNative(int argCount, Value* args) {
     writeValueArray(&AS_ARRAY(args[-1]), arr->values[i]);
   }
   writeValueArray(&AS_ARRAY(args[-1]), args[1]);
+  return true;
+}
+
+static bool butlastNative(int argCount, Value* args) {
+  if (argCount != 1) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: butlast takes 1 arg."));
+    return false;
+  }
+  if (!IS_ARRAY(args[0])) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: Can only butlast to array."));
+    return false;
+  }
+  ValueArray* arr = &AS_ARRAY(args[0]);
+  args[-1] = OBJ_VAL(newArray());
+  for (int i = 0; i < arr->count - 1; i++) {
+    writeValueArray(&AS_ARRAY(args[-1]), arr->values[i]);
+  }
   return true;
 }
 
@@ -324,16 +356,18 @@ void defineBuiltinNatives() {
   defineNative("globals", globalsNative);
   defineNative("clock", clockNative);
   defineNative("print", printNative);
+  defineNative("str", strNative);
   defineNative("int", intNative);
+  defineNative("ord", ordNative);
   defineNative("keys", keysNative);
   defineNative("len", lenNative);
   defineNative("type", typeNative);
   defineNative("append", appendNative);
+  defineNative("butlast", butlastNative);
   defineNative("push", pushNative);
   defineNative("pop", popNative);
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
-  defineNative("str", strNative);
 }
 #endif

@@ -400,7 +400,7 @@ static bool toLowerCaseNative(int argCount, Value* args) {
   }
   char* s = AS_STRING(args[0])->chars;
   for ( ; *s; ++s) *s = tolower(*s);
-  args[-1] = args[0];
+  args[-1] = OBJ_VAL(COPY_CSTRING(AS_STRING(args[0])->chars));
   return true;
 }
 
@@ -411,7 +411,7 @@ static bool toUpperCaseNative(int argCount, Value* args) {
   }
   char* s = AS_STRING(args[0])->chars;
   for ( ; *s; ++s) *s = toupper(*s);
-  args[-1] = args[0];
+  args[-1] = OBJ_VAL(COPY_CSTRING(AS_STRING(args[0])->chars));
   return true;
 }
 

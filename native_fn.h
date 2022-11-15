@@ -274,10 +274,10 @@ static bool strNative(int argCount, Value* args) {
   Value arg = args[0];
   if (IS_NUMBER(arg)) {
     double num = AS_NUMBER(arg);
-    int val_i = num;
+    int64_t val_i = num;
     char* str;
     if (num == val_i) {
-      asprintf(&str, "%d", val_i);
+      asprintf(&str, "%lld", val_i);
     } else {
       asprintf(&str, "%f", num);
     }

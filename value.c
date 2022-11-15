@@ -36,9 +36,9 @@ void printValue(Value value) {
     printf("nil");
   } else if (IS_NUMBER(value)) {
     double num = AS_NUMBER(value);
-    int val_i = num;
+    int64_t val_i = num;
     if (num == val_i) {
-      printf("%d", val_i);
+      printf("%lld", val_i);
     } else {
       printf("%f", num);
     }

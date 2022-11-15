@@ -59,6 +59,9 @@ static void runFile(const char* path) {
 }
 
 int main(int argc, const char* argv[]) {
+  LX_ARGC = argc;
+  LX_ARGV = argv;
+
   initVM();
 
   // TODO: be able to run source file

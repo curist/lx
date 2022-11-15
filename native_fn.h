@@ -340,6 +340,20 @@ static bool strNative(int argCount, Value* args) {
   return true;
 }
 
+static bool exitNative(int argCount, Value* args) {
+  int exitCode = 0;
+  if (argCount == 0) {
+  } else if (argCount != 1 || !IS_NUMBER(args[0])) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: exit takes a number arg."));
+    return false;
+  } else {
+    exitCode = AS_NUMBER(args[0]);
+  }
+  freeVM();
+  exit(exitCode);
+  return true;
+}
+
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
@@ -352,8 +366,38 @@ static void defineNative(const char* name, NativeFn function) {
   pop();
 }
 
+static void defineLxNatives() {
+  push(OBJ_VAL(COPY_CSTRING("Lx")));
+  push(OBJ_VAL(newHashmap()));
+  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
+
+  push(OBJ_VAL(COPY_CSTRING("args")));
+  push(OBJ_VAL(newArray()));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
+  for (int i = 0; i < LX_ARGC; i++) {
+    push(OBJ_VAL(COPY_CSTRING(LX_ARGV[i])));
+    writeValueArray(&AS_ARRAY(vm.stack[3]), vm.stack[4]);
+    pop();
+  }
+  pop(); pop();
+
+  push(OBJ_VAL(COPY_CSTRING("globals")));
+  push(OBJ_VAL(newNative(globalsNative)));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
+  pop(); pop();
+
+  push(OBJ_VAL(COPY_CSTRING("exit")));
+  push(OBJ_VAL(newNative(exitNative)));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
+  pop(); pop();
+
+  pop();
+  pop();
+}
+
 void defineBuiltinNatives() {
-  defineNative("globals", globalsNative);
+  defineLxNatives();
+
   defineNative("clock", clockNative);
   defineNative("print", printNative);
   defineNative("str", strNative);
@@ -369,5 +413,6 @@ void defineBuiltinNatives() {
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
+  // TODO: slurp
 }
 #endif

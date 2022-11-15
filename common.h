@@ -7,6 +7,9 @@
 
 #define NAN_BOXING
 
+int LX_ARGC;
+const char** LX_ARGV;
+
 #ifdef DEBUG
 #define DEBUG_TRACE_EXECUTION
 #define DEBUG_PRINT_CODE

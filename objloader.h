@@ -17,4 +17,9 @@ typedef struct {
 
 ObjFunction* loadObj(uint8_t* bytes);
 
+typedef enum {
+  CHUNK_TYPE_REF,
+  CHUNK_TYPE_ACTUAL,
+} ChunkType;
+
 #endif

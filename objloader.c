@@ -6,6 +6,7 @@
 #include "objloader.h"
 #include "object.h"
 
+// functions contains actual function, or a index ref (-> functions[index])
 ValueArray functions;
 ChunkIndexes chunkIndexes;
 
@@ -19,6 +20,8 @@ ChunkIndexes chunkIndexes;
 // TBD:       32 - (2+1+1+4+4) = 20
 // # chunk layout
 // CHUNK_SIZE: 4 little endian
+//    CHUNK_TYPE: 1: 0 as REF, 1 as actual
+//       REF_CHUNK: 4, little endian, chunk index
 //    FUNCTION_ARITY: 1
 //     UPVALUE_COUNT: 1
 //   CHUNK_NAME_SIZE: 2 little endian
@@ -47,7 +50,6 @@ ChunkIndexes chunkIndexes;
 //                first byte represent repeat times for line #
 //                next 2 bytes is the actual line number
 //                (which means we would only support line no. up to 65535)
-
 
 double readDouble(const uint8_t* bytes) {
   double n = 0;
@@ -102,10 +104,25 @@ bool objIsValid(uint8_t* bytes) {
     // this chunk is this big
     uint8_t* ptr = chunk_start;
     size_t chunk_size = getSize(ptr);
+    size_t chunk_size_sofar = 0;
+    ptr += 4; // chunk size
+    chunk_size_sofar += 4;
 
-    // chunk_size + function_arity + upvalue count = 4 + 1 + 1= 6
-    size_t chunk_size_sofar = 6;
-    ptr += 6;
+    // check chunk type
+    uint8_t chunkType = ptr[0];
+    ptr += 1;
+    chunk_size_sofar += 1;
+
+    if (chunkType == CHUNK_TYPE_REF) {
+      // set chunk_start to next chunk
+      chunk_start += 4 + chunk_size;
+      total_size += 4 + chunk_size;
+      continue;
+    }
+
+    // function_arity + upvalue count = 1 + 1= 2
+    ptr += 2;
+    chunk_size_sofar += 2;
 
     if (total_size + 4 + chunk_size > obj_size) {
       // ensure this chunk won't exceed total object size
@@ -183,6 +200,13 @@ void freeChunkIndexes(ChunkIndexes* array) {
   initChunkIndexes(array);
 }
 
+int getModuleIndex(uint8_t* bytes) {
+  uint8_t* ptr = &bytes[4];
+  ChunkType chunkType = ptr[0];
+  if (chunkType != CHUNK_TYPE_REF) return -1;
+  return getSize(&ptr[1]);
+}
+
 ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   bool debug = (flags & 0b00000001) > 0;
 
@@ -191,6 +215,16 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   Chunk* chunk = &func->chunk;
 
   uint8_t* code_start = &bytes[4];
+
+  // check chunk type
+  ChunkType chunkType = code_start[0];
+  code_start += 1;
+
+  if (chunkType == CHUNK_TYPE_REF) {
+    fprintf(stderr, "Unexpected reference chunk\n");
+    return NULL;
+  }
+
   func->arity = code_start[0];
   func->upvalueCount = code_start[1];
   code_start += 2;
@@ -325,12 +359,20 @@ ObjFunction* loadObj(uint8_t* bytes) {
   uint16_t chunks_count = getShortSize(&bytes[8]);
   uint8_t* chunk_start = &bytes[32];
 
+  uint8_t shared_module_count = 0;
+
   for (int i = 0; i < chunks_count; i++) {
     size_t chunk_size = getSize(chunk_start);
-    ObjFunction* func = loadFunction(chunk_start, flags);
-    if (func == NULL) return NULL;
-    if (i == 0) main = func;
-    writeValueArray(&functions, OBJ_VAL(func));
+    int moduleIndex = getModuleIndex(chunk_start);
+    if (moduleIndex >= 0) {
+      writeValueArray(&functions, NUMBER_VAL(moduleIndex));
+      shared_module_count++;
+    } else {
+      ObjFunction* func = loadFunction(chunk_start, flags);
+      if (func == NULL) return NULL;
+      if (i == 0) main = func;
+      writeValueArray(&functions, OBJ_VAL(func));
+    }
     chunk_start += 4 + chunk_size;
   }
 
@@ -343,16 +385,32 @@ ObjFunction* loadObj(uint8_t* bytes) {
 
   for (int i = 0; i < chunkIndexes.count; i++) {
     // functions[0] is main, thus i + 1
-    ObjFunction* func = AS_FUNCTION(functions.values[i + 1]);
+
+    ObjFunction* func;
+    if (IS_NUMBER(functions.values[i + 1])) {
+      int index = AS_NUMBER(functions.values[i + 1]);
+      func = AS_FUNCTION(functions.values[index]);
+    } else {
+      func = AS_FUNCTION(functions.values[i + 1]);
+    }
     ChunkValueIndex chunkIndex = chunkIndexes.values[i];
     chunkIndex.chunk->constants.values[chunkIndex.index] = OBJ_VAL(func);
   }
 
-  for (int i = 0; i < chunks_count; i++) pop();
+  for (int i = 0; i < chunks_count - shared_module_count; i++) pop();
 
 #ifdef DEBUG_PRINT_CODE
   for (int i = 0; i < functions.count; i++) {
+    if (IS_NUMBER(functions.values[i])) {
+      int index = AS_NUMBER(functions.values[i]);
+      ObjFunction* func = AS_FUNCTION(functions.values[index]);
+      printf("[%d] %s -> [%d] \n\n", i, func->filename->chars, index);
+      continue;
+    }
+
     ObjFunction* func = AS_FUNCTION(functions.values[i]);
+
+    printf("[%d] ", i);
     disassembleChunk(&func->chunk,
         func->filename != NULL ? func->filename->chars : "[unknown]",
         func->name != NULL ? func->name->chars : "[script]", true);

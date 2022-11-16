@@ -9,6 +9,10 @@ prepare:
 	@mkdir -p out
 	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > version.h
 
+compiler:
+	@./scripts/build-compiler.sh
+	@echo done
+
 build: prepare
 	gcc -DDEBUG *.c -o out/clox
 

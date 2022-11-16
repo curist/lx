@@ -7,6 +7,15 @@
 #include "debug.h"
 #include "vm.h"
 
+typedef void (*OptHandler)(int argc, const char* argv[]);
+
+typedef struct {
+  const char* name;
+  const char* desc;
+  OptHandler handler;
+} Option;
+
+void handleHelp(int argc, const char* argv[]);
 
 static uint8_t* readFile(const char* path) {
   FILE* file = fopen(path, "rb");
@@ -58,20 +67,72 @@ static void runFile(const char* path) {
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
+void handleRun(int argc, const char* argv[]) {
+  if (argc != 3) {
+    fprintf(stderr, "Usage: %s run <lxobj file>\n", argv[0]);
+    return;
+  }
+
+  initVM();
+  runFile(argv[2]);
+  freeVM();
+}
+
+void handleCompile(int argc, const char* argv[]) {
+  printf("alright, compiling\n");
+}
+
+void handleVersion(int argc, const char* argv[]) {
+  printf("lx version TBD\n");
+}
+
+Option options[] = {
+  {"run",        "Run a lxobj file",           handleRun},
+  {"compile",    "Compile Lx source to lxobj", handleCompile},
+  {"version",    "Print Lx version",           handleVersion},
+  {"help",       "Print Lx help screen",       handleHelp},
+};
+
+void handleHelp(int argc, const char* argv[]) {
+  int optionCount = sizeof(options) / sizeof(Option);
+  fprintf(stderr,
+      "Usage:\n\n"
+      "\t%s <command> [arguments]\n\n"
+      "The commands are:\n",
+      argv[0]
+      );
+  for (int i = 0; i < optionCount; i++) {
+    Option opt = options[i];
+    fprintf(stderr, "\t%-12s %s\n", opt.name, opt.desc);
+  }
+}
+
 int main(int argc, const char* argv[]) {
   LX_ARGC = argc;
   LX_ARGV = argv;
 
-  initVM();
-
-  // TODO: be able to run source file
-  // TODO: repl
-  if (argc >= 2) {
-    runFile(argv[1]);
-  } else {
-    fprintf(stderr, "Usage: clox <lxobj>\n");
-    exit(64);
+  if (argc < 2) {
+    handleHelp(argc, argv);
+    return 128;
   }
+
+  const char* cmd = argv[1];
+
+  int optionCount = sizeof(options) / sizeof(Option);
+  bool handled = false;
+  for (int i = 0; i < optionCount; i++) {
+    Option opt = options[i];
+    if (strcmp(cmd, opt.name) == 0) {
+      handled =  true;
+      opt.handler(argc, argv);
+      break;
+    }
+  }
+  if (!handled) {
+    handleHelp(argc, argv);
+    return 128;
+  }
+
   // XXX: plan
   // embed lxlox compiler
   // to be able to run source file directly,
@@ -87,8 +148,6 @@ int main(int argc, const char* argv[]) {
   // small utitilties could be in their own sources;
   // large utitiles may use single source to support multiple commands,
   // to reduce overheads
-
-  freeVM();
 
   return 0;
 }

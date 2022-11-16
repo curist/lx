@@ -7,3 +7,24 @@ fn each(arr, cb) {
   }
 }
 
+fn fold(arr, acc, cb) {
+  each(arr, fn(x, i) { cb(acc, x, i) })
+  acc
+}
+
+fn foldr(arr, acc, cb) {
+  let length = len(arr)
+  for let i = length - 1; i >= 0; i = i - 1 {
+    acc = cb(acc, arr[i], i) 
+  }
+  acc
+}
+
+fn map(arr, cb) {
+  let result = []
+  let length = len(arr)
+  for let i = 0; i < length; i = i + 1 {
+    push(result, cb(arr[i], i, arr))
+  }
+  result
+}

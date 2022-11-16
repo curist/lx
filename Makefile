@@ -5,16 +5,16 @@ GITHASH = $(shell git rev-parse --short HEAD)
 ARCH = $(shell uname)
 DATE = $(shell date "+%Y.%m.%d")
 
-lxcompiler.h:
+lxcompiler:
 	./scripts/build-compiler.sh
 
-lxglobals.h:
+lxglobals:
 	./scripts/build-globals.sh
 
-version.h:
+version:
 	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > version.h
 
-prepare: lxcompiler.h lxglobals.h version.h
+prepare: lxcompiler lxglobals version
 	@mkdir -p out
 
 build: prepare

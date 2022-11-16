@@ -5,13 +5,17 @@ GITHASH = $(shell git rev-parse --short HEAD)
 ARCH = $(shell uname)
 DATE = $(shell date "+%Y.%m.%d")
 
-prepare:
-	@mkdir -p out
+lxcompiler.h:
+	./scripts/build-compiler.sh
+
+lxglobals.h:
+	./scripts/build-globals.sh
+
+version.h:
 	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > version.h
 
-compiler:
-	@./scripts/build-compiler.sh
-	@echo done
+prepare: lxcompiler.h lxglobals.h version.h
+	@mkdir -p out
 
 build: prepare
 	gcc -DDEBUG *.c -o out/clox
@@ -20,5 +24,5 @@ release: prepare
 	gcc -Wall -O3 *.c -o out/clox
 
 run: build
-	./out/clox /tmp/current.lxobj
+	./out/clox run /tmp/current.lxobj
 

@@ -1,0 +1,9 @@
+fn each(arr, cb) {
+  let length = len(arr)
+  let aborted = false
+  fn abort() { aborted }
+  for let i = 0; i < length and !aborted; i = i + 1 {
+    cb(arr[i], i, arr, abort)
+  }
+}
+

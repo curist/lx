@@ -104,13 +104,13 @@ void handleHelp(int argc, const char* argv[]) {
   int optionCount = sizeof(options) / sizeof(Option);
   fprintf(stderr,
       "Usage:\n\n"
-      "\t%s <command> [arguments]\n\n"
+      "  %s <command> [arguments]\n\n"
       "The commands are:\n",
       argv[0]
       );
   for (int i = 0; i < optionCount; i++) {
     Option opt = options[i];
-    fprintf(stderr, "\t%-12s %s\n", opt.name, opt.desc);
+    fprintf(stderr, "  %-12s %s\n", opt.name, opt.desc);
   }
 }
 

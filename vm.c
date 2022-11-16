@@ -9,6 +9,7 @@
 #include "memory.h"
 #include "vm.h"
 #include "native_fn.h"
+#include "lxglobals.h"
 
 VM vm;
 
@@ -71,6 +72,9 @@ void initVM() {
   initTable(&vm.strings);
 
   defineBuiltinNatives();
+
+  // include global fns
+  interpret((uint8_t*)lxglobals_bytecode);
 }
 
 void freeVM() {

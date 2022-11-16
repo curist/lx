@@ -390,6 +390,8 @@ static bool slurpNative(int argCount, Value* args) {
   }
   args[-1] = OBJ_VAL(takeString(buffer, fileSize));
 
+  fclose(file);
+
   return true;
 }
 
@@ -398,9 +400,16 @@ static bool toLowerCaseNative(int argCount, Value* args) {
     args[-1] = OBJ_VAL(COPY_CSTRING("Error: toLowerCase takes a string arg."));
     return false;
   }
-  char* s = AS_STRING(args[0])->chars;
-  for ( ; *s; ++s) *s = tolower(*s);
-  args[-1] = OBJ_VAL(COPY_CSTRING(AS_STRING(args[0])->chars));
+  ObjString* str = AS_STRING(args[0]);
+  char* s = (char*)malloc(str->length + 1);
+  if (s == NULL) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: failed to allocate memory."));
+    return false;
+  }
+  for (int i = 0; i < str->length; ++i) {
+    s[i] = tolower(str->chars[i]);
+  }
+  args[-1] = OBJ_VAL(copyString(s, str->length));
   return true;
 }
 
@@ -409,9 +418,16 @@ static bool toUpperCaseNative(int argCount, Value* args) {
     args[-1] = OBJ_VAL(COPY_CSTRING("Error: toUpperCase takes a string arg."));
     return false;
   }
-  char* s = AS_STRING(args[0])->chars;
-  for ( ; *s; ++s) *s = toupper(*s);
-  args[-1] = OBJ_VAL(COPY_CSTRING(AS_STRING(args[0])->chars));
+  ObjString* str = AS_STRING(args[0]);
+  char* s = (char*)malloc(str->length + 1);
+  if (s == NULL) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: failed to allocate memory."));
+    return false;
+  }
+  for (int i = 0; i < str->length; ++i) {
+    s[i] = toupper(str->chars[i]);
+  }
+  args[-1] = OBJ_VAL(copyString(s, str->length));
   return true;
 }
 

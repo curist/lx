@@ -31,3 +31,12 @@ fn map(arr, cb) {
   }
   result
 }
+
+fn filter(arr, cb) {
+  fold(arr, [], fn(acc, x, i) {
+    if cb(x, i, arr) { push(acc, x) }
+    acc
+  })
+}
+
+// TODO: use stderr

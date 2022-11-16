@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -eo pipefail
+
 cd lxlox
 
 echo "#include <stdint.h>" > ../lxcompiler.h

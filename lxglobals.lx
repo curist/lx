@@ -8,7 +8,10 @@ fn each(arr, cb) {
 }
 
 fn fold(arr, acc, cb) {
-  each(arr, fn(x, i) { cb(acc, x, i) })
+  let length = len(arr)
+  for let i = 0; i < length; i = i + 1 {
+    acc = cb(acc, arr[i], i) 
+  }
   acc
 }
 

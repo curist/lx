@@ -6,6 +6,7 @@
 #include "chunk.h"
 #include "debug.h"
 #include "vm.h"
+#include "version.h"
 
 typedef void (*OptHandler)(int argc, const char* argv[]);
 
@@ -69,7 +70,7 @@ static void runFile(const char* path) {
 
 void handleRun(int argc, const char* argv[]) {
   if (argc != 3) {
-    fprintf(stderr, "Usage: %s run <lxobj file>\n", argv[0]);
+    fprintf(stderr, "Usage: %s run <lxobj>\n", argv[0]);
     return;
   }
 
@@ -79,11 +80,15 @@ void handleRun(int argc, const char* argv[]) {
 }
 
 void handleCompile(int argc, const char* argv[]) {
-  printf("alright, compiling\n");
+  printf("TODO: handle compile\n");
+  // InterpretResult result = interpret((uint8_t*)compiler_lxobj);
+
+  // if (result == INTERPRET_LOADOBJ_ERROR) exit(65);
+  // if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
 void handleVersion(int argc, const char* argv[]) {
-  printf("lx version TBD\n");
+  printf("lx version %s\n", LX_VERSION);
 }
 
 Option options[] = {

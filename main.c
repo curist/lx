@@ -72,6 +72,21 @@ int main(int argc, const char* argv[]) {
     fprintf(stderr, "Usage: clox <lxobj>\n");
     exit(64);
   }
+  // XXX: plan
+  // embed lxlox compiler
+  // to be able to run source file directly,
+  // we would need to
+  // 1. use lxlox, running by clox VM, to compile the source code
+  // 2. extract data from VM, before VM returns or find a more general way
+  //    to let the VM to return values to c
+  // 3. run the VM again, using bytecodes emitted from above step
+  //
+  // XXX: plan
+  // use lx sources, to implement major features
+  // clox/clxo will have lx sources enhanced commands;
+  // small utitilties could be in their own sources;
+  // large utitiles may use single source to support multiple commands,
+  // to reduce overheads
 
   freeVM();
 

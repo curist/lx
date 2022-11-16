@@ -93,12 +93,12 @@ static Value peek(int distance) {
   return vm.stackTop[-1 - distance];
 }
 
-void push_local(Value value) {
+static void push_local(Value value) {
   *vm.localsTop = value;
   vm.localsTop++;
 }
 
-Value pop_local() {
+static Value pop_local() {
   vm.localsTop--;
   return *vm.localsTop;
 }

@@ -32,6 +32,17 @@ static bool printNative(int argCount, Value* args) {
   return true;
 }
 
+static bool groanNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_STRING(args[0])) {
+    args[-1] = OBJ_VAL(COPY_CSTRING("Error: Arg must be a string."));
+    return false;
+  }
+  ObjString* s = AS_STRING(args[0]);
+  fprintf(stderr, "%s\n", s->chars);
+  args[-1] = NIL_VAL;
+  return true;
+}
+
 static bool intNative(int argCount, Value* args) {
   if (argCount < 1) {
     args[-1] = OBJ_VAL(COPY_CSTRING("Error: Arg must be a number."));
@@ -511,6 +522,7 @@ void defineBuiltinNatives() {
 
   defineNative("clock", clockNative);
   defineNative("print", printNative);
+  defineNative("groan", groanNative);
   defineNative("str", strNative);
   defineNative("int", intNative);
   defineNative("ord", ordNative);

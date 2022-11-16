@@ -451,8 +451,11 @@ static bool doubleToUint8ArrayNative(int argCount, Value* args) {
 
 static void defineTableFunction(Table* table, const char* name, NativeFn function) {
   push(OBJ_VAL(copyString(name, (int)strlen(name))));
-  push(OBJ_VAL(newNative(function)));
-  tableSet(table, vm.stackTop[-2], vm.stackTop[-1]);
+  ObjString* nameString = COPY_CSTRING(name);
+  push(OBJ_VAL(nameString));
+  push(OBJ_VAL(newNative(function, nameString)));
+  tableSet(table, vm.stackTop[-3], vm.stackTop[-1]);
+  pop();
   pop();
   pop();
 }

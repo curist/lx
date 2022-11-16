@@ -17,7 +17,7 @@
 
 #define AS_CLOSURE(value)      ((ObjClosure*)AS_OBJ(value))
 #define AS_FUNCTION(value)     ((ObjFunction*)AS_OBJ(value))
-#define AS_NATIVE(value)       (((ObjNative*)AS_OBJ(value))->function)
+#define AS_NATIVE(value)       (((ObjNative*)AS_OBJ(value)))
 #define AS_STRING(value)       ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value)      (((ObjString*)AS_OBJ(value))->chars)
 #define AS_HASHMAP(value)      (((ObjHashmap*)AS_OBJ(value))->table)
@@ -55,6 +55,7 @@ typedef bool (*NativeFn)(int argCount, Value* args);
 typedef struct {
   Obj obj;
   NativeFn function;
+  ObjString* name;
 } ObjNative;
 
 typedef struct {
@@ -90,7 +91,7 @@ typedef struct {
 
 ObjClosure* newClosure(ObjFunction* function);
 ObjFunction* newFunction();
-ObjNative* newNative(NativeFn function);
+ObjNative* newNative(NativeFn function, ObjString* name);
 ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);
 ObjUpvalue* newUpvalue(Value* slot);

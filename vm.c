@@ -135,7 +135,7 @@ static bool callValue(Value callee, int argCount) {
       case OBJ_CLOSURE:
         return call(AS_CLOSURE(callee), argCount);
       case OBJ_NATIVE: {
-        NativeFn native = AS_NATIVE(callee);
+        NativeFn native = AS_NATIVE(callee)->function;
         if (native(argCount, vm.localsTop - argCount)) {
           vm.localsTop -= argCount;
           push(pop_local());

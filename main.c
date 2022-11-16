@@ -69,7 +69,7 @@ static void runFile(const char* path) {
 }
 
 void handleRun(int argc, const char* argv[]) {
-  if (argc != 3) {
+  if (argc <= 3) {
     fprintf(stderr, "Usage: %s run <lxobj>\n", argv[0]);
     return;
   }

@@ -2,6 +2,11 @@
 
 set -eo pipefail
 
+if [ -x lx ]; then
+  echo skip building lxlx.h
+  exit 0
+fi
+
 cd lxlox
 
 echo "#include <stdint.h>" > ../lxlx.h

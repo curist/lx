@@ -17,7 +17,7 @@ typedef struct {
   OptHandler handler;
 } Option;
 
-void handleHelp(int argc, const char* argv[]);
+static void handleHelp(int argc, const char* argv[]);
 
 static uint8_t* readFile(const char* path) {
   FILE* file = fopen(path, "rb");
@@ -69,23 +69,23 @@ static void runFile(const char* path) {
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
-void handleRunObject(int argc, const char* argv[]) {
+static void handleRunObject(int argc, const char* argv[]) {
   if (argc <= 2) {
-    fprintf(stderr, "Usage: %s run <lxobj>\n", argv[0]);
+    fprintf(stderr, "Usage: %s runo <lxobj>\n", argv[0]);
     return;
   }
 
   runFile(argv[2]);
 }
 
-void handleCompile(int argc, const char* argv[]) {
+static void handleCompile(int argc, const char* argv[]) {
   InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
 
   if (result == INTERPRET_LOADOBJ_ERROR) exit(65);
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
-void handleCompileAndRun(int argc, const char* argv[]) {
+static void handleCompileAndRun(int argc, const char* argv[]) {
   InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
   Value value;
   if (!tableGet(&vm.globals, OBJ_VAL(COPY_CSTRING("__lx_result__")), &value)) {
@@ -112,7 +112,7 @@ void handleCompileAndRun(int argc, const char* argv[]) {
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
-void handleRepl(int argc, const char* argv[]) {
+static void handleRepl(int argc, const char* argv[]) {
   char line[1024];
 
   // intern the key
@@ -160,7 +160,7 @@ void handleRepl(int argc, const char* argv[]) {
   }
 }
 
-void handleVersion(int argc, const char* argv[]) {
+static void handleVersion(int argc, const char* argv[]) {
   printf("lx version %s\n", LX_VERSION);
 }
 
@@ -173,7 +173,7 @@ Option options[] = {
   {"help",       "Print this",                   handleHelp},
 };
 
-void handleHelp(int argc, const char* argv[]) {
+static void handleHelp(int argc, const char* argv[]) {
   int optionCount = sizeof(options) / sizeof(Option);
   fprintf(stderr,
       "Usage:\n\n"

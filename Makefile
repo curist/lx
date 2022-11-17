@@ -14,8 +14,10 @@ lxglobals:
 lxversion:
 	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > lx/lxversion.h
 
-prepare: lxlx lxglobals lxversion
+out:
 	@mkdir -p out
+
+prepare: out lxlx lxglobals lxversion
 
 build: prepare
 	gcc -DDEBUG *.c -o out/clox

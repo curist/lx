@@ -89,15 +89,45 @@ void handleCompile(int argc, const char* argv[]) {
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
+void handleCompileAndRun(int argc, const char* argv[]) {
+  initVM();
+  InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
+  Value value;
+  if (!tableGet(&vm.globals, OBJ_VAL(COPY_CSTRING("__lx_result__")), &value)) {
+    fprintf(stderr, "failed to compile lxobj\n");
+    freeVM();
+    return exit(65);
+  } else if (!IS_ARRAY(value)) {
+    fprintf(stderr, "failed to compile lxobj\n");
+    freeVM();
+    return exit(65);
+  }
+  // assume we got a valid bytes array (which stored in doubles :()
+  ValueArray* code = &AS_ARRAY(value);
+  uint8_t* obj = (uint8_t*)malloc(code->count);
+  for (int i = 0; i < code->count; ++i) {
+    uint8_t byte = AS_NUMBER(code->values[i]);
+    obj[i] = byte;
+  }
+  result = interpret(obj);
+
+  free(obj);
+  freeVM();
+
+  if (result == INTERPRET_LOADOBJ_ERROR) exit(65);
+  if (result == INTERPRET_RUNTIME_ERROR) exit(70);
+}
+
 void handleVersion(int argc, const char* argv[]) {
   printf("lx version %s\n", LX_VERSION);
 }
 
 Option options[] = {
-  {"run",        "Run a lxobj file",           handleRun},
-  {"compile",    "Compile Lx source to lxobj", handleCompile},
-  {"version",    "Print Lx version",           handleVersion},
-  {"help",       "Print Lx help screen",       handleHelp},
+  {"run",        "Run a lxobj file",             handleRun},
+  {"runs",       "Compile Lx source and run it", handleCompileAndRun},
+  {"compile",    "Compile Lx source to lxobj",   handleCompile},
+  {"version",    "Print Lx version",             handleVersion},
+  {"help",       "Print Lx help screen",         handleHelp},
 };
 
 void handleHelp(int argc, const char* argv[]) {

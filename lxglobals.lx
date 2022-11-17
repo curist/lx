@@ -1,3 +1,5 @@
+fn _1(cb) { fn(x) { cb(x) } }
+
 fn each(arr, cb) {
   let length = len(arr)
   let aborted = false

@@ -69,7 +69,7 @@ static void runFile(const char* path) {
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
-void handleRun(int argc, const char* argv[]) {
+void handleRunObject(int argc, const char* argv[]) {
   if (argc <= 2) {
     fprintf(stderr, "Usage: %s run <lxobj>\n", argv[0]);
     return;
@@ -123,11 +123,11 @@ void handleVersion(int argc, const char* argv[]) {
 }
 
 Option options[] = {
-  {"run",        "Run a lxobj file",             handleRun},
-  {"runs",       "Compile Lx source and run it", handleCompileAndRun},
+  {"run",        "Compile Lx source and run it", handleCompileAndRun},
+  {"runo",       "Run a lxobj file",             handleRunObject},
   {"compile",    "Compile Lx source to lxobj",   handleCompile},
   {"version",    "Print Lx version",             handleVersion},
-  {"help",       "Print Lx help screen",         handleHelp},
+  {"help",       "Print this",                   handleHelp},
 };
 
 void handleHelp(int argc, const char* argv[]) {

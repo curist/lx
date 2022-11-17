@@ -75,22 +75,17 @@ void handleRunObject(int argc, const char* argv[]) {
     return;
   }
 
-  initVM();
   runFile(argv[2]);
-  freeVM();
 }
 
 void handleCompile(int argc, const char* argv[]) {
-  initVM();
   InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
-  freeVM();
 
   if (result == INTERPRET_LOADOBJ_ERROR) exit(65);
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
 void handleCompileAndRun(int argc, const char* argv[]) {
-  initVM();
   InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
   Value value;
   if (!tableGet(&vm.globals, OBJ_VAL(COPY_CSTRING("__lx_result__")), &value)) {
@@ -112,10 +107,57 @@ void handleCompileAndRun(int argc, const char* argv[]) {
   result = interpret(obj);
 
   free(obj);
-  freeVM();
 
   if (result == INTERPRET_LOADOBJ_ERROR) exit(65);
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
+}
+
+void handleRepl(int argc, const char* argv[]) {
+  char line[1024];
+
+  // intern the key
+  push(OBJ_VAL(COPY_CSTRING("__lx_input__")));
+  pop();
+
+  ObjString* key = COPY_CSTRING("__lx_input__");
+  Value value;
+
+  for (;;) {
+    printf("> ");
+
+    char* read = NULL;
+    if (!(read = fgets(line, sizeof(line), stdin))) {
+      printf("\n");
+      break;
+    }
+    ObjString* source = COPY_CSTRING(read);
+    push(OBJ_VAL(source));
+    tableSet(&vm.globals, OBJ_VAL(key), OBJ_VAL(source));
+    pop();
+
+    interpret((uint8_t*)lxlx_bytecode);
+
+    if (!tableGet(&vm.globals, OBJ_VAL(COPY_CSTRING("__lx_result__")), &value)) {
+      fprintf(stderr, "failed to compile lxobj\n");
+      return exit(65);
+    } else if (IS_STRING(value)) {
+      // got some errors
+      fprintf(stderr, "%s\n", AS_STRING(value)->chars);
+      continue;
+    } else if (!IS_ARRAY(value)) {
+      fprintf(stderr, "unexpected lx compiled result\n");
+      continue;
+    }
+
+    ValueArray* code = &AS_ARRAY(value);
+    uint8_t* obj = (uint8_t*)malloc(code->count);
+    for (int i = 0; i < code->count; ++i) {
+      uint8_t byte = AS_NUMBER(code->values[i]);
+      obj[i] = byte;
+    }
+    interpret(obj);
+    free(obj);
+  }
 }
 
 void handleVersion(int argc, const char* argv[]) {
@@ -125,6 +167,7 @@ void handleVersion(int argc, const char* argv[]) {
 Option options[] = {
   {"run",        "Compile Lx source and run it", handleCompileAndRun},
   {"runo",       "Run a lxobj file",             handleRunObject},
+  {"repl",       "Start Lx REPL",                handleRepl},
   {"compile",    "Compile Lx source to lxobj",   handleCompile},
   {"version",    "Print Lx version",             handleVersion},
   {"help",       "Print this",                   handleHelp},
@@ -156,19 +199,22 @@ int main(int argc, const char* argv[]) {
   const char* cmd = argv[1];
 
   int optionCount = sizeof(options) / sizeof(Option);
-  bool handled = false;
+  OptHandler* handler = NULL;
   for (int i = 0; i < optionCount; i++) {
     Option opt = options[i];
     if (strcmp(cmd, opt.name) == 0) {
-      handled =  true;
-      opt.handler(argc, argv);
+      handler = &opt.handler;
       break;
     }
   }
-  if (!handled) {
+  if (handler == NULL) {
     handleHelp(argc, argv);
     return 128;
   }
+
+  initVM();
+  (*handler)(argc, argv);
+  freeVM();
 
   return 0;
 }

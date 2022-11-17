@@ -9,7 +9,7 @@
 #include "memory.h"
 #include "vm.h"
 #include "native_fn.h"
-#include "lxglobals.h"
+#include "lx/lxglobals.h"
 
 VM vm;
 

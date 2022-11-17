@@ -6,8 +6,8 @@
 #include "chunk.h"
 #include "debug.h"
 #include "vm.h"
-#include "lxlx.h"
-#include "lxversion.h"
+#include "lx/lxlx.h"
+#include "lx/lxversion.h"
 
 typedef void (*OptHandler)(int argc, const char* argv[]);
 

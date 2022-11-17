@@ -12,7 +12,7 @@ lxglobals:
 	./scripts/build-globals.sh
 
 lxversion:
-	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > lxversion.h
+	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > lx/lxversion.h
 
 prepare: lxlx lxglobals lxversion
 	@mkdir -p out

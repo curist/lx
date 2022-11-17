@@ -1,5 +1,5 @@
 .ccls-cache
 out
-lxcompiler.h
+lxlx.h
 lxglobals.h
-version.h
+lxversion.h

@@ -6,8 +6,8 @@
 #include "chunk.h"
 #include "debug.h"
 #include "vm.h"
-#include "lxcompiler.h"
-#include "version.h"
+#include "lxlx.h"
+#include "lxversion.h"
 
 typedef void (*OptHandler)(int argc, const char* argv[]);
 
@@ -82,7 +82,7 @@ void handleRun(int argc, const char* argv[]) {
 
 void handleCompile(int argc, const char* argv[]) {
   initVM();
-  InterpretResult result = interpret((uint8_t*)lxcompiler_bytecode);
+  InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
   freeVM();
 
   if (result == INTERPRET_LOADOBJ_ERROR) exit(65);

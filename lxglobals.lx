@@ -39,4 +39,3 @@ fn filter(arr, cb) {
   })
 }
 
-// TODO: use stderr

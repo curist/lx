@@ -1,5 +1,4 @@
 .DEFAULT_GOAL := build
-# let's use https://github.com/siu/minunit to unit test some
 
 GITHASH = $(shell git rev-parse --short HEAD)
 ARCH = $(shell uname)
@@ -20,14 +19,16 @@ out:
 prepare: out lxlx lxglobals lxversion
 
 build: prepare
-	gcc -DDEBUG *.c -o out/clox
+	cc -DDEBUG *.c -o out/lx
 
 wasm: prepare
-	wasicc *.c -o out/wlx
+	zig cc -D_WASI_EMULATED_PROCESS_CLOCKS \
+		-lwasi-emulated-process-clocks \
+		-target wasm32-wasi *.c -o out/lx.wasm
 
 release: prepare
-	gcc -Wall -O3 *.c -o out/clox
+	cc -Wall -O3 *.c -o out/lx
 
 run: build
-	./out/clox run /tmp/current.lxobj
+	./out/lx run /tmp/current.lxobj
 

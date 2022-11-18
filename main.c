@@ -224,12 +224,12 @@ static void handleVersion(int argc, const char* argv[]) {
 }
 
 Option options[] = {
-  {"run",        "Run a Lx source or obj file",  handleRun},
-  {"repl",       "Start Lx REPL",                handleRepl},
-  {"compile",    "Compile Lx source to lxobj",   handleCompile},
-  {"disasm",     "Disaseemble Lx object",        handleDisasm},
-  {"version",    "Print Lx version",             handleVersion},
-  {"help",       "Print this helpful page",      handleHelp},
+  {"run",        "Run source or obj file",    handleRun},
+  {"repl",       "Start REPL",                handleRepl},
+  {"compile",    "Compile source to lxobj",   handleCompile},
+  {"disasm",     "Disaseemble object",        handleDisasm},
+  {"version",    "Print version",             handleVersion},
+  {"help",       "Print this helpful page",   handleHelp},
 };
 
 static void handleHelp(int argc, const char* argv[]) {

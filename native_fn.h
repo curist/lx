@@ -21,6 +21,17 @@ static bool clockNative(int argCount, Value* args) {
   return true;
 }
 
+static bool systemNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a string.");
+    return false;
+  }
+  ObjString* s = AS_STRING(args[0]);
+  system(s->chars);
+  args[-1] = NIL_VAL;
+  return true;
+}
+
 static bool printNative(int argCount, Value* args) {
   for (int i = 0; i < argCount; i++) {
     if (i > 0) printf(" ");
@@ -534,5 +545,8 @@ void defineBuiltinNatives() {
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
   defineNative("slurp", slurpNative);
+#ifndef WASM
+  defineNative("system", systemNative);
+#endif
 }
 #endif

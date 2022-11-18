@@ -22,7 +22,7 @@ build: prepare
 	cc -DDEBUG *.c -o out/lx
 
 wasm: prepare
-	zig cc -D_WASI_EMULATED_PROCESS_CLOCKS \
+	zig cc -DWASM -D_WASI_EMULATED_PROCESS_CLOCKS \
 		-lwasi-emulated-process-clocks \
 		-target wasm32-wasi *.c -o out/lx.wasm
 

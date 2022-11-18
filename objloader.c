@@ -404,7 +404,8 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
       if (IS_NUMBER(functions.values[i])) {
         int index = AS_NUMBER(functions.values[i]);
         ObjFunction* func = AS_FUNCTION(functions.values[index]);
-        printf("[%d] %s -> [%d] \n\n", i, func->filename->chars, index);
+        printf("[%d] %s -> [%d] \n\n",
+            i, func->filename != NULL ? func->filename->chars : "[unknown]", index);
         continue;
       }
 

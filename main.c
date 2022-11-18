@@ -19,6 +19,46 @@ typedef struct {
 
 static void handleHelp(int argc, const char* argv[]);
 
+static bool checkIsLxObj(const char* path) {
+  FILE* file = fopen(path, "rb");
+  if (file == NULL) {
+    fprintf(stderr, "Could not open file \"%s\".\n", path);
+    exit(74);
+  }
+
+  fseek(file, 0L, SEEK_END);
+  size_t fileSize = ftell(file);
+  rewind(file);
+
+  uint8_t* buffer = (uint8_t*)malloc(fileSize);
+  if (buffer == NULL) {
+    fprintf(stderr, "Not enough memory to read \"%s\".\n", path);
+    exit(74);
+  }
+  size_t bytesRead = fread(buffer, sizeof(uint8_t), fileSize, file);
+  if (bytesRead < fileSize) {
+    fprintf(stderr, "Could not read file \"%s\".\n", path);
+    exit(74);
+  }
+  // basic lxobj header check
+  if (fileSize < 20) {
+    return false;
+  }
+  size_t obj_size = 0;
+  obj_size += buffer[4];
+  obj_size += buffer[5] << 8;
+  obj_size += buffer[6] << 16;
+  obj_size += buffer[7] << 24;
+
+  if (fileSize != obj_size) {
+    return false;
+  }
+
+  fclose(file);
+  free(buffer);
+  return true;
+}
+
 static uint8_t* readFile(const char* path) {
   FILE* file = fopen(path, "rb");
   if (file == NULL) {
@@ -69,15 +109,6 @@ static void runFile(const char* path) {
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
-static void handleRunObject(int argc, const char* argv[]) {
-  if (argc <= 2) {
-    fprintf(stderr, "Usage: %s runo <lxobj>\n", argv[0]);
-    return;
-  }
-
-  runFile(argv[2]);
-}
-
 static void handleCompile(int argc, const char* argv[]) {
   InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
 
@@ -107,6 +138,17 @@ static void handleCompileAndRun(int argc, const char* argv[]) {
 
   if (result == INTERPRET_LOADOBJ_ERROR) exit(65);
   if (result == INTERPRET_RUNTIME_ERROR) exit(70);
+}
+
+static void handleRun(int argc, const char* argv[]) {
+  if (argc <= 2) {
+    fprintf(stderr, "Usage: %s run <lxfile>\n", argv[0]);
+    return;
+  }
+  if (checkIsLxObj(argv[2])) {
+    return runFile(argv[2]);
+  }
+  handleCompileAndRun(argc, argv);
 }
 
 static void handleRepl(int argc, const char* argv[]) {
@@ -162,12 +204,12 @@ static void handleVersion(int argc, const char* argv[]) {
 }
 
 Option options[] = {
-  {"run",        "Compile Lx source and run it", handleCompileAndRun},
-  {"runo",       "Run a lxobj file",             handleRunObject},
+  {"run",        "Run a Lx source or obj file",  handleRun},
   {"repl",       "Start Lx REPL",                handleRepl},
   {"compile",    "Compile Lx source to lxobj",   handleCompile},
+  // TODO: add disasm command
   {"version",    "Print Lx version",             handleVersion},
-  {"help",       "Print this",                   handleHelp},
+  {"help",       "Print this helpful page",      handleHelp},
 };
 
 static void handleHelp(int argc, const char* argv[]) {

@@ -88,11 +88,8 @@ static void handleCompile(int argc, const char* argv[]) {
 static void handleCompileAndRun(int argc, const char* argv[]) {
   InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
   Value value;
-  if (!tableGet(&vm.globals, OBJ_VAL(COPY_CSTRING("__lx_result__")), &value)) {
-    fprintf(stderr, "failed to compile lxobj\n");
-    freeVM();
-    return exit(65);
-  } else if (!IS_ARRAY(value)) {
+  if (!tableGet(&vm.globals, CSTRING_VAL("__lx_result__"), &value) ||
+      !IS_ARRAY(value)) {
     fprintf(stderr, "failed to compile lxobj\n");
     freeVM();
     return exit(65);
@@ -116,7 +113,7 @@ static void handleRepl(int argc, const char* argv[]) {
   char line[1024];
 
   // intern the key
-  push(OBJ_VAL(COPY_CSTRING("__lx_input__")));
+  push(CSTRING_VAL("__lx_input__"));
   pop();
 
   ObjString* key = COPY_CSTRING("__lx_input__");
@@ -137,7 +134,7 @@ static void handleRepl(int argc, const char* argv[]) {
 
     interpret((uint8_t*)lxlx_bytecode);
 
-    if (!tableGet(&vm.globals, OBJ_VAL(COPY_CSTRING("__lx_result__")), &value)) {
+    if (!tableGet(&vm.globals, CSTRING_VAL("__lx_result__"), &value)) {
       fprintf(stderr, "failed to compile lxobj\n");
       return exit(65);
     } else if (IS_STRING(value)) {

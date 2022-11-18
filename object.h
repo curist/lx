@@ -24,6 +24,7 @@
 #define AS_ARRAY(value)        (((ObjArray*)AS_OBJ(value))->array)
 
 #define COPY_CSTRING(string)   copyString(string, (int)strlen(string))
+#define CSTRING_VAL(string)    OBJ_VAL(copyString(string, (int)strlen(string)))
 
 typedef enum {
   OBJ_CLOSURE,

@@ -22,6 +22,9 @@ prepare: out lxlx lxglobals lxversion
 build: prepare
 	gcc -DDEBUG *.c -o out/clox
 
+wasm: prepare
+	wasicc *.c -o out/wlx
+
 release: prepare
 	gcc -Wall -O3 *.c -o out/clox
 

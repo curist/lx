@@ -5,10 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define NAN_BOXING
+extern int LX_ARGC;
+extern const char** LX_ARGV;
 
-int LX_ARGC;
-const char** LX_ARGV;
+#define NAN_BOXING
 
 #ifdef DEBUG
 #define DEBUG_TRACE_EXECUTION

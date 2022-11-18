@@ -11,7 +11,6 @@
 
 void defineBuiltinNatives();
 
-
 // ---- start of native function declarations ----
 // ---- start of native function declarations ----
 // ---- start of native function declarations ----

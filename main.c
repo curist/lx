@@ -123,11 +123,11 @@ static void handleRepl(int argc, const char* argv[]) {
   Value value;
 
   for (;;) {
-    printf("> ");
+    fprintf(stderr, "> ");
 
     char* read = NULL;
     if (!(read = fgets(line, sizeof(line), stdin))) {
-      printf("\n");
+      fprintf(stderr, "\n");
       break;
     }
     ObjString* source = COPY_CSTRING(read);

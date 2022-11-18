@@ -15,7 +15,7 @@ typedef struct {
   ChunkValueIndex* values;
 } ChunkIndexes;
 
-ObjFunction* loadObj(uint8_t* bytes);
+ObjFunction* loadObj(uint8_t* bytes, bool printCode);
 
 typedef enum {
   CHUNK_TYPE_REF,

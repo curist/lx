@@ -6,6 +6,7 @@
 #include "chunk.h"
 #include "debug.h"
 #include "vm.h"
+#include "objloader.h"
 #include "lx/lxlx.h"
 #include "lx/lxversion.h"
 
@@ -199,6 +200,17 @@ static void handleRepl(int argc, const char* argv[]) {
   }
 }
 
+static void handleDisasm(int argc, const char* argv[]) {
+  if (argc <= 2) {
+    fprintf(stderr, "Usage: %s disasm <lxobj>\n", argv[0]);
+    return;
+  }
+
+  uint8_t* obj = readFile(argv[2]);
+  loadObj(obj, true);
+  free(obj);
+}
+
 static void handleVersion(int argc, const char* argv[]) {
   printf("lx version %s\n", LX_VERSION);
 }
@@ -207,7 +219,7 @@ Option options[] = {
   {"run",        "Run a Lx source or obj file",  handleRun},
   {"repl",       "Start Lx REPL",                handleRepl},
   {"compile",    "Compile Lx source to lxobj",   handleCompile},
-  // TODO: add disasm command
+  {"disasm",     "Disaseemble Lx object",        handleDisasm},
   {"version",    "Print Lx version",             handleVersion},
   {"help",       "Print this helpful page",      handleHelp},
 };

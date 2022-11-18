@@ -346,7 +346,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   return func;
 }
 
-ObjFunction* loadObj(uint8_t* bytes) {
+ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
   if (!objIsValid(bytes)) {
     return NULL;
   }
@@ -399,24 +399,24 @@ ObjFunction* loadObj(uint8_t* bytes) {
 
   for (int i = 0; i < chunks_count - shared_module_count; i++) pop();
 
-#ifdef DEBUG_PRINT_CODE
-  for (int i = 0; i < functions.count; i++) {
-    if (IS_NUMBER(functions.values[i])) {
-      int index = AS_NUMBER(functions.values[i]);
-      ObjFunction* func = AS_FUNCTION(functions.values[index]);
-      printf("[%d] %s -> [%d] \n\n", i, func->filename->chars, index);
-      continue;
+  if (printCode) {
+    for (int i = 0; i < functions.count; i++) {
+      if (IS_NUMBER(functions.values[i])) {
+        int index = AS_NUMBER(functions.values[i]);
+        ObjFunction* func = AS_FUNCTION(functions.values[index]);
+        printf("[%d] %s -> [%d] \n\n", i, func->filename->chars, index);
+        continue;
+      }
+
+      ObjFunction* func = AS_FUNCTION(functions.values[i]);
+
+      printf("[%d] ", i);
+      disassembleChunk(&func->chunk,
+          func->filename != NULL ? func->filename->chars : "[unknown]",
+          func->name != NULL ? func->name->chars : "[script]", true);
     }
-
-    ObjFunction* func = AS_FUNCTION(functions.values[i]);
-
-    printf("[%d] ", i);
-    disassembleChunk(&func->chunk,
-        func->filename != NULL ? func->filename->chars : "[unknown]",
-        func->name != NULL ? func->name->chars : "[script]", true);
   }
-  printf("================================\n\n");
-#endif
+
   freeValueArray(&functions);
   freeChunkIndexes(&chunkIndexes);
   return main;

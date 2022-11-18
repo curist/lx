@@ -731,7 +731,7 @@ DO_OP_RETURN:
 }
 
 InterpretResult interpret(uint8_t* obj) {
-  ObjFunction* function = loadObj(obj);
+  ObjFunction* function = loadObj(obj, false);
   if (function == NULL) return INTERPRET_COMPILE_ERROR;
 
   push(OBJ_VAL(function));

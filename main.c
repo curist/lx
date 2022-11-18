@@ -244,7 +244,7 @@ int main(int argc, const char* argv[]) {
 
   if (argc < 2) {
     handleHelp(argc, argv);
-    return 128;
+    return 28;
   }
 
   const char* cmd = argv[1];
@@ -260,7 +260,7 @@ int main(int argc, const char* argv[]) {
   }
   if (handler == NULL) {
     handleHelp(argc, argv);
-    return 128;
+    return 28;
   }
 
   initVM();

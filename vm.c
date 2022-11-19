@@ -259,6 +259,7 @@ static InterpretResult run() {
     &&DO_OP_CLOSURE,
     &&DO_OP_CLOSE_UPVALUE,
     &&DO_OP_RETURN,
+    &&DO_OP_SWAP,
   };
 
 #ifdef DEBUG_TRACE_EXECUTION
@@ -330,6 +331,14 @@ DO_OP_POP:
 DO_OP_DUP:
     push(peek(0));
     DISPATCH();
+DO_OP_SWAP:
+    {
+      Value a = pop();
+      Value b = pop();
+      push(a);
+      push(b);
+      DISPATCH();
+    }
 DO_OP_NEW_LOCAL:
     push_local(pop());
     DISPATCH();

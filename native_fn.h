@@ -399,6 +399,7 @@ static bool slurpNative(int argCount, Value* args) {
   if (buffer == NULL) {
     fprintf(stderr, "Not enough memory to read \"%s\".\n", path);
     args[-1] = CSTRING_VAL("Error: failed to open file.");
+    fclose(file);
     return false;
   }
 
@@ -406,6 +407,8 @@ static bool slurpNative(int argCount, Value* args) {
   if (bytesRead < fileSize) {
     fprintf(stderr, "Could not read file \"%s\".\n", path);
     args[-1] = CSTRING_VAL("Error: failed to read file.");
+    fclose(file);
+    free(buffer);
     return false;
   }
   args[-1] = OBJ_VAL(takeString(buffer, fileSize));

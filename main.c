@@ -43,6 +43,8 @@ static bool checkIsLxObj(const char* path) {
   }
   // basic lxobj header check
   if (fileSize < 20) {
+    fclose(file);
+    free(buffer);
     return false;
   }
   size_t obj_size = 0;
@@ -51,12 +53,13 @@ static bool checkIsLxObj(const char* path) {
   obj_size += buffer[6] << 16;
   obj_size += buffer[7] << 24;
 
+  fclose(file);
+  free(buffer);
+
   if (fileSize != obj_size) {
     return false;
   }
 
-  fclose(file);
-  free(buffer);
   return true;
 }
 
@@ -233,6 +236,8 @@ Option options[] = {
 };
 
 static void handleHelp(int argc, const char* argv[]) {
+  if (argc == 0) return exit(127);
+
   int optionCount = sizeof(options) / sizeof(Option);
   fprintf(stderr,
       "Usage:\n\n"
@@ -260,9 +265,8 @@ int main(int argc, const char* argv[]) {
   int optionCount = sizeof(options) / sizeof(Option);
   OptHandler* handler = NULL;
   for (int i = 0; i < optionCount; i++) {
-    Option opt = options[i];
-    if (strcmp(cmd, opt.name) == 0) {
-      handler = &opt.handler;
+    if (strcmp(cmd, options[i].name) == 0) {
+      handler = &options[i].handler;
       break;
     }
   }

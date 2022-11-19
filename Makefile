@@ -19,15 +19,15 @@ out:
 prepare: out lxlx lxglobals lxversion
 
 build: prepare
-	cc -DDEBUG *.c -o out/lx
+	$(CC) -DDEBUG *.c -o out/lx
+
+release: prepare
+	$(CC) -Wall -O3 *.c -o out/lx
 
 wasm: prepare
 	zig cc -DWASM -D_WASI_EMULATED_PROCESS_CLOCKS \
 		-lwasi-emulated-process-clocks \
 		-target wasm32-wasi *.c -o out/lx.wasm
-
-release: prepare
-	cc -Wall -O3 *.c -o out/lx
 
 run: build
 	./out/lx run /tmp/current.lxobj

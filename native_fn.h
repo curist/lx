@@ -330,16 +330,16 @@ static bool strNative(int argCount, Value* args) {
   if (IS_NUMBER(arg)) {
     double num = AS_NUMBER(arg);
     int64_t val_i = num;
-    char* str;
+    char str[20];
     if (num == val_i) {
-      asprintf(&str, "%lld", val_i);
+      snprintf(str, sizeof(str), "%lld", val_i);
     } else {
-      asprintf(&str, "%f", num);
+      snprintf(str, sizeof(str), "%f", num);
     }
     args[-1] = CSTRING_VAL(str);
-    free(str);
   } else if (IS_BOOL(arg)) {
-    args[-1] = CSTRING_VAL(AS_BOOL(arg) ? "true" : "false");
+    char* s = AS_BOOL(arg) ? "true" : "false";
+    args[-1] = CSTRING_VAL(s);
   } else if (IS_NIL(arg)) {
     args[-1] = CSTRING_VAL("nil");
   } else if (IS_STRING(arg)) {

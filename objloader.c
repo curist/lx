@@ -126,7 +126,7 @@ bool objIsValid(uint8_t* bytes) {
 
     if (total_size + 4 + chunk_size > obj_size) {
       // ensure this chunk won't exceed total object size
-      fprintf(stderr, "Invalid lxobj: chunk %d size is too big(%ld).\n", i, chunk_size);
+      fprintf(stderr, "Invalid lxobj: chunk %d size is too big(%zu).\n", i, chunk_size);
       return false;
     }
 
@@ -135,7 +135,7 @@ bool objIsValid(uint8_t* bytes) {
     ptr += 2 + chunkNameLength;
     chunk_size_sofar += 2 + chunkNameLength;
     if (chunk_size_sofar > chunk_size) {
-      fprintf(stderr, "Invalid lxobj: chunk %d name length is too big(%ld).\n", i, chunkNameLength);
+      fprintf(stderr, "Invalid lxobj: chunk %d name length is too big(%zu).\n", i, chunkNameLength);
       return false;
     }
 
@@ -143,7 +143,7 @@ bool objIsValid(uint8_t* bytes) {
     chunk_size_sofar += code_size;
     ptr += 4 + code_size;
     if (chunk_size_sofar > chunk_size) {
-      fprintf(stderr, "Invalid lxobj: chunk %d code size is too big(%ld).\n", i, code_size);
+      fprintf(stderr, "Invalid lxobj: chunk %d code size is too big(%zu).\n", i, code_size);
       return false;
     }
 
@@ -151,7 +151,7 @@ bool objIsValid(uint8_t* bytes) {
     chunk_size_sofar += 4 + constant_size;
     ptr += 4 + constant_size;
     if (chunk_size_sofar > chunk_size) {
-      fprintf(stderr, "Invalid lxobj: chunk %d constants size is too big(%ld).\n", i, constant_size);
+      fprintf(stderr, "Invalid lxobj: chunk %d constants size is too big(%zu).\n", i, constant_size);
       return false;
     }
 
@@ -160,7 +160,7 @@ bool objIsValid(uint8_t* bytes) {
       chunk_size_sofar += 4 + debug_section_size;
       ptr += 4 + debug_section_size;
       if (chunk_size_sofar > chunk_size) {
-        fprintf(stderr, "Invalid lxobj: chunk %d debug section size is too big(%ld).\n", i, debug_section_size);
+        fprintf(stderr, "Invalid lxobj: chunk %d debug section size is too big(%zu).\n", i, debug_section_size);
         return false;
       }
     }

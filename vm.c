@@ -235,8 +235,6 @@ static InterpretResult run() {
     &&DO_OP_SET_GLOBAL,
     &&DO_OP_GET_UPVALUE,
     &&DO_OP_SET_UPVALUE,
-    &&DO_OP_GET_PROPERTY,
-    &&DO_OP_SET_PROPERTY,
     &&DO_OP_GET_BY_INDEX,
     &&DO_OP_SET_BY_INDEX,
     &&DO_OP_GREATER,
@@ -391,44 +389,6 @@ DO_OP_SET_UPVALUE:
     {
       uint8_t slot = READ_BYTE();
       *frame->closure->upvalues[slot]->location = peek(0);
-      DISPATCH();
-    }
-DO_OP_GET_PROPERTY:
-    {
-      if (!IS_HASHMAP(peek(0))) {
-        frame->ip = ip;
-        runtimeError("Only hashmap have properties.");
-        return INTERPRET_RUNTIME_ERROR;
-      }
-
-      Table* table = &AS_HASHMAP(peek(0));
-      ObjString* name = READ_STRING();
-
-      pop(); // That hashmap
-
-      Value value;
-      if (tableGet(table, OBJ_VAL(name), &value)) {
-        push(value);
-      } else {
-        push(NIL_VAL);
-      }
-      DISPATCH();
-    }
-DO_OP_SET_PROPERTY:
-    {
-      if (!IS_HASHMAP(peek(1))) {
-        frame->ip = ip;
-        runtimeError("Only hashmap can set properties.");
-        return INTERPRET_RUNTIME_ERROR;
-      }
-
-      Table* table = &AS_HASHMAP(peek(1));
-      tableSet(table, OBJ_VAL(READ_STRING()), peek(0));
-
-      Value value = pop();
-      pop();
-      push(value);
-
       DISPATCH();
     }
 DO_OP_GET_BY_INDEX:

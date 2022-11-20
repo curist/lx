@@ -246,6 +246,11 @@ static InterpretResult run() {
     &&DO_OP_NOT,
     &&DO_OP_MOD,
     &&DO_OP_NEGATE,
+    &&DO_OP_BIT_AND,
+    &&DO_OP_BIT_OR,
+    &&DO_OP_BIT_XOR,
+    &&DO_OP_BIT_LSHIFT,
+    &&DO_OP_BIT_RSHIFT,
     &&DO_OP_JUMP,
     &&DO_OP_JUMP_IF_TRUE,
     &&DO_OP_JUMP_IF_FALSE,
@@ -284,6 +289,17 @@ static InterpretResult run() {
       double b = AS_NUMBER(pop()); \
       double a = AS_NUMBER(pop()); \
       push(valueType(a op b)); \
+    } while (false)
+#define BIT_BINARY_OP(op) \
+    do { \
+      if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) { \
+        frame->ip = ip; \
+        runtimeError("Operands must be numbers."); \
+        return INTERPRET_RUNTIME_ERROR; \
+      } \
+      int b = AS_NUMBER(pop()); \
+      int a = AS_NUMBER(pop()); \
+      push(NUMBER_VAL(a op b)); \
     } while (false)
 
   DISPATCH();
@@ -574,6 +590,21 @@ DO_OP_NEGATE:
       push(NUMBER_VAL(-AS_NUMBER(pop())));
       DISPATCH();
     }
+DO_OP_BIT_AND:
+    BIT_BINARY_OP(&);
+    DISPATCH();
+DO_OP_BIT_OR:
+    BIT_BINARY_OP(|);
+    DISPATCH();
+DO_OP_BIT_XOR:
+    BIT_BINARY_OP(^);
+    DISPATCH();
+DO_OP_BIT_LSHIFT:
+    BIT_BINARY_OP(<<);
+    DISPATCH();
+DO_OP_BIT_RSHIFT:
+    BIT_BINARY_OP(>>);
+    DISPATCH();
 DO_OP_ASSOC:
     {
       Value hashmap = peek(2);
@@ -697,6 +728,7 @@ DO_OP_RETURN:
 #undef READ_CONSTANT
 #undef READ_STRING
 #undef BINARY_OP
+#undef BIT_BINARY_OP
 }
 
 InterpretResult interpret(uint8_t* obj) {

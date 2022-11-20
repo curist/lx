@@ -338,7 +338,7 @@ static bool strNative(int argCount, Value* args) {
     }
     args[-1] = CSTRING_VAL(str);
   } else if (IS_BOOL(arg)) {
-    char* s = AS_BOOL(arg) ? "true" : "false";
+    const char* s = AS_BOOL(arg) ? "true" : "false";
     args[-1] = CSTRING_VAL(s);
   } else if (IS_NIL(arg)) {
     args[-1] = CSTRING_VAL("nil");

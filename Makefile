@@ -29,6 +29,10 @@ wasm: prepare
 		-lwasi-emulated-process-clocks \
 		-target wasm32-wasi *.c -o out/lx.wasm
 
+EMFLAGS=-lembind -sALLOW_MEMORY_GROWTH=1 -sASYNCIFY
+emcc: prepare
+	emcc -Wall -O3 $(EMFLAGS) *.c -o out/lx.js
+
 run: build
 	./out/lx run /tmp/current.lxobj
 

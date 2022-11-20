@@ -10,6 +10,27 @@
 #include "lx/lxlx.h"
 #include "lx/lxversion.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+EM_ASYNC_JS(char*, js_prompt, (), {
+  const rl = require('readline').createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  const line = await new Promise((resolve) => {
+    rl.question('> ', line => {
+      rl.close();
+      return resolve(line);
+    });
+  });
+  var lengthBytes = lengthBytesUTF8(line)+1;
+  var heap = _malloc(lengthBytes);
+  stringToUTF8(line, heap, lengthBytes);
+  return heap;
+});
+#endif
+
 typedef void (*OptHandler)(int argc, const char* argv[]);
 
 typedef struct {
@@ -164,7 +185,9 @@ static void handleRun(int argc, const char* argv[]) {
 }
 
 static void handleRepl(int argc, const char* argv[]) {
+#ifndef __EMSCRIPTEN__
   char line[1024];
+#endif
 
   // intern the key
   push(CSTRING_VAL("__lx_input__"));
@@ -174,6 +197,9 @@ static void handleRepl(int argc, const char* argv[]) {
   Value value;
 
   for (;;) {
+#ifdef __EMSCRIPTEN__
+    char* read = js_prompt();
+#else
     fprintf(stderr, "> ");
 
     char* read = NULL;
@@ -181,6 +207,7 @@ static void handleRepl(int argc, const char* argv[]) {
       fprintf(stderr, "\n");
       break;
     }
+#endif
     ObjString* source = COPY_CSTRING(read);
     push(OBJ_VAL(source));
     tableSet(&vm.globals, OBJ_VAL(key), OBJ_VAL(source));
@@ -208,6 +235,9 @@ static void handleRepl(int argc, const char* argv[]) {
     }
     interpret(obj);
     free(obj);
+#ifdef __EMSCRIPTEN__
+    free(read);
+#endif
   }
 }
 

@@ -225,6 +225,7 @@ static InterpretResult run() {
     &&DO_OP_EQUAL,
     &&DO_OP_POP,
     &&DO_OP_DUP,
+    &&DO_OP_SWAP,
     &&DO_OP_NEW_LOCAL,
     &&DO_OP_POP_LOCAL,
     &&DO_OP_GET_LOCAL,
@@ -259,7 +260,6 @@ static InterpretResult run() {
     &&DO_OP_CLOSURE,
     &&DO_OP_CLOSE_UPVALUE,
     &&DO_OP_RETURN,
-    &&DO_OP_SWAP,
   };
 
 #ifdef DEBUG_TRACE_EXECUTION

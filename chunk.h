@@ -14,6 +14,7 @@ typedef enum {
   OP_EQUAL,
   OP_POP,
   OP_DUP,
+  OP_SWAP,
   OP_NEW_LOCAL,
   OP_POP_LOCAL,
   OP_GET_LOCAL,
@@ -48,7 +49,6 @@ typedef enum {
   OP_CLOSURE,
   OP_CLOSE_UPVALUE,
   OP_RETURN,
-  OP_SWAP,
 } OpCode;
 
 typedef struct {

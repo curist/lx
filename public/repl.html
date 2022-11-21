@@ -14,7 +14,18 @@ pre#output {
   word-wrap: break-all;
   white-space: pre-wrap;
   font-size: 16px;
-  height: 30vh;
+  height: 25vh;
+}
+#output > .lxcmd {
+  color: #59c416;
+  cursor: pointer;
+}
+#output > .lxcmd:before {
+  content: "> ";
+  color: black;
+}
+#output > .err {
+  color: #dc597f;
 }
 #repl-input {
   width: 100%;
@@ -23,11 +34,21 @@ pre#output {
 </style>
   </head>
   <body>
+    <h2>Lx programming language</h2>
+    <p>Yet another <a href="https://github.com/munificent/craftinginterpreters">Lox</a> derived programming language</p>
+    <h3>Lx is...</h3>
+    <ul>
+      <li>Dynamic</li>
+      <li>Minimal</li>
+      <li>Almost everything is expression</li>
+      <li>(Half) self hosted</li>
+    </ul>
+    <h3>A bare REPL</h3>
     <pre id="output"></pre>
     <form id="repl-input-form">
       <input id="repl-input" autofocus
         autocapitalize="off" autocomplete="off" autocorrect="off"
-        value="Lx.globals()->each(_1(print))">
+        value="keys(Lx)->each(_1(print))">
       </input>
     </form>
     <script type="module" src="./repl.js"></script>

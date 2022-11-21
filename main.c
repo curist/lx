@@ -13,7 +13,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 EM_ASYNC_JS(char*, js_prompt, (), {
-  const line = prompt('>');
+  const line = await getLineInput();
   var lengthBytes = lengthBytesUTF8(line)+1;
   var heap = _malloc(lengthBytes);
   stringToUTF8(line, heap, lengthBytes);

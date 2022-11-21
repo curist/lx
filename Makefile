@@ -36,7 +36,6 @@ EMFLAGS=-sASYNCIFY -sINVOKE_RUN=0 -sENVIRONMENT=web \
 				-sEXPORT_ES6 -sMODULARIZE -sEXPORTED_FUNCTIONS=_runRepl
 emcc: public prepare
 	emcc -Wall -O3 $(EMFLAGS) *.c -o public/lx.js
-	cp emscripten/* public/
 
 run: build
 	./out/lx run /tmp/current.lxobj

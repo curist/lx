@@ -30,10 +30,9 @@ wasm: prepare
 		-target wasm32-wasi *.c -o out/lx.wasm
 
 EMFLAGS=-sASYNCIFY -sINVOKE_RUN=0 -sENVIRONMENT=web \
-				-sEXPORT_ES6 -sMODULARIZE -sEXPORTED_FUNCTIONS=_main \
-				-sEXPORTED_RUNTIME_METHODS=stringToUTF8,setValue
+				-sEXPORT_ES6 -sMODULARIZE -sEXPORTED_FUNCTIONS=_runRepl
 emcc: prepare
-	emcc -Wall -O1 $(EMFLAGS) *.c -o out/lx.js
+	emcc -Wall -O3 $(EMFLAGS) *.c -o out/lx.js
 	cp emscripten/repl.html out/lx.html
 
 run: build

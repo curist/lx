@@ -153,7 +153,7 @@ Lx.globals()->each(_1(print))
 
 ## Bulitin functions
 
-Lx currently has enough builtin functions to compile itself, and a few other QOL collection functions, it could be checked with `Lx.globals()`, to see all of them.
+Lx currently has enough of builtin functions to compile itself, and a few other QOL collection functions, those could be checked with `Lx.globals()`.
 
 
 # License

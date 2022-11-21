@@ -9,7 +9,7 @@ Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived pr
 * Compiled
 * Alpha quality
 * Almost everything is expression
-* (Half) self hosted; Lx can compile itself, but relies on a c runtime.
+* (Half) self hosted; Lx can compile itself, but relies on a C runtime.
 
 ## Lx is not
 * Object oriented; Lx doesn't come with class.
@@ -122,20 +122,18 @@ let ifResult = if foo {
   print("then clause")
 } else if {
   "else if"
-} // if-else evaluats to last evaluted result, or nil
+} // if-else resolves to last evaluted result, or nil
 
 // loops
 for true { print("endsless") } // while loop
 let result = for let i = 0; i < 10; i = i + 1 {
-  // traditionaly loop
+  // traditional loop
   print(i)
   i
 } // for loop resolves to last evaluated value, => result == 9
 
 // break
 result = for let i = 0; i < 10; i = i + 1 {
-  // traditionaly loop
-  print(i)
   if i == 3 { break "ohnoez" } // break could optionally pass a value
   i
 } // result == "ohnoez"

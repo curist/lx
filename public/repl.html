@@ -3,16 +3,30 @@
   <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Lx repl</title>
-    <style>
-      textarea { font-family: monospace; width: 80%; }
-      input { outline: 1; }
-    </style>
+    <link rel="stylesheet" href="https://unpkg.com/sakura.css/css/sakura.css" type="text/css">
+<style>
+pre#output {
+  margin: 0;
+  padding: 5px 10px;
+  line-height: 1.3em;
+  word-wrap: break-all;
+  white-space: pre-wrap;
+  font-size: 16px;
+  height: 30vh;
+}
+#repl-input {
+  width: 100%;
+  font-size: 16px;
+}
+</style>
   </head>
   <body>
-    <textarea id="output" rows="8"></textarea>
-    <form id="repl-input-form" autocomplete="off">
+    <pre id="output"></pre>
+    <form id="repl-input-form">
       <input id="repl-input" autofocus
+        autocapitalize="off" autocomplete="off" autocorrect="off"
         value="Lx.globals()->each(_1(print))">
       </input>
     </form>

@@ -21,17 +21,6 @@ static bool clockNative(int argCount, Value* args) {
   return true;
 }
 
-static bool systemNative(int argCount, Value* args) {
-  if (argCount != 1 || !IS_STRING(args[0])) {
-    args[-1] = CSTRING_VAL("Error: Arg must be a string.");
-    return false;
-  }
-  ObjString* s = AS_STRING(args[0]);
-  system(s->chars);
-  args[-1] = NIL_VAL;
-  return true;
-}
-
 static bool printNative(int argCount, Value* args) {
   for (int i = 0; i < argCount; i++) {
     if (i > 0) printf(" ");
@@ -363,6 +352,18 @@ static bool strNative(int argCount, Value* args) {
   return true;
 }
 
+#ifndef __EMSCRIPTEN__
+static bool systemNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a string.");
+    return false;
+  }
+  ObjString* s = AS_STRING(args[0]);
+  system(s->chars);
+  args[-1] = NIL_VAL;
+  return true;
+}
+
 static bool exitNative(int argCount, Value* args) {
   int exitCode = 0;
   if (argCount == 0) {
@@ -417,6 +418,8 @@ static bool slurpNative(int argCount, Value* args) {
 
   return true;
 }
+#endif
+
 
 static bool toLowerCaseNative(int argCount, Value* args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
@@ -518,11 +521,13 @@ static void defineLxNatives() {
   pop(); pop();
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
-  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "exit", exitNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toLowerCase", toLowerCaseNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toUpperCase", toUpperCaseNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "parseFloat", parseFloatNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array", doubleToUint8ArrayNative);
+#ifndef __EMSCRIPTEN__
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "exit", exitNative);
+#endif
 
   pop();
   pop();
@@ -547,9 +552,11 @@ void defineBuiltinNatives() {
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
+#ifndef __EMSCRIPTEN__
   defineNative("slurp", slurpNative);
 #ifndef WASM
   defineNative("system", systemNative);
+#endif
 #endif
 }
 #endif

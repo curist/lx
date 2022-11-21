@@ -13,17 +13,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 EM_ASYNC_JS(char*, js_prompt, (), {
-  const rl = require('readline').createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-
-  const line = await new Promise((resolve) => {
-    rl.question('> ', line => {
-      rl.close();
-      return resolve(line);
-    });
-  });
+  const line = prompt('>');
   var lengthBytes = lengthBytesUTF8(line)+1;
   var heap = _malloc(lengthBytes);
   stringToUTF8(line, heap, lengthBytes);

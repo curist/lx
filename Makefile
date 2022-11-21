@@ -16,9 +16,6 @@ lxversion:
 out:
 	@mkdir -p out
 
-public:
-	@mkdir -p public
-
 prepare: out lxlx lxglobals lxversion
 
 build: prepare
@@ -34,8 +31,8 @@ wasm: prepare
 
 EMFLAGS=-sASYNCIFY -sINVOKE_RUN=0 -sENVIRONMENT=web \
 				-sEXPORT_ES6 -sMODULARIZE -sEXPORTED_FUNCTIONS=_runRepl
-emcc: public prepare
-	emcc -Wall -O3 $(EMFLAGS) *.c -o public/lx.js
+emcc: prepare
+	emcc -Wall -O3 $(EMFLAGS) *.c -o docs/lx.js
 
 run: build
 	./out/lx run /tmp/current.lxobj

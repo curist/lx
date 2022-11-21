@@ -17,6 +17,26 @@ Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived pr
 * Inspiring; there are no big ideas in Lx.
 * That serious; it doesn't come with error handling, for ~~instance~~ example.
 
+# CLI
+
+```sh
+❯ lx version
+lx version 2022.11.20-ffe0e79 (Darwin)
+
+❯ lx
+Usage:
+
+  lx <command> [arguments]
+
+The commands are:
+  run          Run source or lxobj
+  repl         Start REPL
+  compile      Compile source to lxobj
+  disasm       Disassemble lxobj
+  version      Print version
+  help         Print this helpful page
+```
+
 # Lx in Y minutes
 
 ```javascript

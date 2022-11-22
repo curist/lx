@@ -25,14 +25,14 @@ release: prepare
 	$(CC) -Wall -O3 *.c -o out/lx
 
 wasm: prepare
-	zig cc -DWASM -D_WASI_EMULATED_PROCESS_CLOCKS \
+	zig cc -O3 -DWASM -D_WASI_EMULATED_PROCESS_CLOCKS \
 		-lwasi-emulated-process-clocks \
 		-target wasm32-wasi *.c -o out/lx.wasm
 
 EMFLAGS=-sASYNCIFY -sINVOKE_RUN=0 -sENVIRONMENT=web \
 				-sEXPORT_ES6 -sMODULARIZE -sEXPORTED_FUNCTIONS=_runRepl
 emcc: prepare
-	emcc -Wall -O3 $(EMFLAGS) *.c -o docs/lx.js
+	emcc -Wall -O3 -DWASM $(EMFLAGS) *.c -o docs/lx.js
 
 run: build
 	./out/lx run /tmp/current.lxobj

@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <ctype.h>
 
+#ifndef __EMSCRIPTEN__
+#include <wordexp.h>
+#endif
+
 #include "vm.h"
 #include "object.h"
 
@@ -359,8 +363,8 @@ static bool systemNative(int argCount, Value* args) {
     return false;
   }
   ObjString* s = AS_STRING(args[0]);
-  system(s->chars);
-  args[-1] = NIL_VAL;
+  int ret = system(s->chars) >> 8;
+  args[-1] = NUMBER_VAL(ret);
   return true;
 }
 
@@ -383,7 +387,13 @@ static bool slurpNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: slurp takes a string arg.");
     return false;
   }
-  char* path = AS_STRING(args[0])->chars;
+
+  char path[1000] = "";
+  wordexp_t exp_result;
+  wordexp(AS_STRING(args[0])->chars, &exp_result, 0);
+  strncpy(path, exp_result.we_wordv[0], sizeof(path));
+  wordfree(&exp_result);
+
   FILE* file = fopen(path, "rb");
   if (file == NULL) {
     // XXX: more unified error reporting
@@ -552,11 +562,9 @@ void defineBuiltinNatives() {
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
-#ifndef __EMSCRIPTEN__
-  defineNative("slurp", slurpNative);
 #ifndef WASM
+  defineNative("slurp", slurpNative);
   defineNative("system", systemNative);
-#endif
 #endif
 }
 #endif

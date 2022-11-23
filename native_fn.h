@@ -72,7 +72,7 @@ static bool ordNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Arg must be a single char.");
     return false;
   }
-  char ch = AS_STRING(arg)->chars[0];
+  uint8_t ch = AS_STRING(arg)->chars[0];
   args[-1] = NUMBER_VAL(ch);
   return true;
 }

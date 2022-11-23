@@ -465,7 +465,6 @@ DO_OP_GET_BY_INDEX:
         int index = AS_NUMBER(key);
         if (index >= 0 && index < s->length) {
           ch = &AS_STRING(peek(1))->chars[index];
-          *ch &= 127;
         }
         pop();
         pop();

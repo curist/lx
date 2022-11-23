@@ -5,6 +5,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <limits.h>
 
 #ifndef __EMSCRIPTEN__
 #include <wordexp.h>
@@ -388,7 +389,7 @@ static bool slurpNative(int argCount, Value* args) {
     return false;
   }
 
-  char path[1000] = "";
+  char path[PATH_MAX + 1] = "";
   wordexp_t exp_result;
   wordexp(AS_STRING(args[0])->chars, &exp_result, 0);
   strncpy(path, exp_result.we_wordv[0], sizeof(path));

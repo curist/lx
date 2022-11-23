@@ -69,7 +69,7 @@ static bool ordNative(int argCount, Value* args) {
   }
   Value arg = args[0];
   if (!IS_STRING(arg) || AS_STRING(arg)->length != 1) {
-    args[-1] = CSTRING_VAL("Error: Arg must be a char.");
+    args[-1] = CSTRING_VAL("Error: Arg must be a single char.");
     return false;
   }
   char ch = AS_STRING(arg)->chars[0];
@@ -271,6 +271,17 @@ static bool concatNative(int argCount, Value* args) {
   return true;
 }
 
+static uint8_t utf8CharLength(uint8_t val) {
+  if (val < 128) {
+    return 1;
+  } else if (val < 224) {
+    return 2;
+  } else if (val < 240) {
+    return 3;
+  }
+  return 4;
+}
+
 static bool rangeNative(int argCount, Value* args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: range takes 1 args.");
@@ -296,10 +307,12 @@ static bool rangeNative(int argCount, Value* args) {
 
     if (IS_STRING(arg))  {
       ObjString* s = AS_STRING(arg);
-      for (int i = 0; i < s->length; i++) {
-        push(OBJ_VAL(copyString(&s->chars[i], 1)));
+      for (int i = 0; i < s->length; ) {
+        uint8_t charlen = utf8CharLength(s->chars[i]);
+        push(OBJ_VAL(copyString(&s->chars[i], charlen)));
         writeValueArray(&AS_ARRAY(args[-1]), vm.stackTop[-1]);
         pop();
+        i += charlen;
       }
     } else if(IS_HASHMAP(arg)) {
       Table* table = &AS_HASHMAP(arg);

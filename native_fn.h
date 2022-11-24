@@ -77,6 +77,12 @@ static bool ordNative(int argCount, Value* args) {
   return true;
 }
 
+static bool randomNative(int argCount, Value* args) {
+  double num = (double)rand() / (double)RAND_MAX;
+  args[-1] = NUMBER_VAL(num);
+  return true;
+}
+
 static bool keysNative(int argCount, Value* args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a map.");
@@ -566,6 +572,7 @@ void defineBuiltinNatives() {
   defineNative("str", strNative);
   defineNative("int", intNative);
   defineNative("ord", ordNative);
+  defineNative("random", randomNative);
   defineNative("keys", keysNative);
   defineNative("len", lenNative);
   defineNative("type", typeNative);

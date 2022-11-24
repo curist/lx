@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <string.h>
 
 #include "common.h"
@@ -281,6 +282,9 @@ void runRepl() {
 }
 
 int main(int argc, const char* argv[]) {
+  srand(time(NULL));
+  rand();
+
   LX_ARGC = argc;
   LX_ARGV = argv;
 

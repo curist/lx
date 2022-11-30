@@ -381,7 +381,7 @@ static bool readNative(int argCount, Value* args) {
   if (!(read = fgets(line, sizeof(line), stdin))) {
     args[-1] = NIL_VAL;
   } else {
-    args[-1] = CSTRING_VAL(read);
+    args[-1] = OBJ_VAL(copyString(read, (int)strlen(read) - 1));
   }
   return true;
 }

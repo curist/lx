@@ -333,7 +333,6 @@ static bool rangeNative(int argCount, Value* args) {
   return true;
 }
 
-
 static bool strNative(int argCount, Value* args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: str takes 1 arg.");
@@ -372,6 +371,17 @@ static bool strNative(int argCount, Value* args) {
   } else {
     args[-1] = CSTRING_VAL("Error: unknown type.");
     return false;
+  }
+  return true;
+}
+
+static bool readNative(int argCount, Value* args) {
+  char line[1024];
+  char* read = NULL;
+  if (!(read = fgets(line, sizeof(line), stdin))) {
+    args[-1] = NIL_VAL;
+  } else {
+    args[-1] = CSTRING_VAL(read);
   }
   return true;
 }
@@ -589,6 +599,7 @@ void defineBuiltinNatives() {
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
+  defineNative("read", readNative);
 #ifndef WASM
   defineNative("system", systemNative);
 #endif

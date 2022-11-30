@@ -4,6 +4,14 @@ GITHASH = $(shell git rev-parse --short HEAD)
 ARCH = $(shell uname)
 DATE = $(shell date "+%Y.%m.%d")
 
+CFLAGS += -Wall -Wextra -Werror -Wno-unused-parameter
+CFLAGS += -Iinclude -I.
+ifeq ($(MODE),debug)
+	CFLAGS += -DDEBUG -O0
+else
+	CFLAGS += -O3 -flto
+endif
+
 lxlx:
 	./scripts/build-lxlx.sh
 
@@ -19,21 +27,15 @@ out:
 prepare: out lxlx lxglobals lxversion
 
 build: prepare
-	$(CC) -DDEBUG *.c -o out/lx
-
-release: prepare
-	$(CC) -Wall -O3 *.c -o out/lx
+	$(CC) $(CFLAGS) src/*.c -o out/lx
 
 wasm: prepare
-	zig cc -O3 -DWASM -D_WASI_EMULATED_PROCESS_CLOCKS \
+	zig cc $(CFLAGS) -DWASM -D_WASI_EMULATED_PROCESS_CLOCKS \
 		-lwasi-emulated-process-clocks \
-		-target wasm32-wasi *.c -o out/lx.wasm
+		-target wasm32-wasi src/*.c -o out/lx.wasm
 
 EMFLAGS=-sASYNCIFY -sINVOKE_RUN=0 -sENVIRONMENT=web \
 				-sEXPORT_ES6 -sMODULARIZE -sEXPORTED_FUNCTIONS=_runRepl
 emcc: prepare
-	emcc -Wall -O3 -DWASM $(EMFLAGS) *.c -o docs/lx.js
-
-run: build
-	./out/lx run /tmp/current.lxobj
+	emcc $(CFLAGS) -DWASM $(EMFLAGS) src/*.c -o docs/lx.js
 

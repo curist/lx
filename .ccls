@@ -1,0 +1,4 @@
+cc
+%c -std=c99
+-Iinclude
+-I.

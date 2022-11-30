@@ -313,7 +313,7 @@ static bool rangeNative(int argCount, Value* args) {
 
     if (IS_STRING(arg))  {
       ObjString* s = AS_STRING(arg);
-      for (int i = 0; i < s->length; ) {
+      for (size_t i = 0; i < s->length; ) {
         uint8_t charlen = utf8CharLength(s->chars[i]);
         push(OBJ_VAL(copyString(&s->chars[i], charlen)));
         writeValueArray(&AS_ARRAY(args[-1]), vm.stackTop[-1]);
@@ -462,7 +462,7 @@ static bool toLowerCaseNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: failed to allocate memory.");
     return false;
   }
-  for (int i = 0; i < str->length; ++i) {
+  for (size_t i = 0; i < str->length; ++i) {
     s[i] = tolower(str->chars[i]);
   }
   args[-1] = OBJ_VAL(copyString(s, str->length));
@@ -480,7 +480,7 @@ static bool toUpperCaseNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: failed to allocate memory.");
     return false;
   }
-  for (int i = 0; i < str->length; ++i) {
+  for (size_t i = 0; i < str->length; ++i) {
     s[i] = toupper(str->chars[i]);
   }
   args[-1] = OBJ_VAL(copyString(s, str->length));
@@ -583,7 +583,7 @@ void defineBuiltinNatives() {
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
-#ifndef WASM
+#ifndef __EMSCRIPTEN__
   defineNative("slurp", slurpNative);
   defineNative("system", systemNative);
 #endif

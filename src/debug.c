@@ -7,7 +7,7 @@
 void disassembleChunk(Chunk* chunk, const char* filename, const char* name, bool printCode) {
   printf("%s -> %s\n================================\n", filename, name);
 
-  for (int offset = 0; offset < chunk->count;) {
+  for (size_t offset = 0; offset < chunk->count;) {
     offset = disassembleInstruction(chunk, offset, printCode);
   }
   printf("\n");

@@ -156,7 +156,7 @@ ObjString* tableFindString(Table* table, const char* chars, int length, uint32_t
       // Stop if we find an empty non-tombstone entry.
       if (IS_NIL(entry->value)) return NULL;
     } else if (IS_STRING(entry->key) &&
-        AS_STRING(entry->key)->length == length &&
+        AS_STRING(entry->key)->length == (size_t)length &&
         AS_STRING(entry->key)->hash == hash &&
         memcmp(AS_STRING(entry->key)->chars, chars, length) == 0) {
       // We found it.

@@ -100,7 +100,7 @@ bool objIsValid(uint8_t* bytes) {
 
   uint8_t* chunk_start = &bytes[32];
 
-  for (int i = 0; i < chunks_count; i++) {
+  for (size_t i = 0; i < chunks_count; i++) {
     // this chunk is this big
     uint8_t* ptr = chunk_start;
     size_t chunk_size = getSize(ptr);
@@ -126,7 +126,7 @@ bool objIsValid(uint8_t* bytes) {
 
     if (total_size + 4 + chunk_size > obj_size) {
       // ensure this chunk won't exceed total object size
-      fprintf(stderr, "Invalid lxobj: chunk %d size is too big(%zu).\n", i, chunk_size);
+      fprintf(stderr, "Invalid lxobj: chunk %zu size is too big(%zu).\n", i, chunk_size);
       return false;
     }
 
@@ -135,7 +135,7 @@ bool objIsValid(uint8_t* bytes) {
     ptr += 2 + chunkNameLength;
     chunk_size_sofar += 2 + chunkNameLength;
     if (chunk_size_sofar > chunk_size) {
-      fprintf(stderr, "Invalid lxobj: chunk %d name length is too big(%zu).\n", i, chunkNameLength);
+      fprintf(stderr, "Invalid lxobj: chunk %zu name length is too big(%zu).\n", i, chunkNameLength);
       return false;
     }
 
@@ -143,7 +143,7 @@ bool objIsValid(uint8_t* bytes) {
     chunk_size_sofar += code_size;
     ptr += 4 + code_size;
     if (chunk_size_sofar > chunk_size) {
-      fprintf(stderr, "Invalid lxobj: chunk %d code size is too big(%zu).\n", i, code_size);
+      fprintf(stderr, "Invalid lxobj: chunk %zu code size is too big(%zu).\n", i, code_size);
       return false;
     }
 
@@ -151,7 +151,7 @@ bool objIsValid(uint8_t* bytes) {
     chunk_size_sofar += 4 + constant_size;
     ptr += 4 + constant_size;
     if (chunk_size_sofar > chunk_size) {
-      fprintf(stderr, "Invalid lxobj: chunk %d constants size is too big(%zu).\n", i, constant_size);
+      fprintf(stderr, "Invalid lxobj: chunk %zu constants size is too big(%zu).\n", i, constant_size);
       return false;
     }
 
@@ -160,13 +160,13 @@ bool objIsValid(uint8_t* bytes) {
       chunk_size_sofar += 4 + debug_section_size;
       ptr += 4 + debug_section_size;
       if (chunk_size_sofar > chunk_size) {
-        fprintf(stderr, "Invalid lxobj: chunk %d debug section size is too big(%zu).\n", i, debug_section_size);
+        fprintf(stderr, "Invalid lxobj: chunk %zu debug section size is too big(%zu).\n", i, debug_section_size);
         return false;
       }
     }
 
     if (chunk_size != chunk_size_sofar) {
-      fprintf(stderr, "Invalid lxobj: chunk %d size mismatch.\n", i);
+      fprintf(stderr, "Invalid lxobj: chunk %zu size mismatch.\n", i);
       return false;
     }
 
@@ -242,7 +242,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   code_start += 4;
 
   if (!debug) {
-    for (int i = 0; i < code_size; i++) {
+    for (size_t i = 0; i < code_size; i++) {
       writeChunk(chunk, code_start[i], 1);
     }
   } else {
@@ -268,7 +268,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
     ptr++;
     uint16_t line = getShortSize(ptr);
 
-    for (int i = 0; i < code_size; i++) {
+    for (size_t i = 0; i < code_size; i++) {
       if (++repeated > repeatTimes) {
         ptr += 2;
         repeatTimes = ptr[0];
@@ -285,7 +285,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
 
   // skip reading consts total + total consts bytes size
   constSection += (1 + 4);
-  for (int i = 0; i < constsCount; i++) {
+  for (size_t i = 0; i < constsCount; i++) {
     // we are going to ^ read this many constants
     uint8_t type = constSection[0];
 
@@ -383,7 +383,7 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
     return NULL;
   }
 
-  for (int i = 0; i < chunkIndexes.count; i++) {
+  for (size_t i = 0; i < chunkIndexes.count; i++) {
     // functions[0] is main, thus i + 1
 
     ObjFunction* func;

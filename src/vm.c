@@ -462,7 +462,7 @@ DO_OP_GET_BY_INDEX:
         }
         ObjString* s = AS_STRING(peek(1));
         char* ch = NULL;
-        int index = AS_NUMBER(key);
+        size_t index = AS_NUMBER(key);
         if (index >= 0 && index < s->length) {
           ch = &AS_STRING(peek(1))->chars[index];
         }

@@ -7,7 +7,7 @@
 #include <ctype.h>
 #include <limits.h>
 
-#ifndef __EMSCRIPTEN__
+#ifndef WASM
 #include <wordexp.h>
 #endif
 
@@ -376,7 +376,7 @@ static bool strNative(int argCount, Value* args) {
   return true;
 }
 
-#ifndef __EMSCRIPTEN__
+#ifndef WASM
 static bool systemNative(int argCount, Value* args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a string.");
@@ -387,7 +387,9 @@ static bool systemNative(int argCount, Value* args) {
   args[-1] = NUMBER_VAL(ret);
   return true;
 }
+#endif
 
+#ifndef __EMSCRIPTEN__
 static bool exitNative(int argCount, Value* args) {
   int exitCode = 0;
   if (argCount == 0) {
@@ -408,11 +410,15 @@ static bool slurpNative(int argCount, Value* args) {
     return false;
   }
 
+#ifndef WASM
   char path[PATH_MAX + 1] = "";
   wordexp_t exp_result;
   wordexp(AS_STRING(args[0])->chars, &exp_result, 0);
   strncpy(path, exp_result.we_wordv[0], sizeof(path));
   wordfree(&exp_result);
+#else
+  char* path = AS_STRING(args[0])->chars;
+#endif
 
   FILE* file = fopen(path, "rb");
   if (file == NULL) {
@@ -583,9 +589,11 @@ void defineBuiltinNatives() {
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
+#ifndef WASM
+  defineNative("system", systemNative);
+#endif
 #ifndef __EMSCRIPTEN__
   defineNative("slurp", slurpNative);
-  defineNative("system", systemNative);
 #endif
 }
 #endif

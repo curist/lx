@@ -375,8 +375,8 @@ static bool strNative(int argCount, Value* args) {
   return true;
 }
 
-static bool readNative(int argCount, Value* args) {
-  char line[1024];
+static bool getlineNative(int argCount, Value* args) {
+  char line[4096];
   char* read = NULL;
   if (!(read = fgets(line, sizeof(line), stdin))) {
     args[-1] = NIL_VAL;
@@ -599,7 +599,7 @@ void defineBuiltinNatives() {
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
-  defineNative("read", readNative);
+  defineNative("getline", getlineNative);
 #ifndef WASM
   defineNative("system", systemNative);
 #endif

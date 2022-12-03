@@ -191,7 +191,7 @@ static void handleRepl(int argc, const char* argv[]) {
 #ifdef __EMSCRIPTEN__
     char* read = js_prompt();
 #else
-    fprintf(stderr, "> ");
+    printf("> ");
 
     char* read = NULL;
     if (!(read = fgets(line, sizeof(line), stdin))) {
@@ -225,6 +225,9 @@ static void handleRepl(int argc, const char* argv[]) {
       obj[i] = byte;
     }
     interpret(obj);
+    printf("=> ");
+    printValue(*vm.stackTop);
+    printf("\n");
     free(obj);
 #ifdef __EMSCRIPTEN__
     free(read);

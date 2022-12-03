@@ -137,7 +137,7 @@ void printObject(FILE* fd, Value value) {
       fprintf(fd, "<native fn: %s>", AS_NATIVE(value)->name->chars);
       break;
     case OBJ_STRING:
-      fprintf(fd, "\"%s\"", AS_CSTRING(value));
+      fprintf(fd, "%s", AS_CSTRING(value));
       break;
     case OBJ_UPVALUE:
       fprintf(fd, "upvalue");

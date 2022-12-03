@@ -1,6 +1,7 @@
 #ifndef clox_object_h
 #define clox_object_h
 
+#include <stdio.h>
 #include "common.h"
 #include "chunk.h"
 #include "value.h"
@@ -98,7 +99,7 @@ ObjString* copyString(const char* chars, int length);
 ObjUpvalue* newUpvalue(Value* slot);
 ObjHashmap* newHashmap();
 ObjArray* newArray();
-void printObject(Value value);
+void printObject(FILE* fd, Value value);
 
 static inline bool isObjType(Value value, ObjType type) {
   return IS_OBJ(value) && AS_OBJ(value)->type == type;

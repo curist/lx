@@ -29,7 +29,7 @@ static bool clockNative(int argCount, Value* args) {
 static bool printNative(int argCount, Value* args) {
   for (int i = 0; i < argCount; i++) {
     if (i > 0) printf(" ");
-    printValue(args[i]);
+    printValue(stdout, args[i]);
   }
   printf("\n");
   args[-1] = NIL_VAL;
@@ -37,12 +37,11 @@ static bool printNative(int argCount, Value* args) {
 }
 
 static bool groanNative(int argCount, Value* args) {
-  if (argCount != 1 || !IS_STRING(args[0])) {
-    args[-1] = CSTRING_VAL("Error: Arg must be a string.");
-    return false;
+  for (int i = 0; i < argCount; i++) {
+    if (i > 0) fprintf(stderr, " ");
+    printValue(stderr, args[i]);
   }
-  ObjString* s = AS_STRING(args[0]);
-  fprintf(stderr, "%s\n", s->chars);
+  fprintf(stderr, "\n");
   args[-1] = NIL_VAL;
   return true;
 }

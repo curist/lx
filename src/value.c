@@ -28,40 +28,40 @@ void freeValueArray(ValueArray* array) {
   initValueArray(array);
 }
 
-void printValue(Value value) {
+void printValue(FILE* fd, Value value) {
 #ifdef NAN_BOXING
   if (IS_BOOL(value)) {
-    printf(AS_BOOL(value) ? "true" : "false");
+    fprintf(fd, AS_BOOL(value) ? "true" : "false");
   } else if (IS_NIL(value)) {
-    printf("nil");
+    fprintf(fd, "nil");
   } else if (IS_NUMBER(value)) {
     double num = AS_NUMBER(value);
     int64_t val_i = num;
     if (num == val_i) {
-      printf("%lld", val_i);
+      fprintf(fd, "%lld", val_i);
     } else {
-      printf("%f", num);
+      fprintf(fd, "%f", num);
     }
   } else if (IS_OBJ(value)) {
-    printObject(value);
+    printObject(fd, value);
   }
 #else
   switch (value.type) {
     case VAL_BOOL:
-      printf(AS_BOOL(value) ? "true" : "false");
+      fprintf(fd, AS_BOOL(value) ? "true" : "false");
       break;
-    case VAL_NIL: printf("nil"); break;
+    case VAL_NIL: fprintf(fd, "nil"); break;
     case VAL_NUMBER: {
       double num = AS_NUMBER(value);
       int val_i = num;
       if (num == val_i) {
-        printf("%d", val_i);
+        fprintf(fd, "%d", val_i);
       } else {
-        printf("%f", num);
+        fprintf(fd, "%f", num);
       }
       break;
     }
-    case VAL_OBJ: printObject(value); break;
+    case VAL_OBJ: printObject(fd, value); break;
   }
 #endif
 }

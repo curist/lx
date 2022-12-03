@@ -35,7 +35,7 @@ static int jumpInstruction(const char* name, int sign, Chunk* chunk, int offset)
 static int constantInstruction(const char* name, Chunk* chunk, int offset) {
   uint8_t constant = chunk->code[offset + 1];
   printf("%-16s %4d '", name, constant);
-  printValue(chunk->constants.values[constant]);
+  printValue(stdout, chunk->constants.values[constant]);
   printf("'\n");
   return offset + 2;
 }
@@ -144,7 +144,7 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       offset++;
       uint8_t constant = chunk->code[offset++];
       printf("%-16s %4d ", "OP_CLOSURE", constant);
-      printValue(chunk->constants.values[constant]);
+      printValue(stdout, chunk->constants.values[constant]);
       printf("\n");
 
       ObjFunction* function = AS_FUNCTION(

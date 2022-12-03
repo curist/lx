@@ -117,38 +117,38 @@ ObjArray* newArray() {
   return array;
 }
 
-static void printFunction(ObjFunction* function) {
+static void printFunction(FILE* fd, ObjFunction* function) {
   if (function->name == NULL) {
-    printf("<script>");
+    fprintf(fd, "<script>");
     return;
   }
-  printf("<fn %s>", function->name->chars);
+  fprintf(fd, "<fn %s>", function->name->chars);
 }
 
-void printObject(Value value) {
+void printObject(FILE* fd, Value value) {
   switch (OBJ_TYPE(value)) {
     case OBJ_CLOSURE:
-      printFunction(AS_CLOSURE(value)->function);
+      printFunction(fd, AS_CLOSURE(value)->function);
       break;
     case OBJ_FUNCTION:
-      printFunction(AS_FUNCTION(value));
+      printFunction(fd, AS_FUNCTION(value));
       break;
     case OBJ_NATIVE:
-      printf("<native fn: %s>", AS_NATIVE(value)->name->chars);
+      fprintf(fd, "<native fn: %s>", AS_NATIVE(value)->name->chars);
       break;
     case OBJ_STRING:
-      printf("%s", AS_CSTRING(value));
+      fprintf(fd, "%s", AS_CSTRING(value));
       break;
     case OBJ_UPVALUE:
-      printf("upvalue");
+      fprintf(fd, "upvalue");
       break;
     case OBJ_HASHMAP:
       // TODO:
-      printf("<map>");
+      fprintf(fd, "<map>");
       break;
     case OBJ_ARRAY:
       // TODO:
-      printf("<array>");
+      fprintf(fd, "<array>");
       break;
   }
 }

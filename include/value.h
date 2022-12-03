@@ -1,6 +1,7 @@
 #ifndef clox_value_h
 #define clox_value_h
 
+#include <stdio.h>
 #include <string.h>
 
 #include "common.h"
@@ -95,6 +96,6 @@ bool valuesEqual(Value a, Value b);
 void initValueArray(ValueArray* array);
 void writeValueArray(ValueArray* array, Value value);
 void freeValueArray(ValueArray* array);
-void printValue(Value value);
+void printValue(FILE* fd, Value value);
 
 #endif

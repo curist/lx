@@ -226,7 +226,7 @@ static void handleRepl(int argc, const char* argv[]) {
     }
     interpret(obj);
     printf("=> ");
-    printValue(*vm.stackTop);
+    printValue(stdout, *vm.stackTop);
     printf("\n");
     free(obj);
 #ifdef __EMSCRIPTEN__

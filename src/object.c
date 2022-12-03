@@ -137,18 +137,41 @@ void printObject(FILE* fd, Value value) {
       fprintf(fd, "<native fn: %s>", AS_NATIVE(value)->name->chars);
       break;
     case OBJ_STRING:
-      fprintf(fd, "%s", AS_CSTRING(value));
+      fprintf(fd, "\"%s\"", AS_CSTRING(value));
       break;
     case OBJ_UPVALUE:
       fprintf(fd, "upvalue");
       break;
     case OBJ_HASHMAP:
-      // TODO:
-      fprintf(fd, "<map>");
-      break;
+      {
+        fprintf(fd, ".{");
+        Table* hashmap = &AS_HASHMAP(value);
+
+        bool printed = false;
+
+        for (int i = hashmap->capacity - 1; i >= 0; --i) {
+          Entry* entry = &hashmap->entries[i];
+          if (!IS_NIL(entry->key)) {
+            if (printed) fprintf(fd, ",");
+            else printed = true;
+            printValue(fd, entry->key);
+            fprintf(fd, ":");
+            printValue(fd, entry->value);
+          }
+        }
+        fprintf(fd, "}");
+        break;
+      }
     case OBJ_ARRAY:
-      // TODO:
-      fprintf(fd, "<array>");
-      break;
+      {
+        ValueArray* values = &AS_ARRAY(value);
+        fprintf(fd, "[");
+        for (int i = 0; i < values->count; ++i) {
+          if (i > 0) fprintf(fd, ",");
+          printValue(fd, values->values[i]);
+        }
+        fprintf(fd, "]");
+        break;
+      }
   }
 }

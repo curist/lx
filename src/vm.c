@@ -738,7 +738,7 @@ InterpretResult interpret(uint8_t* obj) {
   push(OBJ_VAL(function));
   ObjClosure* closure = newClosure(function);
   pop();
-  push(OBJ_VAL(closure));
+  push_local(OBJ_VAL(closure));
   call(closure, 0);
 
   return run();

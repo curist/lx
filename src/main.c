@@ -243,6 +243,10 @@ static void handleDisasm(int argc, const char* argv[]) {
   free(obj);
 }
 
+static void handleLsp(int argc, const char* argv[]) {
+  interpret((uint8_t*)lxlx_bytecode);
+}
+
 static void handleVersion(int argc, const char* argv[]) {
   printf("lx version %s\n", LX_VERSION);
 }
@@ -252,6 +256,7 @@ Option options[] = {
   {"repl",       "Start REPL",                handleRepl},
   {"compile",    "Compile source to lxobj",   handleCompile},
   {"disasm",     "Disassemble lxobj",         handleDisasm},
+  {"lsp",        "Start LSP",                 handleLsp},
   {"version",    "Print version",             handleVersion},
   {"help",       "Print this helpful page",   handleHelp},
 };

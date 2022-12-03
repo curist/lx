@@ -376,12 +376,28 @@ static bool strNative(int argCount, Value* args) {
 }
 
 static bool getlineNative(int argCount, Value* args) {
-  char line[4096];
+  char line[8192];
   char* read = NULL;
   if (!(read = fgets(line, sizeof(line), stdin))) {
     args[-1] = NIL_VAL;
   } else {
     args[-1] = OBJ_VAL(copyString(read, (int)strlen(read) - 1));
+  }
+  return true;
+}
+
+static bool readNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_NUMBER(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a number.");
+    return false;
+  }
+  size_t n = AS_NUMBER(args[0]);
+  char chars[n];
+  size_t read;
+  if (!(read = fread(chars, n, 1, stdin))) {
+    args[-1] = NIL_VAL;
+  } else {
+    args[-1] = OBJ_VAL(copyString(chars, read));
   }
   return true;
 }
@@ -600,6 +616,8 @@ void defineBuiltinNatives() {
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
   defineNative("getline", getlineNative);
+  defineNative("read", readNative);
+
 #ifndef WASM
   defineNative("system", systemNative);
 #endif

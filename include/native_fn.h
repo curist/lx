@@ -482,9 +482,9 @@ static bool slurpNative(int argCount, Value* args) {
 #endif
 
 
-static bool toLowerCaseNative(int argCount, Value* args) {
+static bool tolowerNative(int argCount, Value* args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
-    args[-1] = CSTRING_VAL("Error: toLowerCase takes a string arg.");
+    args[-1] = CSTRING_VAL("Error: tolower takes a string arg.");
     return false;
   }
   ObjString* str = AS_STRING(args[0]);
@@ -500,9 +500,9 @@ static bool toLowerCaseNative(int argCount, Value* args) {
   return true;
 }
 
-static bool toUpperCaseNative(int argCount, Value* args) {
+static bool toupperNative(int argCount, Value* args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
-    args[-1] = CSTRING_VAL("Error: toUpperCase takes a string arg.");
+    args[-1] = CSTRING_VAL("Error: toupper takes a string arg.");
     return false;
   }
   ObjString* str = AS_STRING(args[0]);
@@ -518,9 +518,9 @@ static bool toUpperCaseNative(int argCount, Value* args) {
   return true;
 }
 
-static bool parseFloatNative(int argCount, Value* args) {
+static bool tonumberNative(int argCount, Value* args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
-    args[-1] = CSTRING_VAL("Error: parseFloat takes a string arg.");
+    args[-1] = CSTRING_VAL("Error: tonumber takes a string arg.");
     return false;
   }
   char* s = AS_STRING(args[0])->chars;
@@ -582,9 +582,6 @@ static void defineLxNatives() {
   pop(); pop();
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
-  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toLowerCase", toLowerCaseNative);
-  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "toUpperCase", toUpperCaseNative);
-  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "parseFloat", parseFloatNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array", doubleToUint8ArrayNative);
 #ifndef __EMSCRIPTEN__
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "exit", exitNative);
@@ -601,6 +598,9 @@ void defineBuiltinNatives() {
   defineNative("print", printNative);
   defineNative("groan", groanNative);
   defineNative("str", strNative);
+  defineNative("tolower", tolowerNative);
+  defineNative("toupper", toupperNative);
+  defineNative("tonumber", tonumberNative);
   defineNative("int", intNative);
   defineNative("ord", ordNative);
   defineNative("random", randomNative);

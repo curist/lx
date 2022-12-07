@@ -175,6 +175,43 @@ static void handleRun(int argc, const char* argv[]) {
   handleCompileAndRun(argc, argv);
 }
 
+static void handleEval(int argc, const char* argv[]) {
+  if (argc <= 2) {
+    fprintf(stderr, "Usage: %s eval <expression>\n", argv[0]);
+    return;
+  }
+  ObjString* key = COPY_CSTRING("__lx_input__");
+  Value value;
+  ObjString* source = COPY_CSTRING(argv[2]);
+
+  push(OBJ_VAL(source));
+  tableSet(&vm.globals, OBJ_VAL(key), OBJ_VAL(source));
+  pop();
+
+  interpret((uint8_t*)lxlx_bytecode);
+
+  if (!tableGet(&vm.globals, CSTRING_VAL("__lx_result__"), &value)) {
+    fprintf(stderr, "failed to compile lxobj\n");
+    return exit(65);
+  } else if (IS_STRING(value)) {
+    // got some errors
+    fprintf(stderr, "%s\n", AS_STRING(value)->chars);
+    return exit(65);
+  } else if (!IS_ARRAY(value)) {
+    fprintf(stderr, "unexpected lx compiled result\n");
+    return exit(65);
+  }
+  ValueArray* code = &AS_ARRAY(value);
+  uint8_t* obj = (uint8_t*)malloc(code->count);
+  for (int i = 0; i < code->count; ++i) {
+    uint8_t byte = AS_NUMBER(code->values[i]);
+    obj[i] = byte;
+  }
+  interpret(obj);
+  printValue(stdout, *vm.stackTop);
+  printf("\n");
+}
+
 static void handleRepl(int argc, const char* argv[]) {
 #ifndef __EMSCRIPTEN__
   char line[1024];
@@ -256,6 +293,7 @@ static void handleVersion(int argc, const char* argv[]) {
 
 Option options[] = {
   {"run",        "Run source or lxobj",       handleRun},
+  {"eval",       "Evaluate expression",       handleEval},
   {"repl",       "Start REPL",                handleRepl},
   {"compile",    "Compile source to lxobj",   handleCompile},
   {"disasm",     "Disassemble lxobj",         handleDisasm},

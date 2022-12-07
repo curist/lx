@@ -393,7 +393,7 @@ static bool readNative(int argCount, Value* args) {
   size_t n = AS_NUMBER(args[0]);
   char chars[n];
   size_t read;
-  if (!(read = fread(chars, n, 1, stdin))) {
+  if (!(read = fread(chars, 1, n, stdin))) {
     args[-1] = NIL_VAL;
   } else {
     args[-1] = OBJ_VAL(copyString(chars, read));

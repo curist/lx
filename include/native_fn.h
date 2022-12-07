@@ -22,6 +22,12 @@ void defineBuiltinNatives();
 // ---- start of native function declarations ----
 
 static bool timeNative(int argCount, Value* args) {
+  time_t now = time(NULL);
+  args[-1] = NUMBER_VAL(now);
+  return true;
+}
+
+static bool timestampNative(int argCount, Value* args) {
   struct timeval now;
   gettimeofday(&now, NULL);
   args[-1] = NUMBER_VAL((uint64_t)(now.tv_sec * 1e3 + now.tv_usec / 1e3));
@@ -41,13 +47,32 @@ static bool strftimeNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Second arg of strftime is format string.");
     return false;
   }
-  time_t t = (int)(AS_NUMBER(args[0]) / 1000);
+  time_t t = (int)AS_NUMBER(args[0]);
   struct tm date;
   localtime_r(&t, &date);
 
   char formatted_time[40];
   strftime(formatted_time, 40, AS_STRING(args[1])->chars, &date);
   args[-1] = CSTRING_VAL(formatted_time);
+  return true;
+}
+
+static bool strptimeNative(int argCount, Value* args) {
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: strptime takes 2 args.");
+    return false;
+  }
+  if (!IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: First arg of strptime is date string.");
+    return false;
+  }
+  if (!IS_STRING(args[1])) {
+    args[-1] = CSTRING_VAL("Error: Second arg of strptime is date format.");
+    return false;
+  }
+  struct tm date;
+  strptime(AS_STRING(args[0])->chars, AS_STRING(args[1])->chars, &date);
+  args[-1] = NUMBER_VAL(mktime(&date));
   return true;
 }
 
@@ -620,7 +645,9 @@ void defineBuiltinNatives() {
   defineLxNatives();
 
   defineNative("time", timeNative);
+  defineNative("ts", timestampNative);
   defineNative("strftime", strftimeNative);
+  defineNative("strptime", strptimeNative);
   defineNative("print", printNative);
   defineNative("groan", groanNative);
   defineNative("str", strNative);

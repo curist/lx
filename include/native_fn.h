@@ -28,19 +28,19 @@ static bool timeNative(int argCount, Value* args) {
 
 static bool strftimeNative(int argCount, Value* args) {
   if (argCount < 2) {
-    args[-1] = CSTRING_VAL("Error: strftime takes 2 args.");
+    args[-1] = CSTRING_VAL("Error: Date.format takes 2 args.");
     return false;
   }
   if (!IS_NUMBER(args[0])) {
-    args[-1] = CSTRING_VAL("Error: First arg of strftime is unix timestamp.");
+    args[-1] = CSTRING_VAL("Error: First arg of Date.format is unix timestamp.");
     return false;
   }
   if (!IS_STRING(args[1])) {
-    args[-1] = CSTRING_VAL("Error: Second arg of strftime is format string.");
+    args[-1] = CSTRING_VAL("Error: Second arg of Date.format is format string.");
     return false;
   }
   time_t t = (int)AS_NUMBER(args[0]);
-  struct tm date;
+  struct tm date = {0};
   localtime_r(&t, &date);
 
   char formatted_time[40];
@@ -51,20 +51,21 @@ static bool strftimeNative(int argCount, Value* args) {
 
 static bool strptimeNative(int argCount, Value* args) {
   if (argCount < 2) {
-    args[-1] = CSTRING_VAL("Error: strptime takes 2 args.");
+    args[-1] = CSTRING_VAL("Error: Date.parse takes 2 args.");
     return false;
   }
   if (!IS_STRING(args[0])) {
-    args[-1] = CSTRING_VAL("Error: First arg of strptime is date string.");
+    args[-1] = CSTRING_VAL("Error: First arg of Date.parse is date string.");
     return false;
   }
   if (!IS_STRING(args[1])) {
-    args[-1] = CSTRING_VAL("Error: Second arg of strptime is date format.");
+    args[-1] = CSTRING_VAL("Error: Second arg of Date.parse is date format.");
     return false;
   }
-  struct tm date;
+  struct tm date = {0};
   strptime(AS_STRING(args[0])->chars, AS_STRING(args[1])->chars, &date);
-  args[-1] = NUMBER_VAL(mktime(&date));
+  time_t datetime = mktime(&date);
+  args[-1] = NUMBER_VAL(datetime);
   return true;
 }
 
@@ -637,6 +638,12 @@ static void defineDateNatives() {
   push(CSTRING_VAL("Date"));
   push(OBJ_VAL(newHashmap()));
   tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
+
+  push(CSTRING_VAL("RFC3339"));
+  push(CSTRING_VAL("%Y-%m-%dT%H:%M:%S%z"));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
+  pop();
+  pop();
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "time", timeNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "format", strftimeNative);

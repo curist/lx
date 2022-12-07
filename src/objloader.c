@@ -66,7 +66,7 @@ size_t getSize(const uint8_t* bytes) {
   return size;
 }
 
-uint16_t getShortSize(const uint8_t* bytes) {
+size_t getShortSize(const uint8_t* bytes) {
   size_t size = 0;
   size += bytes[0];
   size += bytes[1] << 8;
@@ -257,7 +257,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
     // size_t debugLinesSize = getSize(ptr);
     ptr += 4;
 
-    uint16_t filenameSize = getShortSize(ptr);
+    size_t filenameSize = getShortSize(ptr);
     ptr += 2;
     func->filename = copyString((char*)ptr, filenameSize);
     ptr += filenameSize;
@@ -266,7 +266,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
     uint8_t repeatTimes = ptr[0];
     uint8_t repeated = 0;
     ptr++;
-    uint16_t line = getShortSize(ptr);
+    size_t line = getShortSize(ptr);
 
     for (size_t i = 0; i < code_size; i++) {
       if (++repeated > repeatTimes) {
@@ -356,12 +356,12 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
 
   uint8_t flags = bytes[3];
 
-  uint16_t chunks_count = getShortSize(&bytes[8]);
+  size_t chunks_count = getShortSize(&bytes[8]);
   uint8_t* chunk_start = &bytes[32];
 
   uint8_t shared_module_count = 0;
 
-  for (int i = 0; i < chunks_count; i++) {
+  for (size_t i = 0; i < chunks_count; i++) {
     size_t chunk_size = getSize(chunk_start);
     int moduleIndex = getModuleIndex(chunk_start);
     if (moduleIndex >= 0) {
@@ -378,7 +378,7 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
 
   if (chunkIndexes.count != chunks_count - 1) {
     // minus one, cuz first chunk is main
-    fprintf(stderr, "Invalid lxobj: functions(%d)/chunks(%d) count mismatch.\n",
+    fprintf(stderr, "Invalid lxobj: functions(%d)/chunks(%zu) count mismatch.\n",
         chunkIndexes.count, chunks_count);
     return NULL;
   }
@@ -397,7 +397,7 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
     chunkIndex.chunk->constants.values[chunkIndex.index] = OBJ_VAL(func);
   }
 
-  for (int i = 0; i < chunks_count - shared_module_count; i++) pop();
+  for (size_t i = 0; i < chunks_count - shared_module_count; i++) pop();
 
   if (printCode) {
     for (int i = 0; i < functions.count; i++) {

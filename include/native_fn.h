@@ -6,7 +6,6 @@
 #include <ctype.h>
 #include <limits.h>
 #include <time.h>
-#include <sys/time.h>
 
 #ifndef WASM
 #include <wordexp.h>
@@ -24,13 +23,6 @@ void defineBuiltinNatives();
 static bool timeNative(int argCount, Value* args) {
   time_t now = time(NULL);
   args[-1] = NUMBER_VAL(now);
-  return true;
-}
-
-static bool timestampNative(int argCount, Value* args) {
-  struct timeval now;
-  gettimeofday(&now, NULL);
-  args[-1] = NUMBER_VAL((uint64_t)(now.tv_sec * 1e3 + now.tv_usec / 1e3));
   return true;
 }
 
@@ -641,13 +633,23 @@ static void defineLxNatives() {
   pop();
 }
 
+static void defineDateNatives() {
+  push(CSTRING_VAL("Date"));
+  push(OBJ_VAL(newHashmap()));
+  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
+
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "time", timeNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "format", strftimeNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "parse", strptimeNative);
+
+  pop();
+  pop();
+}
+
 void defineBuiltinNatives() {
   defineLxNatives();
+  defineDateNatives();
 
-  defineNative("time", timeNative);
-  defineNative("ts", timestampNative);
-  defineNative("strftime", strftimeNative);
-  defineNative("strptime", strptimeNative);
   defineNative("print", printNative);
   defineNative("groan", groanNative);
   defineNative("str", strNative);

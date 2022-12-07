@@ -2,10 +2,10 @@
 #define clox_native_fn_h
 
 #include <stdio.h>
-#include <time.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <limits.h>
+#include <sys/time.h>
 
 #ifndef WASM
 #include <wordexp.h>
@@ -20,9 +20,10 @@ void defineBuiltinNatives();
 // ---- start of native function declarations ----
 // ---- start of native function declarations ----
 
-
-static bool clockNative(int argCount, Value* args) {
-  args[-1] = NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+static bool timeNative(int argCount, Value* args) {
+  struct timeval now;
+  gettimeofday(&now, NULL);
+  args[-1] = NUMBER_VAL((uint64_t)(now.tv_sec * 1e3 + now.tv_usec / 1e3));
   return true;
 }
 
@@ -594,7 +595,7 @@ static void defineLxNatives() {
 void defineBuiltinNatives() {
   defineLxNatives();
 
-  defineNative("clock", clockNative);
+  defineNative("time", timeNative);
   defineNative("print", printNative);
   defineNative("groan", groanNative);
   defineNative("str", strNative);

@@ -30,9 +30,7 @@ build: prepare
 	$(CC) $(CFLAGS) src/*.c -o out/lx
 
 wasm: prepare
-	zig cc $(CFLAGS) -DWASM -D_WASI_EMULATED_PROCESS_CLOCKS \
-		-lwasi-emulated-process-clocks \
-		-target wasm32-wasi src/*.c -o out/lx.wasm
+	zig cc $(CFLAGS) -DWASM -target wasm32-wasi src/*.c -o out/lx.wasm
 
 EMFLAGS=-sASYNCIFY -sINVOKE_RUN=0 -sENVIRONMENT=web \
 				-sEXPORT_ES6 -sMODULARIZE -sEXPORTED_FUNCTIONS=_runRepl

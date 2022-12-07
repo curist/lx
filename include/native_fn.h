@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <limits.h>
+#include <time.h>
 #include <sys/time.h>
 
 #ifndef WASM
@@ -24,6 +25,29 @@ static bool timeNative(int argCount, Value* args) {
   struct timeval now;
   gettimeofday(&now, NULL);
   args[-1] = NUMBER_VAL((uint64_t)(now.tv_sec * 1e3 + now.tv_usec / 1e3));
+  return true;
+}
+
+static bool strftimeNative(int argCount, Value* args) {
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: strftime takes 2 args.");
+    return false;
+  }
+  if (!IS_NUMBER(args[0])) {
+    args[-1] = CSTRING_VAL("Error: First arg of strftime is unix timestamp.");
+    return false;
+  }
+  if (!IS_STRING(args[1])) {
+    args[-1] = CSTRING_VAL("Error: Second arg of strftime is format string.");
+    return false;
+  }
+  time_t t = (int)(AS_NUMBER(args[0]) / 1000);
+  struct tm date;
+  localtime_r(&t, &date);
+
+  char formatted_time[40];
+  strftime(formatted_time, 40, AS_STRING(args[1])->chars, &date);
+  args[-1] = CSTRING_VAL(formatted_time);
   return true;
 }
 
@@ -596,6 +620,7 @@ void defineBuiltinNatives() {
   defineLxNatives();
 
   defineNative("time", timeNative);
+  defineNative("strftime", strftimeNative);
   defineNative("print", printNative);
   defineNative("groan", groanNative);
   defineNative("str", strNative);

@@ -476,9 +476,6 @@ static bool execNative(int argCount, Value* args) {
   char* tmp_result = NULL;
 
   while ((buflen = fread(buf, sizeof(char), 1000, fp)) > 0) {
-    if (result != NULL) {
-      puts(result);
-    }
     tmp_result = (char*)malloc(buflen + result_size + 1);
 
     if (tmp_result == NULL) {
@@ -498,8 +495,16 @@ static bool execNative(int argCount, Value* args) {
     result[result_size] = '\0';
   }
 
-  pclose(fp);
-  args[-1] = CSTRING_VAL(result);
+  int code = pclose(fp) >> 8;
+  args[-1] = OBJ_VAL(newHashmap());
+  push(CSTRING_VAL("code"));
+  tableSet(&AS_HASHMAP(args[-1]), vm.stackTop[-1], NUMBER_VAL(code));
+  pop();
+  push(CSTRING_VAL("out"));
+  push(CSTRING_VAL(result));
+  tableSet(&AS_HASHMAP(args[-1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
 
   free(result);
   return true;

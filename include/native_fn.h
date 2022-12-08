@@ -490,12 +490,16 @@ static bool systemNative(int argCount, Value* args) {
   tableSet(&AS_HASHMAP(args[-1]), vm.stackTop[-1], NUMBER_VAL(code));
   pop();
   push(CSTRING_VAL("out"));
-  push(CSTRING_VAL(result));
+  if (result != NULL) {
+    push(CSTRING_VAL(result));
+    free(result);
+  } else {
+    push(CSTRING_VAL(""));
+  }
   tableSet(&AS_HASHMAP(args[-1]), vm.stackTop[-2], vm.stackTop[-1]);
   pop();
   pop();
 
-  free(result);
   return true;
 }
 #endif

@@ -450,17 +450,6 @@ static bool systemNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Arg must be a string.");
     return false;
   }
-  ObjString* s = AS_STRING(args[0]);
-  int ret = system(s->chars) >> 8;
-  args[-1] = NUMBER_VAL(ret);
-  return true;
-}
-
-static bool execNative(int argCount, Value* args) {
-  if (argCount != 1 || !IS_STRING(args[0])) {
-    args[-1] = CSTRING_VAL("Error: Arg must be a string.");
-    return false;
-  }
   ObjString* cmd = AS_STRING(args[0]);
   FILE *fp;
 
@@ -735,7 +724,6 @@ void defineBuiltinNatives() {
 
 #ifndef WASM
   defineNative("system", systemNative);
-  defineNative("exec", execNative);
 #endif
 #ifndef __EMSCRIPTEN__
   defineNative("slurp", slurpNative);

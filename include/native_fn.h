@@ -455,6 +455,55 @@ static bool systemNative(int argCount, Value* args) {
   args[-1] = NUMBER_VAL(ret);
   return true;
 }
+
+static bool execNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a string.");
+    return false;
+  }
+  ObjString* cmd = AS_STRING(args[0]);
+  FILE *fp;
+
+  if ((fp = popen(cmd->chars, "r")) == NULL) {
+    args[-1] = CSTRING_VAL("Error: Failed to start process.");
+    return false;
+  }
+
+  char buf[1000];
+  size_t buflen;
+  char* result = NULL;
+  size_t result_size = 0;
+  char* tmp_result = NULL;
+
+  while ((buflen = fread(buf, sizeof(char), 1000, fp)) > 0) {
+    if (result != NULL) {
+      puts(result);
+    }
+    tmp_result = (char*)malloc(buflen + result_size + 1);
+
+    if (tmp_result == NULL) {
+      args[-1] = CSTRING_VAL("Error: Realloc failed.");
+      pclose(fp);
+      return false;
+    }
+
+    if (result != NULL) {
+      memcpy(tmp_result, result, result_size);
+      free(result);
+    }
+    result = tmp_result;
+    memcpy(result + result_size, buf, buflen);
+
+    result_size += buflen;
+    result[result_size] = '\0';
+  }
+
+  pclose(fp);
+  args[-1] = CSTRING_VAL(result);
+
+  free(result);
+  return true;
+}
 #endif
 
 #ifndef __EMSCRIPTEN__
@@ -681,6 +730,7 @@ void defineBuiltinNatives() {
 
 #ifndef WASM
   defineNative("system", systemNative);
+  defineNative("exec", execNative);
 #endif
 #ifndef __EMSCRIPTEN__
   defineNative("slurp", slurpNative);

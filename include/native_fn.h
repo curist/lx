@@ -458,27 +458,23 @@ static bool systemNative(int argCount, Value* args) {
     return false;
   }
 
-  char buf[1000];
+  char buf[500];
   size_t buflen;
   char* result = NULL;
   size_t result_size = 0;
-  char* tmp_result = NULL;
 
-  while ((buflen = fread(buf, sizeof(char), 1000, fp)) > 0) {
-    tmp_result = (char*)malloc(buflen + result_size + 1);
+  while ((buflen = fread(buf, sizeof(char), sizeof(buf), fp)) > 0) {
+    char* tmp_result = (char*)realloc(result, buflen + result_size + 1);
 
     if (tmp_result == NULL) {
       args[-1] = CSTRING_VAL("Error: Realloc failed.");
       pclose(fp);
+      if (result != NULL) free(result);
       return false;
     }
 
-    if (result != NULL) {
-      memcpy(tmp_result, result, result_size);
-      free(result);
-    }
+    memcpy(tmp_result + result_size, buf, buflen);
     result = tmp_result;
-    memcpy(result + result_size, buf, buflen);
 
     result_size += buflen;
     result[result_size] = '\0';

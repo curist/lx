@@ -375,39 +375,39 @@ static bool rangeNative(int argCount, Value* args) {
   return true;
 }
 
-static ObjString* tostring(Value v) {
+static int tostring(char** s, Value v) {
+  *s = (char*) malloc(30);
   if (IS_NUMBER(v)) {
     double num = AS_NUMBER(v);
     int64_t val_i = num;
-    char str[30];
     if (num == val_i) {
-      snprintf(str, sizeof(str), "%lld", val_i);
-      return COPY_CSTRING(str);
+      return snprintf(*s, sizeof(*s), "%lld", val_i);
     } else {
-      snprintf(str, sizeof(str), "%f", num);
-      return COPY_CSTRING(str);
+      return snprintf(*s, sizeof(*s), "%f", num);
     }
   } else if (IS_BOOL(v)) {
-    const char* s = AS_BOOL(v) ? "true" : "false";
-    return COPY_CSTRING(s);
+    return snprintf(*s, sizeof(*s), "%s", AS_BOOL(v) ? "true" : "false");
   } else if (IS_NIL(v)) {
-    return COPY_CSTRING("nil");
+    return snprintf(*s, sizeof(*s), "nil");
   } else if (IS_STRING(v)) {
-    return AS_STRING(v);
+    ObjString* str = AS_STRING(v);
+    *s = realloc(*s, str->length + 1);
+    snprintf(*s, sizeof(*s), "%s", str->chars);
+    return str->length;
   } else if (IS_NATIVE(v)) {
-    return COPY_CSTRING("<native fn>");
+    return snprintf(*s, sizeof(*s), "<native fn>");
   } else if (IS_FUNCTION(v)) {
     // XXX: compose fn name as part of return value
-    return COPY_CSTRING("<fn>");
+    return snprintf(*s, sizeof(*s), "<fn>");
   } else if (IS_CLOSURE(v)) {
     // XXX: compose fn name as part of return value
-    return COPY_CSTRING("<fn>");
+    return snprintf(*s, sizeof(*s), "<fn>");
   } else if (IS_HASHMAP(v)) {
-    return COPY_CSTRING("<map>");
+    return snprintf(*s, sizeof(*s), "<map>");
   } else if (IS_ARRAY(v)) {
-    return COPY_CSTRING("<array>");
+    return snprintf(*s, sizeof(*s), "<array>");
   }
-  return COPY_CSTRING("<unknown>");
+  return snprintf(*s, sizeof(*s), "<unknown>");
 }
 
 static bool strNative(int argCount, Value* args) {
@@ -415,7 +415,10 @@ static bool strNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: str takes 1 arg.");
     return false;
   }
-  args[-1] = OBJ_VAL(tostring(args[0]));
+  char* s = NULL;
+  tostring(&s, args[0]);
+  args[-1] = CSTRING_VAL(s);
+  free(s);
   return true;
 }
 
@@ -437,25 +440,29 @@ static bool joinNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("");
     return true;
   }
-  ObjString* s = tostring(array->values[0]);
+  char* s = NULL;
+  int slen = tostring(&s, array->values[0]);
   if (array->count == 1) {
-    args[-1] = OBJ_VAL(s);
+    args[-1] = CSTRING_VAL(s);
+    free(s);
     return true;
   }
-  char* result = malloc(s->length);
-  size_t result_size = s->length;
-  memcpy(result, s->chars, s->length);
+  char* result = malloc(slen);
+  size_t result_size = slen;
+  memcpy(result, s, slen);
+  free(s);
 
   const char* sep = AS_STRING(args[1])->chars;
   size_t seplen = AS_STRING(args[1])->length;
 
   for (int i = 1; i < array->count; ++i) {
-    result = realloc(result, result_size + seplen + s->length + 1);
+    result = realloc(result, result_size + seplen + slen + 1);
     memcpy(result + result_size, sep, seplen);
 
-    s = tostring(array->values[i]);
-    memcpy(result + result_size + seplen, s->chars, s->length);
-    result_size += seplen + s->length;
+    tostring(&s, array->values[i]);
+    memcpy(result + result_size + seplen, s, slen);
+    free(s);
+    result_size += seplen + slen;
   }
   args[-1] = CSTRING_VAL(result);
   free(result);

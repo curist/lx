@@ -376,38 +376,38 @@ static bool rangeNative(int argCount, Value* args) {
 }
 
 static int tostring(char** s, Value v) {
-  *s = (char*) malloc(30);
+  size_t size = 50;
+  *s = (char*) malloc(size);
   if (IS_NUMBER(v)) {
     double num = AS_NUMBER(v);
     int64_t val_i = num;
     if (num == val_i) {
-      return snprintf(*s, sizeof(*s), "%lld", val_i);
-    } else {
-      return snprintf(*s, sizeof(*s), "%f", num);
+      return snprintf(*s, size, "%lld", val_i);
     }
+    return snprintf(*s, size, "%lf", num);
   } else if (IS_BOOL(v)) {
-    return snprintf(*s, sizeof(*s), "%s", AS_BOOL(v) ? "true" : "false");
+    return snprintf(*s, size, "%s", AS_BOOL(v) ? "true" : "false");
   } else if (IS_NIL(v)) {
-    return snprintf(*s, sizeof(*s), "nil");
+    return snprintf(*s, size, "nil");
   } else if (IS_STRING(v)) {
     ObjString* str = AS_STRING(v);
     *s = realloc(*s, str->length + 1);
-    snprintf(*s, sizeof(*s), "%s", str->chars);
+    snprintf(*s, str->length + 1, "%s", str->chars);
     return str->length;
   } else if (IS_NATIVE(v)) {
-    return snprintf(*s, sizeof(*s), "<native fn>");
+    return snprintf(*s, size, "<native fn>");
   } else if (IS_FUNCTION(v)) {
     // XXX: compose fn name as part of return value
-    return snprintf(*s, sizeof(*s), "<fn>");
+    return snprintf(*s, size, "<fn>");
   } else if (IS_CLOSURE(v)) {
     // XXX: compose fn name as part of return value
-    return snprintf(*s, sizeof(*s), "<fn>");
+    return snprintf(*s, size, "<fn>");
   } else if (IS_HASHMAP(v)) {
-    return snprintf(*s, sizeof(*s), "<map>");
+    return snprintf(*s, size, "<map>");
   } else if (IS_ARRAY(v)) {
-    return snprintf(*s, sizeof(*s), "<array>");
+    return snprintf(*s, size, "<array>");
   }
-  return snprintf(*s, sizeof(*s), "<unknown>");
+  return snprintf(*s, size, "<unknown>");
 }
 
 static bool strNative(int argCount, Value* args) {
@@ -456,14 +456,14 @@ static bool joinNative(int argCount, Value* args) {
   size_t seplen = AS_STRING(args[1])->length;
 
   for (int i = 1; i < array->count; ++i) {
+    slen = tostring(&s, array->values[i]);
     result = realloc(result, result_size + seplen + slen + 1);
     memcpy(result + result_size, sep, seplen);
-
-    tostring(&s, array->values[i]);
     memcpy(result + result_size + seplen, s, slen);
     free(s);
     result_size += seplen + slen;
   }
+  result[result_size] = '\0';
   args[-1] = CSTRING_VAL(result);
   free(result);
   return true;

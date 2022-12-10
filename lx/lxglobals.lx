@@ -61,15 +61,6 @@ fn drop(arr, n) {
   result
 }
 
-fn join(arr, sep) {
-  let s = "" let l = len(arr)
-  for let i = 0; i < l; i = i + 1 {
-    if i > 0 { s = s + sep }
-    s = s + str(arr[i])
-  }
-  return s
-}
-
 fn startsWith(s, prefix) {
   if len(prefix) > len(s) { return false }
   range(s)->take(len(prefix))->join("") == prefix

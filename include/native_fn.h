@@ -375,45 +375,90 @@ static bool rangeNative(int argCount, Value* args) {
   return true;
 }
 
+static ObjString* tostring(Value v) {
+  if (IS_NUMBER(v)) {
+    double num = AS_NUMBER(v);
+    int64_t val_i = num;
+    char str[30];
+    if (num == val_i) {
+      snprintf(str, sizeof(str), "%lld", val_i);
+      return COPY_CSTRING(str);
+    } else {
+      snprintf(str, sizeof(str), "%f", num);
+      return COPY_CSTRING(str);
+    }
+  } else if (IS_BOOL(v)) {
+    const char* s = AS_BOOL(v) ? "true" : "false";
+    return COPY_CSTRING(s);
+  } else if (IS_NIL(v)) {
+    return COPY_CSTRING("nil");
+  } else if (IS_STRING(v)) {
+    return AS_STRING(v);
+  } else if (IS_NATIVE(v)) {
+    return COPY_CSTRING("<native fn>");
+  } else if (IS_FUNCTION(v)) {
+    // XXX: compose fn name as part of return value
+    return COPY_CSTRING("<fn>");
+  } else if (IS_CLOSURE(v)) {
+    // XXX: compose fn name as part of return value
+    return COPY_CSTRING("<fn>");
+  } else if (IS_HASHMAP(v)) {
+    return COPY_CSTRING("<map>");
+  } else if (IS_ARRAY(v)) {
+    return COPY_CSTRING("<array>");
+  }
+  return COPY_CSTRING("<unknown>");
+}
+
 static bool strNative(int argCount, Value* args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: str takes 1 arg.");
     return false;
   }
-  Value arg = args[0];
-  if (IS_NUMBER(arg)) {
-    double num = AS_NUMBER(arg);
-    int64_t val_i = num;
-    char str[20];
-    if (num == val_i) {
-      snprintf(str, sizeof(str), "%lld", val_i);
-    } else {
-      snprintf(str, sizeof(str), "%f", num);
-    }
-    args[-1] = CSTRING_VAL(str);
-  } else if (IS_BOOL(arg)) {
-    const char* s = AS_BOOL(arg) ? "true" : "false";
-    args[-1] = CSTRING_VAL(s);
-  } else if (IS_NIL(arg)) {
-    args[-1] = CSTRING_VAL("nil");
-  } else if (IS_STRING(arg)) {
-    args[-1] = arg;
-  } else if (IS_NATIVE(arg)) {
-    args[-1] = CSTRING_VAL("<native fn>");
-  } else if (IS_FUNCTION(arg)) {
-    // XXX: compose fn name as part of return value
-    args[-1] = CSTRING_VAL("<fn>");
-  } else if (IS_CLOSURE(arg)) {
-    // XXX: compose fn name as part of return value
-    args[-1] = CSTRING_VAL("<fn>");
-  } else if (IS_HASHMAP(arg)) {
-    args[-1] = CSTRING_VAL("<map>");
-  } else if (IS_ARRAY(arg)) {
-    args[-1] = CSTRING_VAL("<array>");
-  } else {
-    args[-1] = CSTRING_VAL("Error: unknown type.");
+  args[-1] = OBJ_VAL(tostring(args[0]));
+  return true;
+}
+
+static bool joinNative(int argCount, Value* args) {
+  if (argCount != 2) {
+    args[-1] = CSTRING_VAL("Error: join takes 2 args.");
     return false;
   }
+  if (!IS_ARRAY(args[0])) {
+    args[-1] = CSTRING_VAL("Error: First args of join is array.");
+    return false;
+  }
+  if (!IS_STRING(args[1])) {
+    args[-1] = CSTRING_VAL("Error: Second args of join is string.");
+    return false;
+  }
+  ValueArray* array = &AS_ARRAY(args[0]);
+  if (array->count == 0) {
+    args[-1] = CSTRING_VAL("");
+    return true;
+  }
+  ObjString* s = tostring(array->values[0]);
+  if (array->count == 1) {
+    args[-1] = OBJ_VAL(s);
+    return true;
+  }
+  char* result = malloc(s->length);
+  size_t result_size = s->length;
+  memcpy(result, s->chars, s->length);
+
+  const char* sep = AS_STRING(args[1])->chars;
+  size_t seplen = AS_STRING(args[1])->length;
+
+  for (int i = 1; i < array->count; ++i) {
+    result = realloc(result, result_size + seplen + s->length + 1);
+    memcpy(result + result_size, sep, seplen);
+
+    s = tostring(array->values[i]);
+    memcpy(result + result_size + seplen, s->chars, s->length);
+    result_size += seplen + s->length;
+  }
+  args[-1] = CSTRING_VAL(result);
+  free(result);
   return true;
 }
 
@@ -703,6 +748,7 @@ void defineBuiltinNatives() {
   defineNative("print", printNative);
   defineNative("groan", groanNative);
   defineNative("str", strNative);
+  defineNative("join", joinNative);
   defineNative("tolower", tolowerNative);
   defineNative("toupper", toupperNative);
   defineNative("tonumber", tonumberNative);

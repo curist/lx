@@ -5,7 +5,7 @@ fn _3(cb) { fn(x, y, z) { cb(x, y, z) } }
 fn each(arr, cb) {
   let length = len(arr)
   let aborted = false
-  fn abort() { aborted }
+  fn abort() { aborted = true }
   for let i = 0; i < length and !aborted; i = i + 1 {
     cb(arr[i], i, arr, abort)
   }
@@ -13,16 +13,20 @@ fn each(arr, cb) {
 
 fn fold(arr, acc, cb) {
   let length = len(arr)
-  for let i = 0; i < length; i = i + 1 {
-    acc = cb(acc, arr[i], i) 
+  let aborted = false
+  fn abort() { aborted = true }
+  for let i = 0; i < length and !aborted; i = i + 1 {
+    acc = cb(acc, arr[i], i, abort)
   }
   acc
 }
 
 fn foldr(arr, acc, cb) {
   let length = len(arr)
-  for let i = length - 1; i >= 0; i = i - 1 {
-    acc = cb(acc, arr[i], i) 
+  let aborted = false
+  fn abort() { aborted = true }
+  for let i = length - 1; i >= 0 and !aborted; i = i - 1 {
+    acc = cb(acc, arr[i], i, abort)
   }
   acc
 }

@@ -4,7 +4,7 @@ GITHASH = $(shell git rev-parse --short HEAD)
 ARCH = $(shell uname)
 DATE = $(shell date "+%Y.%m.%d")
 
-CFLAGS += -std=gnu11
+CFLAGS += -D_XOPEN_SOURCE=700
 CFLAGS += -Wall -Wextra -Werror -Wno-unused-parameter
 CFLAGS += -Iinclude -I.
 ifeq ($(MODE),debug)

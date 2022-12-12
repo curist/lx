@@ -9,21 +9,9 @@ function appendLine(line, className = '') {
 }
 
 var Module = {
-  postRun: [],
-  print(...args) {
-    const text = args.join(' ')
-    appendLine(text)
-  },
-  printErr(...args) {
-    const text = args.join(' ')
-    appendLine(text, 'err')
-  },
+  print(...args) { appendLine(args.join(' ')) },
+  printErr(...args) { appendLine(args.join(' '), 'err') },
   setStatus(text) { console.log('set status:', text) },
-  totalDependencies: 0,
-  monitorRunDependencies: function(left) {
-    this.totalDependencies = Math.max(this.totalDependencies, left);
-    Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies-left) + '/' + this.totalDependencies + ')' : 'All downloads complete.');
-  }
 };
 window.onerror = function() {
   Module.setStatus('Exception thrown, see JavaScript console');
@@ -44,15 +32,12 @@ replInputForm.addEventListener('submit', e => {
   if (prompter) { prompter(line) }
 })
 
-window.getLineInput = function() {
-  return new Promise(resolve => prompters.push(resolve))
-}
+window.getLineInput = () => new Promise(resolve => prompters.push(resolve))
 
 document.body.addEventListener('click', e => {
   if(e.target.className == 'lxcmd') {
     replInput.value = e.target.textContent
-    setTimeout(() => replInput.focus())
-    return
+    return setTimeout(replInput.focus)
   }
 })
 

@@ -1,24 +1,4 @@
-fn join(arr, sep) {
-  // ^ not yet decide if we want a join() builtin
-  //   or leave the implementation in an Array module
-  let s = ""
-  let l = len(arr)
-  for let i = 0; i < l; i = i + 1 {
-    if i > 0 {
-      s = s + sep
-    }
-    s = s + str(arr[i])
-  }
-  return s
-}
-
 let lib = .{
-  join: join,
-  floor: fn(num) {
-    // ^ not yet decide if we want a int() builtin
-    //   or leave the implementation in a Math module
-    return int(num)
-  },
   iota: fn (start) {
     let i = start - 1
     fn() { i = i + 1 }

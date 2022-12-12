@@ -194,7 +194,7 @@ fn compile(src, filename, opts) {
       error("Loop body too large.")
     }
 
-    emitByte(lib.floor(offset / 256), line)
+    emitByte(int(offset / 256), line)
     emitByte(offset % 256, line)
   }
 
@@ -258,7 +258,7 @@ fn compile(src, filename, opts) {
     if jump > UINT16_MAX {
       error("Too much code to jump over.")
     }
-    currentChunk().bytecode[offset] = lib.tohex(lib.floor(jump / 256))
+    currentChunk().bytecode[offset] = lib.tohex(int(jump / 256))
     currentChunk().bytecode[offset + 1] = lib.tohex(jump % 256)
   }
 
@@ -907,7 +907,7 @@ fn compile(src, filename, opts) {
   fn number() {
     let value = parser.previous.literal
     let line = parser.previous.line
-    if value >= 0 and value < 256 and lib.floor(value) == value {
+    if value >= 0 and value < 256 and int(value) == value {
       emitBytes(OP.CONST_BYTE, value, line)
     } else {
       emitConstant(NUMBER_VAL(value), line)
@@ -932,7 +932,7 @@ fn compile(src, filename, opts) {
       if jump > UINT16_MAX {
         error("Too much code to jump over.")
       }
-      let upper = lib.tohex(lib.floor(jump / 256))
+      let upper = lib.tohex(int(jump / 256))
       let lower = lib.tohex(jump % 256)
 
       chunk.bytecode[addr] = upper
@@ -950,7 +950,7 @@ fn compile(src, filename, opts) {
       if jump > UINT16_MAX {
         error("Loop body too large.")
       }
-      let upper = lib.tohex(lib.floor(jump / 256))
+      let upper = lib.tohex(int(jump / 256))
       let lower = lib.tohex(jump % 256)
 
       chunk.bytecode[addr] = upper

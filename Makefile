@@ -41,5 +41,5 @@ clean:
 	rm -rf out
 
 test:
-	@cd compiler && make runall && make test
+	@cd lxlx && make runall && make test
 

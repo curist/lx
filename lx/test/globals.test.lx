@@ -50,4 +50,15 @@ test("startsWith", fn(assert) {
   assert.truthy(!startsWith(123, 123))
 })
 
+test("Date", fn(assert) {
+  let now = Date.time()
+  assert.equal(type(Date.RFC3339), "string")
+  assert.equal(Date.format(now, Date.RFC3339)->type(), "string")
+
+  let format = "%Y-%m-%d %H:%M"
+  let y2ks = "2000-01-01 00:00"
+  let y2k = Date.parse(y2ks, format)
+  assert.equal(Date.format(y2k, format), y2ks)
+})
+
 suite.run()

@@ -7,7 +7,9 @@ if ! [ -x "$(command -v lx)" ]; then
   exit 0
 fi
 
-echo "#include <stdint.h>" > ./lx/lxglobals.h
-echo "const uint8_t lxglobals_bytecode[] = {" >> ./lx/lxglobals.h
-lx compile --debug ./lx/lxglobals.lx | xxd -r -p | xxd -e -i >> ./lx/lxglobals.h
-echo "};" >> ./lx/lxglobals.h
+TARGET=./include/lx/lxglobals.h
+
+echo "#include <stdint.h>" > $TARGET
+echo "const uint8_t lxglobals_bytecode[] = {" >> $TARGET
+lx compile --debug ./lx/globals.lx | xxd -r -p | xxd -e -i >> $TARGET
+echo "};" >> $TARGET

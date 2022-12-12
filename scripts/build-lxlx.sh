@@ -7,9 +7,11 @@ if ! [ -x "$(command -v lx)" ]; then
   exit 0
 fi
 
-cd lxlx
+cd lx
 
-echo "#include <stdint.h>" > ../lx/lxlx.h
-echo "const uint8_t lxlx_bytecode[] = {" >> ../lx/lxlx.h
-lx compile --debug src/main.lx | xxd -r -p | xxd -e -i >> ../lx/lxlx.h
-echo "};" >> ../lx/lxlx.h
+TARGET=../include/lx/lxlx.h
+
+echo "#include <stdint.h>" > $TARGET
+echo "const uint8_t lxlx_bytecode[] = {" >> $TARGET
+lx compile --debug src/main.lx | xxd -r -p | xxd -e -i >> $TARGET
+echo "};" >> $TARGET

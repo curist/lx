@@ -6,7 +6,7 @@ DATE = $(shell date "+%Y.%m.%d")
 
 CFLAGS += -D_XOPEN_SOURCE=700
 CFLAGS += -Wall -Wextra -Werror -Wno-unused-parameter
-CFLAGS += -Iinclude -I.
+CFLAGS += -Iinclude
 ifeq ($(MODE),debug)
 	CFLAGS += -DDEBUG -O0
 else
@@ -20,7 +20,7 @@ lxglobals:
 	./scripts/build-globals.sh
 
 lxversion:
-	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > lx/lxversion.h
+	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > include/lx/lxversion.h
 
 out:
 	@mkdir -p out
@@ -42,5 +42,5 @@ clean:
 	rm -rf out
 
 test:
-	@cd lxlx && make runall && make test
+	@cd lx && make runall && make test
 

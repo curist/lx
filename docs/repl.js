@@ -37,7 +37,7 @@ window.getLineInput = () => new Promise(resolve => prompters.push(resolve))
 document.body.addEventListener('click', e => {
   if(e.target.className == 'lxcmd') {
     replInput.value = e.target.textContent
-    return setTimeout(replInput.focus)
+    return setTimeout(() => replInput.focus())
   }
 })
 

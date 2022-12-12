@@ -23,7 +23,7 @@ Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived pr
 
 ```sh
 ❯ lx version
-lx version 2022.11.20-ffe0e79 (Darwin)
+lx version 2022.12.12-f57332b (Darwin)
 
 ❯ lx
 Usage:
@@ -32,6 +32,7 @@ Usage:
 
 The commands are:
   run          Run source or lxobj
+  eval         Evaluate expression
   repl         Start REPL
   compile      Compile source to lxobj
   disasm       Disassemble lxobj

@@ -1,0 +1,53 @@
+let makeTestSuite = import "test/makeTestSuite.lx"
+let suite = makeTestSuite()
+let test = fn(name, cb) {
+  suite.defineTest("globals - " + name, cb)
+}
+
+test("do", fn(assert) {
+  let r = do(123, fn(x) { x })
+  assert.equal(r, 123)
+
+  r = "foo"->do(fn (x) { x + x })
+  assert.equal(r, "foofoo")
+})
+
+test("each", fn(assert) {
+  let a = 0
+  range(10)->each(fn() { a = a + 1 })
+  assert.equal(a, 10)
+})
+
+test("take", fn(assert) {
+  let r = range(1000)->take(10)
+  assert.equal(len(r), 10)
+
+  r = range(10)->take(1000)
+  assert.equal(len(r), 10)
+
+  r = []->take(1000)
+  assert.equal(len(r), 0)
+})
+
+test("drop", fn(assert) {
+  let r = range(1000)->drop(10)
+  assert.equal(len(r), 990)
+
+  r = range(10)->drop(1000)
+  assert.equal(len(r), 0)
+})
+
+test("startsWith", fn(assert) {
+  assert.truthy(startsWith("asdf", "as"))
+  assert.truthy(startsWith("asdf", ""))
+  assert.truthy(startsWith("asdf", "asdf"))
+  assert.truthy(!startsWith("asdf", "asdfx"))
+  assert.truthy(!startsWith("asdf", "1"))
+  assert.truthy(!startsWith("asdf", "1"))
+  // no implicitly conversion
+  assert.truthy(!startsWith(0, nil))
+  assert.truthy(!startsWith(1, nil))
+  assert.truthy(!startsWith(123, 123))
+})
+
+suite.run()

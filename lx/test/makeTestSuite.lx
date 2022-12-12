@@ -19,6 +19,18 @@ fn makeTestSuite() {
         )
         testPassed = false
       },
+      truthy: fn(actual) {
+        totalAssertions = totalAssertions + 1
+        if actual {
+          passedAssertions = passedAssertions + 1
+          return
+        }
+        print(
+          "assertion fail:", testName, "\n",
+          "\texpect to be truthy:", actual, "\n",
+        )
+        testPassed = false
+      },
     }
     push(tests, fn() {
       testBody(assert)

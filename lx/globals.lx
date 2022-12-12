@@ -1,6 +1,7 @@
 fn _1(cb) { fn(x) { cb(x) } }
 fn _2(cb) { fn(x, y) { cb(x, y) } }
 fn _3(cb) { fn(x, y, z) { cb(x, y, z) } }
+
 fn do(x, cb) { cb(x) }
 
 fn each(arr, cb) {
@@ -46,6 +47,17 @@ fn filter(arr, cb) {
     if cb(x, i, arr) { push(acc, x) }
     acc
   })
+}
+
+fn contains(arr, target) {
+  let contains = false
+  each(arr, fn(x, _, _, abort) {
+    if x == target {
+      contains = true
+      abort()
+    }
+  })
+  contains
 }
 
 fn take(arr, n) {

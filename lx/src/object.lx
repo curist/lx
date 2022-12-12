@@ -1,22 +1,5 @@
-let lib = import "src/lib.lx"
-
-let mod = .{}
-
-mod.Object = fn(kind, value) {.{
-  kind: kind,
-  value: value,
-}}
-
-mod.ObjectFunction = fn(function) {
-  mod.Object(mod.ObjType.FUNCTION, function)
-}
-
-mod.ObjectString = fn(string) {
-  mod.Object(mod.ObjType.STRING, string)
-}
-
-mod.ObjType = {
-  let iota = lib.iota(0)
+let ObjType = {
+  let iota = {import "src/lib.lx"}.iota(0)
   .{
     CLOSURE: iota(),
     FUNCTION: iota(),
@@ -28,4 +11,22 @@ mod.ObjType = {
   }
 }
 
-mod
+fn Object(kind, value) {.{
+  kind: kind,
+  value: value,
+}}
+
+fn ObjectFunction(function) {
+  Object(ObjType.FUNCTION, function)
+}
+
+fn ObjectString(string) {
+  Object(ObjType.STRING, string)
+}
+
+return .{
+  ObjType: ObjType,
+  Object: Object,
+  ObjectFunction: ObjectFunction,
+  ObjectString: ObjectString,
+}

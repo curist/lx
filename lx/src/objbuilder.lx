@@ -320,7 +320,6 @@ fn objbuilder(main, debug) {
   writeBytesAt(obj, int32ToBytes(len(functions)), 8)
 
   return .{
-    obj: obj,
     dump: fn() { dumpObj(obj) },
     bytes: fn() { map(obj, hexToBytes) },
   }

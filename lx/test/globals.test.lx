@@ -37,6 +37,16 @@ test("drop", fn(assert) {
   assert.equal(len(r), 0)
 })
 
+test("contains", fn(assert) {
+  assert.equal(contains([], "foo"), false)
+  assert.equal(contains(["foo"], "foo"), true)
+  assert.equal(contains(range(10), 9), true)
+  assert.equal(contains(range(10), 10), false)
+  assert.equal(contains("asdf", "d"), true)
+  assert.equal(contains("asdf", ""), false)
+  assert.equal(contains("asdf", "as"), false)
+})
+
 test("startsWith", fn(assert) {
   assert.truthy(startsWith("asdf", "as"))
   assert.truthy(startsWith("asdf", ""))

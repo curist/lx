@@ -3,15 +3,12 @@ let lib = import "src/lib.lx"
 let types = import "src/types.lx"
 let TOKEN = types.TOKEN
 
-// lib.prettyprint(types.TOKEN_NAME )
-// lib.prettyprint(types.KEYWORDS )
-
 let scanner = initScanner(slurp("test/stub/sink.lx"))
 
 for true {
   let tok = scanner.scanToken()
 
-  lib.prettyprint(tok)
+  print(tok)
   if tok.type == TOKEN.EOF {
     break
   }
@@ -33,4 +30,4 @@ print(types.KEYWORDS["false"])
 print(toupper("let"))
 print(true and TOKEN[toupper("let")] or TOKEN.IDENTIFIER)
 
-lib.prettyprint(keys(types.KEYWORDS))
+print(keys(types.KEYWORDS))

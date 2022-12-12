@@ -20,5 +20,5 @@ runall: $(LX)
 	$(LX) run test/stub/sink.lx
 
 test: $(LX)
-	@ls test/*.test.lx | xargs -I{} sh -c "echo {} && $(LX) run {}"
+	@ls test/*.test.lx | xargs -I{} sh -c "echo {} && $(LX) run --debug {}"
 

@@ -221,6 +221,7 @@ fn compile(src, filename, opts) {
     } else {
       // currently only BOOL & NIL is in the category
       // and...they won't be stored in constants
+      error("Invalid to calculate cache key for constant.")
     }
     return k
   }
@@ -886,7 +887,6 @@ fn compile(src, filename, opts) {
   }
 
   fn array() {
-    // TODO:
     emitByte(OP.ARRAY, parser.previous.line)
 
     fn hasNextValue() {

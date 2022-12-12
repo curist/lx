@@ -1,0 +1,37 @@
+let makeTestSuite = import "test/makeTestSuite.lx"
+let suite = makeTestSuite()
+let test = suite.defineTest
+
+let lib = import "src/lib.lx"
+
+test("concat", fn(assert) {
+  let arr1 = [1]
+  let arr2 = [2]
+  assert.equal(len(arr1), 1)
+  // concat shouldn't affect original arr
+  concat(arr1, arr2)
+  assert.equal(len(arr1), 1)
+  arr1 = concat(arr1, arr2)
+  assert.equal(len(arr1), 2)
+
+  arr2 = []
+  arr1 = concat(arr1, arr2)
+  assert.equal(len(arr1), 2)
+})
+
+test("pretty print", fn(assert) {
+  let x = .{ a: 1, [100]: "b", c: [1, 2] }
+  let r = lib.prettyprint(x)
+  assert.equal(r, "{a: 1, c: [1,2], 100: \"b\"}")
+
+  r = lib.prettyprint([])
+  assert.equal(r, "[]")
+})
+
+test("unicode", fn(assert) {
+  assert.equal(len("你好世界"), 12)
+  assert.equal(len("やれやれだぜ"), 18)
+  assert.equal(len(range("やれやれだぜ")), 6)
+})
+
+suite.run()

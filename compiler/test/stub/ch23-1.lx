@@ -1,0 +1,36 @@
+let total = 0
+for let i = 0; i < 3; i = i + 1 {
+  for let j = 0; j < 20; j = j + 1 {
+    let x = 10
+    let y = x
+    let z = x + y
+    z = z * 3
+
+    if j > 6 {
+      continue
+    }
+
+    let foo = x + y + z
+
+    if j >= 3 {
+      break
+    }
+
+    total = total + 1
+
+    let bar = foo * z
+  }
+}
+
+total == 9
+
+let a = 0
+let b = 1
+
+for let i = 0; i < 28; i = i + 1 {
+  let temp = a
+  a = a + b
+  b = temp
+}
+a
+

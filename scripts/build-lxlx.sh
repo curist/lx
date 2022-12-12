@@ -7,7 +7,7 @@ if ! [ -x "$(command -v lx)" ]; then
   exit 0
 fi
 
-cd lxlox
+cd compiler
 
 echo "#include <stdint.h>" > ../lx/lxlx.h
 echo "const uint8_t lxlx_bytecode[] = {" >> ../lx/lxlx.h

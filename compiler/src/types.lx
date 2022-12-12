@@ -1,0 +1,160 @@
+let lib = import "src/lib.lx"
+
+let types = .{}
+
+fn enumNameMapper(enum) {
+  fold(keys(enum), .{}, fn(acc, k) {
+    acc[enum[k]] = k
+    acc
+  })
+}
+
+types.TOKEN = {
+  let iota
+  .{
+    LEFT_PAREN: {
+      iota = lib.iota(100)
+      iota()
+    },
+    RIGHT_PAREN: iota(),
+    LEFT_BRACE: iota(),
+    RIGHT_BRACE: iota(),
+    LEFT_BRACKET: iota(),
+    RIGHT_BRACKET: iota(),
+    COMMA: iota(),
+    DOT: iota(),
+    MINUS: iota(),
+    PLUS: iota(),
+    SEMICOLON: iota(),
+    SLASH: iota(),
+    STAR: iota(),
+    COLON: iota(),
+    MOD: iota(),
+
+    // One or two character tokens.
+    BANG: {
+      iota = lib.iota(200)
+      iota()
+    },
+    BANG_EQUAL: iota(),
+    EQUAL: iota(),
+    EQUAL_EQUAL: iota(),
+    GREATER: iota(),
+    GREATER_EQUAL: iota(),
+    GREATER_GREATER: iota(),
+    LESS: iota(),
+    LESS_EQUAL: iota(),
+    LESS_LESS: iota(),
+    DOT_BRACE: iota(),
+    MINUS_GREATER: iota(),
+    AMPERSAND: iota(),
+    PIPE: iota(),
+    CARET: iota(),
+
+    // Literals.
+    IDENTIFIER: {
+      iota = lib.iota(300)
+      iota()
+    },
+    STRING: iota(),
+    NUMBER: iota(),
+
+    // Keywords.
+    AND: {
+      iota = lib.iota(400) 
+      iota()
+    },
+    OR: iota(),
+    IF: iota(),
+    ELSE: iota(),
+    FN: iota(),
+    FOR: iota(),
+    NIL: iota(),
+    RETURN: iota(),
+    TRUE: iota(),
+    FALSE: iota(),
+    LET: iota(),
+    BREAK: iota(),
+    CONTINUE: iota(),
+    IMPORT: iota(),
+
+    // Termination
+    ERROR: 990,
+    EOF: 999,
+  }
+}
+types.TOKEN_NAME = enumNameMapper(types.TOKEN)
+
+types.KEYWORDS = fold(keys(types.TOKEN), .{}, fn(acc, k) {
+  let enum = types.TOKEN[k]
+  if enum >= 400 and enum < 500 {
+    acc[tolower(k)] = true
+  }
+  acc
+})
+
+// XXX: need to keep this in sync with clox
+types.OP = {
+  let iota = lib.iota(0)
+  .{
+    NOP: iota(), // might be useful in the future if we want to do op patching
+    CONSTANT: iota(),
+    CONST_BYTE: iota(),
+    NIL: iota(),
+    TRUE: iota(),
+    FALSE: iota(),
+    EQUAL: iota(),
+    POP: iota(),
+    DUP: iota(),
+    SWAP: iota(),
+    NEW_LOCAL: iota(),
+    POP_LOCAL: iota(),
+    GET_LOCAL: iota(),
+    SET_LOCAL: iota(),
+    GET_GLOBAL: iota(),
+    DEFINE_GLOBAL: iota(),
+    SET_GLOBAL: iota(),
+    GET_UPVALUE: iota(),
+    SET_UPVALUE: iota(),
+    GET_BY_INDEX: iota(),
+    SET_BY_INDEX: iota(),
+    GREATER: iota(),
+    LESS: iota(),
+    ADD: iota(),
+    SUBTRACT: iota(),
+    MULTIPLY: iota(),
+    DIVIDE: iota(),
+    NOT: iota(),
+    MOD: iota(),
+    NEGATE: iota(),
+    BIT_AND: iota(),
+    BIT_OR: iota(),
+    BIT_XOR: iota(),
+    BIT_LSHIFT: iota(),
+    BIT_RSHIFT: iota(),
+    JUMP: iota(),
+    JUMP_IF_TRUE: iota(),
+    JUMP_IF_FALSE: iota(),
+    LOOP: iota(),
+    ASSOC: iota(),
+    APPEND: iota(),
+    HASHMAP: iota(),
+    ARRAY: iota(),
+    CALL: iota(),
+    CLOSURE: iota(),
+    CLOSE_UPVALUE: iota(),
+    RETURN: iota(),
+  }
+}
+
+types.ValueType = {
+  let iota = lib.iota(0)
+  .{
+    BOOL:    iota(),
+    NIL:     iota(),
+    NUMBER:  iota(),
+    OBJ:     iota(),
+  }
+}
+
+types

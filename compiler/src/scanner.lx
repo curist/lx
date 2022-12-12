@@ -1,0 +1,254 @@
+let lib = import "src/lib.lx"
+let types = import "src/types.lx"
+let TOKEN = types.TOKEN
+
+fn initScanner(src) {
+  let state = .{
+    start: 0,
+    current: 0,
+    line: 1,
+  }
+
+  let srcLen = len(src)
+  fn isAtEnd() { srcLen == state.current }
+
+  fn getLexeme() {
+    let lexeme = ""
+
+    for let i = state.start; i < state.current; i = i + 1 {
+      lexeme = lexeme + src[i]
+    }
+  }
+
+  fn Token(type) {.{
+    type: type,
+    lexeme: getLexeme(),
+    line: state.line,
+  }}
+
+  fn StringToken(string) {.{
+    type: TOKEN.STRING,
+    lexeme: getLexeme(),
+    literal: string,
+    line: state.line,
+  }}
+
+  fn NumberToken() {
+    let lexeme = getLexeme()
+    return .{
+      type: TOKEN.NUMBER,
+      lexeme: lexeme,
+      literal: tonumber(lexeme),
+      line: state.line,
+    }
+  }
+
+  fn errorToken(message) {.{
+    type: TOKEN.ERROR,
+    lexeme: message,
+    line: state.line,
+  }}
+
+  fn peekAtIndex(index) {
+    let charLength = {
+      let val = ord(src[index])
+      if val < 128 {
+        1
+      } else if val < 224 {
+        2
+      } else if val < 240 {
+        3
+      } else {
+        4
+      }
+    }
+    return .{
+      length: charLength,
+      s: range(charLength)->fold("", fn(s, i) {
+        s + src[index + i]
+      }),
+    }
+  }
+
+  fn advance() {
+    let current = state.current
+    let result = peekAtIndex(current)
+    state.current = current + result.length
+    return result.s
+  }
+
+  fn match(expected) {
+    if isAtEnd() {
+      return false
+    }
+    if src[state.current] != expected {
+      return false
+    }
+    state.current = state.current + 1
+    return true
+  }
+
+  fn peek() {
+    if isAtEnd() { return "" }
+    peekAtIndex(state.current).s
+  }
+
+  fn peekNext() {
+    if isAtEnd() { nil } else peekAtIndex(state.current + 1).s
+  }
+
+  fn skipWhitespace() {
+    for !isAtEnd() {
+      let c = peek()
+      if c == " " or c == "\r" or c == "\t" {
+        advance()
+      } else if c == "\n" {
+        state.line = state.line + 1
+        advance()
+      } else if c == "/" {
+        if peekNext() == "/" {
+          for peek() != "\n" and !isAtEnd() { advance() }
+        } else {
+          return
+        }
+      } else {
+        return
+      }
+    }
+  }
+
+  let tokenHandlers = .{
+    ["("]: fn() { Token(TOKEN.LEFT_PAREN) },
+    [")"]: fn() { Token(TOKEN.RIGHT_PAREN) },
+    ["{"]: fn() { Token(TOKEN.LEFT_BRACE) },
+    ["}"]: fn() { Token(TOKEN.RIGHT_BRACE) },
+    ["["]: fn() { Token(TOKEN.LEFT_BRACKET) },
+    ["]"]: fn() { Token(TOKEN.RIGHT_BRACKET) },
+    [";"]: fn() { Token(TOKEN.SEMICOLON) },
+    [":"]: fn() { Token(TOKEN.COLON) },
+    [","]: fn() { Token(TOKEN.COMMA) },
+    ["."]: fn() { Token(match("{") and TOKEN.DOT_BRACE or TOKEN.DOT) },
+    ["-"]: fn() { Token(match(">") and TOKEN.MINUS_GREATER or TOKEN.MINUS) },
+    ["%"]: fn() { Token(TOKEN.MOD) },
+    ["+"]: fn() { Token(TOKEN.PLUS) },
+    ["/"]: fn() { Token(TOKEN.SLASH) },
+    ["*"]: fn() { Token(TOKEN.STAR) },
+    ["&"]: fn() { Token(TOKEN.AMPERSAND) },
+    ["|"]: fn() { Token(TOKEN.PIPE) },
+    ["^"]: fn() { Token(TOKEN.CARET) },
+    ["!"]: fn() { Token(match("=") and TOKEN.BANG_EQUAL or TOKEN.BANG) },
+    ["="]: fn() { Token(match("=") and TOKEN.EQUAL_EQUAL or TOKEN.EQUAL) },
+    ["<"]: fn() {
+      Token(if match("=") {
+        TOKEN.LESS_EQUAL
+      } else if match("<") {
+        TOKEN.LESS_LESS
+      } else {
+        TOKEN.LESS
+      })
+    },
+    [">"]: fn() {
+      Token(if match("=") {
+        TOKEN.GREATER_EQUAL
+      } else if match(">") {
+        TOKEN.GREATER_GREATER
+      } else {
+        TOKEN.GREATER
+      })
+    },
+    ["\""]: fn() {
+      let string = ""
+      for peek() != "\"" and !isAtEnd() {
+        let c = peek()
+        if c == "\n" {
+          state.line = state.line + 1
+        }
+        if c != "\\" {
+          string = string + c
+        } else {
+          // handle escape sequences
+          let escapeSequences = .{
+            n: "\n",
+            r: "\r",
+            t: "\t",
+            ["\""]: "\"",
+            ["\\"]: "\\",
+          }
+          advance()
+          c = peek()
+          string = string + (escapeSequences[c] or c)
+        }
+
+        advance()
+      }
+
+      if isAtEnd() { return errorToken("Unterminated string.") }
+
+      // closing quote.
+      advance()
+      StringToken(string)
+    },
+  }
+
+  fn isDigit(n) { len(n) > 0 and ord(n) >= ord("0") and ord(n) <= ord("9") }
+  fn isAlpha(ch) {
+    if len(ch) < 1 { return false }
+    let c = ord(ch)
+    return (c >= ord("a") and c <= ord("z")) or
+      (c >= ord("A") and c <= ord("Z")) or
+      (c == ord("_"))
+  }
+
+  fn number() {
+    for isDigit(peek()) { advance() }
+    if peek() == "." and isDigit(peekNext()) {
+      // consume the "."
+      advance()
+
+      for isDigit(peek()) { advance() }
+    }
+    NumberToken()
+  }
+
+  fn identifier() {
+    for isAlpha(peek()) or isDigit(peek()) { advance() }
+    let lexeme = getLexeme()
+    let isKeyword = types.KEYWORDS[lexeme]
+
+    Token(isKeyword and TOKEN[toupper(lexeme)] or TOKEN.IDENTIFIER)
+  }
+
+  fn shebang() {
+    let c = peek()
+    if c == "#" {
+      if peekNext() == "!" {
+        for peek() != "\n" and !isAtEnd() { advance() }
+      }
+    }
+  }
+
+  shebang()
+
+  return .{
+    scanToken: fn() {
+      skipWhitespace()
+      state.start = state.current
+
+      if isAtEnd() {
+        return Token(TOKEN.EOF)
+      }
+
+      let c = advance()
+
+      if isAlpha(c) { return identifier() }
+      if isDigit(c) { return number() }
+
+      if let handler = tokenHandlers[c] {
+        return handler()
+      }
+
+      errorToken("Unexpected character: " + c)
+    },
+  }
+}
+

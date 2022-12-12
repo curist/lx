@@ -1,0 +1,26 @@
+let empty
+let a = "global"
+{
+  let a = "block 1"
+  {
+    let a = "inner a"
+    let b = a + " innermost b"
+  }
+}
+
+let c = {
+  a + a + { a }
+}
+
+
+let x = (let y = 10)
+x * y - 58
+
+let foo = {
+  1
+  2
+  3
+  4
+  5
+}
+foo + foo

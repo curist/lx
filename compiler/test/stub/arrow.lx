@@ -1,0 +1,14 @@
+let a = range(11)->map(fn(x) { x * x })
+
+each(a, _1(print))
+
+range(101)
+  -> map(fn(x) { x * x })
+  -> fold(0, fn(a, b) { a + b })
+  -> print()
+
+fn add(a, b) { a + b }
+print("sum of 0~100:", range(101)->fold(0, add))
+
+print("...and... hello world!!")
+

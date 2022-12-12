@@ -1,0 +1,18 @@
+let a = [1, 2, "foo", "bar", "baz"]
+print("a:", a)
+print("a[2]:", a[2])
+a[4] = 42
+print("a[4]:", a[4])
+
+// TODO:
+// b.y[123] = 456
+// a["bar"] = "ohhhh"
+// print(a.foo.bar[123])
+let b = .{
+  y: .{},
+}
+b.y[123] = 456
+print("OOOO:", b.y[123])
+let dynamicKey = "ohwell"
+b[dynamicKey] = "sure"
+print("dynamic:", b[dynamicKey])

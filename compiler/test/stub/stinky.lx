@@ -1,0 +1,12 @@
+fn() {
+  fn hello() {
+    fn greeting() {
+      print("hello")
+      true and true
+    }
+    if greeting() {
+      greeting()
+      print("such a manner guy")
+    }
+  }
+}

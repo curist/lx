@@ -1,0 +1,2 @@
+// lx.ts src/main.lx test/stub/ch18.lx | xxd -r -p > /tmp/ch18.lxobj
+!(5 - 4 > 3 * 2 == !nil)

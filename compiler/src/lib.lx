@@ -1,0 +1,85 @@
+fn join(arr, sep) {
+  // ^ not yet decide if we want a join() builtin
+  //   or leave the implementation in an Array module
+  let s = ""
+  let l = len(arr)
+  for let i = 0; i < l; i = i + 1 {
+    if i > 0 {
+      s = s + sep
+    }
+    s = s + str(arr[i])
+  }
+  return s
+}
+
+let lib = .{
+  join: join,
+  floor: fn(num) {
+    // ^ not yet decide if we want a int() builtin
+    //   or leave the implementation in a Math module
+    return int(num)
+  },
+  iota: fn (start) {
+    let i = start - 1
+    fn() { i = i + 1 }
+  },
+  tohex: fn(num) {
+    let map = .{
+      [10]: "a", [11]: "b", [12]: "c",
+      [13]: "d", [14]: "e", [15]: "f",
+    }
+    if num < 0 or num > 255 {
+      return nil
+    }
+    let x = int(num / 16)
+    let y = num % 16
+    return join([map[x] or x, map[y] or y], "")
+  },
+  padStart: fn(n, length, c) {
+    let s = str(n)
+    if len(s) >= length {
+      return s
+    }
+    for len(s) < length {
+      s = c + s
+    }
+  },
+  padRight: fn(n, length, c) {
+    let s = str(n)
+    if len(s) >= length {
+      return s
+    }
+    for len(s) < length {
+      s = s + c
+    }
+  },
+  pp: fn(x) {
+    if type(x) == "array" {
+      groan(join(x, ""))
+    } else {
+      groan(x)
+    }
+  },
+  prettyprint: fn(x) {
+    fn present(x) {
+      if type(x) == "array" {
+        "[" + join(map(x, present), ",") + "]"
+      } else if type(x) == "map" {
+        let mapkeys = keys(x)
+        let s = "{"
+        let keyvalues = fold(mapkeys, [], fn(acc, k) {
+          append(acc, str(k) + ": " + present(x[k]))
+        })
+        s = s + join(keyvalues, ", ")
+        s = s + "}"
+      } else if type(x) == "string" {
+        "\"" + x + "\""
+      } else {
+        str(x)
+      }
+    }
+    let s = present(x)
+    print(s)
+    s
+  },
+}

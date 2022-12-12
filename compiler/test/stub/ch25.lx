@@ -1,0 +1,16 @@
+fn vector(x, y) {
+  fn object(message) {
+    fn add(other) { vector(x + other("x"), y + other("y")) }
+
+    if message == "x" {return x}
+    if message == "y" {return y}
+    if message == "add" {return add}
+    if message == "print" {return print(x, y)}
+    print("unknown message")
+  }
+}
+
+let a = vector(1, 2)
+let b = vector(3, 4)
+let c = a("add")(b)
+c("print")

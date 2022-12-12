@@ -1,0 +1,327 @@
+let lib = import "src/lib.lx"
+let types = import "src/types.lx"
+let object = import "src/object.lx"
+
+let VERSION = 0
+
+let ValueType = types.ValueType
+let ObjType = object.ObjType
+
+let ChunkType = .{
+  REF: 0,
+  ACTUAL: 1,
+}
+
+// obj layout
+// LX:        2
+// VERSION:   1
+// FLAGS:     1 , 8 bits
+//     0000 0001 -> debug
+// OBJSIZE:   4 little endian
+// CHUNKS:    4 little endian
+// TBD:       32 - (2+1+1+4+4) = 20
+// # chunk layout
+// CHUNK_SIZE: 4 little endian
+//    CHUNK_TYPE: 1: 0 as REF, 1 as actual
+//       REF_CHUNK: 4, little endian, chunk index
+//    FUNCTION_ARITY: 1
+//     UPVALUE_COUNT: 1
+//   CHUNK_NAME_SIZE: 2 little endian
+//        CHUNK_NAME: string, vary length, aka function name
+// CODE_SECTION: ?
+//      SIZE: 4 little endian
+//      CODE: various length
+//            CODE_SECTION guaranteed to be followed by 5 bytes of CONST_SECTION header
+// CONST_SECTION: follow right after a CODE_SECTION
+//      SIZE: 4  let's leave size here, so it's possible for us to jump to next chunk
+//      CONST_COUNT: 1
+//   every const is like
+//      TYPE:  1
+//      VALUE: 1 bit type + type dependent layout(length)
+//        BOOL:   1 + 1
+//        NIL:    1
+//        NUMBER: 1 + 8 (double)
+//        OBJ:    1 + 1 (obj type) + obj type dependent layout(length)
+//          STRING:   4 little endian size + actual string
+//          FUNCTION: 0, we rely on the build order to stay the same
+// DEBUG_SECTION:
+//      SIZE: 4 little endian
+//      FILEPATH_LENGTH: 2 file path length
+//      FILEPATH: vary length
+//      TOKEN_LINE_NUMBER: 1 + 2 byte, each
+//                first byte represent repeat times for line #
+//                next 2 bytes is the actual line number
+//                (which means we would only support line no. up to 65535)
+
+fn int32ToBytes(num) {
+  // always return 4 bytes
+  let bytes = [0, 0, 0, 0]
+  bytes[0] = lib.tohex(num & 255)
+  num = num >> 8
+  bytes[1] = lib.tohex(num & 255)
+  num = num >> 8
+  bytes[2] = lib.tohex(num & 255)
+  num = num >> 8
+  bytes[3] = lib.tohex(num & 255)
+  return bytes
+}
+
+fn numberToDoubleBytes(num) {
+  if num > 256*256 { return ["ff", "ff"] }
+  let bytes = [0, 0]
+  bytes[0] = lib.tohex(num & 255)
+  num = num >> 8
+  bytes[1] = lib.tohex(num & 255)
+  num = num >> 8
+  return bytes
+}
+
+fn doubleToBytes(num) {
+  map(Lx.doubleToUint8Array(num), fn(n) {
+    lib.tohex(n)
+  })
+}
+
+fn stringToBytes(s) {
+  fold(range(s), [], fn(bytes, c) {
+    if len(c) > 1 {
+      concat(bytes, map(range(len(c)), fn(i) { lib.tohex(ord(c[i])) } ))
+    } else {
+      push(bytes, lib.tohex(ord(c)))
+    }
+  })
+}
+
+fn writeBytesAt(arr1, arr2, index) {
+  for let i = 0; i < len(arr2) and i + index < len(arr1); i = i + 1 {
+    arr1[index + i] = arr2[i]
+  }
+}
+
+fn setFlags(options) {
+  let flags = 0
+  if options.debug {
+    flags = flags + 1
+  }
+  return lib.tohex(flags)
+}
+
+fn buildChunkObj(func, flags, builtModuleCache) {
+  let chunk = func.chunk
+  let funcName = func.name
+  let filename = chunk.filename
+  let isModule = funcName == ""
+
+  let obj = []
+  let debug = flags.debug
+  let functions = []
+
+  // reserve chunk size
+  obj = concat(obj, int32ToBytes(0))
+
+  // chunk type
+  let moduleBuilt = isModule and builtModuleCache[filename]
+  if moduleBuilt {
+    push(obj, lib.tohex(ChunkType.REF))
+    obj = concat(obj, int32ToBytes(moduleBuilt))
+
+    // update chunk total size
+    writeBytesAt(obj, int32ToBytes(len(obj) - 4), 0)
+
+    return .{
+      obj: obj,
+      functions: [],
+    }
+  }
+
+  push(obj, lib.tohex(ChunkType.ACTUAL))
+
+  push(obj, lib.tohex(func.arity))
+  push(obj, lib.tohex(func.upvalueCount))
+
+  // chunk name info
+  obj = concat(obj, numberToDoubleBytes(len(funcName)))
+  obj = concat(obj, stringToBytes(funcName))
+
+  let codeSize = len(chunk.bytecode)
+  obj = concat(obj, int32ToBytes(codeSize))
+  obj = concat(obj, chunk.bytecode)
+
+  // save start index, we will update this to actual constants size
+  let constSectionStart = len(obj)
+  // reserve constants section size
+  obj = concat(obj, int32ToBytes(1))
+
+  let constantsSize = len(chunk.constants)
+  push(obj, lib.tohex(constantsSize))
+
+  if constantsSize > 0 {
+    let constants = []
+    let objTypeHandlers = .{
+      [ObjType.STRING]: fn(value) {
+        constants = concat(constants, int32ToBytes(len(value)))
+        constants = concat(constants, stringToBytes(value))
+      },
+      [ObjType.FUNCTION]: fn(value) {
+        push(functions, value)
+      },
+    }
+    let constTypeHandlers = .{
+      // NOTE: not having nil or bool handlers here,
+      // since those are represented directly as byte codes
+      [ValueType.NUMBER]: fn(value) {
+        let double = doubleToBytes(value)
+        constants = concat(constants, double)
+      },
+      [ValueType.OBJ]: fn(val) {
+        let handler = objTypeHandlers[val.kind]
+        if handler {
+          push(constants, lib.tohex(val.kind))
+          handler(val.value)
+        } else {
+          // should be unreachable
+          groan("Invalid obj handler type: ", val.kind)
+          Lx.exit(55)
+        }
+      },
+    }
+    each(chunk.constants, fn(val) {
+      let handler = constTypeHandlers[val.kind]
+      if handler {
+        push(constants, lib.tohex(val.kind))
+        handler(val.value)
+      } else {
+        // should be unreachable
+        groan("Invalid value handler type: ", val.kind)
+        Lx.exit(55)
+      }
+    })
+
+    // update constants section size
+    writeBytesAt(obj, int32ToBytes(len(constants) + 1), constSectionStart)
+    obj = concat(obj, constants)
+  }
+
+  if debug {
+    // save start index, we will update this to actual debug size
+    let debugSectionStart = len(obj)
+    // reserve debug section size
+    obj = concat(obj, int32ToBytes(0))
+    let debugLines = []
+
+    let filePathStringLength = numberToDoubleBytes(len(filename))
+    debugLines = concat(debugLines, filePathStringLength)
+    debugLines = concat(debugLines, stringToBytes(filename))
+
+    let lastLineNumber = -1
+    let runningLength = 0
+    fn emitDebugLines(line) {
+      if line == -1 or runningLength == 0 { return }
+      push(debugLines, lib.tohex(runningLength))
+      debugLines = concat(debugLines, numberToDoubleBytes(line))
+      lastLineNumber = -1
+      runningLength = 0
+    }
+    each(chunk.lines, fn(line) {
+      if line == lastLineNumber {
+        runningLength = runningLength + 1
+      } else {
+        emitDebugLines(lastLineNumber)
+        lastLineNumber = line
+        runningLength = 1
+      }
+      if runningLength == 255 {
+        emitDebugLines(line)
+      }
+    })
+    // emit remaing lines
+    emitDebugLines(lastLineNumber)
+
+    // update debug section size
+    writeBytesAt(obj, int32ToBytes(len(debugLines)), debugSectionStart)
+    obj = concat(obj, debugLines)
+  }
+
+  // update chunk total size
+  writeBytesAt(obj, int32ToBytes(len(obj) - 4), 0)
+
+  return .{
+    obj: obj,
+    functions: functions,
+  }
+}
+
+fn dumpObj(obj) {
+  // print formatted obj in plain text
+  let buffered = ""
+  let totalSize = len(obj)
+  for let i = 0; i < totalSize; {
+    for let j = i; j < i + 16 and j < totalSize; j = j + 1 {
+      buffered = buffered + obj[j]
+      if j % 2 == 1 {
+        buffered = buffered + " "
+      }
+    }
+
+    i = i + 16
+
+    if len(buffered) > 500 {
+      print(buffered)
+      buffered = ""
+    } else {
+      buffered = buffered + "\n"
+    }
+  }
+  print(buffered)
+}
+
+fn hexToBytes(hex) {
+  let mapping = .{
+    ["0"]: 0, ["1"]: 1, ["2"]: 2, ["3"]: 3, ["4"]: 4,
+    ["5"]: 5, ["6"]: 6, ["7"]: 7, ["8"]: 8, ["9"]: 9,
+    a: 10, b: 11, c: 12, d: 13, e: 14, f: 15,
+  }
+  return mapping[hex[0]] * 16 + mapping[hex[1]]
+}
+
+fn objbuilder(main, debug) {
+  let flags = .{ debug: debug }
+
+  let obj = ["4c", "58", lib.tohex(VERSION), setFlags(flags)]
+
+  let sign = "@curist"
+  let fillRest = 32 - len(obj) - len(sign)
+  each(range(fillRest), fn() { push(obj, "00") })
+
+  obj = concat(obj, stringToBytes(sign))
+
+  let builtModuleCache = .{}
+
+  let functions = [main]
+  for let i = 0; i < len(functions); i = i + 1 {
+    let func = functions[i]
+    let chunkObj = buildChunkObj(func, flags, builtModuleCache)
+    functions = concat(functions, chunkObj.functions)
+    obj = concat(obj, chunkObj.obj)
+
+    let isModule = func.name == ""
+
+    if isModule and !builtModuleCache[func.chunk.filename] {
+      // just built a not cached module chunk
+      builtModuleCache[func.chunk.filename] = i
+    }
+  }
+
+  // update obj size
+  let totalSize = len(obj)
+  writeBytesAt(obj, int32ToBytes(totalSize), 4)
+
+  // update chunks count
+  writeBytesAt(obj, int32ToBytes(len(functions)), 8)
+
+  return .{
+    obj: obj,
+    dump: fn() { dumpObj(obj) },
+    bytes: fn() { map(obj, hexToBytes) },
+  }
+}

@@ -1,0 +1,11 @@
+let mod = .{}
+
+mod.math = .{
+  add: fn(a, b) { a + b },
+}
+
+mod.string = .{
+  len: fn(s) { len(s) }
+}
+
+mod

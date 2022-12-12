@@ -1,0 +1,36 @@
+let initScanner = import "src/scanner.lx"
+let lib = import "src/lib.lx"
+let types = import "src/types.lx"
+let TOKEN = types.TOKEN
+
+// lib.prettyprint(types.TOKEN_NAME )
+// lib.prettyprint(types.KEYWORDS )
+
+let scanner = initScanner(slurp("test/stub/sink.lx"))
+
+for true {
+  let tok = scanner.scanToken()
+
+  lib.prettyprint(tok)
+  if tok.type == TOKEN.EOF {
+    break
+  }
+}
+// lib.prettyprint(types.KEYWORDS)
+//
+// fold(keys(types.KEYWORDS), nil, fn(_, x) {
+//   print(x)
+//   print(type(x))
+//   print(x == "return")
+//   print(type("return"))
+// })
+print(types.TOKEN["RETURN"])
+print(types.KEYWORDS["return"])
+print(types.TOKEN["LET"])
+print(types.KEYWORDS["let"])
+print(types.TOKEN["FALSE"])
+print(types.KEYWORDS["false"])
+print(toupper("let"))
+print(true and TOKEN[toupper("let")] or TOKEN.IDENTIFIER)
+
+lib.prettyprint(keys(types.KEYWORDS))

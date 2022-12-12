@@ -1,0 +1,13 @@
+let mod = import "test/stub/module.lx"
+// XXX: maybe we should expand filepath to abs path, and use that as cache key
+
+fn printArray(arr) {
+  print("========================")
+  for let i = 0; i < len(arr); i = i + 1 {
+    print(arr[i])
+  }
+}
+printArray(Lx.globals())
+printArray(keys(mod))
+
+print(mod.math.add(40, 2))

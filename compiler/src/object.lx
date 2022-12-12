@@ -1,0 +1,31 @@
+let lib = import "src/lib.lx"
+
+let mod = .{}
+
+mod.Object = fn(kind, value) {.{
+  kind: kind,
+  value: value,
+}}
+
+mod.ObjectFunction = fn(function) {
+  mod.Object(mod.ObjType.FUNCTION, function)
+}
+
+mod.ObjectString = fn(string) {
+  mod.Object(mod.ObjType.STRING, string)
+}
+
+mod.ObjType = {
+  let iota = lib.iota(0)
+  .{
+    CLOSURE: iota(),
+    FUNCTION: iota(),
+    NATIVE: iota(),
+    STRING: iota(),
+    UPVALUE: iota(),
+    HASHMAP: iota(),
+    ARRAY: iota(),
+  }
+}
+
+mod

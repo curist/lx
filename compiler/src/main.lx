@@ -1,0 +1,88 @@
+// to put arbitrary things to vm.globals
+let __lx_result__
+
+fn() {
+  let compile = import "src/compiler.lx"
+  let objbuilder = import "src/objbuilder.lx"
+
+  fn handleBuildFunction(cb) {
+    // TODO: proper args parsing
+    let argsLength = len(Lx.args)
+    let DEBUG_BUILD = false
+    let path = Lx.args[2]
+    if path == "--debug" {
+      if argsLength <= 3 {
+        groan("Usage:", Lx.args[0], "compile [--debug] <path>")
+        Lx.exit(28)
+      }
+      DEBUG_BUILD = true
+      path = Lx.args[3]
+    }
+
+    let source = slurp(path)
+    if !source {
+      groan("Failed to open", path)
+      Lx.exit(2)
+    }
+
+    let result = compile(source, path, .{ main: true })
+    if !result.success {
+      groan("Compile failed.")
+      Lx.exit(65)
+    }
+
+    cb(result.function, DEBUG_BUILD)
+  }
+
+
+  let handlers = .{
+    compile: fn() {
+      handleBuildFunction(fn(func, DEBUG_BUILD) {
+        objbuilder(func, DEBUG_BUILD).dump()
+      })
+    },
+    run: fn() {
+      handleBuildFunction(fn(func, DEBUG_BUILD) {
+        __lx_result__ = objbuilder(func, DEBUG_BUILD).bytes()
+      })
+    },
+    eval: fn() {
+      if !__lx_input__ {
+        __lx_result__ = "Empty input."
+        return
+      }
+      let result = compile(__lx_input__, "[LX EVAL]", .{ main: true })
+      if !result.success {
+        __lx_result__ = "Compile failed."
+        return
+      }
+      __lx_result__ = objbuilder(result.function, false).bytes()
+    },
+    repl: fn() {
+      if !__lx_input__ {
+        __lx_result__ = "Empty input."
+        return
+      }
+      let result = compile(__lx_input__, "[LX REPL]", .{ main: true })
+      if !result.success {
+        __lx_result__ = "Compile failed."
+        return
+      }
+      __lx_result__ = objbuilder(result.function, false).bytes()
+    },
+    lsp: fn() {
+      for true { groan(getline() or { break }) }
+    },
+  }
+
+  fn handleUnknownCommand() {
+    if Lx.args[1] {
+      groan(Lx.args[0] + " " + Lx.args[1] + ": unknown command")
+    }
+    groan("Run '", Lx.args[0], " help' for usage.")
+    Lx.exit(28)
+  }
+
+  {Lx.args[1] and handlers[Lx.args[1]] or handleUnknownCommand}()
+}()
+

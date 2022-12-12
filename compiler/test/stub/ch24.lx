@@ -1,0 +1,14 @@
+fn fib(n) {
+  if n < 2 {
+    return n
+  }
+  fib(n - 1) + fib(n - 2)
+}
+
+let start = clock()
+let x = 35
+print("fib(", x, "):", fib(x))
+print("time:", clock() - start)
+print()
+
+print(int(123.456))

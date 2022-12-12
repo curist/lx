@@ -1,0 +1,58 @@
+let lib = import "src/lib.lx"
+
+fn pp(arr) {
+  if type(arr) == "array" {
+    print(lib.join(arr, ""))
+  } else {
+    print(arr)
+  }
+}
+
+fn makeTestSuite() {
+  let tests = []
+  let passedTests = 0
+  let totalAssertions = 0
+  let passedAssertions = 0
+
+  fn defineTest(testName, testBody) {
+    let testPassed = true
+    let assert = .{
+      equal: fn(actual, expect) {
+        totalAssertions = totalAssertions + 1
+        if expect == actual {
+          passedAssertions = passedAssertions + 1
+          return
+        }
+        print("assertion fail: " + testName)
+        print("\texpect: " + str(expect))
+        print("\tactual: " + str(actual))
+        print("")
+        testPassed = false
+      },
+    }
+    tests = append(tests, fn() {
+      testBody(assert)
+      testPassed
+    })
+  }
+
+  fn run() {
+    for let i = 0; i < len(tests); i = i + 1 {
+      let passed = tests[i]()
+      if passed {
+        passedTests = passedTests + 1
+      }
+    }
+    pp([
+      "passed tests ", passedTests, "/", len(tests),
+      " asserts ", passedAssertions, "/", totalAssertions,
+    ])
+
+    Lx.exit(len(tests) == passedTests and 0 or 1)
+  }
+
+  return .{
+    defineTest: defineTest,
+    run: run,
+  }
+}

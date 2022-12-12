@@ -5,10 +5,10 @@ fn fib(n) {
   fib(n - 1) + fib(n - 2)
 }
 
-let start = clock()
-let x = 35
+let start = Date.time()
+let x = 20
 print("fib(", x, "):", fib(x))
-print("time:", clock() - start)
+print("time:", Date.time() - start)
 print()
 
 print(int(123.456))

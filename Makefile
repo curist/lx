@@ -37,3 +37,9 @@ EMFLAGS=-sASYNCIFY -sINVOKE_RUN=0 -sENVIRONMENT=web \
 emcc: prepare
 	emcc $(CFLAGS) -DWASM $(EMFLAGS) src/*.c -o docs/lx.js
 
+clean:
+	rm -rf out
+
+test:
+	@cd compiler && make runall && make test
+

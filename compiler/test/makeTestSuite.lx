@@ -1,13 +1,3 @@
-let lib = import "src/lib.lx"
-
-fn pp(arr) {
-  if type(arr) == "array" {
-    print(lib.join(arr, ""))
-  } else {
-    print(arr)
-  }
-}
-
 fn makeTestSuite() {
   let tests = []
   let passedTests = 0
@@ -43,10 +33,10 @@ fn makeTestSuite() {
         passedTests = passedTests + 1
       }
     }
-    pp([
-      "passed tests ", passedTests, "/", len(tests),
-      " asserts ", passedAssertions, "/", totalAssertions,
-    ])
+    print(
+      "passed tests", str(passedTests) + "/" + len(tests)->str(),
+      "asserts", str(passedAssertions) + "/" + str(totalAssertions),
+    )
 
     Lx.exit(len(tests) == passedTests and 0 or 1)
   }

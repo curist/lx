@@ -1,3 +1,5 @@
+![status](https://github.com/curist/lx/actions/workflows/test.yml/badge.svg)
+
 # Lx programming language
 Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived programming language.
 

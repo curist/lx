@@ -1,3 +1,3 @@
--std=c99
+-std=gnu11
 -Iinclude
 -I.

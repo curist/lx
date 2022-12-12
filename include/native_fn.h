@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <time.h>
 
@@ -382,7 +383,7 @@ static int tostring(char** s, Value v) {
     double num = AS_NUMBER(v);
     int64_t val_i = num;
     if (num == val_i) {
-      return snprintf(*s, size, "%lld", val_i);
+      return snprintf(*s, size, "%" PRId64, val_i);
     }
     return snprintf(*s, size, "%lf", num);
   } else if (IS_BOOL(v)) {

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "object.h"
 #include "memory.h"
@@ -38,7 +39,7 @@ void printValue(FILE* fd, Value value) {
     double num = AS_NUMBER(value);
     int64_t val_i = num;
     if (num == val_i) {
-      fprintf(fd, "%lld", val_i);
+      fprintf(fd, "%" PRId64, val_i);
     } else {
       fprintf(fd, "%f", num);
     }

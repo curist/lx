@@ -1,6 +1,7 @@
 fn _1(cb) { fn(x) { cb(x) } }
 fn _2(cb) { fn(x, y) { cb(x, y) } }
 fn _3(cb) { fn(x, y, z) { cb(x, y, z) } }
+fn do(x, cb) { cb(x) }
 
 fn each(arr, cb) {
   let length = len(arr)

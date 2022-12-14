@@ -1,5 +1,4 @@
-let makeTestSuite = import "test/makeTestSuite.lx"
-let suite = makeTestSuite()
+let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
 let initScanner = import "src/scanner.lx"

@@ -1,5 +1,4 @@
-let makeTestSuite = import "test/makeTestSuite.lx"
-let suite = makeTestSuite()
+let suite = (import "test/makeTestSuite.lx")()
 let test = fn(name, cb) {
   suite.defineTest("globals - " + name, cb)
 }

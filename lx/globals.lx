@@ -50,14 +50,33 @@ fn filter(arr, cb) {
 }
 
 fn contains(arr, target) {
-  let contains = false
-  each(arr, fn(x, _, _, abort) {
-    if x == target {
-      contains = true
-      abort()
+  if type(arr) != "string" {
+    let contains = false
+    each(arr, fn(x, _, _, abort) {
+      if x == target {
+        contains = true
+        abort()
+      }
+    })
+    return contains
+  }
+  // handle string contains
+  if type(target) != "string" {
+    return false
+  }
+  if len(target) == 0 {
+    return true
+  }
+  let s = range(arr)
+  let slen = len(s)
+  let tlen = len(range(target))
+  // inefficient, i know
+  for let i = 0; i < slen; i = i + 1 {
+    if s->drop(i)->take(tlen)->join("") == target {
+      return true
     }
-  })
-  contains
+  }
+  false
 }
 
 fn take(arr, n) {

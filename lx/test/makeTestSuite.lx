@@ -5,15 +5,17 @@ fn makeTestSuite() {
 
   fn defineTest(testName, testBody) {
     let testPassed = true
+    let testAssertions = 0
     let assert = .{
       equal: fn(actual, expect) {
         totalAssertions = totalAssertions + 1
+        testAssertions = testAssertions + 1
         if expect == actual {
           passedAssertions = passedAssertions + 1
           return
         }
         print(
-          "assertion fail:", testName, "\n",
+          "assertion fail (" + str(testAssertions) + "):", testName, "\n",
           "\texpect:", expect, "\n",
           "\tactual:", actual, "\n",
         )
@@ -21,12 +23,13 @@ fn makeTestSuite() {
       },
       truthy: fn(actual) {
         totalAssertions = totalAssertions + 1
+        testAssertions = testAssertions + 1
         if actual {
           passedAssertions = passedAssertions + 1
           return
         }
         print(
-          "assertion fail:", testName, "\n",
+          "assertion fail (" + str(testAssertions) + "):", testName, "\n",
           "\texpect to be truthy:", actual, "\n",
         )
         testPassed = false

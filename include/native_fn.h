@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <math.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <time.h>
@@ -80,13 +81,18 @@ static bool printNative(int argCount, Value* args) {
   return true;
 }
 
-static bool groanNative(int argCount, Value* args) {
+static bool printerrNative(int argCount, Value* args) {
   for (int i = 0; i < argCount; i++) {
     if (i > 0) fprintf(stderr, " ");
     printValue(stderr, args[i]);
   }
-  fprintf(stderr, "\n");
   args[-1] = NIL_VAL;
+  return true;
+}
+
+static bool groanNative(int argCount, Value* args) {
+  printerrNative(argCount, args);
+  fprintf(stderr, "\n");
   return true;
 }
 
@@ -122,6 +128,21 @@ static bool ordNative(int argCount, Value* args) {
 
 static bool randomNative(int argCount, Value* args) {
   double num = (double)rand() / (double)RAND_MAX;
+  args[-1] = NUMBER_VAL(num);
+  return true;
+}
+
+static bool sqrtNative(int argCount, Value* args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a number.");
+    return false;
+  }
+  Value arg = args[0];
+  if (!IS_NUMBER(arg)) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a number.");
+    return false;
+  }
+  double num = sqrt(AS_NUMBER(arg));
   args[-1] = NUMBER_VAL(num);
   return true;
 }
@@ -754,6 +775,7 @@ void defineBuiltinNatives() {
   defineDateNatives();
 
   defineNative("print", printNative);
+  defineNative("printerr", printerrNative);
   defineNative("groan", groanNative);
   defineNative("str", strNative);
   defineNative("join", joinNative);
@@ -763,6 +785,7 @@ void defineBuiltinNatives() {
   defineNative("int", intNative);
   defineNative("ord", ordNative);
   defineNative("random", randomNative);
+  defineNative("sqrt", sqrtNative);
   defineNative("keys", keysNative);
   defineNative("len", lenNative);
   defineNative("type", typeNative);

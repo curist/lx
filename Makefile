@@ -29,7 +29,7 @@ out:
 prepare: out lxlx lxglobals lxversion
 
 build: prepare
-	$(CC) $(CFLAGS) src/*.c -o out/lx
+	$(CC) src/*.c -o out/lx $(CFLAGS)
 
 wasm: prepare
 	zig cc $(CFLAGS) -DWASM -target wasm32-wasi src/*.c -o out/lx.wasm

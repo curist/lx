@@ -110,3 +110,20 @@ fn endsWith(s, suffix) {
   if sfxlen > slen { return false }
   range(s)->drop(slen - sfxlen)->join("") == suffix
 }
+
+return .{
+  _1: _1,
+  _2: _2,
+  _3: _3,
+  do: do,
+  each: each,
+  fold: fold,
+  foldr: foldr,
+  map: map,
+  filter: filter,
+  contains: contains,
+  take: take,
+  drop: drop,
+  startsWith: startsWith,
+  endsWith: endsWith,
+}

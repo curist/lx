@@ -3,6 +3,9 @@ let types = import "src/types.lx"
 let initScanner = import "src/scanner.lx"
 let object = import "src/object.lx"
 
+let globals = import "globals.lx"
+let each = globals.each
+
 let TOKEN = types.TOKEN
 let OP = types.OP
 let ValueType = types.ValueType
@@ -648,8 +651,9 @@ fn compile(src, filename, opts) {
   }
 
   fn call() {
+    let line = parser.previous.line
     let argCount = argumentList()
-    emitBytes(OP.CALL, argCount, parser.previous.line)
+    emitBytes(OP.CALL, argCount, line)
   }
 
   fn dot(canAssign) {

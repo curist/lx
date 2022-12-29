@@ -2,6 +2,8 @@ let lib = import "src/lib.lx"
 let types = import "src/types.lx"
 let object = import "src/object.lx"
 
+let globals = import "globals.lx"
+
 let VERSION = 0
 
 let ValueType = types.ValueType
@@ -11,6 +13,10 @@ let ChunkType = .{
   REF: 0,
   ACTUAL: 1,
 }
+
+let each = globals.each
+let fold = globals.fold
+let map = globals.map
 
 // obj layout
 // LX:        2

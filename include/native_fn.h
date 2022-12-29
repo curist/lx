@@ -379,6 +379,8 @@ static bool rangeNative(int argCount, Value* args) {
       ObjString* s = AS_STRING(arg);
       for (size_t i = 0; i < s->length; ) {
         uint8_t charlen = utf8CharLength(s->chars[i]);
+        if (i + charlen > s->length) break;
+
         push(OBJ_VAL(copyString(&s->chars[i], charlen)));
         writeValueArray(&AS_ARRAY(args[-1]), vm.stackTop[-1]);
         pop();
@@ -479,7 +481,12 @@ static bool joinNative(int argCount, Value* args) {
 
   for (int i = 1; i < array->count; ++i) {
     slen = tostring(&s, array->values[i]);
-    result = realloc(result, result_size + seplen + slen + 1);
+    char* result_tmp = realloc(result, result_size + seplen + slen + 1);
+    if (result_tmp == NULL) {
+      args[-1] = CSTRING_VAL("Error: Realloc failed.");
+      return false;
+    }
+    result = result_tmp;
     memcpy(result + result_size, sep, seplen);
     memcpy(result + result_size + seplen, s, slen);
     free(s);
@@ -657,6 +664,7 @@ static bool tolowerNative(int argCount, Value* args) {
     s[i] = tolower(str->chars[i]);
   }
   args[-1] = OBJ_VAL(copyString(s, str->length));
+  free(s);
   return true;
 }
 
@@ -675,6 +683,7 @@ static bool toupperNative(int argCount, Value* args) {
     s[i] = toupper(str->chars[i]);
   }
   args[-1] = OBJ_VAL(copyString(s, str->length));
+  free(s);
   return true;
 }
 

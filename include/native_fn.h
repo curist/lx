@@ -16,6 +16,8 @@
 #include "vm.h"
 #include "object.h"
 
+static char RFC3339[] = "%Y-%m-%dT%H:%M:%S%z";
+
 void defineBuiltinNatives();
 
 // ---- start of native function declarations ----
@@ -29,7 +31,7 @@ static bool timeNative(int argCount, Value* args) {
 }
 
 static bool strftimeNative(int argCount, Value* args) {
-  if (argCount < 2) {
+  if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Date.format takes 2 args.");
     return false;
   }
@@ -37,16 +39,20 @@ static bool strftimeNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: First arg of Date.format is unix timestamp.");
     return false;
   }
-  if (!IS_STRING(args[1])) {
-    args[-1] = CSTRING_VAL("Error: Second arg of Date.format is format string.");
-    return false;
+  char* format = RFC3339;
+  if (argCount >= 2) {
+    if (!IS_STRING(args[1])) {
+      args[-1] = CSTRING_VAL("Error: Second arg of Date.format is format string.");
+      return false;
+    }
+    format = AS_STRING(args[1])->chars;
   }
   time_t t = (int)AS_NUMBER(args[0]);
   struct tm date = {0};
   localtime_r(&t, &date);
 
   char formatted_time[40];
-  strftime(formatted_time, 40, AS_STRING(args[1])->chars, &date);
+  strftime(formatted_time, 40, format, &date);
   args[-1] = CSTRING_VAL(formatted_time);
   return true;
 }
@@ -766,7 +772,7 @@ static void defineDateNatives() {
   tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
 
   push(CSTRING_VAL("RFC3339"));
-  push(CSTRING_VAL("%Y-%m-%dT%H:%M:%S%z"));
+  push(CSTRING_VAL(RFC3339));
   tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
   pop();
   pop();

@@ -82,4 +82,9 @@ test("Date", fn(assert) {
   assert.equal(Date.format(y2k, format), y2ks)
 })
 
+test("Date.format optional format", fn(assert) {
+  let now = Date.time()
+  assert.equal(Date.format(now, Date.RFC3339), Date.format(now))
+})
+
 suite.run()

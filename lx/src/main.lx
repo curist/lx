@@ -4,6 +4,8 @@ let __lx_result__
 fn() {
   let compile = import "src/compiler.lx"
   let objbuilder = import "src/objbuilder.lx"
+  let tohex = (import "src/lib.lx").tohex
+  let OP = (import "src/types.lx").OP
 
   fn handleBuildFunction(cb) {
     // TODO: proper args parsing
@@ -67,6 +69,10 @@ fn() {
       if !result.success {
         __lx_result__ = "Compile failed."
         return
+      }
+      if result.function.chunk.bytecode->len() == 1 {
+        // handle empty line, with [2e] (OP_RET)
+        result.function.chunk.bytecode = [OP.NIL, OP.RETURN]->map(tohex)
       }
       __lx_result__ = objbuilder(result.function, false).bytes()
     },

@@ -47,7 +47,7 @@ static bool strftimeNative(int argCount, Value* args) {
     }
     format = AS_STRING(args[1])->chars;
   }
-  time_t t = (int)AS_NUMBER(args[0]);
+  time_t t = (time_t)AS_NUMBER(args[0]);
   struct tm date = {0};
   localtime_r(&t, &date);
 

@@ -1,8 +1,8 @@
 let types = import "src/types.lx"
 let TOKEN = types.TOKEN
 
-let globals = import "globals.lx"
-let fold = globals.fold
+// let globals = import "globals.lx"
+// let fold = globals.fold
 
 fn initScanner(src) {
   let state = .{

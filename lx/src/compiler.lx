@@ -3,8 +3,8 @@ let types = import "src/types.lx"
 let initScanner = import "src/scanner.lx"
 let object = import "src/object.lx"
 
-let globals = import "globals.lx"
-let each = globals.each
+// let globals = import "globals.lx"
+// let each = globals.each
 
 let TOKEN = types.TOKEN
 let OP = types.OP

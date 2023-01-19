@@ -1,7 +1,7 @@
 let lib = import "src/lib.lx"
 
-let globals = import "globals.lx"
-let fold = globals.fold
+// let globals = import "globals.lx"
+// let fold = globals.fold
 
 let types = .{}
 

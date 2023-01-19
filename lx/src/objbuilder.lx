@@ -2,10 +2,10 @@ let lib = import "src/lib.lx"
 let types = import "src/types.lx"
 let object = import "src/object.lx"
 
-let globals = import "globals.lx"
-let each = globals.each
-let fold = globals.fold
-let map = globals.map
+// let globals = import "globals.lx"
+// let each = globals.each
+// let fold = globals.fold
+// let map = globals.map
 
 let VERSION = 0
 

@@ -629,10 +629,12 @@ fn compile(src, filename, opts) {
 
   fn argumentList() {
     let argCount = pendingCallCount
+
     if pendingCallCount > 0 {
       emitByte(OP.SWAP, parser.previous.line)
+      pendingCallCount = pendingCallCount - 1
     }
-    pendingCallCount = 0
+
     fn parseArg() {
       expression()
       if (argCount == 255) {

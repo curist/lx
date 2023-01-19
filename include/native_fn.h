@@ -16,7 +16,7 @@
 #include "vm.h"
 #include "object.h"
 
-static char RFC3339[] = "%Y-%m-%dT%H:%M:%S%z";
+#define RFC3339 "%Y-%m-%dT%H:%M:%S%z"
 
 void defineBuiltinNatives();
 

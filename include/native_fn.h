@@ -83,6 +83,7 @@ static bool printNative(int argCount, Value* args) {
     printValue(stdout, args[i]);
   }
   printf("\n");
+  fflush(stdout);
   args[-1] = NIL_VAL;
   return true;
 }
@@ -99,6 +100,7 @@ static bool printerrNative(int argCount, Value* args) {
 static bool groanNative(int argCount, Value* args) {
   printerrNative(argCount, args);
   fprintf(stderr, "\n");
+  fflush(stderr);
   return true;
 }
 

@@ -69,7 +69,8 @@ fn contains(arr, target) {
   }
   let s = range(arr)
   let slen = len(s)
-  let tlen = len(target)
+  // using range to handle utf-8 string length correctly
+  let tlen = len(range(target))
   // inefficient, i know
   for let i = 0; i < slen; i = i + 1 {
     if s->drop(i)->take(tlen)->join("") == target {

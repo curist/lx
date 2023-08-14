@@ -9,6 +9,7 @@ fn initScanner(src) {
     start: 0,
     current: 0,
     line: 1,
+    col: 0,
   }
 
   let srcLen = len(src)
@@ -26,6 +27,7 @@ fn initScanner(src) {
     type: type,
     lexeme: getLexeme(),
     line: state.line,
+    col: state.col,
   }}
 
   fn StringToken(string) {.{
@@ -33,6 +35,7 @@ fn initScanner(src) {
     lexeme: getLexeme(),
     literal: string,
     line: state.line,
+    col: state.col,
   }}
 
   fn NumberToken() {
@@ -42,6 +45,7 @@ fn initScanner(src) {
       lexeme: lexeme,
       literal: tonumber(lexeme),
       line: state.line,
+      col: state.col,
     }
   }
 
@@ -49,6 +53,7 @@ fn initScanner(src) {
     type: TOKEN.ERROR,
     lexeme: message,
     line: state.line,
+    col: state.col,
   }}
 
   fn peekAtIndex(index) {
@@ -76,6 +81,7 @@ fn initScanner(src) {
     let current = state.current
     let result = peekAtIndex(current)
     state.current = current + result.length
+    state.col = state.col + result.length
     return result.s
   }
 
@@ -106,6 +112,7 @@ fn initScanner(src) {
         advance()
       } else if c == "\n" {
         state.line = state.line + 1
+        state.col = 0
         advance()
       } else if c == "/" {
         if peekNext() == "/" {
@@ -164,6 +171,7 @@ fn initScanner(src) {
         let c = peek()
         if c == "\n" {
           state.line = state.line + 1
+          state.col = 0
         }
         if c != "\\" {
           string = string + c

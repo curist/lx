@@ -5,8 +5,8 @@ fn vector(x, y) {
     if message == "x" {return x}
     if message == "y" {return y}
     if message == "add" {return add}
-    if message == "print" {return print(x, y)}
-    print("unknown message")
+    if message == "print" {return println(x, y)}
+    println("unknown message")
   }
 }
 

@@ -4,11 +4,11 @@ let a = .{
   bar: 42,
 } // empty hashmap
 
-print("a:", a)
-print("a.foo:", a.foo)
+println("a:", a)
+println("a.foo:", a.foo)
 a.foo = "foo updated!!!"
-print("a.foo:", a.foo)
-print("math", a.bar * 100)
+println("a.foo:", a.foo)
+println("math", a.bar * 100)
 
 // TODO:
 // b.y[123] = 456

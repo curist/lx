@@ -7,7 +7,7 @@ fn each(arr, cb) {
   }
 }
 fn printArray(arr) {
-  print("========================")
+  println("========================")
   each(arr, fn(x) { print(x) })
 }
 
@@ -33,7 +33,7 @@ printArray(reverse(a))
 
 fn add(a, b) { a + b }
 
-print(fold(range(1000000), 0, add))
+println(fold(range(1000000), 0, add))
 
 let sum = 0
 let foo = each(range(1000000), fn(_, i, _, abort) {
@@ -41,4 +41,4 @@ let foo = each(range(1000000), fn(_, i, _, abort) {
   sum = sum + i
 })
 
-print(sum, foo)
+println(sum, foo)

@@ -7,8 +7,8 @@ fn fib(n) {
 
 let start = Date.time()
 let x = 20
-print("fib(", x, "):", fib(x))
-print("time:", Date.time() - start)
-print()
+println("fib(", x, "):", fib(x))
+println("time:", Date.time() - start)
+println()
 
-print(int(123.456))
+println(int(123.456))

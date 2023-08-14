@@ -124,6 +124,23 @@ static bool intNative(int argCount, Value* args) {
   return true;
 }
 
+static bool chrNative(int argCount, Value* args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a number.");
+    return false;
+  }
+  Value arg = args[0];
+  if (!IS_NUMBER(arg)) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a number.");
+    return false;
+  }
+  char* chrs = malloc(2);
+  chrs[0] = AS_NUMBER(arg);
+  chrs[1] = '\0';
+  args[-1] = OBJ_VAL(takeString(chrs, 1));
+  return true;
+}
+
 static bool ordNative(int argCount, Value* args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a char.");
@@ -807,6 +824,7 @@ void defineBuiltinNatives() {
   defineNative("toupper", toupperNative);
   defineNative("tonumber", tonumberNative);
   defineNative("int", intNative);
+  defineNative("chr", chrNative);
   defineNative("ord", ordNative);
   defineNative("random", randomNative);
   defineNative("sqrt", sqrtNative);

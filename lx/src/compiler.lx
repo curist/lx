@@ -339,13 +339,12 @@ fn compile(src, filename, opts) {
   }
 
   fn resolveLocal(compiler, name) {
-    // we were assume all variables before latest one,
-    // should be initialized, but that's not true for our case
-    // in a scenario like
+    // we were assuming all variables before latest one are initialized,
+    // but that's not true for our case; in a scenario like
     // let x = { let foo }
     // `foo` gets initialized before `x` does
-    // we when we get an index, we must also subtract
-    // how many unintialized variables is before our variable
+    // when we get an index, we must also subtract
+    // how many unintialized variables are before our variable
     for let i = len(compiler.locals) - 1; i >= 1; i = i - 1 {
       let local = compiler.locals[i]
       if identifiersEqual(name, local.name) {

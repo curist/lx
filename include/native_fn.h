@@ -82,13 +82,18 @@ static bool printNative(int argCount, Value* args) {
     if (i > 0) printf(" ");
     printValue(stdout, args[i]);
   }
-  printf("\n");
-  fflush(stdout);
   args[-1] = NIL_VAL;
   return true;
 }
 
-static bool printerrNative(int argCount, Value* args) {
+static bool printlnNative(int argCount, Value* args) {
+  printNative(argCount, args);
+  printf("\n");
+  fflush(stdout);
+  return true;
+}
+
+static bool groanNative(int argCount, Value* args) {
   for (int i = 0; i < argCount; i++) {
     if (i > 0) fprintf(stderr, " ");
     printValue(stderr, args[i]);
@@ -97,8 +102,8 @@ static bool printerrNative(int argCount, Value* args) {
   return true;
 }
 
-static bool groanNative(int argCount, Value* args) {
-  printerrNative(argCount, args);
+static bool groanlnNative(int argCount, Value* args) {
+  groanNative(argCount, args);
   fprintf(stderr, "\n");
   fflush(stderr);
   return true;
@@ -792,8 +797,9 @@ void defineBuiltinNatives() {
   defineDateNatives();
 
   defineNative("print", printNative);
-  defineNative("printerr", printerrNative);
+  defineNative("println", printlnNative);
   defineNative("groan", groanNative);
+  defineNative("groanln", groanlnNative);
   defineNative("str", strNative);
   defineNative("join", joinNative);
   defineNative("tolower", tolowerNative);

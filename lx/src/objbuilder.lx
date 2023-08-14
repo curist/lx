@@ -271,13 +271,13 @@ fn dumpObj(obj) {
     i = i + 16
 
     if len(buffered) > 500 {
-      print(buffered)
+      println(buffered)
       buffered = ""
     } else {
       buffered = buffered + "\n"
     }
   }
-  print(buffered)
+  println(buffered)
 }
 
 fn hexToBytes(hex) {

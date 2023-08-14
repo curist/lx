@@ -14,7 +14,7 @@ fn makeTestSuite() {
           passedAssertions = passedAssertions + 1
           return
         }
-        print(
+        println(
           "assertion fail (" + str(testAssertions) + "):", testName, "\n",
           "\texpect:", expect, "\n",
           "\tactual:", actual, "\n",
@@ -28,7 +28,7 @@ fn makeTestSuite() {
           passedAssertions = passedAssertions + 1
           return
         }
-        print(
+        println(
           "assertion fail (" + str(testAssertions) + "):", testName, "\n",
           "\texpect to be truthy:", actual, "\n",
         )
@@ -45,7 +45,7 @@ fn makeTestSuite() {
     let passedTests = range(tests)->fold(0, fn(acc, testCase) {
       acc + { testCase() and 1 or 0 }
     })
-    print(
+    println(
       "passed tests", str(passedTests) + "/" + len(tests)->str(),
       "asserts", str(passedAssertions) + "/" + str(totalAssertions),
     )

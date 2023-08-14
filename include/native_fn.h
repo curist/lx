@@ -637,7 +637,7 @@ static bool slurpNative(int argCount, Value* args) {
   size_t fileSize = ftell(file);
   rewind(file);
 
-  char* buffer = (char*)malloc(fileSize);
+  char* buffer = (char*)malloc(fileSize + 1);
   if (buffer == NULL) {
     fprintf(stderr, "Not enough memory to read \"%s\".\n", path);
     args[-1] = CSTRING_VAL("Error: failed to open file.");
@@ -653,6 +653,7 @@ static bool slurpNative(int argCount, Value* args) {
     free(buffer);
     return false;
   }
+  buffer[fileSize] = '\0';
   args[-1] = OBJ_VAL(takeString(buffer, fileSize));
 
   fclose(file);

@@ -15,6 +15,7 @@
 
 #include "vm.h"
 #include "object.h"
+#include "memory.h"
 
 #define RFC3339 "%Y-%m-%dT%H:%M:%S%z"
 
@@ -397,9 +398,13 @@ static bool rangeNative(int argCount, Value* args) {
       args[-1] = CSTRING_VAL("Error: range number should be positive integer.");
       return false;
     }
-    args[-1] = OBJ_VAL(newArray());
+    ObjArray* arr = newArray();
+    args[-1] = OBJ_VAL(arr);
+    arr->array.capacity = num;
+    arr->array.values = GROW_ARRAY(Value, NULL, 0, num);
+    arr->array.count = num;
     for (int i = 0; i < num; i++) {
-      writeValueArray(&AS_ARRAY(args[-1]), NUMBER_VAL(i));
+      arr->array.values[i] = NUMBER_VAL(i);
     }
   } else {
     // every other value types start with an empty array

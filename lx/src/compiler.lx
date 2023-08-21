@@ -580,39 +580,36 @@ fn compile(src, filename, opts) {
     // TODO: handle relative path
     consume(TOKEN.STRING, "Import path should be a string.")
     let path = parser.previous.literal
-    let func = importCache[path]
-    if !func {
-      let realPath = {
-        if path[0] != "@" {
-          path
-        } else {
-          let s = "~/lx/"
-          let length = len(path)
-          for let i = 1; i < length; i = i + 1 {
-            s = s + path[i]
-          }
-          s
-        }
-      }
-      let src = slurp(realPath)
-      if !src {
-        error("Fail to import: " + path)
-        return
-      }
-      let result = compile(src, path, .{})
-      func = result.function
-      importCache[path] = func
-    }
 
     let current = currentChunk()
     let const = current.importConstCache[path]
     if !const {
+      let func = importCache[path]
+      if !func {
+        let realPath = {
+          if path[0] != "@" {
+            path
+          } else {
+            let s = "~/lx/"
+            let length = len(path)
+            for let i = 1; i < length; i = i + 1 {
+              s = s + path[i]
+            }
+            s
+          }
+        }
+        let src = slurp(realPath)
+        if !src {
+          error("Fail to import: " + path)
+          return
+        }
+        let result = compile(src, path, .{})
+        func = result.function
+        importCache[path] = func
+      }
       const = makeConstant(ObjectFunction(func))
       current.importConstCache[path] = const
     }
-
-    // XXX: i guess currently we can get duplicated function chunks
-    // if a module is imported many times
 
     let line = parser.previous.line
     emitBytes(OP.CLOSURE, const, line)

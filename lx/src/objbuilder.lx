@@ -185,7 +185,7 @@ fn buildChunkObj(func, flags, builtModuleCache) {
           handler(val.value)
         } else {
           // should be unreachable
-          groan("Invalid obj handler type: ", val.kind)
+          groanln("Invalid obj handler type: ", val.kind)
           Lx.exit(55)
         }
       },
@@ -197,7 +197,7 @@ fn buildChunkObj(func, flags, builtModuleCache) {
         handler(val.value)
       } else {
         // should be unreachable
-        groan("Invalid value handler type: ", val.kind)
+        groanln("Invalid value handler type: ", val.kind)
         Lx.exit(55)
       }
     })

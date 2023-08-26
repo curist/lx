@@ -17,9 +17,9 @@ let lib = .{
   },
   pp: fn(x) {
     if type(x) == "array" {
-      groan(join(x, ""))
+      groanln(join(x, ""))
     } else {
-      groan(x)
+      groanln(x)
     }
   },
 }

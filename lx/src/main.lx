@@ -14,7 +14,7 @@ fn() {
     let path = Lx.args[2]
     if path == "--debug" {
       if argsLength <= 3 {
-        groan("Usage:", Lx.args[0], "compile [--debug] <path>")
+        groanln("Usage:", Lx.args[0], "compile [--debug] <path>")
         Lx.exit(28)
       }
       DEBUG_BUILD = true
@@ -23,13 +23,13 @@ fn() {
 
     let source = slurp(path)
     if !source {
-      groan("Failed to open", path)
+      groanln("Failed to open", path)
       Lx.exit(2)
     }
 
     let result = compile(source, path, .{ main: true })
     if !result.success {
-      groan("Compile failed.")
+      groanln("Compile failed.")
       Lx.exit(65)
     }
 
@@ -80,9 +80,9 @@ fn() {
 
   fn handleUnknownCommand() {
     if Lx.args[1] {
-      groan(Lx.args[0] + " " + Lx.args[1] + ": unknown command")
+      groanln(Lx.args[0] + " " + Lx.args[1] + ": unknown command")
     }
-    groan("Run '", Lx.args[0], " help' for usage.")
+    groanln("Run '", Lx.args[0], " help' for usage.")
     Lx.exit(28)
   }
 

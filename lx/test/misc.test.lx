@@ -31,4 +31,10 @@ test("->", fn(assert) {
   assert.equal(result, 20)
 })
 
+test("keyword as hashmap key", fn(assert) {
+  let x = .{ and: 1, if: 2 }
+  assert.equal(x.and, 1)
+  assert.equal(x.if, 2)
+})
+
 suite.run()

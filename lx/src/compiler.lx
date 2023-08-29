@@ -285,6 +285,15 @@ fn compile(src, filename, opts) {
     errorAtCurrent(message)
   }
 
+  fn consumeKey(message) {
+    let isKeyword = types.KEYWORDS[parser.current.lexeme]
+    if parser.current.type == TOKEN.IDENTIFIER or isKeyword {
+      advance()
+      return
+    }
+    errorAtCurrent(message)
+  }
+
   fn check(type) { parser.current.type == type }
 
   fn match(type) {
@@ -655,7 +664,7 @@ fn compile(src, filename, opts) {
   }
 
   fn dot(canAssign) {
-    consume(TOKEN.IDENTIFIER, "Expect property name after '.'.")
+    consumeKey("Expect property name after '.'.")
     emitConstant(ObjectString(parser.previous.lexeme), parser.previous.line)
 
     if canAssign and match(TOKEN.EQUAL) {
@@ -862,7 +871,8 @@ fn compile(src, filename, opts) {
         consume(TOKEN.RIGHT_BRACKET, "Expect ']' for hashmap index key.")
       } else {
         // key pattern `.{ key: value }`
-        consume(TOKEN.IDENTIFIER, "Expect key for hashmap.")
+        consumeKey("Expect key for hashmap.")
+
         let key = parser.previous.lexeme
         emitConstant(ObjectString(key), parser.previous.line)
       }

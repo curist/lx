@@ -37,4 +37,12 @@ test("keyword as hashmap key", fn(assert) {
   assert.equal(x.if, 2)
 })
 
+test("for in", fn(assert) {
+  let counter = 0
+  // for i in range(10) {
+  //   counter = counter + 1
+  // }
+  // assert.equal(counter, 10)
+})
+
 suite.run()

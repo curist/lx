@@ -238,27 +238,43 @@ fn initScanner(src) {
     }
   }
 
+  // consume possible shebang
   shebang()
 
+  fn _scanToken() {
+    skipWhitespace()
+    state.start = state.current
+
+    if isAtEnd() {
+      return Token(TOKEN.EOF)
+    }
+
+    let c = advance()
+
+    if isAlpha(c) { return identifier() }
+    if isDigit(c) { return number() }
+
+    if let handler = tokenHandlers[c] {
+      return handler()
+    }
+
+    errorToken("Unexpected character: " + c)
+  }
+
+  let tokens = []
+
+  // scan all tokens
+  for !isAtEnd() { push(tokens, _scanToken()) }
+
+  let tokensLength = len(tokens)
+  let currentTokenIndex = 0
+
   return .{
+    peek: fn(n) { tokens[currentTokenIndex + n] or .{} },
     scanToken: fn() {
-      skipWhitespace()
-      state.start = state.current
-
-      if isAtEnd() {
-        return Token(TOKEN.EOF)
-      }
-
-      let c = advance()
-
-      if isAlpha(c) { return identifier() }
-      if isDigit(c) { return number() }
-
-      if let handler = tokenHandlers[c] {
-        return handler()
-      }
-
-      errorToken("Unexpected character: " + c)
+      if currentTokenIndex >= tokensLength { return Token(TOKEN.EOF) }
+      currentTokenIndex = currentTokenIndex + 1
+      return tokens[currentTokenIndex - 1]
     },
   }
 }

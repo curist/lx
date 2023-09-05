@@ -561,7 +561,7 @@ static bool readNative(int argCount, Value* args) {
 }
 
 #ifndef WASM
-static bool systemNative(int argCount, Value* args) {
+static bool execNative(int argCount, Value* args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a string.");
     return false;
@@ -611,6 +611,18 @@ static bool systemNative(int argCount, Value* args) {
   tableSet(&AS_HASHMAP(args[-1]), vm.stackTop[-2], vm.stackTop[-1]);
   pop();
   pop();
+
+  return true;
+}
+
+static bool systemNative(int argCount, Value* args) {
+  if (argCount != 1 || !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a string.");
+    return false;
+  }
+  ObjString* cmd = AS_STRING(args[0]);
+  int code = system(cmd->chars) >> 8;
+  args[-1] = NUMBER_VAL(code);
 
   return true;
 }
@@ -847,6 +859,7 @@ void defineBuiltinNatives() {
   defineNative("read", readNative);
 
 #ifndef WASM
+  defineNative("exec", execNative);
   defineNative("system", systemNative);
 #endif
 #ifndef __EMSCRIPTEN__

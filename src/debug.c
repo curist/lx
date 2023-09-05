@@ -130,8 +130,8 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return simpleInstruction("OP_HASHMAP", offset);
     case OP_ARRAY:
       return simpleInstruction("OP_ARRAY", offset);
-//     case OP_LENGTH:
-//       return simpleInstruction("OP_LENGTH", offset);
+    case OP_LENGTH:
+      return simpleInstruction("OP_LENGTH", offset);
     case OP_JUMP:
       return jumpInstruction("OP_JUMP", 1, chunk, offset);
     case OP_JUMP_IF_TRUE:

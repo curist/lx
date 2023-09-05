@@ -48,7 +48,7 @@ typedef enum {
   OP_APPEND,
   OP_HASHMAP,
   OP_ARRAY,
-  // OP_LENGTH,
+  OP_LENGTH,
   OP_CALL,
   OP_CLOSURE,
   OP_CLOSE_UPVALUE,

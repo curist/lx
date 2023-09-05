@@ -143,6 +143,7 @@ types.OP = {
     APPEND: iota(),
     HASHMAP: iota(),
     ARRAY: iota(),
+    LENGTH: iota(),
     CALL: iota(),
     CLOSURE: iota(),
     CLOSE_UPVALUE: iota(),

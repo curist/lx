@@ -259,7 +259,7 @@ static InterpretResult run() {
     &&DO_OP_APPEND,
     &&DO_OP_HASHMAP,
     &&DO_OP_ARRAY,
-    // &&DO_OP_LENGTH,
+    &&DO_OP_LENGTH,
     &&DO_OP_CALL,
     &&DO_OP_CLOSURE,
     &&DO_OP_CLOSE_UPVALUE,
@@ -648,19 +648,19 @@ DO_OP_HASHMAP:
 DO_OP_ARRAY:
     push(OBJ_VAL(newArray()));
     DISPATCH();
-// DO_OP_LENGTH:
-//     {
-//       if (IS_STRING(peek(0))) {
-//         push(NUMBER_VAL(AS_STRING(pop())->length));
-//       } else if (IS_ARRAY(peek(0))) {
-//         push(NUMBER_VAL(AS_ARRAY(pop()).count));
-//       } else {
-//         frame->ip = ip;
-//         runtimeError("Operand must be string or array.");
-//         return INTERPRET_RUNTIME_ERROR;
-//       }
-//       DISPATCH();
-//     }
+DO_OP_LENGTH:
+    {
+      if (IS_STRING(peek(0))) {
+        push(NUMBER_VAL(AS_STRING(pop())->length));
+      } else if (IS_ARRAY(peek(0))) {
+        push(NUMBER_VAL(AS_ARRAY(pop()).count));
+      } else {
+        frame->ip = ip;
+        runtimeError("Operand must be string or array.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      DISPATCH();
+    }
 DO_OP_JUMP:
     {
       uint16_t offset = READ_SHORT();

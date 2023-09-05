@@ -8,8 +8,9 @@ if ! [ -x "$(command -v lx)" ]; then
 fi
 
 TARGET=./include/lx/lxglobals.h
+LX=${LX:-lx}
 
 echo "#include <stdint.h>" > $TARGET
 echo "const uint8_t lxglobals_bytecode[] = {" >> $TARGET
-lx compile --debug ./lx/globals.lx | xxd -r -p | xxd -e -i >> $TARGET
+$LX compile --debug ./lx/globals.lx | xxd -r -p | xxd -e -i >> $TARGET
 echo "};" >> $TARGET

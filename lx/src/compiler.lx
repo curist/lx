@@ -971,6 +971,10 @@ fn compile(src, filename, opts) {
   }
 
   fn forExpr() {
+    // we support 3 kinds of for loop,
+    // 1. for <condition> {}
+    // 2. for [init]; [condition]; [iterate] {}
+    // 3. for <counter>[, item] in <colletion> {}
     beginScope()
 
     let result = reserveLocal()

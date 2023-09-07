@@ -802,7 +802,7 @@ fn compile(src, filename, opts) {
     emitBytes(OP.CLOSURE, makeConstant(ObjectFunction(function)), line)
 
     for let i = 0; i < func.upvalueCount; i = i + 1 {
-      emitByte(if compiler.upvalues[i].isLocal { 1 } else 0, line)
+      emitByte(compiler.upvalues[i].isLocal and 1 or 0, line)
       emitByte(compiler.upvalues[i].index, line)
     }
   }

@@ -1,4 +1,4 @@
-let lib = .{
+.{
   iota: fn (start) {
     let i = start - 1
     fn() { i = i + 1 }
@@ -14,12 +14,5 @@ let lib = .{
     let x = int(num / 16)
     let y = num % 16
     return join([map[x] or x, map[y] or y], "")
-  },
-  pp: fn(x) {
-    if type(x) == "array" {
-      groanln(join(x, ""))
-    } else {
-      groanln(x)
-    }
   },
 }

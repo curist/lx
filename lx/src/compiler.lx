@@ -96,8 +96,6 @@ fn OBJ_VAL(value)    { Value(ValueType.OBJ, value) }
 fn ObjectFunction(func) { OBJ_VAL(object.ObjectFunction(func)) }
 fn ObjectString(string) { OBJ_VAL(object.ObjectString(string)) }
 
-let pp = lib.pp
-
 fn purifyFunction(func) {.{
   name: func.name,
   arity: func.arity,
@@ -156,7 +154,7 @@ fn compile(src, filename, opts) {
       return
     }
     parser.panicMode = true
-    pp([
+    join([
       "[", filename, ":L", token.line, "]",
       if token.type == TOKEN.EOF {
         " at end"
@@ -166,7 +164,7 @@ fn compile(src, filename, opts) {
         " at '" + token.lexeme + "'"
       },
       ": ", message,
-    ])
+    ], "")->groanln()
     parser.hadError = true
   }
 

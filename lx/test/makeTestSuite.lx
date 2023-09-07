@@ -46,6 +46,9 @@ fn makeTestSuite() {
       acc + { testCase() and 1 or 0 }
     })
 
+    let filename = last(Lx.args)
+    println(filename)
+
     print("\e[1;" + if passedTests < len(tests) {"31"} else {"32"} + "m")
     println(
       "passed tests", str(passedTests) + "/" + len(tests)->str(),

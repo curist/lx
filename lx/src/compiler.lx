@@ -833,7 +833,12 @@ fn compile(src, filename, opts) {
     patchJump(thenJump)
 
     if match(TOKEN.ELSE) {
-      expression()
+      if match(TOKEN.IF) {
+        ifExpr()
+      } else {
+        consume(TOKEN.LEFT_BRACE, "Expect '{' after else.")
+        blocker()
+      }
     } else {
       emitByte(OP.NIL, parser.previous.line)
     }

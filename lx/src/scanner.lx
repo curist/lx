@@ -102,7 +102,7 @@ fn initScanner(src) {
   }
 
   fn peekNext() {
-    if isAtEnd() { nil } else peekAtIndex(state.current + 1).s
+    if isAtEnd() { nil } else { peekAtIndex(state.current + 1).s }
   }
 
   fn skipWhitespace() {

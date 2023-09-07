@@ -37,6 +37,7 @@ test("keyword as hashmap key", fn(assert) {
 
 test("else expression", fn(assert) {
   assert.equal(if false {0} else {1}, 1)
+  assert.equal((if true {0} else {1} + 10) + 10, 20)
 })
 
 suite.run()

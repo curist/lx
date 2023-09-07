@@ -2,7 +2,7 @@ let x = if false {
   1
 } else if false {
   2
-} else true and 3
+} else {true} and 3
 
 false or x + 10
 

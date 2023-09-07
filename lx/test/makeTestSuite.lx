@@ -46,7 +46,7 @@ fn makeTestSuite() {
       acc + { testCase() and 1 or 0 }
     })
 
-    print("\e[1;" + {passedTests < len(tests) and "31" or "32"} + "m")
+    print("\e[1;" + if passedTests < len(tests) {"31"} else {"32"} + "m")
     println(
       "passed tests", str(passedTests) + "/" + len(tests)->str(),
       "asserts", str(passedAssertions) + "/" + str(totalAssertions),

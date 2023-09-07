@@ -1,8 +1,6 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
-let lib = import "src/lib.lx"
-
 test("concat", fn(assert) {
   let arr1 = [1]
   let arr2 = [2]
@@ -37,35 +35,8 @@ test("keyword as hashmap key", fn(assert) {
   assert.equal(x.if, 2)
 })
 
-test("for loop - break", fn(assert) {
-  let counter = 0
-  for let i = 0; i < 10; i = i + 1 {
-    counter = counter + 1
-    if counter == 5 { break }
-  }
-  assert.equal(counter, 5)
-
-  counter = 0
-  for let i = 0; i < 10; i = i + 1 {
-    counter = counter + 1
-    if counter == 7 { break }
-  }
-  assert.equal(counter, 7)
-
-  counter = 0
-  for let i = 0; i < 10; i = i + 1 {
-    counter = counter + 1
-    if counter == 3 { break }
-  }
-  assert.equal(counter, 3)
-})
-
-test("for in", fn(assert) {
-  let counter = 0
-  // for i in range(10) {
-  //   counter = counter + 1
-  // }
-  // assert.equal(counter, 10)
+test("else expression", fn(assert) {
+  assert.equal(if false {0} else {1}, 1)
 })
 
 suite.run()

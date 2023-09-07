@@ -1,7 +1,5 @@
 let suite = (import "test/makeTestSuite.lx")()
-let test = fn(name, cb) {
-  suite.defineTest("globals - " + name, cb)
-}
+fn test(name, cb) { suite.defineTest("globals - " + name, cb) }
 
 test("do", fn(assert) {
   let r = do(123, fn(x) { x })

@@ -1,0 +1,45 @@
+let suite = (import "test/makeTestSuite.lx")()
+fn test(name, cb) { suite.defineTest("for - " + name, cb) }
+let skip = .{ test: fn() {} }
+
+test("break", fn(assert) {
+  let counter = 0
+  for let i = 0; i < 10; i = i + 1 {
+    counter = counter + 1
+    if counter == 5 { break }
+  }
+  assert.equal(counter, 5)
+
+  counter = 0
+  for let i = 0; i < 10; i = i + 1 {
+    counter = counter + 1
+    if counter == 7 { break }
+  }
+  assert.equal(counter, 7)
+
+  counter = 0
+  for let i = 0; i < 10; i = i + 1 {
+    counter = counter + 1
+    if counter == 3 { break }
+  }
+  assert.equal(counter, 3)
+})
+
+skip.test("closure", fn(assert) {
+  let fns = []
+  for let i = 0; i < 3; i = i + 1 {
+    fns->push(fn() { i })
+  }
+  assert.equal(fns[0](), 0)
+  assert.equal(fns[1](), 1)
+})
+
+test("for in", fn(assert) {
+  let counter = 0
+  // for i in range(10) {
+  //   counter = counter + 1
+  // }
+  // assert.equal(counter, 10)
+})
+
+suite.run()

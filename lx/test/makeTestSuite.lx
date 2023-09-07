@@ -45,9 +45,12 @@ fn makeTestSuite() {
     let passedTests = range(tests)->fold(0, fn(acc, testCase) {
       acc + { testCase() and 1 or 0 }
     })
+
+    print("\e[1;" + {passedTests < len(tests) and "31" or "32"} + "m")
     println(
       "passed tests", str(passedTests) + "/" + len(tests)->str(),
       "asserts", str(passedAssertions) + "/" + str(totalAssertions),
+      "\e[0m\n"
     )
 
     Lx.exit(len(tests) == passedTests and 0 or 1)

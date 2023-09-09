@@ -313,15 +313,6 @@ static void handleHelp(int argc, const char* argv[]) {
   }
 }
 
-void runRepl() {
-  const char* argv[] = {"lx", "repl"};
-  LX_ARGC = 2;
-  LX_ARGV = argv;
-  initVM();
-  handleRepl(2, argv);
-  freeVM();
-}
-
 int main(int argc, const char* argv[]) {
   srand(time(NULL));
   rand();

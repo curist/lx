@@ -213,7 +213,6 @@ static void concatenate() {
 
 static InterpretResult run() {
   CallFrame* frame = &vm.frames[vm.frameCount - 1];
-  register uint8_t* ip = frame->ip;
 
   static void* dispatch_table[] = {
     &&DO_OP_NOP,
@@ -269,12 +268,12 @@ static InterpretResult run() {
 #ifdef DEBUG_TRACE_EXECUTION
 #define DISPATCH() goto DO_DEBUG_PRINT
 #else
-#define DISPATCH() goto *dispatch_table[(*ip++)]
+#define DISPATCH() goto *dispatch_table[(*frame->ip++)]
 #endif
-#define READ_BYTE() (*ip++)
+#define READ_BYTE() (*frame->ip++)
 #define READ_SHORT() \
-    (ip += 2, \
-    (uint16_t)((ip[-2] << 8) | ip[-1]))
+    (frame->ip += 2, \
+    (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
 
 #define READ_CONSTANT() \
     (frame->closure->function->chunk.constants.values[READ_BYTE()])
@@ -283,7 +282,6 @@ static InterpretResult run() {
 #define BINARY_OP(valueType, op) \
     do { \
       if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) { \
-        frame->ip = ip; \
         runtimeError("Operands must be numbers."); \
         return INTERPRET_RUNTIME_ERROR; \
       } \
@@ -294,7 +292,6 @@ static InterpretResult run() {
 #define BIT_BINARY_OP(op) \
     do { \
       if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) { \
-        frame->ip = ip; \
         runtimeError("Operands must be numbers."); \
         return INTERPRET_RUNTIME_ERROR; \
       } \
@@ -371,7 +368,6 @@ DO_OP_GET_GLOBAL:
       ObjString* name = READ_STRING();
       Value value;
       if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
-        frame->ip = ip;
         runtimeError("Undefined variable '%s'.", name->chars);
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -390,7 +386,6 @@ DO_OP_SET_GLOBAL:
       ObjString* name = READ_STRING();
       if (tableSet(&vm.globals, OBJ_VAL(name), peek(0))) {
         tableDelete(&vm.globals, OBJ_VAL(name));
-        frame->ip = ip;
         runtimeError("Undefined variable '%s'.", name->chars);
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -411,21 +406,18 @@ DO_OP_SET_UPVALUE:
 DO_OP_GET_BY_INDEX:
     {
       if (!IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1)) && !IS_STRING(peek(1))) {
-        frame->ip = ip;
         runtimeError("Only array / hashmap / string can get value by index.");
         return INTERPRET_RUNTIME_ERROR;
       }
       Value key = peek(0);
       if (IS_ARRAY(peek(1))) {
         if (!IS_NUMBER(key)) {
-          frame->ip = ip;
           runtimeError("Can only use number index to access array.");
           return INTERPRET_RUNTIME_ERROR;
         }
         int index = AS_NUMBER(key);
         if (index != AS_NUMBER(key)) {
           // check if the number is an int
-          frame->ip = ip;
           runtimeError("Can only use integer index to access array.");
           return INTERPRET_RUNTIME_ERROR;
 
@@ -442,7 +434,6 @@ DO_OP_GET_BY_INDEX:
 
       } else if (IS_HASHMAP(peek(1))){
         if (!IS_NUMBER(key) && !IS_STRING(key)) {
-          frame->ip = ip;
           runtimeError("Hashmap key type must be number or string.");
           return INTERPRET_RUNTIME_ERROR;
         }
@@ -457,7 +448,6 @@ DO_OP_GET_BY_INDEX:
       } else {
         // is string
         if (!IS_NUMBER(key)) {
-          frame->ip = ip;
           runtimeError("String index type must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
@@ -480,7 +470,6 @@ DO_OP_GET_BY_INDEX:
 DO_OP_SET_BY_INDEX:
     {
       if (!IS_HASHMAP(peek(2)) && !IS_ARRAY(peek(2))) {
-        frame->ip = ip;
         runtimeError("Only array or hashmap can get value by index.");
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -488,14 +477,12 @@ DO_OP_SET_BY_INDEX:
       Value value = peek(0);
       if (IS_ARRAY(peek(2))) {
         if (!IS_NUMBER(key)) {
-          frame->ip = ip;
           runtimeError("Can only use number index to access array.");
           return INTERPRET_RUNTIME_ERROR;
         }
         int index = AS_NUMBER(key);
         if (index != AS_NUMBER(key)) {
           // check if the number is an int
-          frame->ip = ip;
           runtimeError("Can only use integer index to access array.");
           return INTERPRET_RUNTIME_ERROR;
 
@@ -515,7 +502,6 @@ DO_OP_SET_BY_INDEX:
       } else {
         // is hashmap
         if (!IS_NUMBER(key) && !IS_STRING(key)) {
-          frame->ip = ip;
           runtimeError("Hashmap key type must be number or string.");
           return INTERPRET_RUNTIME_ERROR;
         }
@@ -550,7 +536,6 @@ DO_OP_ADD:
         double a = AS_NUMBER(pop());
         push(NUMBER_VAL(a + b));
       } else {
-        frame->ip = ip;
         runtimeError("Operands must be two numbers or two strings.");
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -568,7 +553,6 @@ DO_OP_DIVIDE:
 DO_OP_MOD:
     {
       if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
-        frame->ip = ip;
         runtimeError("Operands must be numbers.");
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -584,7 +568,6 @@ DO_OP_NOT:
 DO_OP_NEGATE:
     {
       if (!IS_NUMBER(peek(0))) {
-        frame->ip = ip;
         runtimeError("Operand must be a number.");
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -612,12 +595,10 @@ DO_OP_ASSOC:
       Value key     = peek(1);
       Value value   = peek(0);
       if (!IS_HASHMAP(hashmap)) {
-        frame->ip = ip;
         runtimeError("Can only assoc to hashmap.");
         return INTERPRET_RUNTIME_ERROR;
       }
       if (!IS_NUMBER(key) && !IS_STRING(key)) {
-        frame->ip = ip;
         runtimeError("Hashmap key type must be number or string.");
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -633,7 +614,6 @@ DO_OP_APPEND:
       Value array = peek(1);
       Value value = peek(0);
       if (!IS_ARRAY(array)) {
-        frame->ip = ip;
         runtimeError("Can only append to array.");
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -655,7 +635,6 @@ DO_OP_LENGTH:
       } else if (IS_ARRAY(peek(0))) {
         push(NUMBER_VAL(AS_ARRAY(pop()).count));
       } else {
-        frame->ip = ip;
         runtimeError("Operand must be string or array.");
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -664,25 +643,25 @@ DO_OP_LENGTH:
 DO_OP_JUMP:
     {
       uint16_t offset = READ_SHORT();
-      ip += offset;
+      frame->ip += offset;
       DISPATCH();
     }
 DO_OP_JUMP_IF_TRUE:
     {
       uint16_t offset = READ_SHORT();
-      if (!isFalsey(pop())) ip += offset;
+      if (!isFalsey(pop())) frame->ip += offset;
       DISPATCH();
     }
 DO_OP_JUMP_IF_FALSE:
     {
       uint16_t offset = READ_SHORT();
-      if (isFalsey(pop())) ip += offset;
+      if (isFalsey(pop())) frame->ip += offset;
       DISPATCH();
     }
 DO_OP_LOOP:
     {
       uint16_t offset = READ_SHORT();
-      ip -= offset;
+      frame->ip -= offset;
       DISPATCH();
     }
 DO_OP_CALL:
@@ -693,12 +672,10 @@ DO_OP_CALL:
       for (int i = argCount; i >= 0; i--) push_local(peek(i));
       for (int i = 0; i < argCount + 1; i++) pop();
 
-      frame->ip = ip;
       if (!callValue(peek_local(argCount), argCount)) {
         return INTERPRET_RUNTIME_ERROR;
       }
       frame = &vm.frames[vm.frameCount - 1];
-      ip = frame->ip;
       DISPATCH();
     }
 DO_OP_CLOSURE:
@@ -731,7 +708,6 @@ DO_OP_RETURN:
       }
       vm.localsTop = frame->slots;
       frame = &vm.frames[vm.frameCount - 1];
-      ip = frame->ip;
       DISPATCH();
     }
   }

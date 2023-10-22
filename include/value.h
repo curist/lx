@@ -39,12 +39,12 @@ typedef uint64_t Value;
     ((Obj*)(uintptr_t)((value) & ~(SIGN_BIT | QNAN)))
 
 #define BOOL_VAL(b)     ((b) ? TRUE_VAL : FALSE_VAL)
-#define FALSE_VAL       ((Value)(uint64_t)(QNAN | TAG_FALSE))
-#define TRUE_VAL        ((Value)(uint64_t)(QNAN | TAG_TRUE))
-#define NIL_VAL         ((Value)(uint64_t)(QNAN | TAG_NIL))
+#define FALSE_VAL       ((Value)(QNAN | TAG_FALSE))
+#define TRUE_VAL        ((Value)(QNAN | TAG_TRUE))
+#define NIL_VAL         ((Value)(QNAN | TAG_NIL))
 #define NUMBER_VAL(num) numToValue(num)
 #define OBJ_VAL(obj) \
-    (Value)(SIGN_BIT | QNAN | (uint64_t)(uintptr_t)(obj))
+    (Value)(SIGN_BIT | QNAN | (uintptr_t)(obj))
 
 static inline double valueToNum(Value value) {
   double num;

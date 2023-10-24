@@ -470,7 +470,7 @@ DO_OP_GET_BY_INDEX:
 DO_OP_SET_BY_INDEX:
     {
       if (!IS_HASHMAP(peek(2)) && !IS_ARRAY(peek(2))) {
-        runtimeError("Only array or hashmap can get value by index.");
+        runtimeError("Only array or hashmap can set value by index.");
         return INTERPRET_RUNTIME_ERROR;
       }
       Value key = peek(1);

@@ -412,17 +412,6 @@ fn compile(src, filename, opts) {
     push(current.locals, Local(name, -1))
   }
 
-  fn reserveLocal() {
-    if len(current.locals) >= 256 {
-      error("Too many local variables in function.")
-      return
-    }
-    push(current.locals, Local("", current.scopeDepth))
-    emitByte(OP.NIL, parser.previous.line)
-    emitByte(OP.NEW_LOCAL, parser.previous.line)
-    return lowerResolvedLocal(current, len(current.locals) - 1)
-  }
-
   fn declareVariable() {
     if current.scopeDepth == 0 {
       return
@@ -980,8 +969,6 @@ fn compile(src, filename, opts) {
     // 3. for <counter>[, item] in <colletion> {}
     beginScope()
 
-    let result = reserveLocal()
-
     let prevScopeDepth = loopScopeDepth
     loopScopeDepth = current.scopeDepth
 
@@ -1042,7 +1029,6 @@ fn compile(src, filename, opts) {
 
     consume(TOKEN.LEFT_BRACE, "Expect '{' for block.")
     blocker()
-    emitBytes(OP.SET_LOCAL, result, parser.previous.line)
     emitByte(OP.POP, parser.previous.line)
 
     patchContinues()
@@ -1062,7 +1048,7 @@ fn compile(src, filename, opts) {
     pop(breakOffsets)
     pop(continueOffsets)
 
-    emitBytes(OP.GET_LOCAL, result, parser.previous.line)
+    emitByte(OP.NIL, parser.previous.line)
   }
 
   fn breakExpr() {

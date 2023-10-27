@@ -21,6 +21,7 @@ fn initScanner(src) {
     for let i = state.start; i < state.current; i = i + 1 {
       lexeme = lexeme + src[i]
     }
+    lexeme
   }
 
   fn Token(type) {.{

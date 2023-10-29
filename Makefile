@@ -41,6 +41,7 @@ emcc: prepare
 
 clean:
 	rm -rf out
+	rm include/lx/*
 
 test:
 	@cd lx && make runall && make test

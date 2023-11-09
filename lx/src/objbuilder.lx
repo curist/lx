@@ -256,30 +256,6 @@ fn buildChunkObj(func, flags, builtModuleCache) {
   }
 }
 
-fn dumpObj(obj) {
-  // print formatted obj in plain text
-  let buffered = ""
-  let totalSize = len(obj)
-  for let i = 0; i < totalSize; {
-    for let j = i; j < i + 16 and j < totalSize; j = j + 1 {
-      buffered = buffered + obj[j]
-      if j % 2 == 1 {
-        buffered = buffered + " "
-      }
-    }
-
-    i = i + 16
-
-    if len(buffered) > 500 {
-      println(buffered)
-      buffered = ""
-    } else {
-      buffered = buffered + "\n"
-    }
-  }
-  println(buffered)
-}
-
 fn hexToBytes(hex) {
   let mapping = .{
     ["0"]: 0, ["1"]: 1, ["2"]: 2, ["3"]: 3, ["4"]: 4,
@@ -325,7 +301,7 @@ fn objbuilder(main, debug) {
   writeBytesAt(obj, int32ToBytes(len(functions)), 8)
 
   return .{
-    dump: fn() { dumpObj(obj) },
+    dump: fn() { map(obj, hexToBytes)->each(_1(putc)) },
     bytes: fn() { map(obj, hexToBytes) },
   }
 }

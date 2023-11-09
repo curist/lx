@@ -94,6 +94,14 @@ static bool printlnNative(int argCount, Value* args) {
   return true;
 }
 
+static bool putcNative(int argCount, Value* args) {
+  for (int i = 0; i < argCount; i++) {
+    printf("%c", (int)AS_NUMBER(args[i]));
+  }
+  args[-1] = NIL_VAL;
+  return true;
+}
+
 static bool groanNative(int argCount, Value* args) {
   for (int i = 0; i < argCount; i++) {
     if (i > 0) fprintf(stderr, " ");
@@ -833,6 +841,7 @@ void defineBuiltinNatives() {
 
   defineNative("print", printNative);
   defineNative("println", printlnNative);
+  defineNative("putc", putcNative);
   defineNative("groan", groanNative);
   defineNative("groanln", groanlnNative);
   defineNative("str", strNative);

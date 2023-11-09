@@ -1,4 +1,3 @@
-// lx.ts src/main.lx test/stub/ch17.lx | xxd -r -p > /tmp/ch17.lxobj
 (-123 +
   300 - 56 * 2
   + 1337.543)

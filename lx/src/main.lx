@@ -87,7 +87,7 @@ fn() {
     if Lx.args[1] {
       groanln(Lx.args[0] + " " + Lx.args[1] + ": unknown command")
     }
-    groanln("Run '", Lx.args[0], " help' for usage.")
+    groanln("Run '" + Lx.args[0] + " help' for usage.")
     Lx.exit(28)
   }
 

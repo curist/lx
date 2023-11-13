@@ -1058,9 +1058,8 @@ fn compile(src, filename, opts) {
     }
     fn appendBreakOffsets() {
       resetScopeVariables(loopScopeDepth - 1)
-      let breaker = breakOffsets[len(breakOffsets) - 1]
       let jump = emitJump(OP.JUMP)
-      breakOffsets[len(breakOffsets) - 1] = append(breaker, jump)
+      push(breakOffsets[len(breakOffsets) - 1], jump)
     }
     if check(TOKEN.RIGHT_BRACE) {
       appendBreakOffsets()
@@ -1084,9 +1083,8 @@ fn compile(src, filename, opts) {
       return
     }
     resetScopeVariables(loopScopeDepth)
-    let continues = continueOffsets[len(continueOffsets) - 1]
     let jump = emitJump(OP.JUMP)
-    continueOffsets[len(continueOffsets) - 1] = append(continues, jump)
+    push(continueOffsets[len(continueOffsets) - 1], jump)
   }
 
   fn string() {

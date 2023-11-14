@@ -26,6 +26,7 @@ typedef void (*OptHandler)(int argc, const char* argv[]);
 
 typedef struct {
   const char* name;
+  const char* abbr;
   const char* desc;
   OptHandler handler;
 } Option;
@@ -281,13 +282,13 @@ static void handleVersion(int argc, const char* argv[]) {
 }
 
 Option options[] = {
-  {"run",        "Run source or lxobj",       handleRun},
-  {"eval",       "Evaluate expression",       handleEval},
-  {"repl",       "Start REPL",                handleRepl},
-  {"compile",    "Compile source to lxobj",   handleCompile},
-  {"disasm",     "Disassemble lxobj",         handleDisasm},
-  {"version",    "Print version",             handleVersion},
-  {"help",       "Print this helpful page",   handleHelp},
+  {"run",      "r",  "Run source or lxobj",       handleRun},
+  {"eval",     NULL, "Evaluate expression",       handleEval},
+  {"repl",     NULL, "Start REPL",                handleRepl},
+  {"compile",  "c",  "Compile source to lxobj",   handleCompile},
+  {"disasm",   "d",  "Disassemble lxobj",         handleDisasm},
+  {"version",  NULL, "Print version",             handleVersion},
+  {"help",     NULL, "Print this helpful page",   handleHelp},
 };
 
 static void handleHelp(int argc, const char* argv[]) {
@@ -323,7 +324,8 @@ int main(int argc, const char* argv[]) {
   int optionCount = sizeof(options) / sizeof(Option);
   OptHandler* handler = NULL;
   for (int i = 0; i < optionCount; i++) {
-    if (strcmp(cmd, options[i].name) == 0) {
+    if ((options[i].abbr != NULL && strcmp(cmd, options[i].abbr) == 0)
+      || (strcmp(cmd, options[i].name) == 0)) {
       handler = &options[i].handler;
       break;
     }

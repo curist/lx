@@ -157,18 +157,11 @@ static void handleCompileAndRun(int argc, const char* argv[]) {
 }
 
 static void handleRun(int argc, const char* argv[]) {
-  if (argc <= 2) {
-    fprintf(stderr, "Usage: %s run [--debug] <lxfile>\n", argv[0]);
+  if (argc != 3) {
+    fprintf(stderr, "Usage: %s run <lxfile>\n", argv[0]);
     return;
   }
   const char* path = argv[2];
-  if (strcmp(path, "--debug") == 0) {
-    if (argc <= 3) {
-      fprintf(stderr, "Usage: %s run [--debug] <lxfile>\n", argv[0]);
-      return;
-    }
-    path = argv[3];
-  }
   if (checkIsLxObj(path)) {
     return runFile(path);
   }
@@ -274,7 +267,7 @@ static void handleRepl(int argc, const char* argv[]) {
 
 static void handleDisasm(int argc, const char* argv[]) {
   if (argc <= 2) {
-    fprintf(stderr, "Usage: %s disasm [--debug] <lxobj>\n", argv[0]);
+    fprintf(stderr, "Usage: %s disasm <lxobj>\n", argv[0]);
     return;
   }
 

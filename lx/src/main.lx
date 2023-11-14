@@ -8,23 +8,14 @@ fn() {
   let OP = (import "src/types.lx").OP
 
   fn handleBuildFunction(cb) {
-    // TODO: proper args parsing
     let argsLength = len(Lx.args)
-    let DEBUG_BUILD = false
-    let usageMessage = join(["Usage:", Lx.args[0], "compile [--debug] <path>"], " ")
-    if argsLength < 3 {
+    let DEBUG_BUILD = true
+    let usageMessage = join(["Usage:", Lx.args[0], "compile <path>"], " ")
+    if argsLength != 3 {
       groanln(usageMessage)
       Lx.exit(28)
     }
     let path = Lx.args[2]
-    if path == "--debug" {
-      if argsLength <= 3 {
-        groanln(usageMessage)
-        Lx.exit(28)
-      }
-      DEBUG_BUILD = true
-      path = Lx.args[3]
-    }
 
     let source = slurp(path)
     if !source {

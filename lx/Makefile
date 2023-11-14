@@ -6,7 +6,7 @@ $(LX):
 	@cd .. && make
 
 runall: $(LX)
-	$(LX) compile --debug src/main.lx > /dev/null
+	$(LX) compile src/main.lx > /dev/null
 	$(LX) run test/stub/ch17.lx
 	$(LX) run test/stub/ch18.lx
 	$(LX) run test/stub/ch19.lx
@@ -21,5 +21,5 @@ runall: $(LX)
 	$(LX) run test/stub/sink.lx
 
 test: $(LX)
-	@ls test/*.test.lx | xargs -I{} $(LX) run --debug {}
+	@ls test/*.test.lx | xargs -I{} $(LX) run {}
 

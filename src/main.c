@@ -158,7 +158,7 @@ static void handleCompileAndRun(int argc, const char* argv[]) {
 }
 
 static void handleRun(int argc, const char* argv[]) {
-  if (argc != 3) {
+  if (argc < 3) {
     fprintf(stderr, "Usage: %s run <lxfile>\n", argv[0]);
     return;
   }

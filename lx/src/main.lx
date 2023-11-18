@@ -11,7 +11,7 @@ fn() {
     let argsLength = len(Lx.args)
     let DEBUG_BUILD = true
     let usageMessage = join(["Usage:", Lx.args[0], "compile <path>"], " ")
-    if argsLength != 3 {
+    if argsLength < 3 {
       groanln(usageMessage)
       Lx.exit(28)
     }

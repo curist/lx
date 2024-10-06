@@ -4,7 +4,6 @@
 
 #include "common.h"
 #include "objloader.h"
-#include "debug.h"
 #include "object.h"
 #include "memory.h"
 #include "vm.h"

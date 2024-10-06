@@ -73,6 +73,8 @@ fn() {
       __lx_result__ = objbuilder(result.function, false).bytes()
     },
   }
+  handlers.c = handlers.compile
+  handlers.r = handlers.run
 
   fn handleUnknownCommand() {
     if Lx.args[1] {

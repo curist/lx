@@ -442,6 +442,44 @@ static bool rangeNative(int argCount, Value* args) {
   return true;
 }
 
+static bool linesNative(int argCount, Value* args) {
+  if (argCount != 1) {
+    args[-1] = CSTRING_VAL("Error: lines takes 1 arg.");
+    return false;
+  }
+  if (!IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a string.");
+    return false;
+  }
+
+  ObjString* input = AS_STRING(args[0]);
+  ObjArray* result = newArray();
+  args[-1] = OBJ_VAL(result);
+
+  const char* start = input->chars;
+  const char* end = input->chars;
+  const char* limit = input->chars + input->length;
+
+  while (end < limit) {
+    if (*end == '\n') {
+      size_t lineLength = end - start;
+      ObjString* line = copyString(start, lineLength);
+      writeValueArray(&result->array, OBJ_VAL(line));
+      start = end + 1;
+    }
+    end++;
+  }
+
+  // Handle the last line if it doesn't end with a newline
+  if (start < limit) {
+    size_t lineLength = limit - start;
+    ObjString* line = copyString(start, lineLength);
+    writeValueArray(&result->array, OBJ_VAL(line));
+  }
+
+  return true;
+}
+
 static int tostring(char** s, Value v) {
   size_t size = 50;
   *s = (char*) malloc(size);
@@ -864,6 +902,7 @@ void defineBuiltinNatives() {
   defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
+  defineNative("lines", linesNative);
   defineNative("getline", getlineNative);
   defineNative("read", readNative);
 

@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "common.h"
 #include "debug.h"
 #include "objloader.h"
 #include "object.h"
@@ -422,4 +421,3 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
   freeChunkIndexes(&chunkIndexes);
   return main;
 }
-

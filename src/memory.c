@@ -2,7 +2,6 @@
 
 #include "memory.h"
 #include "vm.h"
-#include "objloader.h"
 
 #ifdef DEBUG_LOG_GC
 #include <stdio.h>

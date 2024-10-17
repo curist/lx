@@ -2,7 +2,6 @@
 #define clox_object_h
 
 #include <stdio.h>
-#include "common.h"
 #include "chunk.h"
 #include "value.h"
 #include "table.h"
@@ -106,4 +105,3 @@ static inline bool isObjType(Value value, ObjType type) {
 }
 
 #endif
-

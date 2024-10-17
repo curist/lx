@@ -1218,4 +1218,3 @@ fn compile(src, filename, opts) {
     function: purifyFunction(func),
   }
 }
-

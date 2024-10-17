@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "common.h"
 #include "objloader.h"
 #include "object.h"
 #include "memory.h"

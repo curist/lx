@@ -115,6 +115,56 @@ fn endsWith(s, suffix) {
   range(s)->drop(slen - sfxlen)->join("") == suffix
 }
 
+fn max(a, b) { if a > b { a } else { b } }
+fn min(a, b) { if a < b { a } else { b } }
+
+fn sort(arr, compare) {
+  // qsort
+  let length = len(arr)
+  if length <= 1 { return arr }
+  let pivot = arr[0]
+  let less = []
+  let greater = []
+  for let i = 1; i < length; i = i + 1 {
+    if compare(arr[i], pivot) {
+      push(less, arr[i])
+    } else {
+      push(greater, arr[i])
+    }
+  }
+  sort(less, compare)
+    -> concat([pivot])
+    -> concat(sort(greater, compare))
+}
+
+fn split(line, sep) {
+  if sep == "" { return range(line) }
+
+  let tokens = []
+  let tok = ""
+
+  let sepLen = len(sep)
+
+  fn matchSep(index) {
+    for let i = 0; i < sepLen; i = i + 1 {
+      if sep[i] != line[index + i] { return false }
+    }
+    true
+  }
+
+  for let i = 0; i < len(line); i = i + 1 {
+    if matchSep(i) {
+      i = i + sepLen - 1
+      tokens->push(tok)
+      tok = ""
+    } else {
+      tok = tok + line[i]
+    }
+  }
+  if tok != "" { tokens->push(tok) }
+  return tokens
+}
+
 return .{
   _1: _1,
   _2: _2,
@@ -132,4 +182,8 @@ return .{
   drop: drop,
   startsWith: startsWith,
   endsWith: endsWith,
+  max: max,
+  min: min,
+  sort: sort,
+  split: split,
 }

@@ -276,41 +276,6 @@ static bool typeNative(int argCount, Value *args) {
   return true;
 }
 
-static bool appendNative(int argCount, Value *args) {
-  if (argCount < 2) {
-    args[-1] = CSTRING_VAL("Error: append takes 2 args.");
-    return false;
-  }
-  if (!IS_ARRAY(args[0])) {
-    args[-1] = CSTRING_VAL("Error: Can only append to array.");
-    return false;
-  }
-  ValueArray *arr = &AS_ARRAY(args[0]);
-  args[-1] = OBJ_VAL(newArray());
-  for (int i = 0; i < arr->count; i++) {
-    writeValueArray(&AS_ARRAY(args[-1]), arr->values[i]);
-  }
-  writeValueArray(&AS_ARRAY(args[-1]), args[1]);
-  return true;
-}
-
-static bool butlastNative(int argCount, Value *args) {
-  if (argCount < 1) {
-    args[-1] = CSTRING_VAL("Error: butlast takes 1 arg.");
-    return false;
-  }
-  if (!IS_ARRAY(args[0])) {
-    args[-1] = CSTRING_VAL("Error: Can only butlast to array.");
-    return false;
-  }
-  ValueArray *arr = &AS_ARRAY(args[0]);
-  args[-1] = OBJ_VAL(newArray());
-  for (int i = 0; i < arr->count - 1; i++) {
-    writeValueArray(&AS_ARRAY(args[-1]), arr->values[i]);
-  }
-  return true;
-}
-
 static bool pushNative(int argCount, Value *args) {
   if (argCount < 2) {
     args[-1] = CSTRING_VAL("Error: push takes 2 args.");
@@ -340,26 +305,6 @@ static bool popNative(int argCount, Value *args) {
     return true;
   }
   args[-1] = arr->values[--arr->count];
-  return true;
-}
-
-static bool assocNative(int argCount, Value *args) {
-  if (argCount < 3) {
-    args[-1] = CSTRING_VAL("Error: assoc takes 3 args.");
-    return false;
-  }
-  if (!IS_HASHMAP(args[0])) {
-    args[-1] = CSTRING_VAL("Error: Can only assoc to map.");
-    return false;
-  }
-  Value key = args[1];
-  if (!IS_NUMBER(key) && !IS_STRING(key)) {
-    args[-1] = CSTRING_VAL("Error: Hashmap key type must be number or string.");
-    return false;
-  }
-  args[-1] = OBJ_VAL(newHashmap());
-  tableAddAll(&AS_HASHMAP(args[0]), &AS_HASHMAP(args[-1]));
-  tableSet(&AS_HASHMAP(args[0]), key, args[2]);
   return true;
 }
 
@@ -951,11 +896,8 @@ void defineBuiltinNatives() {
   defineNative("keys", keysNative);
   defineNative("len", lenNative);
   defineNative("type", typeNative);
-  defineNative("append", appendNative);
-  defineNative("butlast", butlastNative);
   defineNative("push", pushNative);
   defineNative("pop", popNative);
-  defineNative("assoc", assocNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
   defineNative("lines", linesNative);

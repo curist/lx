@@ -1,21 +1,21 @@
 #ifndef clox_native_fn_h
 #define clox_native_fn_h
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <ctype.h>
-#include <math.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
 #ifndef WASM
 #include <wordexp.h>
 #endif
 
-#include "vm.h"
-#include "object.h"
 #include "memory.h"
+#include "object.h"
+#include "vm.h"
 
 #define RFC3339 "%Y-%m-%dT%H:%M:%S%z"
 
@@ -25,25 +25,27 @@ void defineBuiltinNatives();
 // ---- start of native function declarations ----
 // ---- start of native function declarations ----
 
-static bool timeNative(int argCount, Value* args) {
+static bool timeNative(int argCount, Value *args) {
   time_t now = time(NULL);
   args[-1] = NUMBER_VAL(now);
   return true;
 }
 
-static bool strftimeNative(int argCount, Value* args) {
+static bool strftimeNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Date.format takes 2 args.");
     return false;
   }
   if (!IS_NUMBER(args[0])) {
-    args[-1] = CSTRING_VAL("Error: First arg of Date.format is unix timestamp.");
+    args[-1] =
+        CSTRING_VAL("Error: First arg of Date.format is unix timestamp.");
     return false;
   }
-  char* format = RFC3339;
+  char *format = RFC3339;
   if (argCount >= 2) {
     if (!IS_STRING(args[1])) {
-      args[-1] = CSTRING_VAL("Error: Second arg of Date.format is format string.");
+      args[-1] =
+          CSTRING_VAL("Error: Second arg of Date.format is format string.");
       return false;
     }
     format = AS_STRING(args[1])->chars;
@@ -58,7 +60,7 @@ static bool strftimeNative(int argCount, Value* args) {
   return true;
 }
 
-static bool strptimeNative(int argCount, Value* args) {
+static bool strptimeNative(int argCount, Value *args) {
   if (argCount < 2) {
     args[-1] = CSTRING_VAL("Error: Date.parse takes 2 args.");
     return false;
@@ -78,23 +80,24 @@ static bool strptimeNative(int argCount, Value* args) {
   return true;
 }
 
-static bool printNative(int argCount, Value* args) {
+static bool printNative(int argCount, Value *args) {
   for (int i = 0; i < argCount; i++) {
-    if (i > 0) printf(" ");
+    if (i > 0)
+      printf(" ");
     printValue(stdout, args[i]);
   }
   args[-1] = NIL_VAL;
   return true;
 }
 
-static bool printlnNative(int argCount, Value* args) {
+static bool printlnNative(int argCount, Value *args) {
   printNative(argCount, args);
   printf("\n");
   fflush(stdout);
   return true;
 }
 
-static bool putcNative(int argCount, Value* args) {
+static bool putcNative(int argCount, Value *args) {
   for (int i = 0; i < argCount; i++) {
     printf("%c", (int)AS_NUMBER(args[i]));
   }
@@ -102,23 +105,24 @@ static bool putcNative(int argCount, Value* args) {
   return true;
 }
 
-static bool groanNative(int argCount, Value* args) {
+static bool groanNative(int argCount, Value *args) {
   for (int i = 0; i < argCount; i++) {
-    if (i > 0) fprintf(stderr, " ");
+    if (i > 0)
+      fprintf(stderr, " ");
     printValue(stderr, args[i]);
   }
   args[-1] = NIL_VAL;
   return true;
 }
 
-static bool groanlnNative(int argCount, Value* args) {
+static bool groanlnNative(int argCount, Value *args) {
   groanNative(argCount, args);
   fprintf(stderr, "\n");
   fflush(stderr);
   return true;
 }
 
-static bool intNative(int argCount, Value* args) {
+static bool intNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
     return false;
@@ -133,7 +137,7 @@ static bool intNative(int argCount, Value* args) {
   return true;
 }
 
-static bool chrNative(int argCount, Value* args) {
+static bool chrNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
     return false;
@@ -143,14 +147,14 @@ static bool chrNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
     return false;
   }
-  char* chrs = malloc(2);
+  char *chrs = malloc(2);
   chrs[0] = AS_NUMBER(arg);
   chrs[1] = '\0';
   args[-1] = OBJ_VAL(takeString(chrs, 1));
   return true;
 }
 
-static bool ordNative(int argCount, Value* args) {
+static bool ordNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a char.");
     return false;
@@ -165,13 +169,13 @@ static bool ordNative(int argCount, Value* args) {
   return true;
 }
 
-static bool randomNative(int argCount, Value* args) {
+static bool randomNative(int argCount, Value *args) {
   double num = (double)rand() / (double)RAND_MAX;
   args[-1] = NUMBER_VAL(num);
   return true;
 }
 
-static bool sqrtNative(int argCount, Value* args) {
+static bool sqrtNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
     return false;
@@ -186,7 +190,7 @@ static bool sqrtNative(int argCount, Value* args) {
   return true;
 }
 
-static bool keysNative(int argCount, Value* args) {
+static bool keysNative(int argCount, Value *args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a map.");
     return false;
@@ -196,12 +200,12 @@ static bool keysNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Arg must be a map.");
     return false;
   }
-  Table* table = &AS_HASHMAP(arg);
-  ObjArray* array = newArray();
+  Table *table = &AS_HASHMAP(arg);
+  ObjArray *array = newArray();
   args[-1] = OBJ_VAL(array);
 
   for (int i = table->capacity - 1; i >= 0; --i) {
-    Entry* entry = &table->entries[i];
+    Entry *entry = &table->entries[i];
     if (!IS_NIL(entry->key)) {
       writeValueArray(&array->array, entry->key);
     }
@@ -209,13 +213,13 @@ static bool keysNative(int argCount, Value* args) {
   return true;
 }
 
-static bool globalsNative(int argCount, Value* args) {
-  Table* table = &vm.globals;
-  ObjArray* array = newArray();
+static bool globalsNative(int argCount, Value *args) {
+  Table *table = &vm.globals;
+  ObjArray *array = newArray();
   args[-1] = OBJ_VAL(array);
 
   for (int i = table->capacity - 1; i >= 0; --i) {
-    Entry* entry = &table->entries[i];
+    Entry *entry = &table->entries[i];
     if (!IS_NIL(entry->key)) {
       writeValueArray(&array->array, entry->key);
     }
@@ -223,7 +227,7 @@ static bool globalsNative(int argCount, Value* args) {
   return true;
 }
 
-static bool lenNative(int argCount, Value* args) {
+static bool lenNative(int argCount, Value *args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be string or array.");
     return false;
@@ -244,7 +248,7 @@ static bool lenNative(int argCount, Value* args) {
   return false;
 }
 
-static bool typeNative(int argCount, Value* args) {
+static bool typeNative(int argCount, Value *args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: type takes 1 arg.");
     return false;
@@ -272,7 +276,7 @@ static bool typeNative(int argCount, Value* args) {
   return true;
 }
 
-static bool appendNative(int argCount, Value* args) {
+static bool appendNative(int argCount, Value *args) {
   if (argCount != 2) {
     args[-1] = CSTRING_VAL("Error: append takes 2 args.");
     return false;
@@ -281,7 +285,7 @@ static bool appendNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Can only append to array.");
     return false;
   }
-  ValueArray* arr = &AS_ARRAY(args[0]);
+  ValueArray *arr = &AS_ARRAY(args[0]);
   args[-1] = OBJ_VAL(newArray());
   for (int i = 0; i < arr->count; i++) {
     writeValueArray(&AS_ARRAY(args[-1]), arr->values[i]);
@@ -290,7 +294,7 @@ static bool appendNative(int argCount, Value* args) {
   return true;
 }
 
-static bool butlastNative(int argCount, Value* args) {
+static bool butlastNative(int argCount, Value *args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: butlast takes 1 arg.");
     return false;
@@ -299,7 +303,7 @@ static bool butlastNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Can only butlast to array.");
     return false;
   }
-  ValueArray* arr = &AS_ARRAY(args[0]);
+  ValueArray *arr = &AS_ARRAY(args[0]);
   args[-1] = OBJ_VAL(newArray());
   for (int i = 0; i < arr->count - 1; i++) {
     writeValueArray(&AS_ARRAY(args[-1]), arr->values[i]);
@@ -307,7 +311,7 @@ static bool butlastNative(int argCount, Value* args) {
   return true;
 }
 
-static bool pushNative(int argCount, Value* args) {
+static bool pushNative(int argCount, Value *args) {
   if (argCount != 2) {
     args[-1] = CSTRING_VAL("Error: push takes 2 args.");
     return false;
@@ -321,7 +325,7 @@ static bool pushNative(int argCount, Value* args) {
   return true;
 }
 
-static bool popNative(int argCount, Value* args) {
+static bool popNative(int argCount, Value *args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: pop takes 1 arg.");
     return false;
@@ -330,7 +334,7 @@ static bool popNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Can only pop from array.");
     return false;
   }
-  ValueArray* arr = &AS_ARRAY(args[0]);
+  ValueArray *arr = &AS_ARRAY(args[0]);
   if (arr->count == 0) {
     args[-1] = NIL_VAL;
     return true;
@@ -339,7 +343,7 @@ static bool popNative(int argCount, Value* args) {
   return true;
 }
 
-static bool assocNative(int argCount, Value* args) {
+static bool assocNative(int argCount, Value *args) {
   if (argCount != 3) {
     args[-1] = CSTRING_VAL("Error: assoc takes 3 args.");
     return false;
@@ -359,7 +363,7 @@ static bool assocNative(int argCount, Value* args) {
   return true;
 }
 
-static bool concatNative(int argCount, Value* args) {
+static bool concatNative(int argCount, Value *args) {
   if (argCount != 2) {
     args[-1] = CSTRING_VAL("Error: concat takes 2 args.");
     return false;
@@ -368,8 +372,8 @@ static bool concatNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Can only concat arrays.");
     return false;
   }
-  ValueArray* arr1 = &AS_ARRAY(args[0]);
-  ValueArray* arr2 = &AS_ARRAY(args[1]);
+  ValueArray *arr1 = &AS_ARRAY(args[0]);
+  ValueArray *arr2 = &AS_ARRAY(args[1]);
   args[-1] = OBJ_VAL(newArray());
   for (int i = 0; i < arr1->count; i++) {
     writeValueArray(&AS_ARRAY(args[-1]), arr1->values[i]);
@@ -391,7 +395,7 @@ static uint8_t utf8CharLength(uint8_t val) {
   return 4;
 }
 
-static bool rangeNative(int argCount, Value* args) {
+static bool rangeNative(int argCount, Value *args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: range takes 1 args.");
     return false;
@@ -399,14 +403,14 @@ static bool rangeNative(int argCount, Value* args) {
   Value arg = args[0];
   if (IS_ARRAY(arg)) {
     args[-1] = arg;
-  } else if(IS_NUMBER(arg)) {
+  } else if (IS_NUMBER(arg)) {
     double dnum = AS_NUMBER(arg);
     int num = dnum;
     if (dnum != num || num < 0) {
       args[-1] = CSTRING_VAL("Error: range number should be positive integer.");
       return false;
     }
-    ObjArray* arr = newArray();
+    ObjArray *arr = newArray();
     args[-1] = OBJ_VAL(arr);
     arr->array.capacity = num;
     arr->array.values = GROW_ARRAY(Value, NULL, 0, num);
@@ -418,21 +422,22 @@ static bool rangeNative(int argCount, Value* args) {
     // every other value types start with an empty array
     args[-1] = OBJ_VAL(newArray());
 
-    if (IS_STRING(arg))  {
-      ObjString* s = AS_STRING(arg);
-      for (size_t i = 0; i < s->length; ) {
+    if (IS_STRING(arg)) {
+      ObjString *s = AS_STRING(arg);
+      for (size_t i = 0; i < s->length;) {
         uint8_t charlen = utf8CharLength(s->chars[i]);
-        if (i + charlen > s->length) break;
+        if (i + charlen > s->length)
+          break;
 
         push(OBJ_VAL(copyString(&s->chars[i], charlen)));
         writeValueArray(&AS_ARRAY(args[-1]), vm.stackTop[-1]);
         pop();
         i += charlen;
       }
-    } else if(IS_HASHMAP(arg)) {
-      Table* table = &AS_HASHMAP(arg);
+    } else if (IS_HASHMAP(arg)) {
+      Table *table = &AS_HASHMAP(arg);
       for (int i = table->capacity - 1; i >= 0; --i) {
-        Entry* entry = &table->entries[i];
+        Entry *entry = &table->entries[i];
         if (!IS_NIL(entry->key)) {
           writeValueArray(&AS_ARRAY(args[-1]), entry->key);
         }
@@ -442,7 +447,7 @@ static bool rangeNative(int argCount, Value* args) {
   return true;
 }
 
-static bool linesNative(int argCount, Value* args) {
+static bool linesNative(int argCount, Value *args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: lines takes 1 arg.");
     return false;
@@ -452,18 +457,18 @@ static bool linesNative(int argCount, Value* args) {
     return false;
   }
 
-  ObjString* input = AS_STRING(args[0]);
-  ObjArray* result = newArray();
+  ObjString *input = AS_STRING(args[0]);
+  ObjArray *result = newArray();
   args[-1] = OBJ_VAL(result);
 
-  const char* start = input->chars;
-  const char* end = input->chars;
-  const char* limit = input->chars + input->length;
+  const char *start = input->chars;
+  const char *end = input->chars;
+  const char *limit = input->chars + input->length;
 
   while (end < limit) {
     if (*end == '\n') {
       size_t lineLength = end - start;
-      ObjString* line = copyString(start, lineLength);
+      ObjString *line = copyString(start, lineLength);
       writeValueArray(&result->array, OBJ_VAL(line));
       start = end + 1;
     }
@@ -473,16 +478,16 @@ static bool linesNative(int argCount, Value* args) {
   // Handle the last line if it doesn't end with a newline
   if (start < limit) {
     size_t lineLength = limit - start;
-    ObjString* line = copyString(start, lineLength);
+    ObjString *line = copyString(start, lineLength);
     writeValueArray(&result->array, OBJ_VAL(line));
   }
 
   return true;
 }
 
-static int tostring(char** s, Value v) {
+static int tostring(char **s, Value v) {
   size_t size = 50;
-  *s = (char*) malloc(size);
+  *s = (char *)malloc(size);
   if (IS_NUMBER(v)) {
     double num = AS_NUMBER(v);
     int64_t val_i = num;
@@ -495,7 +500,7 @@ static int tostring(char** s, Value v) {
   } else if (IS_NIL(v)) {
     return snprintf(*s, size, "nil");
   } else if (IS_STRING(v)) {
-    ObjString* str = AS_STRING(v);
+    ObjString *str = AS_STRING(v);
     *s = realloc(*s, str->length + 1);
     snprintf(*s, str->length + 1, "%s", str->chars);
     return str->length;
@@ -515,19 +520,19 @@ static int tostring(char** s, Value v) {
   return snprintf(*s, size, "<unknown>");
 }
 
-static bool strNative(int argCount, Value* args) {
+static bool strNative(int argCount, Value *args) {
   if (argCount != 1) {
     args[-1] = CSTRING_VAL("Error: str takes 1 arg.");
     return false;
   }
-  char* s = NULL;
+  char *s = NULL;
   tostring(&s, args[0]);
   args[-1] = CSTRING_VAL(s);
   free(s);
   return true;
 }
 
-static bool joinNative(int argCount, Value* args) {
+static bool joinNative(int argCount, Value *args) {
   if (argCount != 2) {
     args[-1] = CSTRING_VAL("Error: join takes 2 args.");
     return false;
@@ -540,29 +545,29 @@ static bool joinNative(int argCount, Value* args) {
     args[-1] = CSTRING_VAL("Error: Second args of join is string.");
     return false;
   }
-  ValueArray* array = &AS_ARRAY(args[0]);
+  ValueArray *array = &AS_ARRAY(args[0]);
   if (array->count == 0) {
     args[-1] = CSTRING_VAL("");
     return true;
   }
-  char* s = NULL;
+  char *s = NULL;
   int slen = tostring(&s, array->values[0]);
   if (array->count == 1) {
     args[-1] = CSTRING_VAL(s);
     free(s);
     return true;
   }
-  char* result = malloc(slen);
+  char *result = malloc(slen);
   size_t result_size = slen;
   memcpy(result, s, slen);
   free(s);
 
-  const char* sep = AS_STRING(args[1])->chars;
+  const char *sep = AS_STRING(args[1])->chars;
   size_t seplen = AS_STRING(args[1])->length;
 
   for (int i = 1; i < array->count; ++i) {
     slen = tostring(&s, array->values[i]);
-    char* result_tmp = realloc(result, result_size + seplen + slen + 1);
+    char *result_tmp = realloc(result, result_size + seplen + slen + 1);
     if (result_tmp == NULL) {
       args[-1] = CSTRING_VAL("Error: Realloc failed.");
       return false;
@@ -579,9 +584,9 @@ static bool joinNative(int argCount, Value* args) {
   return true;
 }
 
-static bool getlineNative(int argCount, Value* args) {
+static bool getlineNative(int argCount, Value *args) {
   char line[8192];
-  char* read = NULL;
+  char *read = NULL;
   if (!(read = fgets(line, sizeof(line), stdin))) {
     args[-1] = NIL_VAL;
   } else {
@@ -590,7 +595,7 @@ static bool getlineNative(int argCount, Value* args) {
   return true;
 }
 
-static bool readNative(int argCount, Value* args) {
+static bool readNative(int argCount, Value *args) {
   if (argCount != 1 || !IS_NUMBER(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
     return false;
@@ -607,12 +612,12 @@ static bool readNative(int argCount, Value* args) {
 }
 
 #ifndef WASM
-static bool execNative(int argCount, Value* args) {
+static bool execNative(int argCount, Value *args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a string.");
     return false;
   }
-  ObjString* cmd = AS_STRING(args[0]);
+  ObjString *cmd = AS_STRING(args[0]);
   FILE *fp;
 
   if ((fp = popen(cmd->chars, "r")) == NULL) {
@@ -622,16 +627,17 @@ static bool execNative(int argCount, Value* args) {
 
   char buf[500];
   size_t buflen;
-  char* result = NULL;
+  char *result = NULL;
   size_t result_size = 0;
 
   while ((buflen = fread(buf, sizeof(char), sizeof(buf), fp)) > 0) {
-    char* tmp_result = (char*)realloc(result, buflen + result_size + 1);
+    char *tmp_result = (char *)realloc(result, buflen + result_size + 1);
 
     if (tmp_result == NULL) {
       args[-1] = CSTRING_VAL("Error: Realloc failed.");
       pclose(fp);
-      if (result != NULL) free(result);
+      if (result != NULL)
+        free(result);
       return false;
     }
 
@@ -661,12 +667,12 @@ static bool execNative(int argCount, Value* args) {
   return true;
 }
 
-static bool systemNative(int argCount, Value* args) {
+static bool systemNative(int argCount, Value *args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a string.");
     return false;
   }
-  ObjString* cmd = AS_STRING(args[0]);
+  ObjString *cmd = AS_STRING(args[0]);
   int code = system(cmd->chars) >> 8;
   args[-1] = NUMBER_VAL(code);
 
@@ -675,7 +681,7 @@ static bool systemNative(int argCount, Value* args) {
 #endif
 
 #ifndef __EMSCRIPTEN__
-static bool exitNative(int argCount, Value* args) {
+static bool exitNative(int argCount, Value *args) {
   int exitCode = 0;
   if (argCount == 0) {
   } else if (argCount != 1 || !IS_NUMBER(args[0])) {
@@ -689,7 +695,7 @@ static bool exitNative(int argCount, Value* args) {
   return true;
 }
 
-static bool slurpNative(int argCount, Value* args) {
+static bool slurpNative(int argCount, Value *args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: slurp takes a string arg.");
     return false;
@@ -702,10 +708,10 @@ static bool slurpNative(int argCount, Value* args) {
   strncpy(path, exp_result.we_wordv[0], sizeof(path));
   wordfree(&exp_result);
 #else
-  char* path = AS_STRING(args[0])->chars;
+  char *path = AS_STRING(args[0])->chars;
 #endif
 
-  FILE* file = fopen(path, "rb");
+  FILE *file = fopen(path, "rb");
   if (file == NULL) {
     // XXX: more unified error reporting
     fprintf(stderr, "Could not open file \"%s\".\n", path);
@@ -717,7 +723,7 @@ static bool slurpNative(int argCount, Value* args) {
   size_t fileSize = ftell(file);
   rewind(file);
 
-  char* buffer = (char*)malloc(fileSize + 1);
+  char *buffer = (char *)malloc(fileSize + 1);
   if (buffer == NULL) {
     fprintf(stderr, "Not enough memory to read \"%s\".\n", path);
     args[-1] = CSTRING_VAL("Error: failed to open file.");
@@ -742,14 +748,13 @@ static bool slurpNative(int argCount, Value* args) {
 }
 #endif
 
-
-static bool tolowerNative(int argCount, Value* args) {
+static bool tolowerNative(int argCount, Value *args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: tolower takes a string arg.");
     return false;
   }
-  ObjString* str = AS_STRING(args[0]);
-  char* s = (char*)malloc(str->length + 1);
+  ObjString *str = AS_STRING(args[0]);
+  char *s = (char *)malloc(str->length + 1);
   if (s == NULL) {
     args[-1] = CSTRING_VAL("Error: failed to allocate memory.");
     return false;
@@ -762,13 +767,13 @@ static bool tolowerNative(int argCount, Value* args) {
   return true;
 }
 
-static bool toupperNative(int argCount, Value* args) {
+static bool toupperNative(int argCount, Value *args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: toupper takes a string arg.");
     return false;
   }
-  ObjString* str = AS_STRING(args[0]);
-  char* s = (char*)malloc(str->length + 1);
+  ObjString *str = AS_STRING(args[0]);
+  char *s = (char *)malloc(str->length + 1);
   if (s == NULL) {
     args[-1] = CSTRING_VAL("Error: failed to allocate memory.");
     return false;
@@ -781,19 +786,20 @@ static bool toupperNative(int argCount, Value* args) {
   return true;
 }
 
-static bool tonumberNative(int argCount, Value* args) {
+static bool tonumberNative(int argCount, Value *args) {
   if (argCount != 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: tonumber takes a string arg.");
     return false;
   }
-  char* s = AS_STRING(args[0])->chars;
+  char *s = AS_STRING(args[0])->chars;
   args[-1] = NUMBER_VAL(strtod(s, NULL));
   return true;
 }
 
-static bool doubleToUint8ArrayNative(int argCount, Value* args) {
+static bool doubleToUint8ArrayNative(int argCount, Value *args) {
   if (argCount != 1 || !IS_NUMBER(args[0])) {
-    args[-1] = CSTRING_VAL("Error: doubleToUint8ArrayNative takes a number arg.");
+    args[-1] =
+        CSTRING_VAL("Error: doubleToUint8ArrayNative takes a number arg.");
     return false;
   }
   union { // union is awesome https://stackoverflow.com/a/24420279/3282323
@@ -802,7 +808,7 @@ static bool doubleToUint8ArrayNative(int argCount, Value* args) {
   } u;
   u.value = AS_NUMBER(args[0]);
 
-  ObjArray* array = newArray();
+  ObjArray *array = newArray();
   args[-1] = OBJ_VAL(array);
   for (int i = 0; i < 8; i++) {
     writeValueArray(&array->array, NUMBER_VAL(u.bytes[i]));
@@ -814,9 +820,10 @@ static bool doubleToUint8ArrayNative(int argCount, Value* args) {
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
 
-static void defineTableFunction(Table* table, const char* name, NativeFn function) {
+static void defineTableFunction(Table *table, const char *name,
+                                NativeFn function) {
   push(OBJ_VAL(copyString(name, (int)strlen(name))));
-  ObjString* nameString = COPY_CSTRING(name);
+  ObjString *nameString = COPY_CSTRING(name);
   push(OBJ_VAL(nameString));
   push(OBJ_VAL(newNative(function, nameString)));
   tableSet(table, vm.stackTop[-3], vm.stackTop[-1]);
@@ -825,7 +832,7 @@ static void defineTableFunction(Table* table, const char* name, NativeFn functio
   pop();
 }
 
-static void defineNative(const char* name, NativeFn function) {
+static void defineNative(const char *name, NativeFn function) {
   defineTableFunction(&vm.globals, name, function);
 }
 
@@ -842,10 +849,12 @@ static void defineLxNatives() {
     writeValueArray(&AS_ARRAY(vm.stack[3]), vm.stack[4]);
     pop();
   }
-  pop(); pop();
+  pop();
+  pop();
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
-  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array", doubleToUint8ArrayNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array",
+                      doubleToUint8ArrayNative);
 #ifndef __EMSCRIPTEN__
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "exit", exitNative);
 #endif

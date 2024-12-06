@@ -396,7 +396,7 @@ static uint8_t utf8CharLength(uint8_t val) {
 }
 
 static bool rangeNative(int argCount, Value *args) {
-  if (argCount != 1) {
+  if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: range takes 1 args.");
     return false;
   }
@@ -581,6 +581,52 @@ static bool joinNative(int argCount, Value *args) {
   result[result_size] = '\0';
   args[-1] = CSTRING_VAL(result);
   free(result);
+  return true;
+}
+
+static bool splitNative(int argCount, Value *args) {
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: split takes 2 args.");
+    return false;
+  }
+  if (!IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: First arg must be a string.");
+    return false;
+  }
+  if (!IS_STRING(args[1])) {
+    args[-1] = CSTRING_VAL("Error: Second arg must be a string.");
+    return false;
+  }
+
+  ObjString *input = AS_STRING(args[0]);
+  ObjString *delimiter = AS_STRING(args[1]);
+
+  ObjArray *result = newArray();
+  args[-1] = OBJ_VAL(result);
+
+  if (delimiter->length == 0) {
+    return rangeNative(argCount, args);
+  }
+
+  const char *start = input->chars;
+  const char *next = strstr(start, delimiter->chars);
+
+  while (next != NULL) {
+    size_t length = next - start;
+    ObjString *part = copyString(start, length);
+    writeValueArray(&result->array, OBJ_VAL(part));
+
+    start = next + delimiter->length;
+    next = strstr(start, delimiter->chars);
+  }
+
+  // Add remaining part
+  if (*start != '\0') {
+    size_t length = (input->chars + input->length) - start;
+    ObjString *part = copyString(start, length);
+    writeValueArray(&result->array, OBJ_VAL(part));
+  }
+
   return true;
 }
 
@@ -893,6 +939,7 @@ void defineBuiltinNatives() {
   defineNative("groanln", groanlnNative);
   defineNative("str", strNative);
   defineNative("join", joinNative);
+  defineNative("split", splitNative);
   defineNative("tolower", tolowerNative);
   defineNative("toupper", toupperNative);
   defineNative("tonumber", tonumberNative);

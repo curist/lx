@@ -137,34 +137,6 @@ fn sort(arr, compare) {
     -> concat(sort(greater, compare))
 }
 
-fn split(line, sep) {
-  if sep == "" { return range(line) }
-
-  let tokens = []
-  let tok = ""
-
-  let sepLen = len(sep)
-
-  fn matchSep(index) {
-    for let i = 0; i < sepLen; i = i + 1 {
-      if sep[i] != line[index + i] { return false }
-    }
-    true
-  }
-
-  for let i = 0; i < len(line); i = i + 1 {
-    if matchSep(i) {
-      i = i + sepLen - 1
-      tokens->push(tok)
-      tok = ""
-    } else {
-      tok = tok + line[i]
-    }
-  }
-  if tok != "" { tokens->push(tok) }
-  return tokens
-}
-
 return .{
   _1: _1,
   _2: _2,
@@ -185,5 +157,4 @@ return .{
   max: max,
   min: min,
   sort: sort,
-  split: split,
 }

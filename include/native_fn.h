@@ -191,7 +191,7 @@ static bool sqrtNative(int argCount, Value *args) {
 }
 
 static bool keysNative(int argCount, Value *args) {
-  if (argCount != 1) {
+  if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a map.");
     return false;
   }
@@ -228,7 +228,7 @@ static bool globalsNative(int argCount, Value *args) {
 }
 
 static bool lenNative(int argCount, Value *args) {
-  if (argCount != 1) {
+  if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be string or array.");
     return false;
   }
@@ -249,7 +249,7 @@ static bool lenNative(int argCount, Value *args) {
 }
 
 static bool typeNative(int argCount, Value *args) {
-  if (argCount != 1) {
+  if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: type takes 1 arg.");
     return false;
   }
@@ -277,7 +277,7 @@ static bool typeNative(int argCount, Value *args) {
 }
 
 static bool appendNative(int argCount, Value *args) {
-  if (argCount != 2) {
+  if (argCount < 2) {
     args[-1] = CSTRING_VAL("Error: append takes 2 args.");
     return false;
   }
@@ -295,7 +295,7 @@ static bool appendNative(int argCount, Value *args) {
 }
 
 static bool butlastNative(int argCount, Value *args) {
-  if (argCount != 1) {
+  if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: butlast takes 1 arg.");
     return false;
   }
@@ -312,7 +312,7 @@ static bool butlastNative(int argCount, Value *args) {
 }
 
 static bool pushNative(int argCount, Value *args) {
-  if (argCount != 2) {
+  if (argCount < 2) {
     args[-1] = CSTRING_VAL("Error: push takes 2 args.");
     return false;
   }
@@ -326,7 +326,7 @@ static bool pushNative(int argCount, Value *args) {
 }
 
 static bool popNative(int argCount, Value *args) {
-  if (argCount != 1) {
+  if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: pop takes 1 arg.");
     return false;
   }
@@ -344,7 +344,7 @@ static bool popNative(int argCount, Value *args) {
 }
 
 static bool assocNative(int argCount, Value *args) {
-  if (argCount != 3) {
+  if (argCount < 3) {
     args[-1] = CSTRING_VAL("Error: assoc takes 3 args.");
     return false;
   }
@@ -364,7 +364,7 @@ static bool assocNative(int argCount, Value *args) {
 }
 
 static bool concatNative(int argCount, Value *args) {
-  if (argCount != 2) {
+  if (argCount < 2) {
     args[-1] = CSTRING_VAL("Error: concat takes 2 args.");
     return false;
   }
@@ -448,7 +448,7 @@ static bool rangeNative(int argCount, Value *args) {
 }
 
 static bool linesNative(int argCount, Value *args) {
-  if (argCount != 1) {
+  if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: lines takes 1 arg.");
     return false;
   }
@@ -521,7 +521,7 @@ static int tostring(char **s, Value v) {
 }
 
 static bool strNative(int argCount, Value *args) {
-  if (argCount != 1) {
+  if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: str takes 1 arg.");
     return false;
   }
@@ -533,7 +533,7 @@ static bool strNative(int argCount, Value *args) {
 }
 
 static bool joinNative(int argCount, Value *args) {
-  if (argCount != 2) {
+  if (argCount < 2) {
     args[-1] = CSTRING_VAL("Error: join takes 2 args.");
     return false;
   }
@@ -642,7 +642,7 @@ static bool getlineNative(int argCount, Value *args) {
 }
 
 static bool readNative(int argCount, Value *args) {
-  if (argCount != 1 || !IS_NUMBER(args[0])) {
+  if (argCount < 1 || !IS_NUMBER(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
     return false;
   }
@@ -659,7 +659,7 @@ static bool readNative(int argCount, Value *args) {
 
 #ifndef WASM
 static bool execNative(int argCount, Value *args) {
-  if (argCount != 1 || !IS_STRING(args[0])) {
+  if (argCount < 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a string.");
     return false;
   }
@@ -714,7 +714,7 @@ static bool execNative(int argCount, Value *args) {
 }
 
 static bool systemNative(int argCount, Value *args) {
-  if (argCount != 1 || !IS_STRING(args[0])) {
+  if (argCount < 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a string.");
     return false;
   }
@@ -730,7 +730,7 @@ static bool systemNative(int argCount, Value *args) {
 static bool exitNative(int argCount, Value *args) {
   int exitCode = 0;
   if (argCount == 0) {
-  } else if (argCount != 1 || !IS_NUMBER(args[0])) {
+  } else if (argCount < 1 || !IS_NUMBER(args[0])) {
     args[-1] = CSTRING_VAL("Error: exit takes a number arg.");
     return false;
   } else {
@@ -742,7 +742,7 @@ static bool exitNative(int argCount, Value *args) {
 }
 
 static bool slurpNative(int argCount, Value *args) {
-  if (argCount != 1 || !IS_STRING(args[0])) {
+  if (argCount < 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: slurp takes a string arg.");
     return false;
   }
@@ -795,7 +795,7 @@ static bool slurpNative(int argCount, Value *args) {
 #endif
 
 static bool tolowerNative(int argCount, Value *args) {
-  if (argCount != 1 || !IS_STRING(args[0])) {
+  if (argCount < 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: tolower takes a string arg.");
     return false;
   }
@@ -814,7 +814,7 @@ static bool tolowerNative(int argCount, Value *args) {
 }
 
 static bool toupperNative(int argCount, Value *args) {
-  if (argCount != 1 || !IS_STRING(args[0])) {
+  if (argCount < 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: toupper takes a string arg.");
     return false;
   }
@@ -833,7 +833,7 @@ static bool toupperNative(int argCount, Value *args) {
 }
 
 static bool tonumberNative(int argCount, Value *args) {
-  if (argCount != 1 || !IS_STRING(args[0])) {
+  if (argCount < 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: tonumber takes a string arg.");
     return false;
   }
@@ -843,7 +843,7 @@ static bool tonumberNative(int argCount, Value *args) {
 }
 
 static bool doubleToUint8ArrayNative(int argCount, Value *args) {
-  if (argCount != 1 || !IS_NUMBER(args[0])) {
+  if (argCount < 1 || !IS_NUMBER(args[0])) {
     args[-1] =
         CSTRING_VAL("Error: doubleToUint8ArrayNative takes a number arg.");
     return false;

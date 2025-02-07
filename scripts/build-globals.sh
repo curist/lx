@@ -12,5 +12,5 @@ LX=${LX:-lx}
 
 echo "#include <stdint.h>" > $TARGET
 echo "const uint8_t lxglobals_bytecode[] = {" >> $TARGET
-$LX compile ./lx/globals.lx | xxd -e -i >> $TARGET
+$LX compile ./lx/globals.lx | xxd -i >> $TARGET
 echo "};" >> $TARGET

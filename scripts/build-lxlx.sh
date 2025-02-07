@@ -14,5 +14,5 @@ LX=${LX:-lx}
 
 echo "#include <stdint.h>" > $TARGET
 echo "const uint8_t lxlx_bytecode[] = {" >> $TARGET
-$LX compile src/main.lx | xxd -e -i >> $TARGET
+$LX compile src/main.lx | xxd -i >> $TARGET
 echo "};" >> $TARGET

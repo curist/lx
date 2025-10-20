@@ -663,6 +663,10 @@ fn compile(src, filename, opts) {
   }
 
   fn arrow() {
+    if pendingCallCount > 0 {
+      error("Unexpected '->' without function call. Did you mean '->func()' instead of '->func'?")
+      return
+    }
     pendingCallCount = pendingCallCount + 1
     expression()
   }

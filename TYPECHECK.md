@@ -64,7 +64,7 @@ Problem: patterns like `Value { kind: ValueType, value: <per-kind type> }` encod
 Two implementation options (no syntax changes):
 
 1) **Precise**: use `Tagged(tagField, cases)` in the type lattice.
-   * Detect a record literal with a tag field (e.g., `kind`/`tag`) and a literal tag value; create/extend a `Tagged` with a case per tag value, each with its own frozen record shape (excluding the tag field).
+   * Detect a record literal with a tag field (e.g., `kind`/`tag`/`type`) and a literal tag value; create/extend a `Tagged` with a case per tag value, each with its own frozen record shape (excluding the tag field).
    * Unify merges case maps; conflicting shapes for the same tag → error. Access without a known tag only allows fields common to all cases with the same type.
    * Best accuracy; reusable for all discriminated unions.
 

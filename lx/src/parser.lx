@@ -26,14 +26,23 @@ let PREC = {
 }
 
 // AST Node constructors
-fn Node(type, filename, token) {.{
-  type: type,
-  filename: filename,
-  line: token.line,
-  col: token.col,
-  endLine: token.line,
-  endCol: token.col,
-}}
+fn Node(type, filename, token) {
+  // Scanner's token.col points AFTER the token
+  // So: startCol = col - length, endCol = col
+  let tokenLen = len(token.lexeme)
+  let startCol = token.col - tokenLen
+  // Clamp to 0 in case of edge cases
+  if startCol < 0 { startCol = 0 }
+
+  .{
+    type: type,
+    filename: filename,
+    line: token.line,
+    col: startCol,
+    endLine: token.line,
+    endCol: token.col,
+  }
+}
 
 fn NumberNode(filename, token) {
   let node = Node("Number", filename, token)
@@ -70,62 +79,74 @@ fn IdentifierNode(filename, token) {
 }
 
 fn BinaryNode(filename, left, operator, right) {
-  let node = Node("Binary", filename, operator)
-  node.left = left
-  node.operator = .{
-    type: operator.type,
-    lexeme: operator.lexeme,
-    line: operator.line,
-    col: operator.col,
+  // Operator token.col points after the operator
+  let opLen = len(operator.lexeme)
+  let opStartCol = operator.col - opLen
+  if opStartCol < 0 { opStartCol = 0 }
+
+  .{
+    type: "Binary",
+    filename: filename,
+    line: left.line,
+    col: left.col,  // Start from left operand
+    endLine: right and right.endLine or operator.line,
+    endCol: right and right.endCol or operator.col,
+    left: left,
+    operator: .{
+      type: operator.type,
+      lexeme: operator.lexeme,
+      line: operator.line,
+      col: opStartCol,  // Adjusted operator position
+    },
+    right: right,
   }
-  node.right = right
-  if right {
-    node.endLine = right.endLine
-    node.endCol = right.endCol
-  } else {
-    node.endLine = operator.line
-    node.endCol = operator.col
-  }
-  node
 }
 
 fn UnaryNode(filename, operator, operand) {
-  let node = Node("Unary", filename, operator)
-  node.operator = .{
-    type: operator.type,
-    lexeme: operator.lexeme,
+  // Operator token.col points after the operator
+  let opLen = len(operator.lexeme)
+  let opStartCol = operator.col - opLen
+  if opStartCol < 0 { opStartCol = 0 }
+
+  .{
+    type: "Unary",
+    filename: filename,
     line: operator.line,
-    col: operator.col,
+    col: opStartCol,  // Start from operator
+    endLine: operand and operand.endLine or operator.line,
+    endCol: operand and operand.endCol or operator.col,
+    operator: .{
+      type: operator.type,
+      lexeme: operator.lexeme,
+      line: operator.line,
+      col: opStartCol,  // Adjusted operator position
+    },
+    operand: operand,
   }
-  node.operand = operand
-  if operand {
-    node.endLine = operand.endLine
-    node.endCol = operand.endCol
-  } else {
-    node.endLine = operator.line
-    node.endCol = operator.col
-  }
-  node
 }
 
 fn LogicalNode(filename, left, operator, right) {
-  let node = Node("Logical", filename, operator)
-  node.left = left
-  node.operator = .{
-    type: operator.type,
-    lexeme: operator.lexeme,
-    line: operator.line,
-    col: operator.col,
+  // Operator token.col points after the operator
+  let opLen = len(operator.lexeme)
+  let opStartCol = operator.col - opLen
+  if opStartCol < 0 { opStartCol = 0 }
+
+  .{
+    type: "Logical",
+    filename: filename,
+    line: left.line,
+    col: left.col,  // Start from left operand
+    endLine: right and right.endLine or operator.line,
+    endCol: right and right.endCol or operator.col,
+    left: left,
+    operator: .{
+      type: operator.type,
+      lexeme: operator.lexeme,
+      line: operator.line,
+      col: opStartCol,  // Adjusted operator position
+    },
+    right: right,
   }
-  node.right = right
-  if right {
-    node.endLine = right.endLine
-    node.endCol = right.endCol
-  } else {
-    node.endLine = operator.line
-    node.endCol = operator.col
-  }
-  node
 }
 
 fn GroupingNode(filename, expr, startToken, endToken) {
@@ -169,12 +190,18 @@ fn FunctionNode(filename, startToken, name, params, body, endToken) {
 }
 
 fn CallNode(filename, callee, args, endToken) {
-  let node = Node("Call", filename, callee)
-  node.callee = callee
-  node.args = args
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  // endToken is the closing paren ")"
+  // Its col points after it, which is exactly where the call ends
+  .{
+    type: "Call",
+    filename: filename,
+    line: callee.line,
+    col: callee.col,
+    endLine: endToken.line,
+    endCol: endToken.col,  // Already points after ")"
+    callee: callee,
+    args: args,
+  }
 }
 
 fn ArrowNode(filename, left, right, arrowToken) {
@@ -253,30 +280,45 @@ fn HashmapNode(filename, startToken, pairs, endToken) {
 }
 
 fn IndexNode(filename, object, index, endToken) {
-  let node = Node("Index", filename, object)
-  node.object = object
-  node.index = index
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  // endToken is the closing bracket "]"
+  // Its col points after it
+  .{
+    type: "Index",
+    filename: filename,
+    line: object.line,
+    col: object.col,
+    endLine: endToken.line,
+    endCol: endToken.col,  // Already points after "]"
+    object: object,
+    index: index,
+  }
 }
 
 fn DotNode(filename, object, property, endToken) {
-  let node = Node("Dot", filename, object)
-  node.object = object
-  node.property = property
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  // property is already a Node with correct positions
+  .{
+    type: "Dot",
+    filename: filename,
+    line: object.line,
+    col: object.col,
+    endLine: property.endLine,
+    endCol: property.endCol,
+    object: object,
+    property: property,
+  }
 }
 
 fn AssignmentNode(filename, target, value, equalToken) {
-  let node = Node("Assignment", filename, target)
-  node.target = target
-  node.value = value
-  node.endLine = value.endLine
-  node.endCol = value.endCol
-  node
+  .{
+    type: "Assignment",
+    filename: filename,
+    line: target.line,
+    col: target.col,
+    endLine: value.endLine,
+    endCol: value.endCol,
+    target: target,
+    value: value,
+  }
 }
 
 fn ImportNode(filename, startToken, path) {
@@ -317,6 +359,9 @@ fn parse(src, filename) {
     panicMode: false,
     errors: [],
   }
+
+  let functionDepth = 0
+  let loopDepth = 0
 
   let parseRules
   let getRule
@@ -582,12 +627,17 @@ fn parse(src, filename) {
           // key pattern `.{ key: value }`
           consumeKey("Expect key for hashmap.")
           // Create a string node with the key's lexeme as the value
+          // Apply same position calculation as Node()
           let keyToken = parser.previous
+          let keyLen = len(keyToken.lexeme)
+          let startCol = keyToken.col - keyLen
+          if startCol < 0 { startCol = 0 }
+
           key = .{
             type: "String",
             filename: filename,
             line: keyToken.line,
-            col: keyToken.col,
+            col: startCol,
             endLine: keyToken.line,
             endCol: keyToken.col,
             value: keyToken.lexeme,
@@ -620,9 +670,14 @@ fn parse(src, filename) {
     }
 
     for hasNextExpression() {
-      push(expressions, expression())
-      if hasNextExpression() {
-        // Don't require expression separator in blocks
+      let expr = expression()
+      push(expressions, expr)
+
+      // Check if return/break is not at end
+      if expr and (expr.type == "Return" or expr.type == "Break") {
+        if hasNextExpression() {
+          error("Can only " + (expr.type == "Return" and "return" or "break") + " at end of block.")
+        }
       }
     }
 
@@ -668,7 +723,9 @@ fn parse(src, filename) {
     consume(TOKEN.RIGHT_PAREN, "Expect ')' after parameters.")
     consume(TOKEN.LEFT_BRACE, "Expect '{' before function body.")
 
+    functionDepth = functionDepth + 1
     let body = block()
+    functionDepth = functionDepth - 1
 
     FunctionNode(filename, startToken, name, params, body, parser.previous)
   }
@@ -699,45 +756,63 @@ fn parse(src, filename) {
     let init = nil
     let condition = nil
     let update = nil
+    let isCStyle = false
 
     if match(TOKEN.SEMICOLON) {
-      // for ;; style - no init
+      // for ;; style - no init but C-style
+      isCStyle = true
     } else {
       let expr = expression()
       if match(TOKEN.SEMICOLON) {
-        // for init; style
+        // for init; style - C-style
         init = expr
+        isCStyle = true
       } else {
         // for condition {} style (while loop)
         condition = expr
       }
     }
 
-    // Parse condition if we're in for init;cond style
-    if init and !check(TOKEN.LEFT_BRACE) {
+    // Parse condition if we're in C-style for loop
+    if isCStyle and !check(TOKEN.LEFT_BRACE) {
       if !match(TOKEN.SEMICOLON) {
         condition = expression()
         consume(TOKEN.SEMICOLON, "Expect ';' after loop condition.")
       }
     }
 
-    // Parse update if present
-    if init and !check(TOKEN.LEFT_BRACE) {
+    // Parse update if present in C-style loop
+    if isCStyle and !check(TOKEN.LEFT_BRACE) {
       update = expression()
     }
 
     consume(TOKEN.LEFT_BRACE, "Expect '{' for block.")
+    loopDepth = loopDepth + 1
     let body = block()
+    loopDepth = loopDepth - 1
 
     ForNode(filename, startToken, init, condition, update, body, parser.previous)
   }
 
   fn returnStatement() {
     let startToken = parser.previous
-    let value = nil
 
+    let value = nil
     if !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF) {
       value = expression()
+    }
+
+    // Validate return position after parsing value
+    if functionDepth == 0 {
+      // At script level, return only allowed at EOF
+      if !check(TOKEN.EOF) {
+        error("Can only return at end of file.")
+      }
+    } else {
+      // In function, return only allowed at end of block
+      if !check(TOKEN.RIGHT_BRACE) {
+        error("Can only return at end of block.")
+      }
     }
 
     ReturnNode(filename, startToken, value)
@@ -745,8 +820,12 @@ fn parse(src, filename) {
 
   fn breakExpr() {
     let startToken = parser.previous
-    let value = nil
 
+    if loopDepth == 0 {
+      error("Can only break inside a loop.")
+    }
+
+    let value = nil
     if !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF) {
       value = expression()
     }
@@ -755,6 +834,10 @@ fn parse(src, filename) {
   }
 
   fn continueExpr() {
+    if loopDepth == 0 {
+      error("Can only continue inside a loop.")
+    }
+
     ContinueNode(filename, parser.previous)
   }
 

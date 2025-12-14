@@ -1,0 +1,14 @@
+// Valid control flow examples
+
+// Return in function at end of block
+fn foo() {
+  let x = 1
+  return 42
+}
+
+// Return at script EOF
+fn bar() {
+  return 1
+}
+
+return bar()

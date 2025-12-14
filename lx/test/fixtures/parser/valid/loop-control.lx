@@ -1,0 +1,26 @@
+// Valid loop control flow
+
+// Break at end of loop block
+for true {
+  let x = 1
+  break
+}
+
+// Break with value
+for true {
+  break 42
+}
+
+// Continue at end of loop block
+for i < 10 {
+  i = i + 1
+  continue
+}
+
+// Nested loops with break/continue
+for true {
+  for true {
+    break
+  }
+  continue
+}

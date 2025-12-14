@@ -10,6 +10,12 @@ fn first(result) {
   result.ast.body[0]
 }
 
+// Helper to parse from fixture file
+fn parseFixture(path) {
+  let src = slurp(path)
+  parse(src, path)
+}
+
 test("parser - number literal", fn(assert) {
   let result = parse("42", "test.lx")
   assert.truthy(result.success)
@@ -213,6 +219,24 @@ test("parser - hashmap with computed key", fn(assert) {
   assert.equal(node.pairs[0].key.name, "x")
 })
 
+test("parser - hashmap key positions", fn(assert) {
+  // ".{ a: 1 }" - key "a" should have correct position
+  let result = parse(".{ a: 1 }", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  let key = node.pairs[0].key
+
+  // Scanner reports "a" token with col=3
+  // So: startCol = 3 - len("a") = 2, endCol = 3
+  assert.equal(key.col, 2)
+  assert.equal(key.endCol, 3)
+  assert.equal(key.value, "a")
+
+  // Should not be zero-length
+  assert.truthy(key.endCol > key.col)
+})
+
 test("parser - function call", fn(assert) {
   let result = parse("foo(1, 2)", "test.lx")
   assert.truthy(result.success)
@@ -391,30 +415,30 @@ test("parser - return without value", fn(assert) {
   assert.equal(node.value, nil)
 })
 
-test("parser - break", fn(assert) {
-  let result = parse("break", "test.lx")
+test("parser - break in loop", fn(assert) {
+  let result = parse("for true { break }", "test.lx")
   assert.truthy(result.success)
 
-  let node = first(result)
-  assert.equal(node.type, "Break")
-  assert.equal(node.value, nil)
+  let body = first(result).body
+  assert.equal(body.expressions[0].type, "Break")
+  assert.equal(body.expressions[0].value, nil)
 })
 
-test("parser - break with value", fn(assert) {
-  let result = parse("break 10", "test.lx")
+test("parser - break with value in loop", fn(assert) {
+  let result = parse("for true { break 10 }", "test.lx")
   assert.truthy(result.success)
 
-  let node = first(result)
-  assert.equal(node.type, "Break")
-  assert.equal(node.value.value, 10)
+  let body = first(result).body
+  assert.equal(body.expressions[0].type, "Break")
+  assert.equal(body.expressions[0].value.value, 10)
 })
 
-test("parser - continue", fn(assert) {
-  let result = parse("continue", "test.lx")
+test("parser - continue in loop", fn(assert) {
+  let result = parse("for true { continue }", "test.lx")
   assert.truthy(result.success)
 
-  let node = first(result)
-  assert.equal(node.type, "Continue")
+  let body = first(result).body
+  assert.equal(body.expressions[0].type, "Continue")
 })
 
 test("parser - import", fn(assert) {
@@ -532,6 +556,184 @@ test("parser - error messages include position", fn(assert) {
   // Error message should contain filename and line info
   let errorMsg = result.errors[0]
   assert.truthy(len(errorMsg) > 0)
+})
+
+// Issue #1: For-loop with empty init but semicolons
+test("parser - for loop empty init with condition and update", fn(assert) {
+  let result = parse("for ; i < 10; i = i + 1 { i }", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "For")
+  assert.equal(node.init, nil)
+  assert.equal(node.condition.type, "Binary")
+  assert.equal(node.update.type, "Assignment")
+})
+
+test("parser - for loop variations from fixture", fn(assert) {
+  let result = parseFixture("test/fixtures/parser/valid/for-variations.lx")
+  assert.truthy(result.success)
+
+  // Should have 4 different for-loop styles
+  assert.equal(len(result.ast.body), 4)
+
+  // All should be For nodes
+  assert.equal(result.ast.body[0].type, "For")
+  assert.equal(result.ast.body[1].type, "For")
+  assert.equal(result.ast.body[2].type, "For")
+  assert.equal(result.ast.body[3].type, "For")
+})
+
+// Issue #2: Token position accuracy
+test("parser - token position ranges", fn(assert) {
+  let result = parse("let x = 42", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  // The node should have a meaningful range, not zero-length
+  assert.truthy(node.endCol > node.col)
+
+  // The init value (42) should also have a proper range
+  let initNode = node.init
+  assert.truthy(initNode.endCol > initNode.col)
+})
+
+test("parser - identifier exact position", fn(assert) {
+  // "x" at column 0
+  let result = parse("x", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.col, 0)
+  assert.equal(node.endCol, 1)  // After 'x'
+})
+
+test("parser - number literal exact position", fn(assert) {
+  // "42" starts at column 0
+  let result = parse("42", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.col, 0)
+  assert.equal(node.endCol, 2)  // After '42'
+})
+
+test("parser - string literal with quotes", fn(assert) {
+  // "hello" includes the quotes
+  let result = parse("\"hello\"", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.col, 0)
+  assert.equal(node.endCol, 7)  // After closing quote
+})
+
+test("parser - binary expression positions", fn(assert) {
+  // "1 + 2" - each token has correct position
+  let result = parse("1 + 2", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  // Left operand "1" at column 0
+  assert.equal(node.left.col, 0)
+  assert.equal(node.left.endCol, 1)
+
+  // Operator "+" at column 2
+  assert.equal(node.operator.col, 2)
+
+  // Right operand "2" at column 4
+  assert.equal(node.right.col, 4)
+  assert.equal(node.right.endCol, 5)
+
+  // Whole expression spans from 0 to 5
+  assert.equal(node.col, 0)
+  assert.equal(node.endCol, 5)
+})
+
+test("parser - function call with parens", fn(assert) {
+  // "foo()" - should track opening and closing parens
+  let result = parse("foo()", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  // Callee "foo" starts at 0
+  assert.equal(node.callee.col, 0)
+  assert.equal(node.callee.endCol, 3)
+
+  // Call should span from "foo" to after ")"
+  assert.equal(node.col, 0)
+  assert.equal(node.endCol, 5)  // After ')'
+})
+
+test("parser - dot access positions", fn(assert) {
+  // "obj.prop" - track object, dot, and property
+  let result = parse("obj.prop", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  // Object "obj" at column 0
+  assert.equal(node.object.col, 0)
+  assert.equal(node.object.endCol, 3)
+
+  // Property "prop" after the dot
+  assert.equal(node.property.col, 4)
+  assert.equal(node.property.endCol, 8)
+
+  // Whole expression spans from obj to end of prop
+  assert.equal(node.col, 0)
+  assert.equal(node.endCol, 8)
+})
+
+test("parser - operator position in binary expr", fn(assert) {
+  let result = parse("1 + 2", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  // Operator should have its own position
+  assert.truthy(node.operator.col >= 0)
+  // The whole expression should span from 1 to 2
+  assert.truthy(node.endCol > node.col)
+})
+
+// Issue #3: Control-flow validity
+test("parser - return outside function should be rejected", fn(assert) {
+  let result = parseFixture("test/fixtures/parser/invalid/return-outside-function.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+test("parser - break outside loop should be rejected", fn(assert) {
+  let result = parseFixture("test/fixtures/parser/invalid/break-outside-loop.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+test("parser - continue outside loop should be rejected", fn(assert) {
+  let result = parseFixture("test/fixtures/parser/invalid/continue-outside-loop.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+test("parser - return not at end of block should be rejected", fn(assert) {
+  let result = parseFixture("test/fixtures/parser/invalid/return-not-at-end.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+test("parser - break not at end of block should be rejected", fn(assert) {
+  let result = parseFixture("test/fixtures/parser/invalid/break-not-at-end.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+test("parser - valid control flow from fixture", fn(assert) {
+  let result = parseFixture("test/fixtures/parser/valid/control-flow.lx")
+  assert.truthy(result.success)
+})
+
+test("parser - valid loop control from fixture", fn(assert) {
+  let result = parseFixture("test/fixtures/parser/valid/loop-control.lx")
+  assert.truthy(result.success)
 })
 
 suite.run()

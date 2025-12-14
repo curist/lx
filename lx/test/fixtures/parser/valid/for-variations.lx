@@ -1,0 +1,21 @@
+// Various valid for-loop styles
+
+// While-style: condition only
+for x < 10 {
+  x = x + 1
+}
+
+// C-style: init, condition, update
+for let i = 0; i < 10; i = i + 1 {
+  i
+}
+
+// Empty init with condition and update
+for ; i < 10; i = i + 1 {
+  i
+}
+
+// Infinite loop (no init, no condition, no update)
+for ;; {
+  break
+}

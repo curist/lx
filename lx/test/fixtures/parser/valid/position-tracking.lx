@@ -1,0 +1,23 @@
+// Test precise position tracking for tokens
+// Column positions should accurately reflect source ranges
+
+// Simple identifier at column 0
+x
+
+// Number literal - should span exactly "42"
+42
+
+// String literal - should include quotes
+"hello"
+
+// Binary expression - each token should have correct position
+1 + 2
+
+// Function call - should track parens
+foo()
+
+// Dot access - should track the dot and property
+obj.prop
+
+// Array index - should track brackets
+arr[0]

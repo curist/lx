@@ -1,0 +1,5 @@
+// Invalid: break not at end of block
+for true {
+  break 1
+  let x = 2
+}

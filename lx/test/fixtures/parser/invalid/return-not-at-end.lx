@@ -1,0 +1,5 @@
+// Invalid: return not at end of block
+{
+  return 1
+  let x = 2
+}

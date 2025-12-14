@@ -1,0 +1,4 @@
+// Invalid: return in middle of script (not at EOF)
+let x = 1
+return 5
+let y = 2

@@ -1,0 +1,4 @@
+// Invalid: continue outside of a loop
+let x = 1
+continue
+let y = 2

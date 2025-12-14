@@ -1,0 +1,4 @@
+// Invalid: break outside of a loop
+let x = 1
+break
+let y = 2

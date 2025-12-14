@@ -1,0 +1,5 @@
+// For-loop with empty init but condition and update
+// This is valid C-style for loop syntax
+for ; i < 10; i = i + 1 {
+  i
+}

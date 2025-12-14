@@ -25,11 +25,26 @@ This document captures **MUST** and **MUST NOT** rules that ensure correctness.
 
 - ✅ MUST use canonical paths for import cache keys
 - ✅ MUST build `nodes` map from lowered AST (for O(1) lookup)
-- ✅ MUST perform all semantic validation (before codegen)
+- ✅ MUST perform all semantic validation (before typecheck / codegen)
 - ✅ MUST track hoisting participants and enforce ordering rules
 - ❌ MUST NOT mutate AST
 - ❌ MUST NOT emit bytecode
 - ❌ MUST NOT pre-materialize function objects
+
+### Typecheck
+
+- ✅ MUST run after resolve and before codegen
+- ✅ MUST consume resolved AST and side tables (read-only)
+- ✅ MUST build a per-module type environment
+- ✅ MUST infer monomorphic types using best-effort unification
+- ✅ MUST share TypeVars across closure boundaries (captured variables)
+- ✅ MUST detect incompatible constraints and record type errors
+- ✅ MUST continue analysis after errors (error-tolerant)
+- ✅ MUST produce type side tables keyed by node ID
+- ❌ MUST NOT mutate AST
+- ❌ MUST NOT affect name resolution, hoisting, or scope structure
+- ❌ MUST NOT emit bytecode or runtime artifacts
+- ❌ MUST NOT be required for codegen correctness
 
 ### Codegen
 
@@ -131,15 +146,20 @@ This document captures **MUST** and **MUST NOT** rules that ensure correctness.
 **Rules**:
 
 1. **Exactly one module root per file**
-   - `func.name == ""`
+   - `func.name == ""` (ONLY module root!)
    - `func.arity == 0`
    - `chunk.filename == <canonical module path>`
 
-2. **User functions have non-empty names**
-   - `func.name == "a"` (actual function name)
+2. **Named user functions have non-empty names**
+   - `func.name == <identifier>` (e.g., "foo", "bar")
    - Never empty string
 
-3. **Stable path canonicalization**
+3. **Anonymous functions MUST have non-empty names**
+   - `func.name == "fn"` (current behavior: preserve exactly!)
+   - NEVER empty string
+   - **Rationale**: Prevents misclassification as module chunk
+
+4. **Stable path canonicalization**
    - Same module path → same canonical string
    - Enables `builtModuleCache[filename]` dedup
    - Prevents duplicate ACTUAL chunks instead of REF
@@ -148,12 +168,17 @@ This document captures **MUST** and **MUST NOT** rules that ensure correctness.
 ```lx
 // In codegen - compiler bug guardrails
 if compilingModuleRoot and func.name != "" {
-  panic("Compiler bug: module root must have name == \"\"")
+  panic("Compiler bug: module root must have name == \"\", got: " + func.name)
 }
-if compilingUserFunction and func.name == "" {
-  panic("Compiler bug: user function must have non-empty name")
+if !compilingModuleRoot and func.name == "" {
+  panic("Compiler bug: non-module function must have non-empty name (named or \"fn\" for anonymous)")
 }
 ```
+
+**Current compiler behavior** (preserve exactly):
+- Module root: consumes no name token → `func.name == ""`
+- Named function: `fn foo(){}` → `parser.previous.lexeme == "foo"` → `func.name == "foo"`
+- Anonymous function: `fn(){}` → `parser.previous.lexeme == "fn"` → `func.name == "fn"`
 
 **What breaks if violated**:
 - Empty name on user function → misclassified as module → wrong dedup/REF
@@ -195,14 +220,26 @@ import "path"  →  OP.CLOSURE <const(Function(module))>
 - ✅ Resolver decides opcodes (GET_LOCAL vs GET_UPVALUE, etc.)
 - ❌ Codegen MUST NOT make binding decisions (just emit from side tables)
 
+### Type Side Tables (Typecheck)
+
+- `types[nodeId]` → inferred Type
+- `typeVars[nodeId]` → underlying TypeVar (for debugging / tooling)
+- `typeErrors[]` → structured diagnostics
+
+Rules:
+- Type tables MUST be per-module
+- Type tables MUST use node IDs from lowered AST
+- Resolver side tables MUST NOT depend on type tables
+- Codegen MUST NOT read type tables
+
 ## Error Handling
 
-- ✅ Parser collects syntax errors, continues parsing
-- ✅ Lower collects lowering errors (invalid arrow usage)
-- ✅ Resolver collects all semantic errors before codegen
+- ✅ Resolver collects all semantic errors before typecheck/codegen
+- ✅ Typecheck collects all type errors without aborting compilation
 - ✅ Error reporting uses lowered node positions (spans already copied)
 - ✅ `origin` map used for LSP/tooling only (not diagnostics)
-- ❌ Codegen MUST NOT run if any prior phase had errors
+- ❌ Codegen MUST NOT run if parser/lower/resolve had errors
+- ⚠️ Codegen MAY run even if typecheck produced errors
 
 ## Semantic Validation (Resolver)
 
@@ -231,14 +268,31 @@ import "path"  →  OP.CLOSURE <const(Function(module))>
 
 ## Import Cache Lifecycle
 
-**Status states**: `parsing | lowering | resolving | codegen | done | failed`
+**Status states**:
+`parsing | lowering | resolving | typechecking | codegen | done | failed`
 
 **Rules**:
 - Cache entry created when compilation starts (status = "parsing")
 - Status updated as phases complete
+- Typechecking MAY be skipped by the driver
 - Circular detection: if status is not "done" or "failed" → circular import
 - Failed compilations cache errors, don't retry
 - Cache key is absolute canonical path
+
+## Semantic vs Type Validation
+
+**Semantic validation (resolver)**:
+- Enforces language correctness
+- Errors are fatal
+- Prevents codegen
+
+**Type validation (typecheck)**:
+- Best-effort static analysis
+- Errors are advisory by default
+- Intended for tooling, IDEs, CI, and gradual adoption
+- Does not affect runtime semantics
+
+This separation is intentional.
 
 ## Testing Requirements
 
@@ -250,3 +304,8 @@ Key categories:
 - Hoisting safety (edge cases)
 - Import deduplication
 - Error collection completeness
+- Type inference correctness
+- Record shape freezing
+- Monomorphic function inference
+- Closure type propagation
+- Error recovery after type conflicts

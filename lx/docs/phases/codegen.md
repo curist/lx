@@ -121,17 +121,25 @@ No logic! Just table lookup + emit.
 
 ```lx
 fn compileFunction(gen, node) {
+  // Determine function name (preserve current compiler behavior!)
+  let name =
+    if node.name {
+      node.name.name  // Named: "foo"
+    } else {
+      "fn"            // Anonymous: "fn" (NEVER empty!)
+    }
+
   // Create function object
   let func = Function(
-    name: node.name and node.name.name or "",  // User function has name
+    name: name,
     arity: len(node.params),
     chunk: Chunk(filename: node.filename),
     upvalueCount: 0  // Will be set from scopeInfo
   )
 
-  // ASSERT: user functions have non-empty names
-  if func.name == "" and node.name {
-    panic("Compiler bug: user function has empty name")
+  // ASSERT: non-module functions must have non-empty names
+  if func.name == "" {
+    panic("Compiler bug: user function has empty name (should be identifier or \"fn\")")
   }
 
   // Save current function, switch to nested

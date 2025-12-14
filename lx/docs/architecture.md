@@ -3,85 +3,228 @@
 ## Pipeline
 
 ```
-Source → parser.lx → AST → lower.lx → Lowered AST → resolve.lx → Resolved AST + Side Tables → codegen.lx → Bytecode
+Source
+  → parser.lx
+  → AST
+  → lower.lx
+  → Lowered AST
+  → resolve.lx
+  → Resolved AST + Side Tables
+  → typecheck.lx
+  → (a) codegen.lx → Bytecode
+  → (b) LSP / tooling outputs
 ```
 
-Each phase has a single responsibility and produces immutable outputs.
+Each phase has a **single responsibility** and produces **immutable outputs**.
+Later phases consume earlier results but never mutate them.
+
+---
 
 ## Phases
 
-**parser.lx** — Syntax validation → AST
-- Recognizes lx grammar
-- Creates AST with node IDs and position spans
-- Reports syntax errors only (no semantic validation)
-- Preserves full syntax (Arrow nodes, etc.)
+### **parser.lx** — Syntax validation → AST
 
-**lower.lx** — Desugaring → Canonical AST
-- Pure syntactic transformations
-- Arrow operator: `x->f(a)` becomes `f(x, a)`
-- Creates new AST with fresh node IDs (continuation of module ID space)
-- Copies position spans for error reporting
-- Future: other syntax sugar (spread operators, etc.)
+* Recognizes lx grammar
+* Creates AST with node IDs and position spans
+* Reports **syntax errors only**
+* Preserves full surface syntax (Arrow nodes, etc.)
 
-**resolve.lx** — Binding + Semantic validation
-- Name resolution (locals, upvalues, globals)
-- Function hoisting for mutual recursion
-- Semantic validation (undefined vars, duplicate decls, control flow placement)
-- Builds side tables (resolvedNames, scopeInfo, nodes)
-- No AST mutation
+---
 
-**codegen.lx** — Mechanical bytecode emission
-- Walks resolved AST in source order
-- Looks up decisions from side tables
-- Emits bytecode, builds chunks
-- No semantic analysis (all decisions made by resolver)
+### **lower.lx** — Desugaring → Canonical AST
+
+* Pure syntactic transformations
+* Arrow operator: `x->f(a)` → `f(x, a)`
+* Creates new AST with fresh node IDs (continuation of module ID space)
+* Copies position spans for accurate diagnostics
+* Future: other syntax sugar (spread, destructuring, etc.)
+
+---
+
+### **resolve.lx** — Binding + Semantic validation
+
+* Name resolution (locals, upvalues, globals)
+* Function hoisting for mutual recursion
+* Semantic validation:
+
+  * undefined variables
+  * duplicate declarations
+  * control-flow placement
+* Builds **side tables**:
+
+  * `resolvedNames`
+  * `scopeInfo`
+  * `nodes`
+* Does **not** mutate the AST
+
+---
+
+### **typecheck.lx** — Static analysis (monomorphic, best-effort)
+
+* Infers stable types for:
+
+  * variables
+  * functions
+  * records
+  * arrays
+* Detects incompatible usages:
+
+  * shape mismatches
+  * conflicting assignments
+  * inconsistent call sites
+* Supports closures (captured variables share TypeVars)
+* Flow-insensitive, local, fast
+* Produces:
+
+  * `types[nodeId]`
+  * structured type diagnostics
+* **No runtime or codegen impact**
+
+> This phase is designed to support **tooling and IDE features** independently
+> of backend code generation.
+
+---
+
+### **codegen.lx** — Mechanical bytecode emission
+
+* Walks resolved AST in **source order**
+* Looks up decisions from side tables
+* Emits bytecode and builds chunks
+* No semantic analysis
+* No reordering or deduplication
+* All invariants enforced by resolver
+
+---
 
 ## Driver
 
-Orchestrates phases, owns import cache, manages compilation lifecycle.
+The driver:
+
+* orchestrates phase execution
+* owns the import cache
+* manages module compilation lifecycle
+* provides callbacks for recursive imports
+
+---
 
 ## Data Structures
 
-**Node IDs** — Auto-increment per module, starts at 1
-- Parse: 1..N
-- Lower: N+1..M (same module ID space)
-- Used to key side tables
+### **Node IDs**
 
-**Side Tables** — Per-module, keyed by node ID
-- `resolvedNames[nodeId]` → binding info (kind, opcode, slot, etc.)
-- `scopeInfo[nodeId]` → scope metadata (locals, upvalues, etc.)
-- `nodes[nodeId]` → AST node (O(1) lookup for errors, LSP)
+* Auto-increment per module, starting at 1
+* Parse: `1..N`
+* Lower: `N+1..M` (same module ID space)
+* Used as stable keys across all side tables and tooling
 
-**Import Cache** — Driver-owned, keyed by canonical path
-- Lifecycle states: parsing → lowering → resolving → codegen → done | failed
-- Circular import detection via status check
-- Returns same Function object for module path (enables REF chunk dedup)
+---
+
+### **Side Tables** (per module, keyed by node ID)
+
+* `resolvedNames[nodeId]`
+
+  * binding kind
+  * opcodes
+  * slot / upvalue indices
+
+* `scopeInfo[nodeId]`
+
+  * locals (ordered)
+  * upvalues
+  * hoisting metadata
+
+* `nodes[nodeId]`
+
+  * AST node lookup (O(1))
+  * enables diagnostics and LSP queries
+
+---
+
+### **Import Cache**
+
+* Driver-owned
+* Keyed by canonical absolute path
+* Lifecycle:
+
+  ```
+  parsing → lowering → resolving → typechecking → codegen → done | failed
+  ```
+* Circular imports detected via status checks
+* Same module path returns the same Function object
+  (enables REF chunk deduplication)
+
+---
 
 ## Design Goals
 
-1. **Enable mutual recursion** — Eliminate forward declarations via function hoisting
-2. **Better error reporting** — Collect all semantic errors before codegen
-3. **LSP foundation** — Node IDs + side tables enable fast position-based queries
-4. **Preserve object format** — Compatible with existing objbuilder/objloader
-5. **Maintainability** — Clear phase separation, testable in isolation
+1. **Enable mutual recursion**
+
+   * Eliminate forward declarations via function hoisting
+
+2. **Better error reporting**
+
+   * Collect and report semantic and type errors with precise spans
+
+3. **Tooling-first architecture**
+
+   * Resolve + typecheck form a complete foundation for LSP, IDEs, and static tools
+
+4. **Preserve object format**
+
+   * Compatible with existing `objbuilder` / `objloader`
+
+5. **Maintainability**
+
+   * Clear phase separation
+   * Deterministic behavior
+   * Each phase testable in isolation
+
+---
 
 ## Non-Goals
 
-- **Type checking** — Not yet; resolver handles binding and control flow only
-- **Bytecode-level compatibility** — Semantic equivalence (same output), not same bytecode
-- **Optimization passes** — Keep it simple; focus on correctness
-- **AST mutation** — Phases consume and produce; no in-place modification
+* **Polymorphic type inference**
+* **Perfect soundness**
+* **Optimization passes**
+* **AST mutation**
+* **Bytecode-level equivalence**
+  (semantic equivalence only)
+
+---
 
 ## Migration Strategy
 
-1. Implement new pipeline alongside compiler.lx
-2. Test semantic equivalence (output, not bytecode)
-3. Switch default to new pipeline
-4. Deprecate compiler.lx
+1. Implement new pipeline alongside `compiler.lx`
+2. Validate semantic equivalence
+3. Adopt new pipeline as default
+4. Deprecate legacy compiler incrementally
+
+---
+
+## Product Lines
+
+Lx supports **multiple consumers** of the same frontend pipeline:
+
+### 1. Compiler
+
+```
+parser → lower → resolve → typecheck → codegen → runtime
+```
+
+### 2. Tooling / LSP
+
+```
+parser → lower → resolve → typecheck → diagnostics / IDE features
+```
+
+These paths share the same frontend phases and guarantees.
+
+---
 
 ## Future Work
 
-- Type inference and checking
-- Optimization passes
-- Incremental compilation
-- LSP server implementation
+* Optimization passes
+* Incremental compilation
+* Signature files for modules
+* Richer type narrowing
+* Full LSP server implementation
+

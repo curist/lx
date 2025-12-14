@@ -4,9 +4,18 @@ This document defines required tests to validate compiler correctness.
 
 ## Order Preservation Tests
 
+**Critical invariant**: Function constant order must match `objbuilder.lx` traversal order.
+
+`objbuilder` walks the constant graph starting from main:
+1. Scans `main.chunk.constants` in order
+2. Enqueues each `OBJ_FUNCTION` found
+3. Recursively processes each function's `chunk.constants` (DFS/preorder-like)
+
+**Expected order**: The order obtained by this traversal, NOT just source order.
+
 ### Sequential Functions
 
-**Purpose**: Verify function constants appear in source order
+**Purpose**: Verify function constants appear in traversal order
 
 ```lx
 {
@@ -17,9 +26,11 @@ This document defines required tests to validate compiler correctness.
 ```
 
 **Expected**:
-- `OBJ_FUNCTION` constants in order: a, b, c
-- Chunk order matches constant order
-- `objbuilder` patches correctly
+- Codegen emits `OP.CLOSURE` in source order: a, b, c
+- Main's `chunk.constants` contains `OBJ_FUNCTION(a)`, `OBJ_FUNCTION(b)`, `OBJ_FUNCTION(c)` in that order
+- `objbuilder` traversal encounters them in order: a, b, c
+- Chunk order matches: a, b, c
+- Loader patches correctly
 
 ### Nested Functions
 
@@ -37,8 +48,16 @@ This document defines required tests to validate compiler correctness.
 ```
 
 **Expected**:
-- Function constants enqueued as encountered during codegen
-- Order: outer, inner1, inner2
+- Codegen compiles `outer`, which:
+  1. Compiles `outer`'s body
+  2. Encounters `inner1` → emits `OP.CLOSURE` → adds `OBJ_FUNCTION(inner1)` to `outer.chunk.constants[0]`
+  3. Encounters `inner2` → emits `OP.CLOSURE` → adds `OBJ_FUNCTION(inner2)` to `outer.chunk.constants[1]`
+- Main's constants: `[OBJ_FUNCTION(outer)]`
+- `objbuilder` traversal:
+  1. Process main.constants[0] = `outer` → enqueue `outer`
+  2. Process outer.constants[0] = `inner1` → enqueue `inner1`
+  3. Process outer.constants[1] = `inner2` → enqueue `inner2`
+- Final order: outer, inner1, inner2
 - Loader patches correctly
 
 ### Multiple Nesting Levels
@@ -184,6 +203,36 @@ fn foo() { 1 }
 **Expected**:
 - Function has `name == "foo"`
 - NOT empty string
+
+### Anonymous Functions Have Name "fn"
+
+```lx
+{
+  let f = fn() { 1 }
+  f()
+}
+```
+
+**Expected**:
+- Anonymous function has `name == "fn"` (non-empty!)
+- NOT empty string
+- NOT treated as module chunk
+- NO module dedup/REF behavior
+
+### Multiple Anonymous Functions Don't Dedup as Modules
+
+```lx
+{
+  let a = fn() { 1 }
+  let b = fn() { 2 }
+}
+```
+
+**Expected**:
+- Two distinct `OBJ_FUNCTION` constants
+- Two distinct chunks
+- Both have `name == "fn"`
+- NO module REF logic triggered (only empty string triggers that)
 
 ### Path Canonicalization
 

@@ -1,0 +1,862 @@
+let lib = import "src/lib.lx"
+let types = import "src/types.lx"
+let initScanner = import "src/scanner.lx"
+
+let TOKEN = types.TOKEN
+
+let PREC = {
+  let iota = lib.iota(0)
+  .{
+    NONE:       iota(),
+    ASSIGNMENT: iota(),  // =
+    OR:         iota(),  // or
+    AND:        iota(),  // and
+    BIT_OR:     iota(),  // |
+    BIT_XOR:    iota(),  // ^
+    BIT_AND:    iota(),  // &
+    EQUALITY:   iota(),  // == !=
+    COMPARISON: iota(),  // < > <= >=
+    BIT_SHIFT:  iota(),  // << >>
+    TERM:       iota(),  // + -
+    FACTOR:     iota(),  // * /
+    UNARY:      iota(),  // ! -
+    CALL:       iota(),  // . () []
+    PRIMARY:    iota(),
+  }
+}
+
+// AST Node constructors
+fn Node(type, filename, token) {.{
+  type: type,
+  filename: filename,
+  line: token.line,
+  col: token.col,
+  endLine: token.line,
+  endCol: token.col,
+}}
+
+fn NumberNode(filename, token) {
+  let node = Node("Number", filename, token)
+  node.value = token.literal
+  node.lexeme = token.lexeme
+  node
+}
+
+fn StringNode(filename, token) {
+  let node = Node("String", filename, token)
+  node.value = token.literal
+  node.lexeme = token.lexeme
+  node
+}
+
+fn BoolNode(filename, token) {
+  let node = Node("Bool", filename, token)
+  node.value = token.type == TOKEN.TRUE
+  node.lexeme = token.lexeme
+  node
+}
+
+fn NilNode(filename, token) {
+  let node = Node("Nil", filename, token)
+  node.lexeme = token.lexeme
+  node
+}
+
+fn IdentifierNode(filename, token) {
+  let node = Node("Identifier", filename, token)
+  node.name = token.lexeme
+  node.lexeme = token.lexeme
+  node
+}
+
+fn BinaryNode(filename, left, operator, right) {
+  let node = Node("Binary", filename, operator)
+  node.left = left
+  node.operator = .{
+    type: operator.type,
+    lexeme: operator.lexeme,
+    line: operator.line,
+    col: operator.col,
+  }
+  node.right = right
+  if right {
+    node.endLine = right.endLine
+    node.endCol = right.endCol
+  } else {
+    node.endLine = operator.line
+    node.endCol = operator.col
+  }
+  node
+}
+
+fn UnaryNode(filename, operator, operand) {
+  let node = Node("Unary", filename, operator)
+  node.operator = .{
+    type: operator.type,
+    lexeme: operator.lexeme,
+    line: operator.line,
+    col: operator.col,
+  }
+  node.operand = operand
+  if operand {
+    node.endLine = operand.endLine
+    node.endCol = operand.endCol
+  } else {
+    node.endLine = operator.line
+    node.endCol = operator.col
+  }
+  node
+}
+
+fn LogicalNode(filename, left, operator, right) {
+  let node = Node("Logical", filename, operator)
+  node.left = left
+  node.operator = .{
+    type: operator.type,
+    lexeme: operator.lexeme,
+    line: operator.line,
+    col: operator.col,
+  }
+  node.right = right
+  if right {
+    node.endLine = right.endLine
+    node.endCol = right.endCol
+  } else {
+    node.endLine = operator.line
+    node.endCol = operator.col
+  }
+  node
+}
+
+fn GroupingNode(filename, expr, startToken, endToken) {
+  let node = Node("Grouping", filename, startToken)
+  node.expression = expr
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn LetNode(filename, startToken, nameToken, init) {
+  let node = Node("Let", filename, startToken)
+  node.name = IdentifierNode(filename, nameToken)
+  node.init = init
+  if init {
+    node.endLine = init.endLine
+    node.endCol = init.endCol
+  } else {
+    node.endLine = nameToken.line
+    node.endCol = nameToken.col
+  }
+  node
+}
+
+fn BlockNode(filename, startToken, expressions, endToken) {
+  let node = Node("Block", filename, startToken)
+  node.expressions = expressions
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn FunctionNode(filename, startToken, name, params, body, endToken) {
+  let node = Node("Function", filename, startToken)
+  node.name = name
+  node.params = params
+  node.body = body
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn CallNode(filename, callee, args, endToken) {
+  let node = Node("Call", filename, callee)
+  node.callee = callee
+  node.args = args
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn ArrowNode(filename, left, right, arrowToken) {
+  let node = Node("Arrow", filename, arrowToken)
+  node.left = left
+  node.right = right
+  node.endLine = right.endLine
+  node.endCol = right.endCol
+  node
+}
+
+fn IfNode(filename, startToken, condition, thenBranch, elseBranch) {
+  let node = Node("If", filename, startToken)
+  node.condition = condition
+  node.then = thenBranch
+  node.else = elseBranch
+  if elseBranch {
+    node.endLine = elseBranch.endLine
+    node.endCol = elseBranch.endCol
+  } else {
+    node.endLine = thenBranch.endLine
+    node.endCol = thenBranch.endCol
+  }
+  node
+}
+
+fn ForNode(filename, startToken, init, condition, update, body, endToken) {
+  let node = Node("For", filename, startToken)
+  node.init = init
+  node.condition = condition
+  node.update = update
+  node.body = body
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn ReturnNode(filename, startToken, value) {
+  let node = Node("Return", filename, startToken)
+  node.value = value
+  if value {
+    node.endLine = value.endLine
+    node.endCol = value.endCol
+  }
+  node
+}
+
+fn BreakNode(filename, startToken, value) {
+  let node = Node("Break", filename, startToken)
+  node.value = value
+  if value {
+    node.endLine = value.endLine
+    node.endCol = value.endCol
+  }
+  node
+}
+
+fn ContinueNode(filename, token) {
+  Node("Continue", filename, token)
+}
+
+fn ArrayNode(filename, startToken, elements, endToken) {
+  let node = Node("Array", filename, startToken)
+  node.elements = elements
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn HashmapNode(filename, startToken, pairs, endToken) {
+  let node = Node("Hashmap", filename, startToken)
+  node.pairs = pairs
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn IndexNode(filename, object, index, endToken) {
+  let node = Node("Index", filename, object)
+  node.object = object
+  node.index = index
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn DotNode(filename, object, property, endToken) {
+  let node = Node("Dot", filename, object)
+  node.object = object
+  node.property = property
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn AssignmentNode(filename, target, value, equalToken) {
+  let node = Node("Assignment", filename, target)
+  node.target = target
+  node.value = value
+  node.endLine = value.endLine
+  node.endCol = value.endCol
+  node
+}
+
+fn ImportNode(filename, startToken, path) {
+  let node = Node("Import", filename, startToken)
+  node.path = path
+  node.endLine = path.endLine
+  node.endCol = path.endCol
+  node
+}
+
+fn ProgramNode(filename, body) {
+  let node = .{
+    type: "Program",
+    filename: filename,
+    body: body,
+  }
+  if len(body) > 0 {
+    node.line = body[0].line
+    node.col = body[0].col
+    node.endLine = body[len(body) - 1].endLine
+    node.endCol = body[len(body) - 1].endCol
+  } else {
+    node.line = 1
+    node.col = 0
+    node.endLine = 1
+    node.endCol = 0
+  }
+  node
+}
+
+fn parse(src, filename) {
+  let scanner = initScanner(src)
+
+  let parser = .{
+    current: 0,
+    previous: 0,
+    hadError: false,
+    panicMode: false,
+    errors: [],
+  }
+
+  let parseRules
+  let getRule
+
+  fn errorAt(token, message) {
+    if parser.panicMode {
+      return
+    }
+    parser.panicMode = true
+
+    let errorMsg = join([
+      "[", filename, ":L", token.line, ":C", token.col, "]",
+      if token.type == TOKEN.EOF {
+        " at end"
+      } else if token.type == TOKEN.ERROR {
+        ""
+      } else {
+        " at '" + token.lexeme + "'"
+      },
+      ": ", message,
+    ], "")
+
+    push(parser.errors, errorMsg)
+    parser.hadError = true
+  }
+
+  fn error(message) {
+    errorAt(parser.previous, message)
+  }
+
+  fn errorAtCurrent(message) {
+    errorAt(parser.current, message)
+  }
+
+  fn advance() {
+    parser.previous = parser.current
+    for true {
+      parser.current = scanner.scanToken()
+      if parser.current.type != TOKEN.ERROR {
+        break
+      }
+      errorAtCurrent(parser.current.lexeme)
+    }
+  }
+
+  fn consume(type, message) {
+    if parser.current.type == type {
+      advance()
+      return
+    }
+    errorAtCurrent(message)
+  }
+
+  fn consumeKey(message) {
+    let isKeyword = types.KEYWORDS[parser.current.lexeme]
+    if parser.current.type == TOKEN.IDENTIFIER or isKeyword {
+      advance()
+      return
+    }
+    errorAtCurrent(message)
+  }
+
+  fn check(type) { parser.current.type == type }
+
+  fn match(type) {
+    if !check(type) { return false }
+    advance()
+    true
+  }
+
+  fn synchronize() {
+    parser.panicMode = false
+    for parser.current.type != TOKEN.EOF {
+      let breakpoints = .{
+        [TOKEN.FN]: true,
+        [TOKEN.LET]: true,
+        [TOKEN.FOR]: true,
+        [TOKEN.IF]: true,
+        [TOKEN.RETURN]: true,
+        [TOKEN.IMPORT]: true,
+        [TOKEN.DOT_BRACE]: true,
+      }
+      if breakpoints[parser.current.type] {
+        return
+      }
+      advance()
+    }
+  }
+
+  fn parsePrecedence(precedence) {
+    advance()
+    let prefixRule = getRule(parser.previous.type).prefix
+    if !prefixRule {
+      error("Expect expression.")
+      return nil
+    }
+
+    let canAssign = precedence <= PREC.ASSIGNMENT
+    let left = prefixRule(canAssign)
+
+    for precedence <= getRule(parser.current.type).precedence {
+      advance()
+      let infixRule = getRule(parser.previous.type).infix
+      if !infixRule {
+        error("Expect expression.")
+        return nil
+      }
+      left = infixRule(left, canAssign)
+    }
+
+    if canAssign and match(TOKEN.EQUAL) {
+      error("Invalid assignment target.")
+    }
+
+    return left
+  }
+
+  fn literal() {
+    let token = parser.previous
+    let tokenType = token.type
+
+    if tokenType == TOKEN.FALSE or tokenType == TOKEN.TRUE {
+      return BoolNode(filename, token)
+    } else if tokenType == TOKEN.NIL {
+      return NilNode(filename, token)
+    } else {
+      error("Unknown literal type.")
+      return nil
+    }
+  }
+
+  fn number() {
+    NumberNode(filename, parser.previous)
+  }
+
+  fn string() {
+    StringNode(filename, parser.previous)
+  }
+
+  fn variable(canAssign) {
+    let nameToken = parser.previous
+    let name = IdentifierNode(filename, nameToken)
+
+    if canAssign and match(TOKEN.EQUAL) {
+      let value = expression()
+      return AssignmentNode(filename, name, value, parser.previous)
+    }
+
+    return name
+  }
+
+  fn grouping() {
+    let startToken = parser.previous
+    let expr = expression()
+    consume(TOKEN.RIGHT_PAREN, "Expect ')' after expression.")
+    GroupingNode(filename, expr, startToken, parser.previous)
+  }
+
+  fn unary() {
+    let operator = parser.previous
+    let operand = parsePrecedence(PREC.UNARY)
+    UnaryNode(filename, operator, operand)
+  }
+
+  fn binary(left, canAssign) {
+    let operator = parser.previous
+    let rule = getRule(operator.type)
+    let right = parsePrecedence(rule.precedence + 1)
+    BinaryNode(filename, left, operator, right)
+  }
+
+  fn and_(left, canAssign) {
+    let operator = parser.previous
+    let right = parsePrecedence(PREC.AND)
+    LogicalNode(filename, left, operator, right)
+  }
+
+  fn or_(left, canAssign) {
+    let operator = parser.previous
+    let right = parsePrecedence(PREC.OR)
+    LogicalNode(filename, left, operator, right)
+  }
+
+  fn call(left, canAssign) {
+    let args = []
+
+    if !check(TOKEN.RIGHT_PAREN) {
+      args = [expression()]
+      for match(TOKEN.COMMA) and !check(TOKEN.RIGHT_PAREN) {
+        push(args, expression())
+      }
+    }
+
+    consume(TOKEN.RIGHT_PAREN, "Expect ')' after arguments.")
+    CallNode(filename, left, args, parser.previous)
+  }
+
+  fn arrow(left, canAssign) {
+    let arrowToken = parser.previous
+    let right = expression()
+    ArrowNode(filename, left, right, arrowToken)
+  }
+
+  fn dot(left, canAssign) {
+    consumeKey("Expect property name after '.'.")
+    let propertyToken = parser.previous
+    let property = IdentifierNode(filename, propertyToken)
+
+    if canAssign and match(TOKEN.EQUAL) {
+      let value = expression()
+      let dotNode = DotNode(filename, left, property, propertyToken)
+      return AssignmentNode(filename, dotNode, value, parser.previous)
+    }
+
+    DotNode(filename, left, property, propertyToken)
+  }
+
+  fn index(left, canAssign) {
+    let indexExpr = expression()
+    consume(TOKEN.RIGHT_BRACKET, "Expect ']' for index key.")
+    let endToken = parser.previous
+
+    if canAssign and match(TOKEN.EQUAL) {
+      let value = expression()
+      let indexNode = IndexNode(filename, left, indexExpr, endToken)
+      return AssignmentNode(filename, indexNode, value, parser.previous)
+    }
+
+    IndexNode(filename, left, indexExpr, endToken)
+  }
+
+  fn array() {
+    let startToken = parser.previous
+    let elements = []
+
+    if !check(TOKEN.RIGHT_BRACKET) {
+      push(elements, expression())
+      for match(TOKEN.COMMA) and !check(TOKEN.RIGHT_BRACKET) {
+        push(elements, expression())
+      }
+    }
+
+    consume(TOKEN.RIGHT_BRACKET, "Expect ']' after array.")
+    ArrayNode(filename, startToken, elements, parser.previous)
+  }
+
+  fn hashmap() {
+    let startToken = parser.previous
+    let pairs = []
+
+    fn hasNextKeyValuePair() {
+      !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF)
+    }
+
+    if hasNextKeyValuePair() {
+      fn keyvalue() {
+        let key
+        if match(TOKEN.LEFT_BRACKET) {
+          // index pattern `.{ [expr]: value }`
+          key = expression()
+          consume(TOKEN.RIGHT_BRACKET, "Expect ']' for hashmap index key.")
+        } else {
+          // key pattern `.{ key: value }`
+          consumeKey("Expect key for hashmap.")
+          // Create a string node with the key's lexeme as the value
+          let keyToken = parser.previous
+          key = .{
+            type: "String",
+            filename: filename,
+            line: keyToken.line,
+            col: keyToken.col,
+            endLine: keyToken.line,
+            endCol: keyToken.col,
+            value: keyToken.lexeme,
+            lexeme: keyToken.lexeme,
+          }
+        }
+
+        consume(TOKEN.COLON, "Expect ':' for hashmap.")
+
+        let value = expression()
+        push(pairs, .{ key: key, value: value })
+      }
+
+      keyvalue()
+      for match(TOKEN.COMMA) and hasNextKeyValuePair() {
+        keyvalue()
+      }
+    }
+
+    consume(TOKEN.RIGHT_BRACE, "Expect '}' after hashmap.")
+    HashmapNode(filename, startToken, pairs, parser.previous)
+  }
+
+  fn block() {
+    let startToken = parser.previous
+    let expressions = []
+
+    fn hasNextExpression() {
+      !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF)
+    }
+
+    for hasNextExpression() {
+      push(expressions, expression())
+      if hasNextExpression() {
+        // Don't require expression separator in blocks
+      }
+    }
+
+    consume(TOKEN.RIGHT_BRACE, "Expect '}' after block.")
+    BlockNode(filename, startToken, expressions, parser.previous)
+  }
+
+  fn letExpr() {
+    let startToken = parser.previous
+    consume(TOKEN.IDENTIFIER, "Expect variable name.")
+    let nameToken = parser.previous
+
+    let init = nil
+    if match(TOKEN.EQUAL) {
+      init = expression()
+    }
+
+    LetNode(filename, startToken, nameToken, init)
+  }
+
+  fn fnExpr() {
+    let startToken = parser.previous
+    let name = nil
+
+    if check(TOKEN.IDENTIFIER) {
+      advance()
+      name = IdentifierNode(filename, parser.previous)
+    }
+
+    consume(TOKEN.LEFT_PAREN, "Expect '(' after function name.")
+
+    let params = []
+    if !check(TOKEN.RIGHT_PAREN) {
+      consume(TOKEN.IDENTIFIER, "Expect parameter name.")
+      push(params, IdentifierNode(filename, parser.previous))
+
+      for match(TOKEN.COMMA) and !check(TOKEN.RIGHT_PAREN) {
+        consume(TOKEN.IDENTIFIER, "Expect parameter name.")
+        push(params, IdentifierNode(filename, parser.previous))
+      }
+    }
+
+    consume(TOKEN.RIGHT_PAREN, "Expect ')' after parameters.")
+    consume(TOKEN.LEFT_BRACE, "Expect '{' before function body.")
+
+    let body = block()
+
+    FunctionNode(filename, startToken, name, params, body, parser.previous)
+  }
+
+  fn ifExpr() {
+    let startToken = parser.previous
+    let condition = expression()
+
+    consume(TOKEN.LEFT_BRACE, "Expect '{' after condition.")
+    let thenBranch = block()
+
+    let elseBranch = nil
+    if match(TOKEN.ELSE) {
+      if match(TOKEN.IF) {
+        elseBranch = ifExpr()
+      } else {
+        consume(TOKEN.LEFT_BRACE, "Expect '{' after else.")
+        elseBranch = block()
+      }
+    }
+
+    IfNode(filename, startToken, condition, thenBranch, elseBranch)
+  }
+
+  fn forExpr() {
+    let startToken = parser.previous
+
+    let init = nil
+    let condition = nil
+    let update = nil
+
+    if match(TOKEN.SEMICOLON) {
+      // for ;; style - no init
+    } else {
+      let expr = expression()
+      if match(TOKEN.SEMICOLON) {
+        // for init; style
+        init = expr
+      } else {
+        // for condition {} style (while loop)
+        condition = expr
+      }
+    }
+
+    // Parse condition if we're in for init;cond style
+    if init and !check(TOKEN.LEFT_BRACE) {
+      if !match(TOKEN.SEMICOLON) {
+        condition = expression()
+        consume(TOKEN.SEMICOLON, "Expect ';' after loop condition.")
+      }
+    }
+
+    // Parse update if present
+    if init and !check(TOKEN.LEFT_BRACE) {
+      update = expression()
+    }
+
+    consume(TOKEN.LEFT_BRACE, "Expect '{' for block.")
+    let body = block()
+
+    ForNode(filename, startToken, init, condition, update, body, parser.previous)
+  }
+
+  fn returnStatement() {
+    let startToken = parser.previous
+    let value = nil
+
+    if !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF) {
+      value = expression()
+    }
+
+    ReturnNode(filename, startToken, value)
+  }
+
+  fn breakExpr() {
+    let startToken = parser.previous
+    let value = nil
+
+    if !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF) {
+      value = expression()
+    }
+
+    BreakNode(filename, startToken, value)
+  }
+
+  fn continueExpr() {
+    ContinueNode(filename, parser.previous)
+  }
+
+  fn importStatement() {
+    let startToken = parser.previous
+    consume(TOKEN.STRING, "Import path should be a string.")
+    let pathNode = StringNode(filename, parser.previous)
+    ImportNode(filename, startToken, pathNode)
+  }
+
+  fn expression() {
+    if match(TOKEN.IMPORT) {
+      return importStatement()
+    }
+    parsePrecedence(PREC.ASSIGNMENT)
+  }
+
+  fn expressionStatement() {
+    let expr = expression()
+
+    if parser.panicMode {
+      synchronize()
+    }
+
+    return expr
+  }
+
+  // Parse rules table
+  parseRules = .{
+    [TOKEN.IMPORT]:          [nil,        nil,    PREC.NONE],
+    [TOKEN.LEFT_PAREN]:      [grouping,   call,   PREC.CALL],
+    [TOKEN.RIGHT_PAREN]:     [nil,        nil,    PREC.NONE],
+    [TOKEN.LEFT_BRACE]:      [block,      nil,    PREC.NONE],
+    [TOKEN.RIGHT_BRACE]:     [nil,        nil,    PREC.NONE],
+    [TOKEN.LEFT_BRACKET]:    [array,      index,  PREC.CALL],
+    [TOKEN.RIGHT_BRACKET]:   [nil,        nil,    PREC.NONE],
+    [TOKEN.DOT_BRACE]:       [hashmap,    nil,    PREC.NONE],
+    [TOKEN.COMMA]:           [nil,        nil,    PREC.NONE],
+    [TOKEN.DOT]:             [nil,        dot,    PREC.CALL],
+    [TOKEN.MINUS]:           [unary,      binary, PREC.TERM],
+    [TOKEN.MINUS_GREATER]:   [nil,        arrow,  PREC.CALL],
+    [TOKEN.PLUS]:            [nil,        binary, PREC.TERM],
+    [TOKEN.SEMICOLON]:       [nil,        nil,    PREC.NONE],
+    [TOKEN.SLASH]:           [nil,        binary, PREC.FACTOR],
+    [TOKEN.STAR]:            [nil,        binary, PREC.FACTOR],
+    [TOKEN.MOD]:             [nil,        binary, PREC.FACTOR],
+    [TOKEN.BANG]:            [unary,      nil,    PREC.NONE],
+    [TOKEN.BANG_EQUAL]:      [nil,        binary, PREC.EQUALITY],
+    [TOKEN.EQUAL]:           [nil,        nil,    PREC.NONE],
+    [TOKEN.EQUAL_EQUAL]:     [nil,        binary, PREC.EQUALITY],
+    [TOKEN.GREATER]:         [nil,        binary, PREC.COMPARISON],
+    [TOKEN.GREATER_EQUAL]:   [nil,        binary, PREC.COMPARISON],
+    [TOKEN.GREATER_GREATER]: [nil,        binary, PREC.BIT_SHIFT],
+    [TOKEN.LESS]:            [nil,        binary, PREC.COMPARISON],
+    [TOKEN.LESS_EQUAL]:      [nil,        binary, PREC.COMPARISON],
+    [TOKEN.LESS_LESS]:       [nil,        binary, PREC.BIT_SHIFT],
+    [TOKEN.AMPERSAND]:       [nil,        binary, PREC.BIT_AND],
+    [TOKEN.PIPE]:            [nil,        binary, PREC.BIT_OR],
+    [TOKEN.CARET]:           [nil,        binary, PREC.BIT_XOR],
+    [TOKEN.LET]:             [letExpr,    nil,    PREC.NONE],
+    [TOKEN.IDENTIFIER]:      [variable,   nil,    PREC.NONE],
+    [TOKEN.STRING]:          [string,     nil,    PREC.NONE],
+    [TOKEN.NUMBER]:          [number,     nil,    PREC.NONE],
+    [TOKEN.AND]:             [nil,        and_,   PREC.AND],
+    [TOKEN.ELSE]:            [nil,        nil,    PREC.NONE],
+    [TOKEN.FALSE]:           [literal,    nil,    PREC.NONE],
+    [TOKEN.FOR]:             [forExpr,    nil,    PREC.NONE],
+    [TOKEN.FN]:              [fnExpr,     nil,    PREC.NONE],
+    [TOKEN.IF]:              [ifExpr,     nil,    PREC.NONE],
+    [TOKEN.NIL]:             [literal,    nil,    PREC.NONE],
+    [TOKEN.OR]:              [nil,        or_,    PREC.OR],
+    [TOKEN.RETURN]:          [returnStatement, nil, PREC.NONE],
+    [TOKEN.BREAK]:           [breakExpr,  nil,    PREC.NONE],
+    [TOKEN.CONTINUE]:        [continueExpr, nil,  PREC.NONE],
+    [TOKEN.TRUE]:            [literal,    nil,    PREC.NONE],
+    [TOKEN.ERROR]:           [nil,        nil,    PREC.NONE],
+    [TOKEN.EOF]:             [nil,        nil,    PREC.NONE],
+  }
+
+  getRule = fn(type) {
+    let rule = parseRules[type]
+    return .{
+      prefix: rule[0],
+      infix: rule[1],
+      precedence: rule[2],
+    }
+  }
+
+  // Main parsing loop
+  advance()
+  let body = []
+
+  for !match(TOKEN.EOF) {
+    let stmt = expressionStatement()
+    if stmt {
+      push(body, stmt)
+    }
+  }
+
+  return .{
+    success: !parser.hadError,
+    ast: ProgramNode(filename, body),
+    errors: parser.errors,
+  }
+}

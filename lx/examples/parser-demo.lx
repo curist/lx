@@ -1,0 +1,65 @@
+let parse = import "src/parser.lx"
+
+// Example 1: Simple expression
+let code1 = "let x = 1 + 2 * 3"
+let result1 = parse(code1, "demo.lx")
+
+if result1.success {
+  println("Parse successful!")
+  println("AST type:", result1.ast.type)
+  println("Number of statements:", len(result1.ast.body))
+
+  let stmt = result1.ast.body[0]
+  println("\nFirst statement:")
+  println("  Type:", stmt.type)
+  println("  Variable name:", stmt.name.name)
+  println("  Init expression type:", stmt.init.type)
+  println("  Position: L" + str(stmt.line) + ":C" + str(stmt.col))
+  println("  Filename:", stmt.filename)
+} else {
+  println("Parse failed!")
+  each(result1.errors, fn(err) { println(err) })
+}
+
+// Example 2: Function definition
+let code2 = "fn add(a, b) { a + b }"
+let result2 = parse(code2, "demo.lx")
+
+if result2.success {
+  let funcNode = result2.ast.body[0]
+  println("\n--- Function Definition ---")
+  println("Name:", funcNode.name.name)
+  println("Parameters:", len(funcNode.params))
+  println("Param 1:", funcNode.params[0].name)
+  println("Param 2:", funcNode.params[1].name)
+  println("Body type:", funcNode.body.type)
+  println("Body expressions:", len(funcNode.body.expressions))
+}
+
+// Example 3: Complex expression with arrow operator
+let code3 = "[1, 2, 3]->map(fn(x) { x * 2 })"
+let result3 = parse(code3, "demo.lx")
+
+if result3.success {
+  let expr = result3.ast.body[0]
+  println("\n--- Arrow Expression ---")
+  println("Type:", expr.type)
+  println("Left type:", expr.left.type)
+  println("Right type:", expr.right.type)
+  println("Right is call:", expr.right.type == "Call")
+  if expr.right.type == "Call" {
+    println("Callee:", expr.right.callee.name)
+    println("Args count:", len(expr.right.args))
+  }
+}
+
+// Example 4: Error handling
+let code4 = "let x = "
+let result4 = parse(code4, "demo.lx")
+
+if !result4.success {
+  println("\n--- Error Example ---")
+  println("Parse failed as expected!")
+  println("Errors:")
+  each(result4.errors, fn(err) { println("  ", err) })
+}

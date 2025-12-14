@@ -1,0 +1,399 @@
+// Lower Phase - Desugar syntax into canonical AST
+// Responsibility: Pure syntactic transformations
+//   - Arrow operator: x->f(a) → f(x, a)
+//   - Future: spread, destructuring, for-loops, etc.
+//
+// IMPORTANT: Lower MUST NOT introduce synthetic nodes.
+// Missing else branches remain as nil (not normalized to empty blocks).
+
+let types = import "src/types.lx"
+let TOKEN = types.TOKEN
+
+// ========================================
+// Error handling
+// ========================================
+
+fn addError(lowerer, nodeId, message) {
+  push(lowerer.errors, .{
+    nodeId: nodeId,
+    message: message,
+    severity: "error",
+  })
+}
+
+// ========================================
+// Node Creation Helpers
+// ========================================
+
+fn allocNodeId(lowerer) {
+  let id = lowerer.nextId
+  lowerer.nextId = lowerer.nextId + 1
+  id
+}
+
+fn copyNodeShallow(lowerer, node) {
+  // Copy all fields from node (shallow copy)
+  let newNode = .{}
+  // Copy all properties
+  let node_keys = keys(node)
+  for let i = 0; i < len(node_keys); i = i + 1 {
+    let key = node_keys[i]
+    newNode[key] = node[key]
+  }
+
+  // Assign new ID and track provenance
+  let newId = allocNodeId(lowerer)
+  lowerer.origin[newId] = node.id
+  newNode.id = newId
+
+  newNode
+}
+
+// ========================================
+// Node Type Lowering Functions
+// ========================================
+
+// Leaf nodes - just copy with new ID
+fn lowerLeaf(lowerer, node) {
+  copyNodeShallow(lowerer, node)
+}
+
+fn lowerBinary(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  newNode.left = lowerExpr(lowerer, node.left)
+  newNode.right = lowerExpr(lowerer, node.right)
+  newNode
+}
+
+fn lowerUnary(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  newNode.operand = lowerExpr(lowerer, node.operand)
+  newNode
+}
+
+fn lowerLogical(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  newNode.left = lowerExpr(lowerer, node.left)
+  newNode.right = lowerExpr(lowerer, node.right)
+  newNode
+}
+
+fn lowerGrouping(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  newNode.expression = lowerExpr(lowerer, node.expression)
+  newNode
+}
+
+fn lowerLet(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+
+  // Lower the name (Identifier node)
+  newNode.name = lowerExpr(lowerer, node.name)
+
+  if node.init {
+    newNode.init = lowerExpr(lowerer, node.init)
+  }
+  newNode
+}
+
+fn lowerBlock(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+
+  let loweredExprs = []
+  for let i = 0; i < len(node.expressions); i = i + 1 {
+    push(loweredExprs, lowerExpr(lowerer, node.expressions[i]))
+  }
+  newNode.expressions = loweredExprs
+
+  newNode
+}
+
+fn lowerFunction(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+
+  // Lower name (Identifier node or nil for anonymous functions)
+  if node.name {
+    newNode.name = lowerExpr(lowerer, node.name)
+  }
+
+  // Lower params (array of Identifier nodes)
+  let loweredParams = []
+  for let i = 0; i < len(node.params); i = i + 1 {
+    push(loweredParams, lowerExpr(lowerer, node.params[i]))
+  }
+  newNode.params = loweredParams
+
+  // Lower body
+  newNode.body = lowerExpr(lowerer, node.body)
+
+  newNode
+}
+
+fn lowerCall(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+
+  newNode.callee = lowerExpr(lowerer, node.callee)
+
+  let loweredArgs = []
+  for let i = 0; i < len(node.args); i = i + 1 {
+    push(loweredArgs, lowerExpr(lowerer, node.args[i]))
+  }
+  newNode.args = loweredArgs
+
+  newNode
+}
+
+fn lowerArrow(lowerer, node) {
+  // Arrow: left->right
+  // Transform to: right with left prepended to args
+
+  let left = lowerExpr(lowerer, node.left)
+  let right = lowerExpr(lowerer, node.right)
+
+  // Validate RHS is Call
+  if right.type != "Call" {
+    addError(lowerer, node.id, "Arrow operator requires function call on right side")
+    return left  // Error recovery: return left side
+  }
+
+  // Create new Call node with left prepended to args
+  // Need to manually build the prepended args array
+  let newArgs = [left]
+  for let i = 0; i < len(right.args); i = i + 1 {
+    push(newArgs, right.args[i])
+  }
+
+  let newCall = .{
+    type: "Call",
+    filename: right.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+    callee: right.callee,
+    args: newArgs,
+  }
+
+  // Track provenance - this new Call came from the Arrow node
+  lowerer.origin[newCall.id] = node.id
+
+  newCall
+}
+
+fn lowerIf(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+
+  newNode.condition = lowerExpr(lowerer, node.condition)
+  newNode.then = lowerExpr(lowerer, node.then)
+
+  // Keep else as-is: nil if missing, or lower if present
+  if node.else {
+    newNode.else = lowerExpr(lowerer, node.else)
+  }
+  // else remains nil (no normalization)
+
+  newNode
+}
+
+fn lowerFor(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+
+  if node.init {
+    newNode.init = lowerExpr(lowerer, node.init)
+  }
+  if node.condition {
+    newNode.condition = lowerExpr(lowerer, node.condition)
+  }
+  if node.update {
+    newNode.update = lowerExpr(lowerer, node.update)
+  }
+  newNode.body = lowerExpr(lowerer, node.body)
+
+  newNode
+}
+
+fn lowerReturn(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  if node.value {
+    newNode.value = lowerExpr(lowerer, node.value)
+  }
+  newNode
+}
+
+fn lowerBreak(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  if node.value {
+    newNode.value = lowerExpr(lowerer, node.value)
+  }
+  newNode
+}
+
+fn lowerContinue(lowerer, node) {
+  // Continue has no children, just copy
+  copyNodeShallow(lowerer, node)
+}
+
+fn lowerArray(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+
+  let loweredElements = []
+  for let i = 0; i < len(node.elements); i = i + 1 {
+    push(loweredElements, lowerExpr(lowerer, node.elements[i]))
+  }
+  newNode.elements = loweredElements
+
+  newNode
+}
+
+fn lowerHashmap(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+
+  let loweredPairs = []
+  for let i = 0; i < len(node.pairs); i = i + 1 {
+    let pair = node.pairs[i]
+    let loweredPair = .{
+      key: lowerExpr(lowerer, pair.key),
+      value: lowerExpr(lowerer, pair.value),
+    }
+    push(loweredPairs, loweredPair)
+  }
+  newNode.pairs = loweredPairs
+
+  newNode
+}
+
+fn lowerIndex(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  newNode.object = lowerExpr(lowerer, node.object)
+  newNode.index = lowerExpr(lowerer, node.index)
+  newNode
+}
+
+fn lowerDot(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  newNode.object = lowerExpr(lowerer, node.object)
+  // property is a StringKey node, needs lowering
+  newNode.property = lowerExpr(lowerer, node.property)
+  newNode
+}
+
+fn lowerAssignment(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  newNode.target = lowerExpr(lowerer, node.target)
+  newNode.value = lowerExpr(lowerer, node.value)
+  newNode
+}
+
+fn lowerImport(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+  // Lower the path (String node)
+  newNode.path = lowerExpr(lowerer, node.path)
+  newNode
+}
+
+// ========================================
+// Main Expression Dispatcher
+// ========================================
+
+fn lowerExpr(lowerer, node) {
+  if !node { return nil }
+
+  if node.type == "Arrow" {
+    return lowerArrow(lowerer, node)
+  } else if node.type == "If" {
+    return lowerIf(lowerer, node)
+  } else if node.type == "Binary" {
+    return lowerBinary(lowerer, node)
+  } else if node.type == "Unary" {
+    return lowerUnary(lowerer, node)
+  } else if node.type == "Logical" {
+    return lowerLogical(lowerer, node)
+  } else if node.type == "Grouping" {
+    return lowerGrouping(lowerer, node)
+  } else if node.type == "Let" {
+    return lowerLet(lowerer, node)
+  } else if node.type == "Block" {
+    return lowerBlock(lowerer, node)
+  } else if node.type == "Function" {
+    return lowerFunction(lowerer, node)
+  } else if node.type == "Call" {
+    return lowerCall(lowerer, node)
+  } else if node.type == "For" {
+    return lowerFor(lowerer, node)
+  } else if node.type == "Return" {
+    return lowerReturn(lowerer, node)
+  } else if node.type == "Break" {
+    return lowerBreak(lowerer, node)
+  } else if node.type == "Continue" {
+    return lowerContinue(lowerer, node)
+  } else if node.type == "Array" {
+    return lowerArray(lowerer, node)
+  } else if node.type == "Hashmap" {
+    return lowerHashmap(lowerer, node)
+  } else if node.type == "Index" {
+    return lowerIndex(lowerer, node)
+  } else if node.type == "Dot" {
+    return lowerDot(lowerer, node)
+  } else if node.type == "Assignment" {
+    return lowerAssignment(lowerer, node)
+  } else if node.type == "Import" {
+    return lowerImport(lowerer, node)
+  } else if node.type == "Number" or node.type == "String" or
+            node.type == "Bool" or node.type == "Nil" or
+            node.type == "Identifier" {
+    return lowerLeaf(lowerer, node)
+  } else {
+    // Unknown node type - this should never happen if parser is correct
+    addError(lowerer, node.id, "Unknown node type in lowering: " + node.type)
+    return node
+  }
+}
+
+fn lowerProgram(lowerer, node) {
+  let newNode = copyNodeShallow(lowerer, node)
+
+  // Lower all body expressions
+  let loweredBody = []
+  for let i = 0; i < len(node.body); i = i + 1 {
+    push(loweredBody, lowerExpr(lowerer, node.body[i]))
+  }
+  newNode.body = loweredBody
+
+  newNode
+}
+
+// ========================================
+// Main API
+// ========================================
+// lower(ast, opts) → {
+//   success: bool,
+//   ast: ProgramNode,           // Lowered AST (no Arrow nodes)
+//   origin: { newId → oldId },  // Provenance map
+//   errors: [{ nodeId, message, severity }],
+//   nextNodeId: number,         // For next phase to continue
+// }
+//
+// opts: {
+//   startNodeId: number,  // Where to start fresh IDs (from parseResult.nextNodeId)
+// }
+fn lower(ast, opts) {
+  let lowerer = .{
+    nextId: opts.startNodeId or 1,  // Continue module ID sequence
+    origin: .{},                     // newId → oldId mapping
+    errors: [],                      // Lowering errors
+    filename: ast.filename,          // For creating new nodes
+  }
+
+  let loweredAst = lowerProgram(lowerer, ast)
+
+  .{
+    success: len(lowerer.errors) == 0,
+    ast: loweredAst,
+    origin: lowerer.origin,
+    errors: lowerer.errors,
+    nextNodeId: lowerer.nextId,
+  }
+}
+
+lower

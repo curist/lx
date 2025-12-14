@@ -91,7 +91,10 @@ fn BinaryNode(filename, left, operator, right) {
   let opStartCol = operator.col - opLen
   if opStartCol < 0 { opStartCol = 0 }
 
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: "Binary",
     filename: filename,
     line: left.line,
@@ -115,7 +118,10 @@ fn UnaryNode(filename, operator, operand) {
   let opStartCol = operator.col - opLen
   if opStartCol < 0 { opStartCol = 0 }
 
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: "Unary",
     filename: filename,
     line: operator.line,
@@ -138,7 +144,10 @@ fn LogicalNode(filename, left, operator, right) {
   let opStartCol = operator.col - opLen
   if opStartCol < 0 { opStartCol = 0 }
 
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: "Logical",
     filename: filename,
     line: left.line,
@@ -199,7 +208,10 @@ fn FunctionNode(filename, startToken, name, params, body, endToken) {
 fn CallNode(filename, callee, args, endToken) {
   // endToken is the closing paren ")"
   // Its col points after it, which is exactly where the call ends
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: "Call",
     filename: filename,
     line: callee.line,
@@ -218,7 +230,10 @@ fn ArrowNode(filename, left, right, arrowToken) {
   let opStartCol = arrowToken.col - opLen
   if opStartCol < 0 { opStartCol = 0 }
 
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: "Arrow",
     filename: filename,
     line: left.line,
@@ -305,7 +320,10 @@ fn HashmapNode(filename, startToken, pairs, endToken) {
 fn IndexNode(filename, object, index, endToken) {
   // endToken is the closing bracket "]"
   // Its col points after it
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: "Index",
     filename: filename,
     line: object.line,
@@ -319,7 +337,10 @@ fn IndexNode(filename, object, index, endToken) {
 
 fn DotNode(filename, object, property, endToken) {
   // property is already a Node with correct positions
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: "Dot",
     filename: filename,
     line: object.line,
@@ -332,7 +353,10 @@ fn DotNode(filename, object, property, endToken) {
 }
 
 fn AssignmentNode(filename, target, value, equalToken) {
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: "Assignment",
     filename: filename,
     line: target.line,

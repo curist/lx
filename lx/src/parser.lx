@@ -346,6 +346,24 @@ fn ImportNode(filename, startToken, path) {
   node
 }
 
+fn StringKeyNodeFromToken(filename, token) {
+  // Create a String node from a token's lexeme (for dot/hashmap keys)
+  let tokenLen = len(token.lexeme)
+  let startCol = token.col - tokenLen
+  if startCol < 0 { startCol = 0 }
+
+  .{
+    type: "String",
+    filename: filename,
+    line: token.line,
+    col: startCol,
+    endLine: token.line,
+    endCol: token.col,
+    value: token.lexeme,
+    lexeme: token.lexeme,
+  }
+}
+
 fn ProgramNode(filename, body) {
   let node = .{
     type: "Program",
@@ -646,22 +664,7 @@ fn parse(src, filename) {
   fn dot(left, canAssign) {
     consumeKey("Expect property name after '.'.")
     let propertyToken = parser.previous
-
-    // Create String node for property (consistent with hashmap keys)
-    let keyLen = len(propertyToken.lexeme)
-    let startCol = propertyToken.col - keyLen
-    if startCol < 0 { startCol = 0 }
-
-    let property = .{
-      type: "String",
-      filename: filename,
-      line: propertyToken.line,
-      col: startCol,
-      endLine: propertyToken.line,
-      endCol: propertyToken.col,
-      value: propertyToken.lexeme,
-      lexeme: propertyToken.lexeme,
-    }
+    let property = StringKeyNodeFromToken(filename, propertyToken)
 
     if canAssign and match(TOKEN.EQUAL) {
       let value = expression()
@@ -736,23 +739,7 @@ fn parse(src, filename) {
         } else {
           // key pattern `.{ key: value }`
           consumeKey("Expect key for hashmap.")
-          // Create a string node with the key's lexeme as the value
-          // Apply same position calculation as Node()
-          let keyToken = parser.previous
-          let keyLen = len(keyToken.lexeme)
-          let startCol = keyToken.col - keyLen
-          if startCol < 0 { startCol = 0 }
-
-          key = .{
-            type: "String",
-            filename: filename,
-            line: keyToken.line,
-            col: startCol,
-            endLine: keyToken.line,
-            endCol: keyToken.col,
-            value: keyToken.lexeme,
-            lexeme: keyToken.lexeme,
-          }
+          key = StringKeyNodeFromToken(filename, parser.previous)
         }
 
         consume(TOKEN.COLON, "Expect ':' for hashmap.")

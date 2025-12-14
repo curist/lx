@@ -28,6 +28,8 @@ Later phases consume earlier results but never mutate them.
 * Creates AST with node IDs and position spans
 * Reports **syntax errors only**
 * Preserves full surface syntax (Arrow nodes, etc.)
+* **Structural "everything is expression"**: `Program.body` and `Block.expressions` are `[Expr]`, not `[Stmt]`
+* Does **NOT** enforce contextual legality (return/break placement, etc.)
 
 ---
 
@@ -35,9 +37,11 @@ Later phases consume earlier results but never mutate them.
 
 * Pure syntactic transformations
 * Arrow operator: `x->f(a)` → `f(x, a)`
+* Missing else normalization: `if cond {a}` → `if cond {a} else {nil}`
 * Creates new AST with fresh node IDs (continuation of module ID space)
 * Copies position spans for accurate diagnostics
-* Future: other syntax sugar (spread, destructuring, etc.)
+* Makes "everything is expression" semantics uniform for later phases
+* Future: other syntax sugar (spread, destructuring, for-loops, etc.)
 
 ---
 
@@ -45,13 +49,15 @@ Later phases consume earlier results but never mutate them.
 
 * Name resolution (locals, upvalues, globals)
 * Function hoisting for mutual recursion
-* Semantic validation:
-
+* **Contextual legality** ("everything is expression" enforcement):
+  * `return` placement (end of block/file, inside function)
+  * `break`/`continue` placement (inside loops only)
+  * Invalid assignment targets
+* **Semantic validation**:
   * undefined variables
   * duplicate declarations
-  * control-flow placement
+  * read-before-initialization
 * Builds **side tables**:
-
   * `resolvedNames`
   * `scopeInfo`
   * `nodes`

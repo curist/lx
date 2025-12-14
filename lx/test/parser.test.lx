@@ -697,35 +697,9 @@ test("parser - operator position in binary expr", fn(assert) {
 })
 
 // Issue #3: Control-flow validity
-test("parser - return outside function should be rejected", fn(assert) {
-  let result = parseFixture("test/fixtures/parser/invalid/return-outside-function.lx")
-  assert.truthy(!result.success)
-  assert.truthy(len(result.errors) > 0)
-})
-
-test("parser - break outside loop should be rejected", fn(assert) {
-  let result = parseFixture("test/fixtures/parser/invalid/break-outside-loop.lx")
-  assert.truthy(!result.success)
-  assert.truthy(len(result.errors) > 0)
-})
-
-test("parser - continue outside loop should be rejected", fn(assert) {
-  let result = parseFixture("test/fixtures/parser/invalid/continue-outside-loop.lx")
-  assert.truthy(!result.success)
-  assert.truthy(len(result.errors) > 0)
-})
-
-test("parser - return not at end of block should be rejected", fn(assert) {
-  let result = parseFixture("test/fixtures/parser/invalid/return-not-at-end.lx")
-  assert.truthy(!result.success)
-  assert.truthy(len(result.errors) > 0)
-})
-
-test("parser - break not at end of block should be rejected", fn(assert) {
-  let result = parseFixture("test/fixtures/parser/invalid/break-not-at-end.lx")
-  assert.truthy(!result.success)
-  assert.truthy(len(result.errors) > 0)
-})
+// NOTE: Semantic validation tests moved to test/resolve.test.lx
+// Parser now only validates syntax and AST structure.
+// Contextual legality (return/break placement) is validated in resolve phase.
 
 test("parser - valid control flow from fixture", fn(assert) {
   let result = parseFixture("test/fixtures/parser/valid/control-flow.lx")
@@ -999,11 +973,8 @@ test("parser - block with semicolons", fn(assert) {
   assert.equal(len(block.expressions), 2)
 })
 
-test("parser - return not at end should fail", fn(assert) {
-  let result = parse("{ return 1; 2 }", "test.lx")
-  assert.truthy(!result.success)
-  assert.truthy(len(result.errors) > 0)
-})
+// NOTE: "return not at end" validation moved to test/resolve.test.lx
+// Parser accepts this syntactically; resolve phase will reject it semantically.
 
 test("parser - return with multiple trailing semicolons", fn(assert) {
   let result = parse("fn() { return 1;; }", "test.lx")

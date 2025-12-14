@@ -26,6 +26,9 @@ let PREC = {
   }
 }
 
+// Node ID counter - reset at start of each parse()
+let nodeIdCounter = 0
+
 // AST Node constructors
 fn Node(type, filename, token) {
   // Scanner's token.col points AFTER the token
@@ -35,7 +38,10 @@ fn Node(type, filename, token) {
   // Clamp to 0 in case of edge cases
   if startCol < 0 { startCol = 0 }
 
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: type,
     filename: filename,
     line: token.line,
@@ -352,7 +358,10 @@ fn StringKeyNodeFromToken(filename, token) {
   let startCol = token.col - tokenLen
   if startCol < 0 { startCol = 0 }
 
+  nodeIdCounter = nodeIdCounter + 1
+
   .{
+    id: nodeIdCounter,
     type: "String",
     filename: filename,
     line: token.line,
@@ -365,7 +374,10 @@ fn StringKeyNodeFromToken(filename, token) {
 }
 
 fn ProgramNode(filename, body) {
+  nodeIdCounter = nodeIdCounter + 1
+
   let node = .{
+    id: nodeIdCounter,
     type: "Program",
     filename: filename,
     body: body,
@@ -387,6 +399,9 @@ fn ProgramNode(filename, body) {
 fn parse(src, filename) {
   let scanner = initScanner(src)
 
+  // Reset node ID counter for this module
+  nodeIdCounter = 0
+
   let parser = .{
     current: 0,
     previous: 0,
@@ -394,9 +409,6 @@ fn parse(src, filename) {
     panicMode: false,
     errors: [],
   }
-
-  let functionDepth = 0
-  let loopDepth = 0
 
   let parseRules
   let getRule
@@ -777,14 +789,6 @@ fn parse(src, filename) {
       // Only push non-nil expressions (error recovery)
       if expr {
         push(expressions, expr)
-
-        // Check if return/break is not at end
-        if expr.type == "Return" or expr.type == "Break" {
-          skipSemicolons()  // Allow trailing semicolons after return/break
-          if hasNextExpression() {
-            error("Can only " + (expr.type == "Return" and "return" or "break") + " at end of block.")
-          }
-        }
       }
     }
 
@@ -830,9 +834,7 @@ fn parse(src, filename) {
     consume(TOKEN.RIGHT_PAREN, "Expect ')' after parameters.")
     consume(TOKEN.LEFT_BRACE, "Expect '{' before function body.")
 
-    functionDepth = functionDepth + 1
     let body = block()
-    functionDepth = functionDepth - 1
 
     FunctionNode(filename, startToken, name, params, body, parser.previous)
   }
@@ -894,9 +896,7 @@ fn parse(src, filename) {
     }
 
     consume(TOKEN.LEFT_BRACE, "Expect '{' for block.")
-    loopDepth = loopDepth + 1
     let body = block()
-    loopDepth = loopDepth - 1
 
     ForNode(filename, startToken, init, condition, update, body, parser.previous)
   }
@@ -909,31 +909,11 @@ fn parse(src, filename) {
       value = expression()
     }
 
-    // Skip any trailing semicolons before validating position
-    skipSemicolons()
-
-    // Validate return position after parsing value
-    if functionDepth == 0 {
-      // At script level, return only allowed at EOF
-      if !check(TOKEN.EOF) {
-        error("Can only return at end of file.")
-      }
-    } else {
-      // In function, return only allowed at end of block
-      if !check(TOKEN.RIGHT_BRACE) {
-        error("Can only return at end of block.")
-      }
-    }
-
     ReturnNode(filename, startToken, value)
   }
 
   fn breakExpr() {
     let startToken = parser.previous
-
-    if loopDepth == 0 {
-      error("Can only break inside a loop.")
-    }
 
     let value = nil
     if !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF) {
@@ -944,10 +924,6 @@ fn parse(src, filename) {
   }
 
   fn continueExpr() {
-    if loopDepth == 0 {
-      error("Can only continue inside a loop.")
-    }
-
     ContinueNode(filename, parser.previous)
   }
 
@@ -1054,5 +1030,6 @@ fn parse(src, filename) {
     success: !parser.hadError,
     ast: ProgramNode(filename, body),
     errors: parser.errors,
+    nextNodeId: nodeIdCounter + 1,
   }
 }

@@ -140,6 +140,70 @@ fn lowerBinary(lowerer, node) {
 }
 ```
 
+## Missing Else Normalization
+
+**Purpose**: Make "everything is expression" uniform for typecheck/LSP
+
+Parser allows `if cond { then }` with no else branch. Lower normalizes this:
+
+```lx
+fn lowerIf(lowerer, node) {
+  let condition = lowerExpr(lowerer, node.condition)
+  let thenBranch = lowerExpr(lowerer, node.thenBranch)
+
+  let elseBranch =
+    if node.elseBranch {
+      lowerExpr(lowerer, node.elseBranch)
+    } else {
+      // Missing else → explicit nil block
+      createNilBlock(lowerer, node.endLine, node.endCol)
+    }
+
+  let newIf = copyNode(node)
+  newIf.id = lowerer.nextId
+  lowerer.nextId = lowerer.nextId + 1
+  newIf.condition = condition
+  newIf.thenBranch = thenBranch
+  newIf.elseBranch = elseBranch  // Always present after lowering
+
+  // Copy position
+  newIf.line = node.line
+  newIf.col = node.col
+  newIf.endLine = node.endLine
+  newIf.endCol = node.endCol
+
+  lowerer.origin[newIf.id] = node.id
+
+  return newIf
+}
+
+fn createNilBlock(lowerer, line, col) {
+  let nilLiteral = NilNode()
+  nilLiteral.id = lowerer.nextId
+  lowerer.nextId = lowerer.nextId + 1
+  nilLiteral.line = line
+  nilLiteral.col = col
+  nilLiteral.endLine = line
+  nilLiteral.endCol = col
+
+  let block = BlockNode([nilLiteral])
+  block.id = lowerer.nextId
+  lowerer.nextId = lowerer.nextId + 1
+  block.line = line
+  block.col = col
+  block.endLine = line
+  block.endCol = col
+
+  return block
+}
+```
+
+**Why this helps**:
+- Typecheck sees uniform if-expression shape: always has both branches
+- Type of `if` is `join(thenType, elseType)` - no special case needed
+- LSP can analyze both branches consistently
+- Codegen doesn't need nil-branch logic
+
 ## Future Transformations
 
 Lower phase can handle other desugarings:
@@ -147,6 +211,7 @@ Lower phase can handle other desugarings:
 - Optional chaining
 - Destructuring
 - Template strings
+- For-loop → while-loop normalization
 
 All follow same pattern:
 1. Create new nodes with fresh IDs

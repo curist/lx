@@ -270,8 +270,8 @@ test("parser - dot access", fn(assert) {
   assert.equal(node.type, "Dot")
   assert.equal(node.object.type, "Identifier")
   assert.equal(node.object.name, "obj")
-  assert.equal(node.property.type, "Identifier")
-  assert.equal(node.property.name, "prop")
+  assert.equal(node.property.type, "String")
+  assert.equal(node.property.value, "prop")
 })
 
 test("parser - index access", fn(assert) {
@@ -293,7 +293,8 @@ test("parser - dot assignment", fn(assert) {
   let node = first(result)
   assert.equal(node.type, "Assignment")
   assert.equal(node.target.type, "Dot")
-  assert.equal(node.target.property.name, "prop")
+  assert.equal(node.target.property.type, "String")
+  assert.equal(node.target.property.value, "prop")
   assert.equal(node.value.value, 5)
 })
 
@@ -734,6 +735,283 @@ test("parser - valid control flow from fixture", fn(assert) {
 test("parser - valid loop control from fixture", fn(assert) {
   let result = parseFixture("test/fixtures/parser/valid/loop-control.lx")
   assert.truthy(result.success)
+})
+
+// ===== Code Review Issue Tests =====
+// These tests demonstrate the issues found in code review
+
+test("parser - and associativity should be left-to-right", fn(assert) {
+  // a and b and c should parse as (a and b) and c (left-assoc)
+  let result = parse("a and b and c", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  // Top level should be: (a and b) and c
+  // So the operator at top is 'and', left is Logical(a and b), right is 'c'
+  assert.equal(node.type, "Logical")
+  assert.equal(node.operator.type, TOKEN.AND)
+  assert.equal(node.left.type, "Logical")  // (a and b)
+  assert.equal(node.left.left.name, "a")
+  assert.equal(node.left.right.name, "b")
+  assert.equal(node.right.name, "c")
+})
+
+test("parser - or associativity should be left-to-right", fn(assert) {
+  // a or b or c should parse as (a or b) or c (left-assoc)
+  let result = parse("a or b or c", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  // Top level should be: (a or b) or c
+  assert.equal(node.type, "Logical")
+  assert.equal(node.operator.type, TOKEN.OR)
+  assert.equal(node.left.type, "Logical")  // (a or b)
+  assert.equal(node.left.left.name, "a")
+  assert.equal(node.left.right.name, "b")
+  assert.equal(node.right.name, "c")
+})
+
+test("parser - arrow precedence vs addition", fn(assert) {
+  // For a pipeline operator, we'd expect: a + b -> foo() to parse as (a + b) -> foo()
+  // This test verifies the correct parse tree structure
+  let result = parse("a + b->foo()", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+
+  // Expected for pipeline (lower precedence than +):
+  // Arrow { left: Binary(a + b), right: Call(foo) }
+  assert.equal(node.type, "Arrow")
+  assert.equal(node.left.type, "Binary")
+  assert.equal(node.left.operator.type, TOKEN.PLUS)
+  assert.equal(node.left.left.name, "a")
+  assert.equal(node.left.right.name, "b")
+  assert.equal(node.right.type, "Call")
+  assert.equal(node.right.callee.name, "foo")
+})
+
+test("parser - arrow associativity", fn(assert) {
+  // a->f()->g() should be left-assoc for pipeline: (a->f())->g()
+  let result = parse("a->f()->g()", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  // Expected: Arrow { left: Arrow(a, f()), right: g() }
+  assert.equal(node.type, "Arrow")
+  assert.equal(node.left.type, "Arrow")
+  assert.equal(node.left.left.name, "a")
+  assert.equal(node.left.right.type, "Call")
+  assert.equal(node.left.right.callee.name, "f")
+  assert.equal(node.right.type, "Call")
+  assert.equal(node.right.callee.name, "g")
+})
+
+test("parser - subtraction is left-associative", fn(assert) {
+  // Verify that binary operators work correctly: a - b - c = (a - b) - c
+  let result = parse("a - b - c", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Binary")
+  assert.equal(node.operator.type, TOKEN.MINUS)
+  assert.equal(node.left.type, "Binary")  // (a - b)
+  assert.equal(node.left.operator.type, TOKEN.MINUS)
+  assert.equal(node.right.name, "c")
+})
+
+test("parser - assignment is right-associative", fn(assert) {
+  // a = b = c should parse as a = (b = c) (right-assoc)
+  let result = parse("a = b = c", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Assignment")
+  assert.equal(node.target.name, "a")
+  assert.equal(node.value.type, "Assignment")  // (b = c)
+  assert.equal(node.value.target.name, "b")
+  assert.equal(node.value.value.name, "c")
+})
+
+test("parser - invalid assignment target with grouping", fn(assert) {
+  // (a) = 1 should fail with "Invalid assignment target"
+  let result = parse("(a) = 1", "test.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+test("parser - invalid assignment target with binary expr", fn(assert) {
+  // a + b = 1 should fail with "Invalid assignment target"
+  let result = parse("a + b = 1", "test.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+// ===== Pipeline Precedence Tests =====
+test("parser - pipeline precedence vs or (pipeline tighter)", fn(assert) {
+  // a->b or c should parse as (a->b) or c
+  let result = parse("a->f() or c", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Logical")
+  assert.equal(node.operator.type, TOKEN.OR)
+  assert.equal(node.left.type, "Arrow")  // (a->f())
+  assert.equal(node.right.name, "c")
+})
+
+test("parser - pipeline precedence vs or (right side)", fn(assert) {
+  // a or b->c should parse as a or (b->c)
+  let result = parse("a or b->f()", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Logical")
+  assert.equal(node.operator.type, TOKEN.OR)
+  assert.equal(node.left.name, "a")
+  assert.equal(node.right.type, "Arrow")  // (b->f())
+})
+
+test("parser - pipeline precedence vs and", fn(assert) {
+  // a->b and c should parse as (a->b) and c
+  let result = parse("a->f() and c", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Logical")
+  assert.equal(node.operator.type, TOKEN.AND)
+  assert.equal(node.left.type, "Arrow")  // (a->f())
+  assert.equal(node.right.name, "c")
+})
+
+test("parser - pipeline precedence vs assignment", fn(assert) {
+  // a = b->c should parse as a = (b->c) because PIPELINE > ASSIGNMENT
+  let result = parse("a = b->f()", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Assignment")
+  assert.equal(node.target.name, "a")
+  assert.equal(node.value.type, "Arrow")  // (b->f())
+})
+
+test("parser - pipeline right of or", fn(assert) {
+  // a or b->c should parse as a or (b->c) because PIPELINE > OR
+  let result = parse("a or b->f()", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Logical")
+  assert.equal(node.operator.type, TOKEN.OR)
+  assert.equal(node.left.name, "a")
+  assert.equal(node.right.type, "Arrow")  // (b->f())
+  assert.equal(node.right.left.name, "b")
+})
+
+test("parser - pipeline with and", fn(assert) {
+  // a->b and c should parse as (a->b) and c because PIPELINE > AND
+  let result = parse("a->f() and c", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Logical")
+  assert.equal(node.operator.type, TOKEN.AND)
+  assert.equal(node.left.type, "Arrow")  // (a->f())
+  assert.equal(node.right.name, "c")
+})
+
+test("parser - pipeline chain associativity", fn(assert) {
+  // a->b->c should parse as (a->b)->c (left-associative)
+  let result = parse("a->f()->g()", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Arrow")
+  assert.equal(node.left.type, "Arrow")  // (a->f())
+  assert.equal(node.left.left.name, "a")
+  assert.equal(node.right.type, "Call")
+  assert.equal(node.right.callee.name, "g")
+})
+
+// ===== Keyword Key Tests =====
+test("parser - hashmap with keyword keys", fn(assert) {
+  let result = parse(".{ if: 1, return: 2, true: 3 }", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Hashmap")
+  assert.equal(len(node.pairs), 3)
+  assert.equal(node.pairs[0].key.value, "if")
+  assert.equal(node.pairs[1].key.value, "return")
+  assert.equal(node.pairs[2].key.value, "true")
+})
+
+test("parser - dot access with keyword property", fn(assert) {
+  let result = parse("x.if", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Dot")
+  assert.equal(node.object.name, "x")
+  // Property should be String node (consistent with hashmap keys)
+  assert.equal(node.property.type, "String")
+  assert.equal(node.property.value, "if")
+})
+
+test("parser - dot access with multiple keyword properties", fn(assert) {
+  let result = parse("x.return.true.nil", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Dot")
+  // x.return.true.nil = ((x.return).true).nil
+  assert.equal(node.property.type, "String")
+  assert.equal(node.property.value, "nil")
+  assert.equal(node.object.type, "Dot")
+  assert.equal(node.object.property.type, "String")
+  assert.equal(node.object.property.value, "true")
+})
+
+// ===== Semicolon Tests =====
+test("parser - return with trailing semicolon", fn(assert) {
+  let result = parse("fn() { return 1; }", "test.lx")
+  assert.truthy(result.success)
+
+  let funcNode = first(result)
+  assert.equal(funcNode.type, "Function")
+  assert.equal(funcNode.body.expressions[0].type, "Return")
+})
+
+test("parser - top level statements with semicolons", fn(assert) {
+  let result = parse("let a = 1; let b = 2;", "test.lx")
+  assert.truthy(result.success)
+
+  assert.equal(len(result.ast.body), 2)
+  assert.equal(result.ast.body[0].type, "Let")
+  assert.equal(result.ast.body[1].type, "Let")
+})
+
+test("parser - block with semicolons", fn(assert) {
+  let result = parse("{ let x = 1; x + 1; }", "test.lx")
+  assert.truthy(result.success)
+
+  let block = first(result)
+  assert.equal(block.type, "Block")
+  assert.equal(len(block.expressions), 2)
+})
+
+test("parser - return not at end should fail", fn(assert) {
+  let result = parse("{ return 1; 2 }", "test.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+test("parser - return with multiple trailing semicolons", fn(assert) {
+  let result = parse("fn() { return 1;; }", "test.lx")
+  assert.truthy(result.success)
+
+  let funcNode = first(result)
+  assert.equal(funcNode.type, "Function")
+  assert.equal(funcNode.body.expressions[0].type, "Return")
 })
 
 suite.run()

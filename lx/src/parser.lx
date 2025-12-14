@@ -11,6 +11,7 @@ let PREC = {
     ASSIGNMENT: iota(),  // =
     OR:         iota(),  // or
     AND:        iota(),  // and
+    PIPELINE:   iota(),  // -> (binds tighter than logical ops)
     BIT_OR:     iota(),  // |
     BIT_XOR:    iota(),  // ^
     BIT_AND:    iota(),  // &
@@ -205,12 +206,28 @@ fn CallNode(filename, callee, args, endToken) {
 }
 
 fn ArrowNode(filename, left, right, arrowToken) {
-  let node = Node("Arrow", filename, arrowToken)
-  node.left = left
-  node.right = right
-  node.endLine = right.endLine
-  node.endCol = right.endCol
-  node
+  // Start span from left operand (like Binary/Logical/Call/etc)
+  // Calculate arrow operator position
+  let opLen = len(arrowToken.lexeme)
+  let opStartCol = arrowToken.col - opLen
+  if opStartCol < 0 { opStartCol = 0 }
+
+  .{
+    type: "Arrow",
+    filename: filename,
+    line: left.line,
+    col: left.col,
+    endLine: right.endLine,
+    endCol: right.endCol,
+    left: left,
+    operator: .{
+      type: arrowToken.type,
+      lexeme: arrowToken.lexeme,
+      line: arrowToken.line,
+      col: opStartCol,
+    },
+    right: right,
+  }
 }
 
 fn IfNode(filename, startToken, condition, thenBranch, elseBranch) {
@@ -372,8 +389,16 @@ fn parse(src, filename) {
     }
     parser.panicMode = true
 
+    // Calculate token start column (scanner's col points AFTER token)
+    let tokenCol = token.col
+    if token.type != TOKEN.EOF {
+      let tokenLen = len(token.lexeme)
+      tokenCol = token.col - tokenLen
+      if tokenCol < 0 { tokenCol = 0 }
+    }
+
     let errorMsg = join([
-      "[", filename, ":L", token.line, ":C", token.col, "]",
+      "[", filename, ":L", token.line, ":C", tokenCol, "]",
       if token.type == TOKEN.EOF {
         " at end"
       } else if token.type == TOKEN.ERROR {
@@ -415,9 +440,37 @@ fn parse(src, filename) {
     errorAtCurrent(message)
   }
 
+  fn consumeIdentifier(message) {
+    if parser.current.type == TOKEN.IDENTIFIER {
+      advance()
+      return
+    }
+    errorAtCurrent(message)
+  }
+
+  fn canBeKey(tokenType) {
+    // Token types that are safe to use as hashmap/object keys
+    // This explicitly allows keywords in key positions
+    tokenType == TOKEN.IDENTIFIER or
+    tokenType == TOKEN.IF or
+    tokenType == TOKEN.ELSE or
+    tokenType == TOKEN.FOR or
+    tokenType == TOKEN.FN or
+    tokenType == TOKEN.LET or
+    tokenType == TOKEN.RETURN or
+    tokenType == TOKEN.BREAK or
+    tokenType == TOKEN.CONTINUE or
+    tokenType == TOKEN.IMPORT or
+    tokenType == TOKEN.AND or
+    tokenType == TOKEN.OR or
+    tokenType == TOKEN.TRUE or
+    tokenType == TOKEN.FALSE or
+    tokenType == TOKEN.NIL
+  }
+
   fn consumeKey(message) {
-    let isKeyword = types.KEYWORDS[parser.current.lexeme]
-    if parser.current.type == TOKEN.IDENTIFIER or isKeyword {
+    // Accept identifiers and keywords as keys for dot access / hashmap
+    if canBeKey(parser.current.type) {
       advance()
       return
     }
@@ -430,6 +483,10 @@ fn parse(src, filename) {
     if !check(type) { return false }
     advance()
     true
+  }
+
+  fn skipSemicolons() {
+    for match(TOKEN.SEMICOLON) { }
   }
 
   fn synchronize() {
@@ -530,18 +587,29 @@ fn parse(src, filename) {
     let operator = parser.previous
     let rule = getRule(operator.type)
     let right = parsePrecedence(rule.precedence + 1)
+    if !right {
+      return left
+    }
     BinaryNode(filename, left, operator, right)
   }
 
   fn and_(left, canAssign) {
     let operator = parser.previous
-    let right = parsePrecedence(PREC.AND)
+    // Left-associative: parse RHS at higher precedence
+    let right = parsePrecedence(PREC.AND + 1)
+    if !right {
+      return left
+    }
     LogicalNode(filename, left, operator, right)
   }
 
   fn or_(left, canAssign) {
     let operator = parser.previous
-    let right = parsePrecedence(PREC.OR)
+    // Left-associative: parse RHS at higher precedence
+    let right = parsePrecedence(PREC.OR + 1)
+    if !right {
+      return left
+    }
     LogicalNode(filename, left, operator, right)
   }
 
@@ -549,9 +617,15 @@ fn parse(src, filename) {
     let args = []
 
     if !check(TOKEN.RIGHT_PAREN) {
-      args = [expression()]
+      let firstArg = expression()
+      if firstArg {
+        args = [firstArg]
+      }
       for match(TOKEN.COMMA) and !check(TOKEN.RIGHT_PAREN) {
-        push(args, expression())
+        let arg = expression()
+        if arg {
+          push(args, arg)
+        }
       }
     }
 
@@ -561,14 +635,33 @@ fn parse(src, filename) {
 
   fn arrow(left, canAssign) {
     let arrowToken = parser.previous
-    let right = expression()
+    // Left-associative: parse RHS at higher precedence
+    let right = parsePrecedence(PREC.PIPELINE + 1)
+    if !right {
+      return left
+    }
     ArrowNode(filename, left, right, arrowToken)
   }
 
   fn dot(left, canAssign) {
     consumeKey("Expect property name after '.'.")
     let propertyToken = parser.previous
-    let property = IdentifierNode(filename, propertyToken)
+
+    // Create String node for property (consistent with hashmap keys)
+    let keyLen = len(propertyToken.lexeme)
+    let startCol = propertyToken.col - keyLen
+    if startCol < 0 { startCol = 0 }
+
+    let property = .{
+      type: "String",
+      filename: filename,
+      line: propertyToken.line,
+      col: startCol,
+      endLine: propertyToken.line,
+      endCol: propertyToken.col,
+      value: propertyToken.lexeme,
+      lexeme: propertyToken.lexeme,
+    }
 
     if canAssign and match(TOKEN.EQUAL) {
       let value = expression()
@@ -598,9 +691,15 @@ fn parse(src, filename) {
     let elements = []
 
     if !check(TOKEN.RIGHT_BRACKET) {
-      push(elements, expression())
+      let firstElem = expression()
+      if firstElem {
+        push(elements, firstElem)
+      }
       for match(TOKEN.COMMA) and !check(TOKEN.RIGHT_BRACKET) {
-        push(elements, expression())
+        let elem = expression()
+        if elem {
+          push(elements, elem)
+        }
       }
     }
 
@@ -616,12 +715,23 @@ fn parse(src, filename) {
       !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF)
     }
 
+    fn syncHashmapPair() {
+      // Advance until we hit a comma, closing brace, or EOF
+      for !check(TOKEN.COMMA) and !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF) {
+        advance()
+      }
+    }
+
     if hasNextKeyValuePair() {
       fn keyvalue() {
         let key
         if match(TOKEN.LEFT_BRACKET) {
           // index pattern `.{ [expr]: value }`
           key = expression()
+          if !key {
+            syncHashmapPair()  // Recover to comma/brace boundary
+            return
+          }
           consume(TOKEN.RIGHT_BRACKET, "Expect ']' for hashmap index key.")
         } else {
           // key pattern `.{ key: value }`
@@ -648,7 +758,9 @@ fn parse(src, filename) {
         consume(TOKEN.COLON, "Expect ':' for hashmap.")
 
         let value = expression()
-        push(pairs, .{ key: key, value: value })
+        if value {
+          push(pairs, .{ key: key, value: value })
+        }
       }
 
       keyvalue()
@@ -670,13 +782,21 @@ fn parse(src, filename) {
     }
 
     for hasNextExpression() {
-      let expr = expression()
-      push(expressions, expr)
+      skipSemicolons()  // Skip any leading semicolons
+      if !hasNextExpression() { break }  // Re-check after skipping
 
-      // Check if return/break is not at end
-      if expr and (expr.type == "Return" or expr.type == "Break") {
-        if hasNextExpression() {
-          error("Can only " + (expr.type == "Return" and "return" or "break") + " at end of block.")
+      let expr = expression()
+
+      // Only push non-nil expressions (error recovery)
+      if expr {
+        push(expressions, expr)
+
+        // Check if return/break is not at end
+        if expr.type == "Return" or expr.type == "Break" {
+          skipSemicolons()  // Allow trailing semicolons after return/break
+          if hasNextExpression() {
+            error("Can only " + (expr.type == "Return" and "return" or "break") + " at end of block.")
+          }
         }
       }
     }
@@ -687,7 +807,7 @@ fn parse(src, filename) {
 
   fn letExpr() {
     let startToken = parser.previous
-    consume(TOKEN.IDENTIFIER, "Expect variable name.")
+    consumeIdentifier("Expect variable name.")
     let nameToken = parser.previous
 
     let init = nil
@@ -711,11 +831,11 @@ fn parse(src, filename) {
 
     let params = []
     if !check(TOKEN.RIGHT_PAREN) {
-      consume(TOKEN.IDENTIFIER, "Expect parameter name.")
+      consumeIdentifier("Expect parameter name.")
       push(params, IdentifierNode(filename, parser.previous))
 
       for match(TOKEN.COMMA) and !check(TOKEN.RIGHT_PAREN) {
-        consume(TOKEN.IDENTIFIER, "Expect parameter name.")
+        consumeIdentifier("Expect parameter name.")
         push(params, IdentifierNode(filename, parser.previous))
       }
     }
@@ -802,6 +922,9 @@ fn parse(src, filename) {
       value = expression()
     }
 
+    // Skip any trailing semicolons before validating position
+    skipSemicolons()
+
     // Validate return position after parsing value
     if functionDepth == 0 {
       // At script level, return only allowed at EOF
@@ -878,13 +1001,13 @@ fn parse(src, filename) {
     [TOKEN.COMMA]:           [nil,        nil,    PREC.NONE],
     [TOKEN.DOT]:             [nil,        dot,    PREC.CALL],
     [TOKEN.MINUS]:           [unary,      binary, PREC.TERM],
-    [TOKEN.MINUS_GREATER]:   [nil,        arrow,  PREC.CALL],
+    [TOKEN.MINUS_GREATER]:   [nil,        arrow,  PREC.PIPELINE],
     [TOKEN.PLUS]:            [nil,        binary, PREC.TERM],
     [TOKEN.SEMICOLON]:       [nil,        nil,    PREC.NONE],
     [TOKEN.SLASH]:           [nil,        binary, PREC.FACTOR],
     [TOKEN.STAR]:            [nil,        binary, PREC.FACTOR],
     [TOKEN.MOD]:             [nil,        binary, PREC.FACTOR],
-    [TOKEN.BANG]:            [unary,      nil,    PREC.NONE],
+    [TOKEN.BANG]:            [unary,      nil,    PREC.UNARY],
     [TOKEN.BANG_EQUAL]:      [nil,        binary, PREC.EQUALITY],
     [TOKEN.EQUAL]:           [nil,        nil,    PREC.NONE],
     [TOKEN.EQUAL_EQUAL]:     [nil,        binary, PREC.EQUALITY],
@@ -931,6 +1054,9 @@ fn parse(src, filename) {
   let body = []
 
   for !match(TOKEN.EOF) {
+    skipSemicolons()  // Skip any leading semicolons
+    if check(TOKEN.EOF) { break }  // Re-check after skipping
+
     let stmt = expressionStatement()
     if stmt {
       push(body, stmt)

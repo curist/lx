@@ -84,15 +84,25 @@ fn makeResolver(opts) {
 // Error Handling
 // ========================================
 
+// Severity levels
+let ERROR = "error"
+let WARNING = "warning"
+let INFO = "info"
+
 fn addError(resolver, nodeId, message, severity) {
   push(resolver.errors, .{
     nodeId: nodeId,
     message: message,
-    severity: severity or "error",
+    severity: severity or ERROR,
   })
-  if severity != "warning" and severity != "info" {
+  if severity != WARNING and severity != INFO {
     resolver.hadError = true
   }
+}
+
+// Helper for common case - error severity
+fn reportError(resolver, nodeId, message) {
+  addError(resolver, nodeId, message, ERROR)
 }
 
 // ========================================
@@ -139,10 +149,10 @@ fn declareLocal(resolver, name, kind, nodeId) {
   if !scope {
     return nil  // Global scope - no local
   }
-  
+
   // Check for duplicate in current scope
   if scope.localsByName[name] {
-    addError(resolver, nodeId, "Variable '" + name + "' already declared in this scope")
+    reportError(resolver, nodeId, "Variable '" + name + "' already declared in this scope")
     return nil
   }
   
@@ -228,19 +238,19 @@ fn resolveUpvalue(resolver, scope, name) {
 
 fn resolveName(resolver, name, nodeId, context) {
   let scope = resolver.currentScope
-  
+
   // Walk up scope chain
   let current = scope
-  while current {
+  for current {
     // Check locals
     let local = current.localsByName[name]
     if local {
       // Check read-before-init
       if local.depth == -1 {
-        addError(resolver, nodeId, "Can't read local variable '" + name + "' in its own initializer")
+        reportError(resolver, nodeId, "Can't read local variable '" + name + "' in its own initializer")
         return nil
       }
-      
+
       // Local found
       if current == scope {
         // Same scope - direct local access
@@ -251,7 +261,7 @@ fn resolveName(resolver, name, nodeId, context) {
           slot: local.slot,
           declaredAt: local.nodeId,
           depth: current.depth,
-          isCaptured: local.isCaptured,
+          // Note: isCaptured is NOT stored here - codegen should read it from scopeInfo.locals
         }
       } else {
         // Different scope - need upvalue
@@ -269,10 +279,10 @@ fn resolveName(resolver, name, nodeId, context) {
       }
       return true
     }
-    
+
     current = current.enclosing
   }
-  
+
   // Not found in any local scope - assume global
   resolver.resolvedNames[nodeId] = .{
     kind: "global",
@@ -280,7 +290,7 @@ fn resolveName(resolver, name, nodeId, context) {
     setOp: OP.SET_GLOBAL,
     name: name,
   }
-  
+
   true
 }
 
@@ -296,7 +306,7 @@ fn resolveIdentifier(resolver, node, context) {
     // This ensures entire mutual recursion group is initialized
     if context and !context.inFunctionBody {
       if context.exprIndex < scope.lastHoistedFunctionIndex {
-        addError(resolver, node.id,
+        reportError(resolver, node.id,
           "Cannot use hoisted function '" + name + "' before all hoisted functions are declared")
         return
       }
@@ -324,7 +334,7 @@ fn resolveIdentifier(resolver, node, context) {
 
 fn isInLoop(scope) {
   let current = scope
-  while current {
+  for current {
     if current.type == "loop" { return true }
     current = current.enclosing
   }
@@ -333,7 +343,7 @@ fn isInLoop(scope) {
 
 fn isInFunction(scope) {
   let current = scope
-  while current {
+  for current {
     if current.type == "function" { return true }
     current = current.enclosing
   }
@@ -454,42 +464,286 @@ fn buildNodeMap(resolver, node) {
 }
 
 // ========================================
-// Expression Resolution (stubs for now)
+// Function and Block Resolution
+// ========================================
+
+fn resolveFunction(resolver, node, context) {
+  // Create function scope
+  beginScope(resolver, "function")
+
+  // Declare parameters as locals
+  for let i = 0; i < len(node.params); i = i + 1 {
+    let param = node.params[i]
+    let local = declareLocal(resolver, param.name, "param", param.id)
+    markInitialized(resolver, local)
+  }
+
+  // Resolve function body (with inFunctionBody = true)
+  let bodyContext = .{
+    exprIndex: 0,
+    inFunctionBody: true,  // Disable hoisting ordering check in function bodies
+  }
+  resolveExpr(resolver, node.body, bodyContext)
+
+  endScope(resolver, node.id)
+}
+
+fn resolveBlockWithHoisting(resolver, node, context) {
+  // Two-phase block resolution for hoisting
+  let scope = resolver.currentScope
+
+  // PHASE 1: Prescan for hoisted functions
+  let lastHoistedIndex = -1
+  for let i = 0; i < len(node.expressions); i = i + 1 {
+    let expr = node.expressions[i]
+    if expr.type == "Function" and expr.name {
+      // Named function declaration - hoist it
+      let fnName = expr.name.name
+      let local = declareLocal(resolver, fnName, "fn", expr.name.id)
+
+      // Mark as initialized immediately (hoisting!)
+      // This allows mutual recursion in function bodies
+      markInitialized(resolver, local)
+
+      // Store hoisting metadata
+      scope.hoistedFns[fnName] = HoistedFunction(
+        expr.id,     // declNodeId
+        i,           // declIndex
+        local.slot   // slot
+      )
+
+      lastHoistedIndex = i
+    }
+  }
+
+  scope.lastHoistedFunctionIndex = lastHoistedIndex
+
+  // PHASE 2: Resolve all expressions
+  let exprCount = len(node.expressions)
+  for let i = 0; i < exprCount; i = i + 1 {
+    let expr = node.expressions[i]
+    let blockContext = .{
+      exprIndex: i,
+      inFunctionBody: context and context.inFunctionBody or false,
+      isLastExpr: i == exprCount - 1,  // Track if this is the last expression
+      parentBlock: node,
+    }
+
+    resolveExpr(resolver, expr, blockContext)
+  }
+}
+
+// ========================================
+// Expression Resolution
 // ========================================
 
 fn resolveExpr(resolver, node, context) {
   if !node { return }
-  
+
   // Build node map as we traverse
   if node.id {
     resolver.nodes[node.id] = node
   }
-  
-  // Dispatch based on type - to be implemented
+
+  // Dispatch based on type
   if node.type == "Identifier" {
     resolveIdentifier(resolver, node, context)
-  } else if node.type == "Number" or node.type == "String" or 
+  } else if node.type == "Number" or node.type == "String" or
             node.type == "Bool" or node.type == "Nil" {
     // Literals - nothing to resolve
+  } else if node.type == "Binary" or node.type == "Logical" {
+    // Binary/Logical: resolve both operands
+    resolveExpr(resolver, node.left, context)
+    resolveExpr(resolver, node.right, context)
+  } else if node.type == "Unary" {
+    // Unary: resolve operand
+    resolveExpr(resolver, node.operand, context)
+  } else if node.type == "Grouping" {
+    // Grouping: resolve inner expression
+    resolveExpr(resolver, node.expression, context)
+  } else if node.type == "Let" {
+    // Let declaration
+    let name = node.name.name
+
+    // Declare local (uninitialized)
+    let local = declareLocal(resolver, name, "var", node.name.id)
+
+    // Resolve initializer if present
+    if node.init {
+      resolveExpr(resolver, node.init, context)
+    }
+
+    // Mark as initialized
+    markInitialized(resolver, local)
+  } else if node.type == "Block" {
+    // Block - create new scope and use hoisting-aware resolution
+    beginScope(resolver, "block")
+    resolveBlockWithHoisting(resolver, node, context)
+    endScope(resolver, node.id)
+  } else if node.type == "Call" {
+    // Call: resolve callee and all arguments
+    resolveExpr(resolver, node.callee, context)
+    for let i = 0; i < len(node.args); i = i + 1 {
+      resolveExpr(resolver, node.args[i], context)
+    }
+  } else if node.type == "If" {
+    // If: resolve condition, then, and else branches
+    resolveExpr(resolver, node.condition, context)
+    resolveExpr(resolver, node.then, context)
+    if node.else {
+      resolveExpr(resolver, node.else, context)
+    }
+  } else if node.type == "Assignment" {
+    // Assignment: resolve target and value
+    // Note: target validation (must be valid lvalue) is a TODO
+    resolveExpr(resolver, node.target, context)
+    resolveExpr(resolver, node.value, context)
+  } else if node.type == "Array" {
+    // Array: resolve all elements
+    for let i = 0; i < len(node.elements); i = i + 1 {
+      resolveExpr(resolver, node.elements[i], context)
+    }
+  } else if node.type == "Hashmap" {
+    // Hashmap: resolve all keys and values
+    for let i = 0; i < len(node.pairs); i = i + 1 {
+      resolveExpr(resolver, node.pairs[i].key, context)
+      resolveExpr(resolver, node.pairs[i].value, context)
+    }
+  } else if node.type == "Index" {
+    // Index: resolve object and index
+    resolveExpr(resolver, node.object, context)
+    resolveExpr(resolver, node.index, context)
+  } else if node.type == "Dot" {
+    // Dot: resolve object (property is just an identifier, not resolved)
+    resolveExpr(resolver, node.object, context)
+  } else if node.type == "Function" {
+    // Function: create scope, declare params, resolve body
+    resolveFunction(resolver, node, context)
+  } else if node.type == "For" {
+    // For loop: create loop scope, resolve init/condition/update/body
+    beginScope(resolver, "loop")
+
+    // Resolve init (if present) - can declare variables
+    if node.init {
+      resolveExpr(resolver, node.init, context)
+    }
+
+    // Resolve condition (if present)
+    if node.condition {
+      resolveExpr(resolver, node.condition, context)
+    }
+
+    // Resolve update (if present)
+    if node.update {
+      resolveExpr(resolver, node.update, context)
+    }
+
+    // Resolve body
+    resolveExpr(resolver, node.body, context)
+
+    endScope(resolver, node.id)
+  } else if node.type == "Return" {
+    // Return: validate placement
+    let scope = resolver.currentScope
+
+    // Check if in function or at top level
+    if !isInFunction(scope) {
+      // Outside function: only allow at top-level end, not in nested blocks
+      if !context or !context.atTopLevel {
+        reportError(resolver, node.id, "Return is only allowed in functions or at top level")
+      } else if !context.isLastExpr {
+        reportError(resolver, node.id, "Can only return at end of file when not in function")
+      }
+    } else {
+      // In function - must be at end of block
+      if context and !context.isLastExpr {
+        reportError(resolver, node.id, "Return must be at end of block")
+      }
+    }
+
+    // Resolve return value if present
+    if node.value {
+      resolveExpr(resolver, node.value, context)
+    }
+  } else if node.type == "Break" {
+    // Break: must be inside loop and at end of block
+    if !isInLoop(resolver.currentScope) {
+      reportError(resolver, node.id, "Can only break inside a loop")
+    }
+
+    if context and !context.isLastExpr {
+      reportError(resolver, node.id, "Break must be at end of block")
+    }
+
+    // Resolve break value if present
+    if node.value {
+      resolveExpr(resolver, node.value, context)
+    }
+  } else if node.type == "Continue" {
+    // Continue: must be inside loop
+    if !isInLoop(resolver.currentScope) {
+      reportError(resolver, node.id, "Can only continue inside a loop")
+    }
+
+    if context and !context.isLastExpr {
+      reportError(resolver, node.id, "Continue must be at end of block")
+    }
+  } else if node.type == "Import" {
+    // Import: just track the node, actual module loading happens during evaluation
+    // The path resolution and module compilation is handled at runtime
+    // We just ensure the Import node is registered in the nodes map
   } else {
     // TODO: Implement other node types
-    addError(resolver, node.id, "Resolution not yet implemented for: " + node.type)
+    reportError(resolver, node.id, "Resolution not yet implemented for: " + node.type)
   }
 }
 
 fn resolveProgram(resolver, ast) {
   // Program has global scope
   beginScope(resolver, "global")
-  
-  // Build node map from AST
-  buildNodeMap(resolver, ast)
-  
-  // Resolve all expressions in program body
+  let scope = resolver.currentScope
+
+  // Note: nodes map is built implicitly during resolveExpr traversal
+  // (no need for explicit buildNodeMap call)
+
+  // PHASE 1: Prescan for top-level hoisted functions
+  let lastHoistedIndex = -1
   for let i = 0; i < len(ast.body); i = i + 1 {
     let expr = ast.body[i]
-    resolveExpr(resolver, expr, .{ exprIndex: i, inFunctionBody: false })
+    if expr.type == "Function" and expr.name {
+      // Named function declaration - hoist it
+      let fnName = expr.name.name
+      let local = declareLocal(resolver, fnName, "fn", expr.name.id)
+
+      // Mark as initialized immediately (hoisting!)
+      markInitialized(resolver, local)
+
+      // Store hoisting metadata
+      scope.hoistedFns[fnName] = HoistedFunction(
+        expr.id,     // declNodeId
+        i,           // declIndex
+        local.slot   // slot
+      )
+
+      lastHoistedIndex = i
+    }
   }
-  
+
+  scope.lastHoistedFunctionIndex = lastHoistedIndex
+
+  // PHASE 2: Resolve all expressions in program body
+  let bodyCount = len(ast.body)
+  for let i = 0; i < bodyCount; i = i + 1 {
+    let expr = ast.body[i]
+    resolveExpr(resolver, expr, .{
+      exprIndex: i,
+      inFunctionBody: false,
+      isLastExpr: i == bodyCount - 1,
+      parentBlock: nil,  // Top level has no parent block
+      atTopLevel: true,  // Mark as top-level context
+    })
+  }
+
   endScope(resolver, ast.id)
 }
 

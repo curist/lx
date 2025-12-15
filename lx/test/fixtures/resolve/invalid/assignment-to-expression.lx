@@ -1,0 +1,5 @@
+// Test case: Assignment to binary expression
+// This should be rejected by the parser (not a valid lvalue)
+
+let x = 1
+(x + 1) = 2

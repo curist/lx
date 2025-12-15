@@ -1,0 +1,6 @@
+// Test case: Return inside if block at top level
+// This should be rejected - return can only be at top-level end, not inside nested control flow
+
+if true {
+  return 1
+}

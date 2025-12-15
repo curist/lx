@@ -1,0 +1,12 @@
+// Test case: Top-level forward reference
+// Function a references b before b is declared
+
+fn a() {
+  b()
+}
+
+fn b() {
+  1
+}
+
+a()

@@ -1,0 +1,9 @@
+// Test case: Return in nested block (not at top level, not in function)
+// This should be rejected - return is only allowed in functions or at top-level end
+
+{
+  let x = 1
+  {
+    return x
+  }
+}

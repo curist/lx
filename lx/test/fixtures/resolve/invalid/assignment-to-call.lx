@@ -1,0 +1,5 @@
+// Test case: Assignment to function call result
+// This should be rejected by the parser (not a valid lvalue)
+
+let f = fn() { 1 }
+f() = 2

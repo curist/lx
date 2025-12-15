@@ -1,0 +1,19 @@
+// Test case: Top-level mutual recursion
+// This exercises function hoisting at module level
+
+fn isEven(n) {
+  if n == 0 {
+    return true
+  }
+  isOdd(n - 1)
+}
+
+fn isOdd(n) {
+  if n == 0 {
+    return false
+  }
+  isEven(n - 1)
+}
+
+// Call after all declarations
+isEven(4)

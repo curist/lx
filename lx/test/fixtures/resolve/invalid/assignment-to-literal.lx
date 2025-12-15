@@ -1,0 +1,4 @@
+// Test case: Assignment to literal
+// This should be rejected by the parser (not a valid lvalue)
+
+42 = 1

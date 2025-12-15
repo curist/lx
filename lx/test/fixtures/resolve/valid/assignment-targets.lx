@@ -1,0 +1,13 @@
+// Test case: Valid assignment targets
+// All valid lvalues: identifier, index, and dot access
+
+let x = 1
+x = 2  // identifier
+
+let arr = [1, 2, 3]
+arr[0] = 10  // index access
+
+let obj = .{ a: 1, b: 2 }
+obj.a = 20  // dot access
+
+x + arr[0] + obj.a

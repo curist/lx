@@ -1,0 +1,942 @@
+// Typecheck Phase - Static type inference and checking
+//
+// Responsibility: Best-effort monomorphic type inference
+//   - Type inference for expressions
+//   - Unification-based constraint solving
+//   - Type error detection and reporting
+//
+// IMPORTANT: Typecheck MUST NOT mutate the AST.
+// All information stored in side tables keyed by node ID.
+//
+// Core Subset (Phase 1):
+//   - Basic types: Unknown, Any, Nil, Number, Bool, String, TypeVar
+//   - Monomorphic inference (no Poly/Scheme)
+//   - Function, Array, Record types
+//   - Eager unification
+//
+// Deferred to Future Phases:
+//   - Polymorphic types (Poly/Scheme, generalization)
+//   - Local narrowing (type guards)
+//   - Tagged records (discriminated unions)
+
+// ========================================
+// Type Constructors
+// ========================================
+
+fn typeUnknown() {
+  .{ kind: "Unknown" }
+}
+
+fn typeAny() {
+  .{ kind: "Any" }
+}
+
+fn typeNil() {
+  .{ kind: "Nil" }
+}
+
+fn typeNumber() {
+  .{ kind: "Number" }
+}
+
+fn typeBool() {
+  .{ kind: "Bool" }
+}
+
+fn typeString() {
+  .{ kind: "String" }
+}
+
+fn typeVar(id) {
+  .{ kind: "TypeVar", id: id }
+}
+
+fn typeFunction(params, ret) {
+  .{ kind: "Function", params: params, return: ret }
+}
+
+fn typeArray(elem) {
+  .{ kind: "Array", elem: elem }
+}
+
+fn typeRecord(fields) {
+  .{ kind: "Record", fields: fields }
+}
+
+// ========================================
+// Type Variable Management
+// ========================================
+
+fn freshTypeVar(checker) {
+  let id = checker.nextTypeVarId
+  checker.nextTypeVarId = checker.nextTypeVarId + 1
+  typeVar(id)
+}
+
+fn bindTypeVar(checker, typeVarId, type) {
+  checker.typeVarBindings[typeVarId] = type
+}
+
+fn getTypeVarBinding(checker, typeVarId) {
+  checker.typeVarBindings[typeVarId]
+}
+
+// Dereference TypeVars to their bound types
+fn deref(checker, type) {
+  if type.kind == "TypeVar" {
+    let bound = getTypeVarBinding(checker, type.id)
+    if bound {
+      return deref(checker, bound)
+    }
+  }
+  type
+}
+
+// ========================================
+// Type Equality
+// ========================================
+
+fn sameType(t1, t2) {
+  if t1.kind != t2.kind {
+    return false
+  }
+
+  if t1.kind == "TypeVar" {
+    return t1.id == t2.id
+  } else if t1.kind == "Function" {
+    if len(t1.params) != len(t2.params) {
+      return false
+    }
+    for let i = 0; i < len(t1.params); i = i + 1 {
+      if !sameType(t1.params[i], t2.params[i]) {
+        return false
+      }
+    }
+    return sameType(t1.return, t2.return)
+  } else if t1.kind == "Array" {
+    return sameType(t1.elem, t2.elem)
+  } else if t1.kind == "Record" {
+    let keys1 = keys(t1.fields)
+    let keys2 = keys(t2.fields)
+    if len(keys1) != len(keys2) {
+      return false
+    }
+    for let i = 0; i < len(keys1); i = i + 1 {
+      let k = keys1[i]
+      if !t2.fields[k] {
+        return false
+      }
+      if !sameType(t1.fields[k], t2.fields[k]) {
+        return false
+      }
+    }
+    return true
+  }
+
+  // Primitive types (Unknown, Any, Nil, Number, Bool, String)
+  true
+}
+
+// ========================================
+// Type Environment
+// ========================================
+
+fn TypeEnv(parent) {
+  .{
+    parent: parent,
+    bindings: .{},  // declNodeId → TypeVar
+  }
+}
+
+fn enterScope(checker) {
+  let newEnv = TypeEnv(checker.currentEnv)
+  checker.currentEnv = newEnv
+  newEnv
+}
+
+fn exitScope(checker) {
+  if checker.currentEnv {
+    checker.currentEnv = checker.currentEnv.parent
+  }
+}
+
+fn bindDecl(checker, declNodeId) {
+  if !declNodeId {
+    return freshTypeVar(checker)
+  }
+  let tv = freshTypeVar(checker)
+  checker.currentEnv.bindings[declNodeId] = tv
+  tv
+}
+
+fn lookupDecl(checker, declNodeId) {
+  if !declNodeId {
+    return nil
+  }
+  let env = checker.currentEnv
+  for env {
+    let binding = env.bindings[declNodeId]
+    if binding {
+      return binding
+    }
+    env = env.parent
+  }
+  nil
+}
+
+// ========================================
+// Forward Declarations
+// ========================================
+
+let addError = nil
+let checkExpr = nil
+
+// ========================================
+// Unification Algorithm
+// ========================================
+
+fn unify(checker, t1, t2) {
+  // Dereference both types
+  t1 = deref(checker, t1)
+  t2 = deref(checker, t2)
+
+  // Same type - success
+  if sameType(t1, t2) {
+    return true
+  }
+
+  // Unknown unifies with anything (stays Unknown for now in core subset)
+  if t1.kind == "Unknown" or t2.kind == "Unknown" {
+    return true
+  }
+
+  // Any accepts everything
+  if t1.kind == "Any" or t2.kind == "Any" {
+    return true
+  }
+
+  // TypeVar unification
+  if t1.kind == "TypeVar" {
+    bindTypeVar(checker, t1.id, t2)
+    return true
+  }
+  if t2.kind == "TypeVar" {
+    bindTypeVar(checker, t2.id, t1)
+    return true
+  }
+
+  // Structural unification - Function
+  if t1.kind == "Function" and t2.kind == "Function" {
+    if len(t1.params) != len(t2.params) {
+      return false
+    }
+    for let i = 0; i < len(t1.params); i = i + 1 {
+      if !unify(checker, t1.params[i], t2.params[i]) {
+        return false
+      }
+    }
+    return unify(checker, t1.return, t2.return)
+  }
+
+  // Structural unification - Array
+  if t1.kind == "Array" and t2.kind == "Array" {
+    return unify(checker, t1.elem, t2.elem)
+  }
+
+  // Structural unification - Record
+  if t1.kind == "Record" and t2.kind == "Record" {
+    let keys1 = keys(t1.fields)
+    let keys2 = keys(t2.fields)
+
+    // Check all keys from t1 exist in t2
+    for let i = 0; i < len(keys1); i = i + 1 {
+      let k = keys1[i]
+      if !t2.fields[k] {
+        return false
+      }
+      if !unify(checker, t1.fields[k], t2.fields[k]) {
+        return false
+      }
+    }
+
+    // Check all keys from t2 exist in t1
+    for let i = 0; i < len(keys2); i = i + 1 {
+      let k = keys2[i]
+      if !t1.fields[k] {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  // Incompatible types
+  false
+}
+
+fn constrain(checker, t1, t2, nodeId, errorMsg) {
+  if !unify(checker, t1, t2) {
+    addError(checker, nodeId, errorMsg)
+    return typeAny()
+  }
+  t1
+}
+
+// ========================================
+// Error Handling
+// ========================================
+
+addError = fn(checker, nodeId, message) {
+  checker.hadError = true
+  push(checker.errors, .{
+    nodeId: nodeId,
+    message: message,
+    severity: "error",
+  })
+}
+
+// ========================================
+// Expression Type Checking
+// ========================================
+
+fn checkLiteral(checker, node) {
+  let resultType = nil
+
+  if node.type == "Number" {
+    resultType = typeNumber()
+  } else if node.type == "String" {
+    resultType = typeString()
+  } else if node.type == "Bool" {
+    resultType = typeBool()
+  } else if node.type == "Nil" {
+    resultType = typeNil()
+  }
+
+  if node.id {
+    checker.types[node.id] = resultType
+  }
+
+  resultType
+}
+
+fn checkIdentifier(checker, node) {
+  // Look up in resolvedNames (from resolve phase)
+  let binding = checker.resolvedNames[node.id]
+
+  if !binding {
+    addError(checker, node.id, "Unresolved identifier: " + node.name)
+    let t = typeAny()
+    checker.types[node.id] = t
+    return t
+  }
+
+  // Get the declaration's type variable
+  let declNodeId = binding.declaredAt
+  let declType = lookupDecl(checker, declNodeId)
+
+  if !declType {
+    // First time seeing this declaration - bind it
+    declType = bindDecl(checker, declNodeId)
+  }
+
+  checker.types[node.id] = declType
+  declType
+}
+
+fn checkBinary(checker, node) {
+  let leftType = checkExpr(checker, node.left)
+  let rightType = checkExpr(checker, node.right)
+
+  let resultType = nil
+  let op = node.operator.lexeme
+
+  // Arithmetic: +, -, *, /, %
+  if op == "+" or op == "-" or op == "*" or op == "/" or op == "%" {
+    constrain(checker, leftType, typeNumber(), node.left.id,
+      "Arithmetic operation requires number")
+    constrain(checker, rightType, typeNumber(), node.right.id,
+      "Arithmetic operation requires number")
+    resultType = typeNumber()
+  }
+  // Comparison: <, >, <=, >=
+  else if op == "<" or op == ">" or op == "<=" or op == ">=" {
+    constrain(checker, leftType, typeNumber(), node.left.id,
+      "Comparison requires number")
+    constrain(checker, rightType, typeNumber(), node.right.id,
+      "Comparison requires number")
+    resultType = typeBool()
+  }
+  // Equality: ==, !=
+  else if op == "==" or op == "!=" {
+    // No constraints - any types can be compared
+    resultType = typeBool()
+  }
+  // Bitwise: &, |, ^, <<, >>
+  else if op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>" {
+    constrain(checker, leftType, typeNumber(), node.left.id,
+      "Bitwise operation requires number")
+    constrain(checker, rightType, typeNumber(), node.right.id,
+      "Bitwise operation requires number")
+    resultType = typeNumber()
+  }
+  else {
+    addError(checker, node.id, "Unknown binary operator: " + op)
+    resultType = typeAny()
+  }
+
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkUnary(checker, node) {
+  let operandType = checkExpr(checker, node.operand)
+
+  let resultType = nil
+  let op = node.operator.lexeme
+
+  if op == "-" {
+    constrain(checker, operandType, typeNumber(), node.operand.id,
+      "Unary negation requires number")
+    resultType = typeNumber()
+  } else if op == "!" {
+    // No constraint - any type can be negated
+    resultType = typeBool()
+  } else {
+    addError(checker, node.id, "Unknown unary operator: " + op)
+    resultType = typeAny()
+  }
+
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkLogical(checker, node) {
+  let leftType = checkExpr(checker, node.left)
+  let rightType = checkExpr(checker, node.right)
+
+  // Logical operators don't constrain operands in lx
+  // Result type is the right operand's type (short-circuit semantics)
+  let resultType = rightType
+
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkArray(checker, node) {
+  // Infer element type from first element, unify with rest
+  let elemType = typeUnknown()
+
+  if len(node.elements) > 0 {
+    elemType = checkExpr(checker, node.elements[0])
+
+    for let i = 1; i < len(node.elements); i = i + 1 {
+      let eltType = checkExpr(checker, node.elements[i])
+      constrain(checker, elemType, eltType, node.elements[i].id,
+        "Array elements must have compatible types")
+    }
+  }
+
+  let resultType = typeArray(elemType)
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkIndex(checker, node) {
+  let objType = checkExpr(checker, node.object)
+  let indexType = checkExpr(checker, node.index)
+
+  objType = deref(checker, objType)
+
+  let resultType = nil
+
+  if objType.kind == "Array" {
+    // Index should be number (optional check)
+    constrain(checker, indexType, typeNumber(), node.index.id,
+      "Array index must be number")
+    resultType = objType.elem
+  } else if objType.kind == "Unknown" {
+    // Refine to Array(Unknown)
+    let elemType = freshTypeVar(checker)
+    let arrayType = typeArray(elemType)
+    constrain(checker, objType, arrayType, node.object.id,
+      "Index access requires array")
+    resultType = elemType
+  } else {
+    addError(checker, node.id, "Index access requires array, got: " + objType.kind)
+    resultType = typeAny()
+  }
+
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkHashmap(checker, node) {
+  let fields = .{}
+
+  for let i = 0; i < len(node.pairs); i = i + 1 {
+    let pair = node.pairs[i]
+    let keyType = checkExpr(checker, pair.key)
+    let valueType = checkExpr(checker, pair.value)
+
+    // In core subset, keys must be string literals
+    if pair.key.type == "String" {
+      let keyName = pair.key.value
+      fields[keyName] = valueType
+    } else {
+      addError(checker, pair.key.id, "Record keys must be string literals")
+    }
+  }
+
+  let resultType = typeRecord(fields)
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkDot(checker, node) {
+  let objType = checkExpr(checker, node.object)
+  objType = deref(checker, objType)
+
+  // Property must be a string literal (from parser)
+  let propName = node.property.value
+
+  let resultType = nil
+
+  if objType.kind == "Record" {
+    let fieldType = objType.fields[propName]
+    if !fieldType {
+      addError(checker, node.id, "Property '" + propName + "' not found in record")
+      resultType = typeAny()
+    } else {
+      resultType = fieldType
+    }
+  } else if objType.kind == "Unknown" {
+    // Refine to Record with this field
+    let fieldType = freshTypeVar(checker)
+    let recordFields = .{}
+    recordFields[propName] = fieldType
+    let recordType = typeRecord(recordFields)
+    constrain(checker, objType, recordType, node.object.id,
+      "Dot access requires record")
+    resultType = fieldType
+  } else {
+    addError(checker, node.id, "Dot access requires record, got: " + objType.kind)
+    resultType = typeAny()
+  }
+
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkFunction(checker, node) {
+  // Enter new scope for function
+  enterScope(checker)
+
+  // Create type variables for parameters
+  let paramTypes = []
+  for let i = 0; i < len(node.params); i = i + 1 {
+    let param = node.params[i]
+    let paramType = freshTypeVar(checker)
+
+    // Bind parameter declaration (param.id is the declNodeId)
+    checker.currentEnv.bindings[param.id] = paramType
+
+    push(paramTypes, paramType)
+    checker.types[param.id] = paramType
+  }
+
+  // Track return type for this function
+  let returnType = freshTypeVar(checker)
+  let prevReturnType = checker.currentReturnType
+  checker.currentReturnType = returnType
+
+  // Check body
+  let bodyType = checkExpr(checker, node.body)
+
+  // Body type unifies with return type (implicit return)
+  // But only if the body doesn't end with an explicit return (which evaluates to Nil)
+  bodyType = deref(checker, bodyType)
+  if bodyType.kind != "Nil" {
+    constrain(checker, bodyType, returnType, node.body.id,
+      "Function body type incompatible with return type")
+  }
+
+  // Restore previous return type
+  checker.currentReturnType = prevReturnType
+
+  exitScope(checker)
+
+  // Create function type
+  let resultType = typeFunction(paramTypes, returnType)
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkCall(checker, node) {
+  let calleeType = checkExpr(checker, node.callee)
+
+  // Check arguments
+  let argTypes = []
+  for let i = 0; i < len(node.args); i = i + 1 {
+    push(argTypes, checkExpr(checker, node.args[i]))
+  }
+
+  calleeType = deref(checker, calleeType)
+
+  let resultType = nil
+
+  if calleeType.kind == "Function" {
+    // Constrain arguments (exact arity in core subset)
+    let paramCount = len(calleeType.params)
+    let argCount = len(argTypes)
+
+    if argCount != paramCount {
+      addError(checker, node.id,
+        "Function expects " + str(paramCount) + " arguments, got " + str(argCount))
+    } else {
+      for let i = 0; i < paramCount; i = i + 1 {
+        constrain(checker, argTypes[i], calleeType.params[i],
+          node.args[i].id, "Argument type mismatch")
+      }
+    }
+
+    resultType = calleeType.return
+  } else if calleeType.kind == "Unknown" or calleeType.kind == "TypeVar" {
+    // Refine to Function type
+    let paramTypes = []
+    for let i = 0; i < len(argTypes); i = i + 1 {
+      push(paramTypes, argTypes[i])
+    }
+    let retType = freshTypeVar(checker)
+    let fnType = typeFunction(paramTypes, retType)
+    constrain(checker, calleeType, fnType, node.callee.id,
+      "Call requires function")
+    resultType = retType
+  } else if calleeType.kind == "Any" {
+    // Any can be called - result is Any
+    resultType = typeAny()
+  } else {
+    addError(checker, node.id, "Cannot call non-function type: " + calleeType.kind)
+    resultType = typeAny()
+  }
+
+  checker.types[node.id] = resultType
+  resultType
+}
+
+// ========================================
+// Statement Type Checking
+// ========================================
+
+fn checkLet(checker, node) {
+  // For Let declarations, the declNodeId is the name identifier's id
+  let declNodeId = node.name.id
+
+  // Bind declaration to fresh type variable
+  let varType = bindDecl(checker, declNodeId)
+
+  // Check initializer if present
+  if node.init {
+    let initType = checkExpr(checker, node.init)
+    constrain(checker, varType, initType, node.init.id,
+      "Initializer type incompatible with variable type")
+  }
+
+  // Record type for the name identifier
+  checker.types[node.name.id] = varType
+
+  // Let statements return nil
+  checker.types[node.id] = typeNil()
+  typeNil()
+}
+
+fn checkAssignment(checker, node) {
+  // Check value first
+  let valueType = checkExpr(checker, node.value)
+
+  // Check target
+  let targetType = nil
+
+  if node.target.type == "Identifier" {
+    targetType = checkExpr(checker, node.target)
+    // Unify target with value
+    constrain(checker, targetType, valueType, node.value.id,
+      "Assignment type mismatch")
+  } else if node.target.type == "Index" {
+    // arr[i] = value
+    let objType = checkExpr(checker, node.target.object)
+    let indexType = checkExpr(checker, node.target.index)
+
+    objType = deref(checker, objType)
+
+    if objType.kind == "Array" {
+      constrain(checker, objType.elem, valueType, node.value.id,
+        "Array element assignment type mismatch")
+    }
+
+    targetType = valueType
+  } else if node.target.type == "Dot" {
+    // obj.field = value
+    let objType = checkExpr(checker, node.target.object)
+    objType = deref(checker, objType)
+
+    if objType.kind == "Record" {
+      let propName = node.target.property.value
+      let fieldType = objType.fields[propName]
+
+      if fieldType {
+        constrain(checker, fieldType, valueType, node.value.id,
+          "Record field assignment type mismatch")
+      }
+    }
+
+    targetType = valueType
+  }
+
+  // Assignment evaluates to the assigned value
+  checker.types[node.id] = valueType
+  valueType
+}
+
+fn checkIf(checker, node) {
+  let condType = checkExpr(checker, node.condition)
+  // Condition can be any type (no constraint)
+
+  let thenType = checkExpr(checker, node.then)
+
+  let resultType = nil
+
+  if node.else {
+    let elseType = checkExpr(checker, node.else)
+
+    // Unify then and else branches
+    constrain(checker, thenType, elseType, node.else.id,
+      "If branches have incompatible types")
+
+    resultType = thenType
+  } else {
+    // No else branch - result is then type
+    resultType = thenType
+  }
+
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkFor(checker, node) {
+  // Enter loop scope
+  enterScope(checker)
+
+  // Check init
+  if node.init {
+    checkExpr(checker, node.init)
+  }
+
+  // Check condition
+  if node.condition {
+    checkExpr(checker, node.condition)
+  }
+
+  // Check update
+  if node.update {
+    checkExpr(checker, node.update)
+  }
+
+  // Check body
+  checkExpr(checker, node.body)
+
+  exitScope(checker)
+
+  // For loops return nil
+  let resultType = typeNil()
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkReturn(checker, node) {
+  let valueType = nil
+
+  if node.value {
+    valueType = checkExpr(checker, node.value)
+  } else {
+    valueType = typeNil()
+  }
+
+  // Constrain with current function's return type
+  if checker.currentReturnType {
+    constrain(checker, valueType, checker.currentReturnType,
+      node.id, "Return type mismatch")
+  }
+
+  // Return statements have no value (never reached)
+  let resultType = typeNil()
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkBreak(checker, node) {
+  let valueType = nil
+
+  if node.value {
+    valueType = checkExpr(checker, node.value)
+  } else {
+    valueType = typeNil()
+  }
+
+  // Break value typing is complex - skip for core subset
+  let resultType = typeNil()
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkContinue(checker, node) {
+  let resultType = typeNil()
+  checker.types[node.id] = resultType
+  resultType
+}
+
+fn checkBlock(checker, node) {
+  // Blocks create new scope
+  enterScope(checker)
+
+  let resultType = typeNil()
+
+  for let i = 0; i < len(node.expressions); i = i + 1 {
+    resultType = checkExpr(checker, node.expressions[i])
+  }
+
+  // Block evaluates to last expression
+  exitScope(checker)
+
+  checker.types[node.id] = resultType
+  resultType
+}
+
+// ========================================
+// Main Expression Dispatcher
+// ========================================
+
+checkExpr = fn(checker, node) {
+  if !node {
+    return typeNil()
+  }
+
+  // Dispatch based on node type
+  if node.type == "Number" or node.type == "String" or
+     node.type == "Bool" or node.type == "Nil" {
+    return checkLiteral(checker, node)
+  } else if node.type == "Identifier" {
+    return checkIdentifier(checker, node)
+  } else if node.type == "Binary" {
+    return checkBinary(checker, node)
+  } else if node.type == "Unary" {
+    return checkUnary(checker, node)
+  } else if node.type == "Logical" {
+    return checkLogical(checker, node)
+  } else if node.type == "Grouping" {
+    return checkExpr(checker, node.expression)
+  } else if node.type == "Array" {
+    return checkArray(checker, node)
+  } else if node.type == "Index" {
+    return checkIndex(checker, node)
+  } else if node.type == "Hashmap" {
+    return checkHashmap(checker, node)
+  } else if node.type == "Dot" {
+    return checkDot(checker, node)
+  } else if node.type == "Function" {
+    return checkFunction(checker, node)
+  } else if node.type == "Call" {
+    return checkCall(checker, node)
+  } else if node.type == "Let" {
+    return checkLet(checker, node)
+  } else if node.type == "Assignment" {
+    return checkAssignment(checker, node)
+  } else if node.type == "If" {
+    return checkIf(checker, node)
+  } else if node.type == "For" {
+    return checkFor(checker, node)
+  } else if node.type == "Return" {
+    return checkReturn(checker, node)
+  } else if node.type == "Break" {
+    return checkBreak(checker, node)
+  } else if node.type == "Continue" {
+    return checkContinue(checker, node)
+  } else if node.type == "Block" {
+    return checkBlock(checker, node)
+  } else if node.type == "Import" {
+    // Import: treat as Any for now
+    let t = typeAny()
+    checker.types[node.id] = t
+    return t
+  } else if node.type == "Program" {
+    // Program node - check body
+    let resultType = typeNil()
+    for let i = 0; i < len(node.body); i = i + 1 {
+      resultType = checkExpr(checker, node.body[i])
+    }
+    return resultType
+  } else {
+    addError(checker, node.id, "Type checking not implemented for: " + node.type)
+    return typeAny()
+  }
+}
+
+// ========================================
+// Main API
+// ========================================
+
+fn makeChecker(resolveResult, opts) {
+  .{
+    // Output tables
+    types: .{},
+    errors: [],
+    hadError: false,
+
+    // Inputs
+    resolveResult: resolveResult,
+    nodes: resolveResult.nodes,
+    resolvedNames: resolveResult.resolvedNames,
+
+    // Type variable state
+    nextTypeVarId: 1,
+    typeVarBindings: .{},
+
+    // Environment
+    currentEnv: nil,
+
+    // Function tracking
+    currentReturnType: nil,
+
+    // Options
+    opts: opts or .{},
+  }
+}
+
+fn typecheck(ast, resolveResult, opts) {
+  if !resolveResult.success {
+    // Resolve failed - cannot typecheck
+    return .{
+      success: false,
+      types: .{},
+      errors: [.{ nodeId: nil, message: "Resolve phase failed", severity: "error" }],
+    }
+  }
+
+  let checker = makeChecker(resolveResult, opts)
+
+  // Initialize global environment
+  checker.currentEnv = TypeEnv(nil)
+
+  // Check program body
+  for let i = 0; i < len(ast.body); i = i + 1 {
+    checkExpr(checker, ast.body[i])
+  }
+
+  .{
+    success: !checker.hadError,
+    types: checker.types,
+    errors: checker.errors,
+  }
+}
+
+// Export the main function
+typecheck

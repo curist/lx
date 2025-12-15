@@ -1,14 +1,8 @@
 // Resolve Phase Tests
 // Tests for semantic validation (resolve.lx)
-//
-// NOTE: These tests are currently disabled until resolve.lx is implemented.
-// Uncomment the suite import and remove the stub test() function when ready.
 
-// let suite = (import "test/makeTestSuite.lx")()
-// let test = suite.defineTest
-
-// Stub for now - does nothing
-fn test(name, body) {}
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
 
 let parse = import "src/parser.lx"
 

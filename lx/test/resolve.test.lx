@@ -248,14 +248,15 @@ test("resolve - call after all hoisted functions declared", fn(assert) {
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
 
-test("resolve - call before all hoisted functions declared (error)", fn(assert) {
+test("resolve - call after first hoisted function (allowed)", fn(assert) {
   let result = parseAndResolve("{
     fn a() { b() }
     a()
     fn b() { a() }
   }")
-  assert.equal(result.success, false, "Should fail on early call")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
+  // With per-function declIndex check, a() is allowed after fn a()
+  assert.truthy(result.success, "Should allow call after function's declaration")
+  assert.equal(len(result.errors), 0, "Should have no errors")
 })
 
 test("resolve - forward reference in function body (ok)", fn(assert) {
@@ -283,6 +284,27 @@ test("resolve - top-level call after hoisted functions", fn(assert) {
   let result = parseAndResolve("fn a() { b() }\nfn b() { a() }\na()")
   assert.truthy(result.success, "Should allow call after all top-level declarations")
   assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+// Test for hoisted-function ordering rule (issue #4)
+test("resolve - call hoisted function after its declaration", fn(assert) {
+  let result = parseAndResolve("{
+    fn a() { }
+    a()
+    fn b() { }
+  }")
+  // Should allow calling a() after fn a() even if fn b() comes later
+  assert.truthy(result.success, "Should allow call after function's own declaration")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("resolve - call hoisted function before its declaration (should error)", fn(assert) {
+  let result = parseAndResolve("{
+    a()
+    fn a() { }
+  }")
+  assert.equal(result.success, false, "Should error when calling before declaration")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
 })
 
 test("resolve - top-level mutual recursion from fixture", fn(assert) {
@@ -344,6 +366,12 @@ test("resolve - multiple captures of same variable", fn(assert) {
   }")
   assert.truthy(result.success, "Should resolve multiple captures")
   assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("resolve - capture variable in own initializer (invalid)", fn(assert) {
+  let result = parseAndResolve("let x = fn() { x }")
+  assert.equal(result.success, false, "Should reject capturing var in own initializer")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
 })
 
 // ========================================
@@ -435,6 +463,12 @@ test("resolve - return not at end from fixture should be rejected", fn(assert) {
 test("resolve - break inside loop (valid)", fn(assert) {
   let result = parseAndResolve("for true { break }")
   assert.truthy(result.success, "Should allow break inside loop")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("resolve - break inside loop with value (valid)", fn(assert) {
+  let result = parseAndResolve("for true { break 1 }")
+  assert.truthy(result.success, "Should allow break with value inside loop")
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
 

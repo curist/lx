@@ -21,7 +21,7 @@ fn Scope(enclosing, type) {
     enclosing: enclosing,
     type: type,  // "global" | "function" | "block" | "loop"
     depth: enclosing and enclosing.depth + 1 or 0,
-    
+
     localsByName: .{},       // name → Local
     localsArray: [],         // [Local] - preserve declaration order!
     hoistedFns: .{},         // name → HoistedFunction
@@ -67,13 +67,14 @@ fn makeResolver(opts) {
     // Side tables (output)
     resolvedNames: .{},    // nodeId → BindingInfo
     scopeInfo: .{},        // nodeId → ScopeInfo
-    nodes: .{},            // nodeId → AST node (built via buildNodeMap)
+    assignmentInfo: .{},   // nodeId → AssignmentInfo (for Assignment nodes)
+    nodes: .{},            // nodeId → AST node (built during traversal)
     errors: [],            // [{ nodeId, message, severity }]
     hadError: false,
-    
+
     // State
     currentScope: nil,     // Current scope object
-    
+
     // Options
     importCache: opts.importCache or .{},
     compileModule: opts.compileModule,  // Callback: fn(path) → result
@@ -84,25 +85,15 @@ fn makeResolver(opts) {
 // Error Handling
 // ========================================
 
-// Severity levels
-let ERROR = "error"
-let WARNING = "warning"
-let INFO = "info"
-
-fn addError(resolver, nodeId, message, severity) {
+fn addError(resolver, nodeId, message) {
+  // we only have error severity for now.
+  // other severities are info & warning
+  resolver.hadError = true
   push(resolver.errors, .{
     nodeId: nodeId,
     message: message,
-    severity: severity or ERROR,
+    severity: "error",
   })
-  if severity != WARNING and severity != INFO {
-    resolver.hadError = true
-  }
-}
-
-// Helper for common case - error severity
-fn reportError(resolver, nodeId, message) {
-  addError(resolver, nodeId, message, ERROR)
 }
 
 // ========================================
@@ -120,24 +111,20 @@ fn endScope(resolver, nodeId) {
   if !scope {
     return  // Compiler bug guard
   }
-  
+
   // Record scope info in side table
   resolver.scopeInfo[nodeId] = .{
     scopeType: scope.type,
     depth: scope.depth,
     locals: scope.localsArray,
     upvalues: scope.upvalues,
-    hoistedFns: keys(scope.hoistedFns),  // Just the names
+    hoistedFns: scope.hoistedFns,  // Full map: name → { declNodeId, declIndex, slot }
     lastHoistedFunctionIndex: scope.lastHoistedFunctionIndex,
     nextSlot: scope.nextSlot,
   }
-  
+
   // Pop to enclosing scope
   resolver.currentScope = scope.enclosing
-}
-
-fn getCurrentScope(resolver) {
-  resolver.currentScope
 }
 
 // ========================================
@@ -152,21 +139,21 @@ fn declareLocal(resolver, name, kind, nodeId) {
 
   // Check for duplicate in current scope
   if scope.localsByName[name] {
-    reportError(resolver, nodeId, "Variable '" + name + "' already declared in this scope")
+    addError(resolver, nodeId, "Variable '" + name + "' already declared in this scope")
     return nil
   }
-  
+
   // Allocate slot
   let slot = scope.nextSlot
   scope.nextSlot = scope.nextSlot + 1
-  
+
   // Create local (uninitialized: depth = -1)
   let local = Local(name, -1, kind, slot, nodeId)
-  
+
   // Add to scope
   scope.localsByName[name] = local
   push(scope.localsArray, local)
-  
+
   local
 }
 
@@ -189,7 +176,7 @@ fn addUpvalue(resolver, scope, isLocal, slot) {
       return i  // Already have this upvalue
     }
   }
-  
+
   // Add new upvalue
   let index = len(scope.upvalues)
   push(scope.upvalues, Upvalue(index, isLocal, slot))
@@ -202,15 +189,20 @@ fn markCaptured(local) {
   }
 }
 
-fn resolveUpvalue(resolver, scope, name) {
-  if !scope { return nil }
-  if !scope.enclosing { return nil }  // At global scope
-  
+fn resolveUpvalue(resolver, scope, name, nodeId) {
+  if !scope.enclosing { return }  // At global scope
+
   // Look in enclosing scope
   let enclosing = scope.enclosing
   let local = enclosing.localsByName[name]
-  
+
   if local {
+    // Check read-before-init (same as resolveName)
+    if local.depth == -1 {
+      addError(resolver, nodeId, "Can't read local variable '" + name + "' in its own initializer")
+      return nil
+    }
+
     // Found in immediate parent - capture as local upvalue
     markCaptured(local)
     return .{
@@ -218,9 +210,9 @@ fn resolveUpvalue(resolver, scope, name) {
       isLocal: true,
     }
   }
-  
+
   // Not in immediate parent - recurse
-  let upvalue = resolveUpvalue(resolver, enclosing, name)
+  let upvalue = resolveUpvalue(resolver, enclosing, name, nodeId)
   if upvalue {
     // Captured from further up - capture as non-local upvalue
     return .{
@@ -228,7 +220,7 @@ fn resolveUpvalue(resolver, scope, name) {
       isLocal: false,
     }
   }
-  
+
   nil
 }
 
@@ -236,7 +228,7 @@ fn resolveUpvalue(resolver, scope, name) {
 // Name Resolution
 // ========================================
 
-fn resolveName(resolver, name, nodeId, context) {
+fn resolveName(resolver, name, nodeId) {
   let scope = resolver.currentScope
 
   // Walk up scope chain
@@ -247,8 +239,8 @@ fn resolveName(resolver, name, nodeId, context) {
     if local {
       // Check read-before-init
       if local.depth == -1 {
-        reportError(resolver, nodeId, "Can't read local variable '" + name + "' in its own initializer")
-        return nil
+        addError(resolver, nodeId, "Can't read local variable '" + name + "' in its own initializer")
+        return
       }
 
       // Local found
@@ -265,7 +257,7 @@ fn resolveName(resolver, name, nodeId, context) {
         }
       } else {
         // Different scope - need upvalue
-        let upvalue = resolveUpvalue(resolver, scope, name)
+        let upvalue = resolveUpvalue(resolver, scope, name, nodeId)
         if upvalue {
           resolver.resolvedNames[nodeId] = .{
             kind: "upvalue",
@@ -277,7 +269,7 @@ fn resolveName(resolver, name, nodeId, context) {
           }
         }
       }
-      return true
+      return
     }
 
     current = current.enclosing
@@ -290,28 +282,27 @@ fn resolveName(resolver, name, nodeId, context) {
     setOp: OP.SET_GLOBAL,
     name: name,
   }
-
-  true
 }
 
 fn resolveIdentifier(resolver, node, context) {
   let name = node.name
   let scope = resolver.currentScope
-  
+
   // Check if this is a hoisted function in current block scope
   if scope and scope.hoistedFns[name] {
     let hoisted = scope.hoistedFns[name]
-    
-    // STRICTER RULE: Block-level calls require exprIndex >= lastHoistedFunctionIndex
-    // This ensures entire mutual recursion group is initialized
+
+    // Block-level calls require exprIndex >= function's own declIndex
+    // This allows calling a function after its declaration, even if later functions exist
+    // (Permits mutual recursion while preventing use-before-declaration)
     if context and !context.inFunctionBody {
-      if context.exprIndex < scope.lastHoistedFunctionIndex {
-        reportError(resolver, node.id,
-          "Cannot use hoisted function '" + name + "' before all hoisted functions are declared")
+      if context.exprIndex < hoisted.declIndex {
+        addError(resolver, node.id,
+          "Cannot use hoisted function '" + name + "' before it is declared")
         return
       }
     }
-    
+
     // Valid hoisted function reference
     resolver.resolvedNames[node.id] = .{
       kind: "local",
@@ -323,9 +314,9 @@ fn resolveIdentifier(resolver, node, context) {
     }
     return
   }
-  
+
   // Regular name resolution
-  resolveName(resolver, name, node.id, context)
+  resolveName(resolver, name, node.id)
 }
 
 // ========================================
@@ -348,119 +339,6 @@ fn isInFunction(scope) {
     current = current.enclosing
   }
   false
-}
-
-fn isAtEndOfBlock(node, parentBlock) {
-  if !parentBlock { return false }
-  if parentBlock.type != "Block" { return false }
-  
-  let exprs = parentBlock.expressions
-  if len(exprs) == 0 { return false }
-  
-  // Check if node is the last expression
-  exprs[len(exprs) - 1].id == node.id
-}
-
-fn isAtEndOfFile(node, program) {
-  if !program { return false }
-  if program.type != "Program" { return false }
-  
-  let body = program.body
-  if len(body) == 0 { return false }
-  
-  // Check if node is the last expression in program
-  body[len(body) - 1].id == node.id
-}
-
-// ========================================
-// Build Node Map
-// ========================================
-
-fn buildNodeMap(resolver, node) {
-  if !node { return }
-  
-  // Register this node
-  if node.id {
-    resolver.nodes[node.id] = node
-  }
-  
-  // Recursively walk children based on node type
-  if node.type == "Program" {
-    for let i = 0; i < len(node.body); i = i + 1 {
-      buildNodeMap(resolver, node.body[i])
-    }
-  } else if node.type == "Block" {
-    for let i = 0; i < len(node.expressions); i = i + 1 {
-      buildNodeMap(resolver, node.expressions[i])
-    }
-  } else if node.type == "Binary" or node.type == "Logical" {
-    buildNodeMap(resolver, node.left)
-    buildNodeMap(resolver, node.right)
-  } else if node.type == "Unary" {
-    buildNodeMap(resolver, node.operand)
-  } else if node.type == "Grouping" {
-    buildNodeMap(resolver, node.expression)
-  } else if node.type == "Let" {
-    buildNodeMap(resolver, node.name)
-    if node.init {
-      buildNodeMap(resolver, node.init)
-    }
-  } else if node.type == "Function" {
-    if node.name {
-      buildNodeMap(resolver, node.name)
-    }
-    for let i = 0; i < len(node.params); i = i + 1 {
-      buildNodeMap(resolver, node.params[i])
-    }
-    buildNodeMap(resolver, node.body)
-  } else if node.type == "Call" {
-    buildNodeMap(resolver, node.callee)
-    for let i = 0; i < len(node.args); i = i + 1 {
-      buildNodeMap(resolver, node.args[i])
-    }
-  } else if node.type == "If" {
-    buildNodeMap(resolver, node.condition)
-    buildNodeMap(resolver, node.then)
-    if node.else {
-      buildNodeMap(resolver, node.else)
-    }
-  } else if node.type == "For" {
-    if node.init {
-      buildNodeMap(resolver, node.init)
-    }
-    if node.condition {
-      buildNodeMap(resolver, node.condition)
-    }
-    if node.update {
-      buildNodeMap(resolver, node.update)
-    }
-    buildNodeMap(resolver, node.body)
-  } else if node.type == "Return" or node.type == "Break" {
-    if node.value {
-      buildNodeMap(resolver, node.value)
-    }
-  } else if node.type == "Array" {
-    for let i = 0; i < len(node.elements); i = i + 1 {
-      buildNodeMap(resolver, node.elements[i])
-    }
-  } else if node.type == "Hashmap" {
-    for let i = 0; i < len(node.pairs); i = i + 1 {
-      buildNodeMap(resolver, node.pairs[i].key)
-      buildNodeMap(resolver, node.pairs[i].value)
-    }
-  } else if node.type == "Index" {
-    buildNodeMap(resolver, node.object)
-    buildNodeMap(resolver, node.index)
-  } else if node.type == "Dot" {
-    buildNodeMap(resolver, node.object)
-    buildNodeMap(resolver, node.property)
-  } else if node.type == "Assignment" {
-    buildNodeMap(resolver, node.target)
-    buildNodeMap(resolver, node.value)
-  } else if node.type == "Import" {
-    buildNodeMap(resolver, node.path)
-  }
-  // Leaf nodes: Number, String, Bool, Nil, Identifier - already registered
 }
 
 // ========================================
@@ -594,9 +472,57 @@ fn resolveExpr(resolver, node, context) {
       resolveExpr(resolver, node.else, context)
     }
   } else if node.type == "Assignment" {
-    // Assignment: resolve target and value
-    // Note: target validation (must be valid lvalue) is a TODO
-    resolveExpr(resolver, node.target, context)
+    // Assignment: validate target and resolve binding
+    let target = node.target
+
+    // Validate target type
+    if target.type == "Identifier" {
+      // Resolve the identifier to get binding info
+      resolveExpr(resolver, target, context)
+
+      // Check that identifier has a setOp (can be assigned to)
+      let binding = resolver.resolvedNames[target.id]
+      if binding and binding.setOp {
+        // Store discriminated binding info (only relevant fields per kind)
+        if binding.kind == "local" {
+          resolver.assignmentInfo[node.id] = .{
+            kind: "local",
+            slot: binding.slot,
+          }
+        } else if binding.kind == "upvalue" {
+          resolver.assignmentInfo[node.id] = .{
+            kind: "upvalue",
+            upvalueIndex: binding.upvalueIndex,
+          }
+        } else if binding.kind == "global" {
+          resolver.assignmentInfo[node.id] = .{
+            kind: "global",
+            name: binding.name,
+          }
+        }
+      } else {
+        addError(resolver, node.id, "Cannot assign to identifier (no setOp)")
+      }
+    } else if target.type == "Index" {
+      // Index assignment: arr[idx] = value
+      // Codegen reads object/index from node.target AST
+      resolveExpr(resolver, target.object, context)
+      resolveExpr(resolver, target.index, context)
+      resolver.assignmentInfo[node.id] = .{
+        kind: "index",
+      }
+    } else if target.type == "Dot" {
+      // Dot assignment: obj.prop = value
+      // Codegen reads property from node.target.property AST
+      resolveExpr(resolver, target.object, context)
+      resolver.assignmentInfo[node.id] = .{
+        kind: "dot",
+      }
+    } else {
+      addError(resolver, node.id, "Invalid assignment target")
+    }
+
+    // Resolve value
     resolveExpr(resolver, node.value, context)
   } else if node.type == "Array" {
     // Array: resolve all elements
@@ -650,14 +576,14 @@ fn resolveExpr(resolver, node, context) {
     if !isInFunction(scope) {
       // Outside function: only allow at top-level end, not in nested blocks
       if !context or !context.atTopLevel {
-        reportError(resolver, node.id, "Return is only allowed in functions or at top level")
+        addError(resolver, node.id, "Return is only allowed in functions or at top level")
       } else if !context.isLastExpr {
-        reportError(resolver, node.id, "Can only return at end of file when not in function")
+        addError(resolver, node.id, "Can only return at end of file when not in function")
       }
     } else {
       // In function - must be at end of block
       if context and !context.isLastExpr {
-        reportError(resolver, node.id, "Return must be at end of block")
+        addError(resolver, node.id, "Return must be at end of block")
       }
     }
 
@@ -668,11 +594,11 @@ fn resolveExpr(resolver, node, context) {
   } else if node.type == "Break" {
     // Break: must be inside loop and at end of block
     if !isInLoop(resolver.currentScope) {
-      reportError(resolver, node.id, "Can only break inside a loop")
+      addError(resolver, node.id, "Can only break inside a loop")
     }
 
     if context and !context.isLastExpr {
-      reportError(resolver, node.id, "Break must be at end of block")
+      addError(resolver, node.id, "Break must be at end of block")
     }
 
     // Resolve break value if present
@@ -682,19 +608,21 @@ fn resolveExpr(resolver, node, context) {
   } else if node.type == "Continue" {
     // Continue: must be inside loop
     if !isInLoop(resolver.currentScope) {
-      reportError(resolver, node.id, "Can only continue inside a loop")
+      addError(resolver, node.id, "Can only continue inside a loop")
     }
 
     if context and !context.isLastExpr {
-      reportError(resolver, node.id, "Continue must be at end of block")
+      addError(resolver, node.id, "Continue must be at end of block")
     }
   } else if node.type == "Import" {
-    // Import: just track the node, actual module loading happens during evaluation
-    // The path resolution and module compilation is handled at runtime
-    // We just ensure the Import node is registered in the nodes map
+    // Import: track the node and traverse path for completeness
+    // Actual module loading happens during evaluation
+    if node.path {
+      resolveExpr(resolver, node.path, context)
+    }
   } else {
     // TODO: Implement other node types
-    reportError(resolver, node.id, "Resolution not yet implemented for: " + node.type)
+    addError(resolver, node.id, "Resolution not yet implemented for: " + node.type)
   }
 }
 
@@ -753,15 +681,16 @@ fn resolveProgram(resolver, ast) {
 
 fn resolve(ast, opts) {
   let resolver = makeResolver(opts or .{})
-  
+
   resolveProgram(resolver, ast)
-  
+
   .{
     success: !resolver.hadError,
-    ast: ast,  // Unchanged
+    ast: ast,
     nodes: resolver.nodes,
     resolvedNames: resolver.resolvedNames,
     scopeInfo: resolver.scopeInfo,
+    assignmentInfo: resolver.assignmentInfo,
     errors: resolver.errors,
   }
 }

@@ -2,13 +2,14 @@
 
 ## Responsibility
 
-Perform **best-effort, monomorphic static analysis** on resolved Lx programs.
+Perform **best-effort static analysis** on resolved Lx programs.
 
 This phase:
 
 * infers stable types for variables, functions, records, and arrays
 * detects incompatible usages (shape mismatches, conflicting assignments)
-* supports closures and imports
+* supports closures, imports, and higher-order functions
+* is **mostly monomorphic**, with **limited, explicit polymorphism**
 * is **flow-insensitive**, **local**, and **fast**
 
 It does **not**:
@@ -16,7 +17,7 @@ It does **not**:
 * affect runtime semantics
 * mutate the AST
 * participate in code generation
-* attempt full soundness or polymorphism
+* attempt full soundness or full Hindley–Milner inference
 
 This phase exists primarily to support:
 
@@ -71,8 +72,8 @@ These are **authoritative** for:
 
 ```lx
 .{
-  builtinTypes: BuiltinTypeTable,  // len, str, type, etc.
-  importSignatures: SignatureLoader?,  // optional future extension
+  builtinTypes: BuiltinTypeTable,     // len, push, str, etc.
+  importSignatures: SignatureLoader?, // optional future extension
 }
 ```
 
@@ -114,44 +115,63 @@ These are **authoritative** for:
 Type =
   Unknown
   Any
+  Nil
   Number
   Bool
   String
-  Nil
+  TypeVar(id)
+
   Function(params: [Type], return: Type)
   Array(elem: Type)
   Record(fields: map<string, Type>)
   Tagged(tagField: string, cases: map<tagValue, Record>)
 ```
 
+### Type Schemes (Limited Polymorphism)
+
+```
+Scheme =
+  Forall(typeVars: [TypeVar], type: Type)
+```
+
 ### Semantics
 
 * **Unknown**: initial state; can be refined by constraints
-* **Any**: escape hatch; always unifies, suppresses cascading errors
-* All types are **monomorphic**
+* **Any**: escape hatch; unifies with everything, suppresses cascades
+* All **ordinary variables are monomorphic**
+* **Only function literals may be generalized**
 * Records and arrays are **frozen once shaped**
+
+This is **not** full Hindley–Milner.
 
 ---
 
 ## Environments and Identity
 
-### Type Variables
+### Type Bindings
 
-Each variable binding corresponds to **exactly one TypeVar**.
+Each variable binding corresponds to exactly one entry:
 
-Source of truth:
+```
+TypeBinding =
+  Mono(TypeVar)   // assignable, monomorphic
+  Poly(Scheme)    // immutable, instantiable
+```
 
-* Variable identity is determined by `resolveResult`
-* Captured variables reuse the **same TypeVar** as their outer binding
+### Type Environment
 
 ```lx
 TypeEnv = {
   parent: TypeEnv?,
-  vars: map<declNodeId, TypeVar>,
+  vars: map<declNodeId, TypeBinding>,
 }
 ```
 
-**Key invariant**: names are irrelevant here — only declaration identity matters.
+**Key invariants:**
+
+* Variable identity is determined solely by `resolveResult`
+* Names are irrelevant during typechecking
+* Captured variables reuse the **same binding** (Mono or Poly)
 
 ---
 
@@ -161,42 +181,121 @@ Typechecking is a single traversal that:
 
 1. creates fresh `TypeVar`s
 2. emits constraints
-3. unifies types eagerly
+3. unifies eagerly
 4. reports conflicts
 
-This is **not** Hindley–Milner and does not generalize.
+There is **no generalization except at `let`-bound function literals**.
 
 ---
 
-## Core Rules (Selected)
+## Polymorphism Model (Intentional and Restricted)
 
-### Variable Declaration
+Lx supports **limited parametric polymorphism** via:
+
+* `Poly(Scheme)` bindings
+* per-use instantiation
+* a strict value restriction
+
+### Design Intent
+
+This exists to support:
+
+* prelude helpers (`map`, `each`, `fold`, etc.)
+* higher-order callbacks
+* adapter functions (`_1`, `_2`, `_3`, …)
+
+It does **not** turn Lx into a fully polymorphic language.
+
+---
+
+## Free Variables, Generalization, Instantiation
+
+### Free Type Variables
+
+* `ftv(type)` → free type variables in a `Type`
+* `ftv(binding)` → free vars in Mono or Poly
+* `ftv(env)` → union of all reachable bindings
+
+### Generalization
+
+```
+generalize(env, type) =
+  let qs = ftv(type) - ftv(env)
+  Poly(Forall(qs, type))
+```
+
+Only performed for **function literals**.
+
+### Instantiation
+
+```
+instantiate(Forall([t1..tn], T)) =
+  let [u1..un] = fresh TypeVars
+  substitute(T, { t1 → u1, ... })
+```
+
+Performed **at every identifier use** of a polymorphic binding.
+
+---
+
+## Core Rules
+
+### Let Binding
 
 ```lx
 let x = expr
 ```
 
-Constraint:
+Procedure:
 
+1. Analyze `expr`, producing `T(expr)`.
+
+2. If `expr` is a **function literal** (`fn (...) { ... }`):
+
+   * Bind `x → generalize(env, T(expr))`.
+
+3. Otherwise:
+
+   * Create fresh `TypeVar tv`.
+   * Bind `x → Mono(tv)`.
+   * Emit constraint: `tv ≈ T(expr)`.
+
+### Top-Level Function Declarations
+
+```lx
+fn f(a, b) { body }
 ```
-T(x) ≈ T(expr)
+
+Treated equivalently to:
+
+```lx
+let f = fn(a, b) { body }
 ```
+
+For purposes of **generalization only**.
 
 ---
 
-### Assignment
+### Reassignment
 
 ```lx
 x = expr
 ```
 
-Constraint:
+Rules:
 
-```
-T(x) ≈ T(expr)
-```
+* If `x` resolves to `Mono(tv)`:
 
-Mismatch → error → widen to `Any`
+  ```
+  tv ≈ T(expr)
+  ```
+
+* If `x` resolves to `Poly(_)`:
+
+  * Report error: *“Cannot assign to polymorphic binding”*
+  * Widen assignment result to `Any` to continue analysis
+
+This prevents unsound polymorphic mutation.
 
 ---
 
@@ -206,13 +305,21 @@ Mismatch → error → widen to `Any`
 x
 ```
 
-Constraint:
+Rules:
 
-```
-T(expr) = T(x)
-```
+* If `x → Mono(tv)`:
 
-Undefined variables should already be caught by `resolve`.
+  ```
+  T(expr) = tv
+  ```
+
+* If `x → Poly(scheme)`:
+
+  ```
+  T(expr) = instantiate(scheme)
+  ```
+
+Undefined variables must already be caught by `resolve`.
 
 ---
 
@@ -273,7 +380,7 @@ T(xs) ≈ Array(elem = T(v))
 ### Function Definition
 
 ```lx
-fn f(a, b) { body }
+fn(a, b) { body }
 ```
 
 Type:
@@ -282,30 +389,45 @@ Type:
 Function([A, B], R)
 ```
 
-* `A`, `B`, `R` are fresh TypeVars
-* Parameters are bound in function TypeEnv
+* `A`, `B`, `R` are fresh `TypeVar`s
+* Parameters are **always monomorphic**
+* Parameters are bound as `Mono(TypeVar)`
 
 ---
 
 ### Function Call
 
 ```lx
-f(x, y)
+f(x1, x2, ..., xm)
 ```
 
-Constraint:
+Rules:
+
+If:
 
 ```
-T(f) ≈ Function([A, B], R)
-T(x) ≈ A
-T(y) ≈ B
-T(call) = R
+T(f) ≈ Function([P1..Pk], R)
 ```
 
-**Monomorphic rule**:
+Then:
 
-* First call constrains parameters
-* Later calls must match
+* For `i = 1 .. min(k, m)`:
+
+  ```
+  T(xi) ≈ Pi
+  ```
+
+* If `m > k`: extra arguments are **allowed and ignored**
+
+* If `m < k`: missing arguments may be reported as an error (implementation choice)
+
+* Result type:
+
+  ```
+  T(call) = R
+  ```
+
+This matches Lua / JS calling semantics and supports callback adapters.
 
 ---
 
@@ -321,7 +443,7 @@ Constraint:
 T(expr) ≈ R
 ```
 
-All returns unify to the same `R`.
+All returns unify to the same return type.
 
 ---
 
@@ -329,10 +451,10 @@ All returns unify to the same `R`.
 
 Captured variables:
 
-* reuse the **same TypeVar**
-* constraints propagate naturally across closures
+* reuse the **same TypeBinding**
+* propagate constraints across scopes naturally
 
-No special handling required beyond resolve’s capture graph.
+No special handling beyond `resolve`’s capture graph.
 
 ---
 
@@ -342,9 +464,11 @@ No special handling required beyond resolve’s capture graph.
 if cond { A } else { B }
 ```
 
-* `cond` should be `Bool` (optional check)
+Rules:
+
+* Optionally constrain `T(cond) ≈ Bool`
 * Analyze both branches
-* Unify resulting variable types
+* Unify all variable bindings touched by either branch
 
 This enforces **branch consistency** without control-flow tracking.
 
@@ -354,18 +478,21 @@ This enforces **branch consistency** without control-flow tracking.
 
 Two supported strategies:
 
-### MVP (Heuristic)
+### MVP (Default)
 
 * Detect tag fields (`kind`, `type`, etc.)
-* Allow variant fields to widen to `Any`
+* Variant-specific fields widen to `Any`
 
 ### Precise (Future)
 
-* Use `Tagged(tagField, cases)`
+```
+Tagged(tagField, cases)
+```
+
 * Enforce per-tag record shapes
 * Safe field access only when tag is known
 
-**No syntax changes required**.
+No syntax changes required.
 
 ---
 
@@ -373,11 +500,11 @@ Two supported strategies:
 
 On any type error:
 
-* Report diagnostic
-* Replace conflicting TypeVar with `Any`
+* Emit diagnostic
+* Replace conflicting type with `Any`
 * Continue analysis
 
-Severity is configurable:
+Severity levels:
 
 * `error` (default)
 * `warning`
@@ -389,12 +516,12 @@ Severity is configurable:
 
 If `success == true`:
 
-* No incompatible type constraints were found
+* No incompatible constraints were found
 * Inferred types are stable and usable for tooling
 
 If `success == false`:
 
-* Partial types are still available
+* Partial types remain available
 * Diagnostics are complete and non-cascading
 
 ---
@@ -403,18 +530,11 @@ If `success == false`:
 
 This phase intentionally does **not**:
 
-* infer polymorphic types
-* perform effect analysis
-* reason about reachability
-* affect runtime or bytecode
-
----
-
-## Future Extensions
-
-* Narrowing via pattern tests
-* Better tagged-union precision
-* IDE-only hints (dead code, unused vars)
+* implement full Hindley–Milner
+* infer polymorphic parameters
+* perform effect or lifetime analysis
+* reason about reachability or exhaustiveness
+* influence runtime or code generation
 
 ---
 
@@ -423,9 +543,10 @@ This phase intentionally does **not**:
 The typecheck phase provides:
 
 * fast, predictable static analysis
-* strong IDE support
+* honest support for higher-order prelude functions
+* limited, well-scoped polymorphism
 * minimal implementation complexity
 * zero coupling to backend decisions
 
-It is a **frontend value multiplier**, not a gatekeeper.
+It is a **frontend value multiplier**, not a soundness gatekeeper.
 

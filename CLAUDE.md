@@ -12,7 +12,6 @@ This document contains important information for AI assistants working with the 
 6. **No string interpolation** - use concatenation
 7. **No `++`/`--` operators** - use `i = i + 1`
 8. **Hashmaps use `.{ }` syntax** - dot prefix required
-9. **Build before testing** - `make build test` to pick up compiler changes
 
 ## Communication Guidelines
 

@@ -342,10 +342,58 @@ fn isInFunction(scope) {
 }
 
 // ========================================
+// Import Handling
+// ========================================
+
+fn resolveImport(resolver, node) {
+  // Add path node to nodes map if it exists
+  if node.path and node.path.id {
+    resolver.nodes[node.path.id] = node.path
+  }
+
+  // Import path must be a string literal
+  if !node.path or node.path.type != "String" {
+    addError(resolver, node.id, "Import path must be a string literal")
+    return nil
+  }
+
+  let path = node.path.value
+
+  // Check cache if available
+  if resolver.importCache {
+    let cached = resolver.importCache[path]
+    if cached {
+      // Check for circular import (status is neither done nor failed)
+      if cached.status != "done" and cached.status != "failed" {
+        addError(resolver, node.id, "Circular import detected: " + path)
+        return nil
+      }
+
+      // Already compiled successfully or failed - return cached result
+      return cached
+    }
+  }
+
+  // Compile module via callback if provided
+  if resolver.compileModule {
+    let result = resolver.compileModule(path)
+    return result
+  }
+
+  // No callback - import will be handled at runtime
+  nil
+}
+
+// ========================================
 // Function and Block Resolution
 // ========================================
 
-fn resolveFunction(resolver, node, context) {
+// Forward declarations for mutual recursion
+let resolveExpr = nil
+let resolveFunction = nil
+let resolveBlockWithHoisting = nil
+
+resolveFunction = fn(resolver, node, context) {
   // Create function scope
   beginScope(resolver, "function")
 
@@ -366,7 +414,7 @@ fn resolveFunction(resolver, node, context) {
   endScope(resolver, node.id)
 }
 
-fn resolveBlockWithHoisting(resolver, node, context) {
+resolveBlockWithHoisting = fn(resolver, node, context) {
   // Two-phase block resolution for hoisting
   let scope = resolver.currentScope
 
@@ -415,7 +463,7 @@ fn resolveBlockWithHoisting(resolver, node, context) {
 // Expression Resolution
 // ========================================
 
-fn resolveExpr(resolver, node, context) {
+resolveExpr = fn(resolver, node, context) {
   if !node { return }
 
   // Build node map as we traverse
@@ -615,11 +663,8 @@ fn resolveExpr(resolver, node, context) {
       addError(resolver, node.id, "Continue must be at end of block")
     }
   } else if node.type == "Import" {
-    // Import: track the node and traverse path for completeness
-    // Actual module loading happens during evaluation
-    if node.path {
-      resolveExpr(resolver, node.path, context)
-    }
+    // Import: resolve path and compile module via callback
+    resolveImport(resolver, node)
   } else {
     // TODO: Implement other node types
     addError(resolver, node.id, "Resolution not yet implemented for: " + node.type)

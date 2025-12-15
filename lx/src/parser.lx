@@ -562,6 +562,10 @@ fn parse(src, filename) {
     }
   }
 
+  // Forward declarations for mutual recursion
+  let expression = nil
+  let expressionStatement = nil
+
   fn parsePrecedence(precedence) {
     advance()
     let prefixRule = getRule(parser.previous.type).prefix
@@ -958,14 +962,14 @@ fn parse(src, filename) {
     ImportNode(filename, startToken, pathNode)
   }
 
-  fn expression() {
+  expression = fn() {
     if match(TOKEN.IMPORT) {
       return importStatement()
     }
     parsePrecedence(PREC.ASSIGNMENT)
   }
 
-  fn expressionStatement() {
+  expressionStatement = fn() {
     let expr = expression()
 
     if parser.panicMode {

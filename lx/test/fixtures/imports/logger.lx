@@ -1,0 +1,12 @@
+// Logger module - also imports constants
+let constants = import "test/fixtures/imports/constants.lx"
+
+.{
+  enabled: constants.DEBUG,
+  maxLogSize: constants.MAX_SIZE,
+  log: fn(msg) {
+    if constants.DEBUG {
+      println("[LOG]", msg)
+    }
+  },
+}

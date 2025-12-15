@@ -179,22 +179,51 @@ See `docs/algorithms.md` for full algorithm.
 
 ### Import Handling
 
+The resolver handles imports by calling a driver-provided `compileModule` callback:
+
 ```lx
 fn resolveImport(resolver, node) {
-  let path = resolvePath(node.path.value)
+  // Validate import path is a string literal
+  if !node.path or node.path.type != "String" {
+    resolveAddError(resolver, node.id, "Import path must be a string literal")
+    return nil
+  }
 
-  let cached = resolver.importCache[path]
-  if cached {
-    if cached.status != "done" and cached.status != "failed" {
-      addError(resolver, node.id, "Circular import: " + path)
-      return
+  let path = node.path.value
+
+  // Check cache for circular imports
+  if resolver.importCache {
+    let cached = resolver.importCache[path]
+    if cached {
+      // Circular import detected if module is being compiled
+      if cached.status != "done" and cached.status != "failed" {
+        resolveAddError(resolver, node.id, "Circular import detected: " + path)
+        return nil
+      }
+      // Module already compiled - return cached result
+      return cached
     }
   }
 
-  // Compile via callback
-  resolver.compileModule(path)
+  // Compile module via driver callback
+  if resolver.compileModule {
+    return resolver.compileModule(path)
+  }
+
+  // No callback - import handled at runtime
+  nil
 }
 ```
+
+**Driver responsibilities:**
+- Maintain `importCache` with entries: `.{ status: "compiling" | "done" | "failed", ... }`
+- `compileModule(path)` callback should:
+  1. Mark module as "compiling" in cache
+  2. Run parse → lower → resolve (passing same cache and callback)
+  3. Update cache with "done" or "failed" status
+  4. Return compiled result or diagnostics
+
+See `test/resolve.test.lx` for a complete example driver implementation.
 
 ## Semantic Validation
 

@@ -1,0 +1,6 @@
+// Shared constants module (diamond bottom)
+.{
+  VERSION: "1.0.0",
+  MAX_SIZE: 100,
+  DEBUG: false,
+}

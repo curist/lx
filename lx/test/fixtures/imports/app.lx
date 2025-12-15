@@ -1,0 +1,10 @@
+// App module - imports both config and logger (diamond top)
+let config = import "test/fixtures/imports/config.lx"
+let logger = import "test/fixtures/imports/logger.lx"
+
+.{
+  start: fn() {
+    logger.log("Starting " + config.getName())
+    config.version
+  },
+}

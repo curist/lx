@@ -1,0 +1,8 @@
+// Config module - imports constants
+let constants = import "test/fixtures/imports/constants.lx"
+
+.{
+  version: constants.VERSION,
+  maxItems: constants.MAX_SIZE,
+  getName: fn() { "Config v" + constants.VERSION },
+}

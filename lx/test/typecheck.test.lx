@@ -708,4 +708,31 @@ test("typecheck - or: Option(T) or Option(T) stays Option", fn(assert) {
   assert.truthy(len(result.errors) > 0, "Should have errors")
 })
 
+// Regression tests for critical fixes
+
+test("typecheck - regression: mergeEnvs across parent scope", fn(assert) {
+  let code = "{
+    let x = if true { 1 } else { 2 }
+    if x != nil { 0 } else { 0 }
+    x + 1
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should typecheck with x remaining Number")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - regression: println with no arguments", fn(assert) {
+  let code = "{ println() }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should accept println() with no arguments")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - regression: print with no arguments", fn(assert) {
+  let code = "{ print() }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should accept print() with no arguments")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
 suite.run()

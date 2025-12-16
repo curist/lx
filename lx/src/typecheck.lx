@@ -904,8 +904,8 @@ fn getBuiltinType(checker, name) {
   }
 
   if name == "println" or name == "print" {
-    // println/print: (...Any) -> Nil (variadic, approximate with Any)
-    return typeFunction([typeAny()], typeNil())
+    // println/print: (...Any) -> Nil (variadic, approximate with 0-arg + arity widening)
+    return typeFunction([], typeNil())
   }
 
   if name == "type" {
@@ -1763,7 +1763,7 @@ fn tryExtractTypeTest(checker, node, op) {
   } else if typeName == "array" {
     expectedType = typeArray(freshTypeVar(checker))
   } else if typeName == "map" {
-    expectedType = typeRecord(.{})
+    expectedType = typeMap(typeString(), freshTypeVar(checker))
   } else if typeName == "function" {
     let retVar = freshTypeVar(checker)
     expectedType = typeFunction([], retVar)
@@ -1842,20 +1842,19 @@ fn mergeEnvs(checker, originalEnv, thenEnv, elseEnv, guard) {
 
   let declNodeId = guard.declNodeId
 
+  // Always unify back into the real binding (walks parent chain)
+  let originalBinding = lookupDecl(checker, declNodeId)
+  if !originalBinding or originalBinding.kind != "Mono" { return }
+
   let thenBinding = thenEnv.bindings[declNodeId]
   let elseBinding = elseEnv.bindings[declNodeId]
-  let originalBinding = originalEnv.bindings[declNodeId]
-
-  if !originalBinding { return }
 
   // If both branches refined the type, unify them back
-  if thenBinding and elseBinding and originalBinding.kind == "Mono" {
-    if thenBinding.kind == "Mono" and elseBinding.kind == "Mono" {
-      // Unify refined types back to original
-      // This ensures the original binding reflects constraints from both branches
-      unify(checker, thenBinding.typeVar, originalBinding.typeVar)
-      unify(checker, elseBinding.typeVar, originalBinding.typeVar)
-    }
+  if thenBinding and elseBinding and thenBinding.kind == "Mono" and elseBinding.kind == "Mono" {
+    // Unify refined types back to original
+    // This ensures the original binding reflects constraints from both branches
+    unify(checker, thenBinding.typeVar, originalBinding.typeVar)
+    unify(checker, elseBinding.typeVar, originalBinding.typeVar)
   }
 
   // Clear tag narrowing after merge

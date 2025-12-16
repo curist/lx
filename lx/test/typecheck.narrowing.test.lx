@@ -211,12 +211,12 @@ test("typecheck - narrowing: type test supports map", fn(assert) {
   let result = parseAndTypecheck(code)
   assert.truthy(result.success, "Should typecheck map type test")
 
-  // In then branch, x should be refined to Record
+  // In then branch, x should be refined to Map
   let ast = result.lowerResult.ast
   let ifNode = ast.body[0].expressions[1]
   let thenExpr = ifNode.then.expressions[0]
   let thenType = result.types[thenExpr.id]
-  assert.equal(thenType.kind, "Record", "x should be Record in then branch")
+  assert.equal(thenType.kind, "Map", "x should be Map in then branch")
 })
 
 test("typecheck - narrowing: type test supports function", fn(assert) {

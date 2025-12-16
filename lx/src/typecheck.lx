@@ -154,6 +154,14 @@ fn sameType(t1, t2) {
 }
 
 // ========================================
+// Forward Declarations
+// ========================================
+
+let lookupDecl = nil
+let addError = nil
+let checkExpr = nil
+
+// ========================================
 // Type Environment
 // ========================================
 
@@ -162,6 +170,88 @@ fn TypeEnv(parent) {
     parent: parent,
     bindings: .{},  // declNodeId → TypeVar
   }
+}
+
+fn cloneEnv(env) {
+  // Shallow clone environment for type narrowing
+  // Clone bindings map to allow shadowing
+  if !env { return nil }
+
+  let newBindings = .{}
+  let bindingKeys = keys(env.bindings)
+  for let i = 0; i < len(bindingKeys); i = i + 1 {
+    let key = bindingKeys[i]
+    newBindings[key] = env.bindings[key]
+  }
+
+  return .{
+    parent: env.parent,  // Share parent chain
+    bindings: newBindings,
+  }
+}
+
+// ========================================
+// Type Narrowing - Refinement
+// ========================================
+
+fn refineForNilCheck(checker, env, guard, truthy) {
+  // guard.isNilCheck: true if checking == nil, false if checking != nil
+  let checkingIsNil = guard.isNilCheck
+  let shouldBeNil = (truthy == checkingIsNil)
+
+  if shouldBeNil {
+    // Variable is Nil - create new binding
+    let freshVar = freshTypeVar(checker)
+    let nilType = typeNil()
+    bindTypeVar(checker, freshVar.id, nilType)
+    let newBinding = bindingMono(freshVar)
+    env.bindings[guard.declNodeId] = newBinding
+  } else {
+    // Variable is non-nil
+    // Best-effort: we don't create a NonNil type form
+    // Just leave the binding as-is for now
+    // This is sufficient to mark that we've validated non-nil
+  }
+}
+
+fn refineForTypeTest(checker, env, guard, truthy) {
+  if !truthy { return }  // Only refine in truthy branch
+
+  // Replace binding with refined type
+  let freshVar = freshTypeVar(checker)
+  let refinedType = guard.expectedType
+  bindTypeVar(checker, freshVar.id, refinedType)
+  let newBinding = bindingMono(freshVar)
+  env.bindings[guard.declNodeId] = newBinding
+}
+
+fn refineForTagCheck(checker, env, guard, truthy) {
+  // Stub for Phase 1
+  if !truthy { return }
+  // Future: refine to specific tagged case
+}
+
+fn refineEnv(checker, env, guard, truthy) {
+  // Create a refined environment based on guard
+  if !guard { return env }
+
+  // Check if guard variable is polymorphic (can't refine)
+  let originalBinding = lookupDecl(checker, guard.declNodeId)
+  if originalBinding and originalBinding.kind == "Poly" {
+    return env  // Don't refine polymorphic bindings
+  }
+
+  let refinedEnv = cloneEnv(env)
+
+  if guard.kind == "nil-check" {
+    refineForNilCheck(checker, refinedEnv, guard, truthy)
+  } else if guard.kind == "type-test" {
+    refineForTypeTest(checker, refinedEnv, guard, truthy)
+  } else if guard.kind == "tag-check" {
+    refineForTagCheck(checker, refinedEnv, guard, truthy)
+  }
+
+  return refinedEnv
 }
 
 fn enterScope(checker) {
@@ -197,7 +287,7 @@ fn bindDeclPoly(checker, declNodeId, scheme) {
   binding
 }
 
-fn lookupDecl(checker, declNodeId) {
+lookupDecl = fn(checker, declNodeId) {
   // Returns Mono/Poly binding or nil
   if !declNodeId {
     return nil
@@ -210,15 +300,8 @@ fn lookupDecl(checker, declNodeId) {
     }
     env = env.parent
   }
-  nil
+  return nil
 }
-
-// ========================================
-// Forward Declarations
-// ========================================
-
-let addError = nil
-let checkExpr = nil
 
 // ========================================
 // Unification Algorithm
@@ -1054,24 +1137,205 @@ fn checkAssignment(checker, node) {
   valueType
 }
 
-fn checkIf(checker, node) {
-  let condType = checkExpr(checker, node.condition)
-  // Condition can be any type (no constraint)
+// ========================================
+// Type Narrowing - Guard Detection
+// ========================================
 
+fn tryExtractNilCheck(checker, node, op) {
+  // Pattern: x != nil, x == nil, nil != x, nil == x
+  let left = node.left
+  let right = node.right
+
+  let identifier = nil
+  let isCheckingForNil = (op == "==")
+
+  if left.type == "Identifier" and right.type == "Nil" {
+    identifier = left
+  } else if left.type == "Nil" and right.type == "Identifier" {
+    identifier = right
+  } else {
+    return nil
+  }
+
+  let binding = checker.resolvedNames[identifier.id]
+  if !binding { return nil }
+
+  return .{
+    kind: "nil-check",
+    identifier: identifier,
+    declNodeId: binding.declaredAt,
+    isNilCheck: isCheckingForNil,
+  }
+}
+
+fn tryExtractTypeTest(checker, node, op) {
+  // Pattern: type(x) == "string"
+  if op != "==" { return nil }
+
+  let left = node.left
+  let right = node.right
+
+  // Check if left is type(x)
+  if left.type != "Call" { return nil }
+  if left.callee.type != "Identifier" { return nil }
+  if left.callee.name != "type" { return nil }
+  if len(left.args) != 1 { return nil }
+
+  let arg = left.args[0]
+  if arg.type != "Identifier" { return nil }
+
+  // Check if right is a string literal
+  if right.type != "String" { return nil }
+  let typeName = right.value
+
+  // Map type name to Type constructor
+  let expectedType = nil
+  if typeName == "string" {
+    expectedType = typeString()
+  } else if typeName == "number" {
+    expectedType = typeNumber()
+  } else if typeName == "bool" {
+    expectedType = typeBool()
+  } else if typeName == "nil" {
+    expectedType = typeNil()
+  } else if typeName == "array" {
+    expectedType = typeArray(freshTypeVar(checker))
+  } else if typeName == "map" {
+    expectedType = typeRecord(.{})
+  } else if typeName == "function" {
+    let retVar = freshTypeVar(checker)
+    expectedType = typeFunction([], retVar)
+  } else {
+    return nil  // Unknown type string
+  }
+
+  let binding = checker.resolvedNames[arg.id]
+  if !binding { return nil }
+
+  return .{
+    kind: "type-test",
+    identifier: arg,
+    declNodeId: binding.declaredAt,
+    expectedType: expectedType,
+  }
+}
+
+fn tryExtractTagCheck(checker, node, op) {
+  // Pattern: x.kind == "Foo"
+  if op != "==" { return nil }
+
+  let left = node.left
+  let right = node.right
+
+  // Left must be x.field
+  if left.type != "Dot" { return nil }
+  if left.object.type != "Identifier" { return nil }
+
+  // Right must be string literal
+  if right.type != "String" { return nil }
+
+  let identifier = left.object
+  let tagField = left.property.value  // property is a String node
+  let tagValue = right.value
+
+  let binding = checker.resolvedNames[identifier.id]
+  if !binding { return nil }
+
+  return .{
+    kind: "tag-check",
+    identifier: identifier,
+    declNodeId: binding.declaredAt,
+    tagField: tagField,
+    tagValue: tagValue,
+  }
+}
+
+fn extractGuard(checker, condNode) {
+  // Returns GuardInfo or nil
+  if !condNode { return nil }
+
+  if condNode.type == "Binary" {
+    let op = condNode.operator.lexeme
+
+    // Only handle equality/inequality
+    if op == "!=" or op == "==" {
+      let guard = tryExtractNilCheck(checker, condNode, op)
+      if guard { return guard }
+
+      let typeGuard = tryExtractTypeTest(checker, condNode, op)
+      if typeGuard { return typeGuard }
+
+      let tagGuard = tryExtractTagCheck(checker, condNode, op)
+      if tagGuard { return tagGuard }
+    }
+  }
+
+  return nil
+}
+
+fn mergeEnvs(checker, originalEnv, thenEnv, elseEnv, guard) {
+  // After if/else, reconcile refined bindings
+  // Unify both branches back to the original binding
+  if !guard { return }
+
+  let declNodeId = guard.declNodeId
+
+  let thenBinding = thenEnv.bindings[declNodeId]
+  let elseBinding = elseEnv.bindings[declNodeId]
+  let originalBinding = originalEnv.bindings[declNodeId]
+
+  if !originalBinding { return }
+
+  // If both branches refined the type, unify them back
+  if thenBinding and elseBinding and originalBinding.kind == "Mono" {
+    if thenBinding.kind == "Mono" and elseBinding.kind == "Mono" {
+      // Unify refined types back to original
+      // This ensures the original binding reflects constraints from both branches
+      unify(checker, thenBinding.typeVar, originalBinding.typeVar)
+      unify(checker, elseBinding.typeVar, originalBinding.typeVar)
+    }
+  }
+}
+
+fn checkIf(checker, node) {
+  // Check condition
+  let condType = checkExpr(checker, node.condition)
+
+  // Extract guard information
+  let guard = extractGuard(checker, node.condition)
+
+  // Save current environment
+  let originalEnv = checker.currentEnv
+
+  // Create refined environment for then branch
+  let thenEnv = refineEnv(checker, originalEnv, guard, true)
+  checker.currentEnv = thenEnv
   let thenType = checkExpr(checker, node.then)
 
   let resultType = nil
 
   if node.else {
+    // Create refined environment for else branch
+    let elseEnv = refineEnv(checker, originalEnv, guard, false)
+    checker.currentEnv = elseEnv
     let elseType = checkExpr(checker, node.else)
 
-    // Unify then and else branches
+    // Restore original environment
+    checker.currentEnv = originalEnv
+
+    // Merge: unify refined bindings back to original
+    mergeEnvs(checker, originalEnv, thenEnv, elseEnv, guard)
+
+    // Unify branch types
     constrain(checker, thenType, elseType, node.else.id,
       "If branches have incompatible types")
 
     resultType = thenType
   } else {
-    // No else branch - result is then type
+    // Restore original environment
+    checker.currentEnv = originalEnv
+
+    // No else branch - can't assume anything about guard at exit
     resultType = thenType
   }
 

@@ -445,4 +445,51 @@ test("typecheck - empty array refinement via index", fn(assert) {
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
 
+// ========================================
+// Polymorphism Tests
+// ========================================
+
+test("typecheck - polymorphic identity function", fn(assert) {
+  let result = parseAndTypecheck("{ let id = fn(x) { x }\nlet n = id(42)\nlet s = id(\"hello\")\nn + 1 }")
+  assert.truthy(result.success, "Should allow polymorphic identity")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - polymorphic function with constraints", fn(assert) {
+  let result = parseAndTypecheck("{ let add1 = fn(x) { x + 1 }\nlet n1 = add1(10)\nlet n2 = add1(20)\nn1 + n2 }")
+  assert.truthy(result.success, "Should allow multiple uses with same constraint")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - polymorphic higher-order function", fn(assert) {
+  let result = parseAndTypecheck("{ let apply = fn(f, x) { f(x) }\nlet inc = fn(n) { n + 1 }\napply(inc, 42) }")
+  assert.truthy(result.success, "Should typecheck higher-order polymorphic function")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - value restriction prevents generalization", fn(assert) {
+  // Non-function values should not be generalized
+  let result = parseAndTypecheck("{ let x = 42\nx = x + 1\nx }")
+  assert.truthy(result.success, "Should allow assignment to monomorphic binding")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - cannot assign to polymorphic binding", fn(assert) {
+  let result = parseAndTypecheck("{ let f = fn(x) { x }\nf = fn(y) { y + 1 }\nf }")
+  assert.equal(result.success, false, "Should fail on assignment to poly binding")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - polymorphic function in array operations", fn(assert) {
+  let result = parseAndTypecheck("{ let double = fn(x) { x + x }\nlet nums = [1, 2, 3]\nmap(nums, double) }")
+  assert.truthy(result.success, "Should work with polymorphic map")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - polymorphic pair selector", fn(assert) {
+  let result = parseAndTypecheck("{ let fst = fn(a, b) { a }\nlet n = fst(1, \"x\")\nlet s = fst(\"hello\", 42)\nn + 1 }")
+  assert.truthy(result.success, "Should generalize pair selectors")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
 suite.run()

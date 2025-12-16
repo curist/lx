@@ -63,6 +63,22 @@ fn typeRecord(fields) {
   .{ kind: "Record", fields: fields }
 }
 
+fn typeScheme(typeVars, type) {
+  .{ kind: "Scheme", typeVars: typeVars, type: type }
+}
+
+// ========================================
+// Type Bindings (Mono/Poly)
+// ========================================
+
+fn bindingMono(typeVar) {
+  .{ kind: "Mono", typeVar: typeVar }
+}
+
+fn bindingPoly(scheme) {
+  .{ kind: "Poly", scheme: scheme }
+}
+
 // ========================================
 // Type Variable Management
 // ========================================
@@ -160,16 +176,29 @@ fn exitScope(checker) {
   }
 }
 
-fn bindDecl(checker, declNodeId) {
+fn bindDeclMono(checker, declNodeId) {
+  // Create a monomorphic binding
   if !declNodeId {
-    return freshTypeVar(checker)
+    return bindingMono(freshTypeVar(checker))
   }
   let tv = freshTypeVar(checker)
-  checker.currentEnv.bindings[declNodeId] = tv
-  tv
+  let binding = bindingMono(tv)
+  checker.currentEnv.bindings[declNodeId] = binding
+  binding
+}
+
+fn bindDeclPoly(checker, declNodeId, scheme) {
+  // Create a polymorphic binding
+  if !declNodeId {
+    return bindingPoly(scheme)
+  }
+  let binding = bindingPoly(scheme)
+  checker.currentEnv.bindings[declNodeId] = binding
+  binding
 }
 
 fn lookupDecl(checker, declNodeId) {
+  // Returns Mono/Poly binding or nil
   if !declNodeId {
     return nil
   }
@@ -280,6 +309,184 @@ fn constrain(checker, t1, t2, nodeId, errorMsg) {
     return typeAny()
   }
   t1
+}
+
+// ========================================
+// Polymorphism: Schemes, Generalization, Instantiation
+// ========================================
+
+fn ftv(type) {
+  // Compute free type variables in a type
+  if type.kind == "TypeVar" {
+    return [type.id]
+  }
+
+  if type.kind == "Function" {
+    let vars = []
+    for let i = 0; i < len(type.params); i = i + 1 {
+      let paramVars = ftv(type.params[i])
+      for let j = 0; j < len(paramVars); j = j + 1 {
+        push(vars, paramVars[j])
+      }
+    }
+    let retVars = ftv(type.return)
+    for let j = 0; j < len(retVars); j = j + 1 {
+      push(vars, retVars[j])
+    }
+    return vars
+  }
+
+  if type.kind == "Array" {
+    return ftv(type.elem)
+  }
+
+  if type.kind == "Record" {
+    let vars = []
+    let fieldKeys = keys(type.fields)
+    for let i = 0; i < len(fieldKeys); i = i + 1 {
+      let fieldVars = ftv(type.fields[fieldKeys[i]])
+      for let j = 0; j < len(fieldVars); j = j + 1 {
+        push(vars, fieldVars[j])
+      }
+    }
+    return vars
+  }
+
+  // Unknown, Any, Nil, Number, Bool, String have no free vars
+  return []
+}
+
+fn ftvEnv(checker, env) {
+  // Compute free type variables in environment
+  let vars = []
+  for env {
+    let bindingKeys = keys(env.bindings)
+    for let i = 0; i < len(bindingKeys); i = i + 1 {
+      let binding = env.bindings[bindingKeys[i]]
+      if binding.kind == "Mono" {
+        let bindingVars = ftv(binding.typeVar)
+        for let j = 0; j < len(bindingVars); j = j + 1 {
+          push(vars, bindingVars[j])
+        }
+      }
+      // Poly bindings don't contribute free vars (they're bound by Scheme)
+    }
+    env = env.parent
+  }
+  return vars
+}
+
+fn setDifference(set1, set2) {
+  // Return elements in set1 that are not in set2
+  let result = []
+  for let i = 0; i < len(set1); i = i + 1 {
+    let found = false
+    for let j = 0; j < len(set2); j = j + 1 {
+      if set1[i] == set2[j] {
+        found = true
+      }
+    }
+    if !found {
+      push(result, set1[i])
+    }
+  }
+  return result
+}
+
+fn derefAll(checker, type) {
+  // Recursively dereference all TypeVars in a type
+  type = deref(checker, type)
+
+  if type.kind == "Function" {
+    let newParams = []
+    for let i = 0; i < len(type.params); i = i + 1 {
+      push(newParams, derefAll(checker, type.params[i]))
+    }
+    let newReturn = derefAll(checker, type.return)
+    return typeFunction(newParams, newReturn)
+  }
+
+  if type.kind == "Array" {
+    return typeArray(derefAll(checker, type.elem))
+  }
+
+  if type.kind == "Record" {
+    let newFields = .{}
+    let fieldKeys = keys(type.fields)
+    for let i = 0; i < len(fieldKeys); i = i + 1 {
+      let key = fieldKeys[i]
+      newFields[key] = derefAll(checker, type.fields[key])
+    }
+    return typeRecord(newFields)
+  }
+
+  // TypeVar, Unknown, Any, Nil, Number, Bool, String - already deref'd
+  return type
+}
+
+fn generalize(checker, env, type) {
+  // First, fully dereference the type to follow all bindings
+  type = derefAll(checker, type)
+
+  // generalize(env, type) = Forall(ftv(type) - ftv(env), type)
+  let typeFreeVars = ftv(type)
+  let envFreeVars = ftvEnv(checker, env)
+  let quantifiedVars = setDifference(typeFreeVars, envFreeVars)
+
+  if len(quantifiedVars) == 0 {
+    // No free vars to quantify - return monomorphic binding
+    return nil
+  }
+
+  typeScheme(quantifiedVars, type)
+}
+
+fn substitute(type, subst) {
+  // Substitute TypeVars according to subst map
+  if type.kind == "TypeVar" {
+    let replacement = subst[type.id]
+    if replacement {
+      return replacement
+    }
+    return type
+  }
+
+  if type.kind == "Function" {
+    let newParams = []
+    for let i = 0; i < len(type.params); i = i + 1 {
+      push(newParams, substitute(type.params[i], subst))
+    }
+    let newReturn = substitute(type.return, subst)
+    return typeFunction(newParams, newReturn)
+  }
+
+  if type.kind == "Array" {
+    return typeArray(substitute(type.elem, subst))
+  }
+
+  if type.kind == "Record" {
+    let newFields = .{}
+    let fieldKeys = keys(type.fields)
+    for let i = 0; i < len(fieldKeys); i = i + 1 {
+      let key = fieldKeys[i]
+      newFields[key] = substitute(type.fields[key], subst)
+    }
+    return typeRecord(newFields)
+  }
+
+  // Unknown, Any, Nil, Number, Bool, String unchanged
+  return type
+}
+
+fn instantiate(checker, scheme) {
+  // instantiate(Forall([t1..tn], T)) = substitute(T, { t1 → fresh, ... })
+  let subst = .{}
+  for let i = 0; i < len(scheme.typeVars); i = i + 1 {
+    let oldId = scheme.typeVars[i]
+    let newVar = freshTypeVar(checker)
+    subst[oldId] = newVar
+  }
+  substitute(scheme.type, subst)
 }
 
 // ========================================
@@ -408,26 +615,42 @@ fn checkIdentifier(checker, node) {
     return t
   }
 
-  // Get the declaration's type variable
+  // Get the declaration's type binding
   let declNodeId = binding.declaredAt
-  let declType = lookupDecl(checker, declNodeId)
+  let declBinding = lookupDecl(checker, declNodeId)
 
-  if !declType {
+  let declType = nil
+
+  if declBinding {
+    // Found in local environment - extract type based on Mono/Poly
+    if declBinding.kind == "Mono" {
+      declType = declBinding.typeVar
+    } else if declBinding.kind == "Poly" {
+      // Instantiate polymorphic binding with fresh TypeVars
+      declType = instantiate(checker, declBinding.scheme)
+    }
+  } else {
     // Not in local environment - check if it's a builtin
     let builtinType = getBuiltinType(checker, node.name)
     if builtinType {
       declType = builtinType
-      // Cache builtin type for this declaration
+      // Cache builtin type for this declaration (as Mono binding)
       if declNodeId {
-        checker.globalTypeCache[declNodeId] = declType
+        checker.globalTypeCache[declNodeId] = bindingMono(builtinType)
       }
     } else if declNodeId {
       // Check global cache
-      declType = checker.globalTypeCache[declNodeId]
-      if !declType {
+      let cachedBinding = checker.globalTypeCache[declNodeId]
+      if cachedBinding {
+        if cachedBinding.kind == "Mono" {
+          declType = cachedBinding.typeVar
+        } else if cachedBinding.kind == "Poly" {
+          declType = instantiate(checker, cachedBinding.scheme)
+        }
+      } else {
         // First time seeing this global - create and cache it
         declType = freshTypeVar(checker)
-        checker.globalTypeCache[declNodeId] = declType
+        checker.globalTypeCache[declNodeId] = bindingMono(declType)
       }
     } else {
       // No declNodeId - create fresh TypeVar
@@ -631,10 +854,8 @@ fn checkFunction(checker, node) {
   let paramTypes = []
   for let i = 0; i < len(node.params); i = i + 1 {
     let param = node.params[i]
-    let paramType = freshTypeVar(checker)
-
-    // Bind parameter declaration (param.id is the declNodeId)
-    checker.currentEnv.bindings[param.id] = paramType
+    let binding = bindDeclMono(checker, param.id)
+    let paramType = binding.typeVar
 
     push(paramTypes, paramType)
     checker.types[param.id] = paramType
@@ -728,14 +949,39 @@ fn checkLet(checker, node) {
   // For Let declarations, the declNodeId is the name identifier's id
   let declNodeId = node.name.id
 
-  // Bind declaration to fresh type variable
-  let varType = bindDecl(checker, declNodeId)
+  let varType = nil
+  let binding = nil
 
   // Check initializer if present
   if node.init {
     let initType = checkExpr(checker, node.init)
-    constrain(checker, varType, initType, node.init.id,
-      "Initializer type incompatible with variable type")
+
+    // Value restriction: only generalize function literals
+    if node.init.type == "Function" {
+      // Try to generalize
+      let scheme = generalize(checker, checker.currentEnv, initType)
+      if scheme {
+        // Successfully generalized - create Poly binding
+        binding = bindDeclPoly(checker, declNodeId, scheme)
+        varType = initType  // Store the ungeneralized type for checker.types
+      } else {
+        // No free vars to generalize - create Mono binding
+        binding = bindDeclMono(checker, declNodeId)
+        varType = binding.typeVar
+        constrain(checker, varType, initType, node.init.id,
+          "Initializer type incompatible with variable type")
+      }
+    } else {
+      // Not a function literal - create Mono binding
+      binding = bindDeclMono(checker, declNodeId)
+      varType = binding.typeVar
+      constrain(checker, varType, initType, node.init.id,
+        "Initializer type incompatible with variable type")
+    }
+  } else {
+    // No initializer - create Mono binding
+    binding = bindDeclMono(checker, declNodeId)
+    varType = binding.typeVar
   }
 
   // Record type for the name identifier
@@ -754,6 +1000,20 @@ fn checkAssignment(checker, node) {
   let targetType = nil
 
   if node.target.type == "Identifier" {
+    // Check if target is a polymorphic binding (not assignable)
+    let binding = checker.resolvedNames[node.target.id]
+    if binding {
+      let declNodeId = binding.declaredAt
+      let declBinding = lookupDecl(checker, declNodeId)
+      if declBinding and declBinding.kind == "Poly" {
+        addError(checker, node.target.id,
+          "Cannot assign to polymorphic binding: " + node.target.name)
+        targetType = typeAny()
+        checker.types[node.id] = valueType
+        return valueType
+      }
+    }
+
     targetType = checkExpr(checker, node.target)
     // Unify target with value
     constrain(checker, targetType, valueType, node.value.id,

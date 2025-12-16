@@ -1023,4 +1023,89 @@ test("typecheck - tagged: multiple tag field names", fn(assert) {
   assert.equal(getExprType(result3, 0).kind, "Tagged", "tag should create Tagged")
 })
 
+// ========================================
+// Regression Tests for Type System Gaps
+// ========================================
+
+test("typecheck - regression: named function call type checking", fn(assert) {
+  let code = "{
+    fn f() { \"hello\" }
+    f() + 1
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(!result.success, "Should error: can't add String and Number")
+})
+
+test("typecheck - regression: recursive function type inference", fn(assert) {
+  let code = "{
+    fn fact(n) {
+      if n == 0 { 1 } else { n * fact(n - 1) }
+    }
+    fact(5)
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should allow recursive calls")
+})
+
+test("typecheck - regression: global consistency checking", fn(assert) {
+  let code = "{
+    let a = println
+    let b = println
+    a(1)
+    b(\"hello\")
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should handle consistent global usage")
+})
+
+test("typecheck - regression: unknown type refinement", fn(assert) {
+  let code = "{
+    fn getVal(x) { x.value }
+    let obj = .{ value: 42 }
+    getVal(obj)
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should refine unknown to record shape")
+})
+
+test("typecheck - regression: keys on real records", fn(assert) {
+  let code = "{
+    let obj = .{ a: 1, b: 2 }
+    keys(obj)
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should allow keys on non-empty records")
+})
+
+test("typecheck - regression: invalid index assignment", fn(assert) {
+  let code = "{
+    1[0] = 2
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(!result.success, "Should error: can't index into number")
+})
+
+test("typecheck - regression: invalid dot assignment", fn(assert) {
+  let code = "{
+    let obj = .{ x: 1 }
+    obj.y = 3
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(!result.success, "Should error: field y doesn't exist")
+})
+
+test("typecheck - regression: if without else known limitation", fn(assert) {
+  // Note: Without union types, if-without-else cannot be properly typed as "T | Nil"
+  // This is a known limitation - the typecheck phase returns the then-branch type
+  // even though the result could be Nil at runtime
+  let code = "{
+    fn f(cond) {
+      if cond { 1 }
+    }
+    f(true)
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Currently allows if-without-else (known limitation)")
+})
+
 suite.run()

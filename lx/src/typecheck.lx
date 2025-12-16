@@ -786,9 +786,9 @@ fn getBuiltinType(checker, name) {
   }
 
   if name == "keys" {
-    // keys: Record -> Array(String)
-    let tv = freshTypeVar(checker)
-    return typeFunction([typeRecord(.{})], typeArray(typeString()))
+    // keys: Record(any shape) -> Array(String)
+    // Use Any to accept any record shape (could also use a TypeVar)
+    return typeFunction([typeAny()], typeArray(typeString()))
   }
 
   if name == "join" {
@@ -1181,6 +1181,13 @@ fn checkDot(checker, node) {
 }
 
 fn checkFunction(checker, node) {
+  // If this is a named function, pre-bind its declaration ID to allow recursion
+  // The resolve phase sets declaredAt to the function node ID for named functions
+  let functionBinding = nil
+  if node.name {
+    functionBinding = bindDeclMono(checker, node.id)
+  }
+
   // Enter new scope for function
   enterScope(checker)
 
@@ -1219,6 +1226,13 @@ fn checkFunction(checker, node) {
   // Create function type
   let resultType = typeFunction(paramTypes, returnType)
   checker.types[node.id] = resultType
+
+  // Bind the function declaration to its inferred type
+  if functionBinding {
+    constrain(checker, functionBinding.typeVar, resultType, node.id,
+      "Function type inconsistent")
+  }
+
   resultType
 }
 
@@ -1362,9 +1376,15 @@ fn checkAssignment(checker, node) {
     if objType.kind == "Array" {
       constrain(checker, objType.elem, valueType, node.value.id,
         "Array element assignment type mismatch")
+      targetType = valueType
+    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" or objType.kind == "Any" {
+      // Allow assignment to unknown types
+      targetType = valueType
+    } else {
+      addError(checker, node.target.object.id,
+        "Index assignment requires array, got: " + objType.kind)
+      targetType = typeAny()
     }
-
-    targetType = valueType
   } else if node.target.type == "Dot" {
     // obj.field = value
     let objType = checkExpr(checker, node.target.object)
@@ -1377,10 +1397,20 @@ fn checkAssignment(checker, node) {
       if fieldType {
         constrain(checker, fieldType, valueType, node.value.id,
           "Record field assignment type mismatch")
+        targetType = valueType
+      } else {
+        addError(checker, node.target.id,
+          "Field '" + propName + "' does not exist on record")
+        targetType = typeAny()
       }
+    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" or objType.kind == "Any" {
+      // Allow assignment to unknown types
+      targetType = valueType
+    } else {
+      addError(checker, node.target.object.id,
+        "Dot assignment requires record, got: " + objType.kind)
+      targetType = typeAny()
     }
-
-    targetType = valueType
   }
 
   // Assignment evaluates to the assigned value
@@ -1591,7 +1621,9 @@ fn checkIf(checker, node) {
     // Restore original environment
     checker.currentEnv = originalEnv
 
-    // No else branch - can't assume anything about guard at exit
+    // No else branch - return then-branch type
+    // Note: This is unsound (result could be Nil at runtime), but without union types
+    // we cannot properly represent "ThenType | Nil"
     resultType = thenType
   }
 

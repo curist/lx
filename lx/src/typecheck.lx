@@ -319,6 +319,84 @@ fn checkLiteral(checker, node) {
   resultType
 }
 
+fn getBuiltinType(checker, name) {
+  // Returns type for known builtins, nil otherwise
+  // Using TypeVars to approximate polymorphism
+
+  if name == "len" {
+    // len: Array(T) | String -> Number
+    let tv = freshTypeVar(checker)
+    return typeFunction([typeArray(tv)], typeNumber())
+  }
+
+  if name == "push" {
+    // push: (Array(T), T) -> Nil
+    let tv = freshTypeVar(checker)
+    return typeFunction([typeArray(tv), tv], typeNil())
+  }
+
+  if name == "println" or name == "print" {
+    // println/print: (...Any) -> Nil (variadic, approximate with Any)
+    return typeFunction([typeAny()], typeNil())
+  }
+
+  if name == "type" {
+    // type: Any -> String
+    return typeFunction([typeAny()], typeString())
+  }
+
+  if name == "str" {
+    // str: Any -> String
+    return typeFunction([typeAny()], typeString())
+  }
+
+  if name == "int" {
+    // int: Any -> Number
+    return typeFunction([typeAny()], typeNumber())
+  }
+
+  if name == "range" {
+    // range: Number -> Array(Number)
+    return typeFunction([typeNumber()], typeArray(typeNumber()))
+  }
+
+  if name == "map" {
+    // map: (Array(T), Function(T -> U)) -> Array(U)
+    let tvar = freshTypeVar(checker)
+    let uvar = freshTypeVar(checker)
+    let fnType = typeFunction([tvar], uvar)
+    return typeFunction([typeArray(tvar), fnType], typeArray(uvar))
+  }
+
+  if name == "fold" {
+    // fold: (Array(T), U, Function(U, T -> U)) -> U
+    let tvar = freshTypeVar(checker)
+    let uvar = freshTypeVar(checker)
+    let fnType = typeFunction([uvar, tvar], uvar)
+    return typeFunction([typeArray(tvar), uvar, fnType], uvar)
+  }
+
+  if name == "each" {
+    // each: (Array(T), Function(T -> Any)) -> Nil
+    let tvar = freshTypeVar(checker)
+    let fnType = typeFunction([tvar], typeAny())
+    return typeFunction([typeArray(tvar), fnType], typeNil())
+  }
+
+  if name == "keys" {
+    // keys: Record -> Array(String)
+    let tv = freshTypeVar(checker)
+    return typeFunction([typeRecord(.{})], typeArray(typeString()))
+  }
+
+  if name == "join" {
+    // join: (Array(String), String) -> String
+    return typeFunction([typeArray(typeString()), typeString()], typeString())
+  }
+
+  nil
+}
+
 fn checkIdentifier(checker, node) {
   // Look up in resolvedNames (from resolve phase)
   let binding = checker.resolvedNames[node.id]
@@ -335,8 +413,26 @@ fn checkIdentifier(checker, node) {
   let declType = lookupDecl(checker, declNodeId)
 
   if !declType {
-    // First time seeing this declaration - bind it
-    declType = bindDecl(checker, declNodeId)
+    // Not in local environment - check if it's a builtin
+    let builtinType = getBuiltinType(checker, node.name)
+    if builtinType {
+      declType = builtinType
+      // Cache builtin type for this declaration
+      if declNodeId {
+        checker.globalTypeCache[declNodeId] = declType
+      }
+    } else if declNodeId {
+      // Check global cache
+      declType = checker.globalTypeCache[declNodeId]
+      if !declType {
+        // First time seeing this global - create and cache it
+        declType = freshTypeVar(checker)
+        checker.globalTypeCache[declNodeId] = declType
+      }
+    } else {
+      // No declNodeId - create fresh TypeVar
+      declType = freshTypeVar(checker)
+    }
   }
 
   checker.types[node.id] = declType
@@ -424,7 +520,7 @@ fn checkLogical(checker, node) {
 
 fn checkArray(checker, node) {
   // Infer element type from first element, unify with rest
-  let elemType = typeUnknown()
+  let elemType = freshTypeVar(checker)
 
   if len(node.elements) > 0 {
     elemType = checkExpr(checker, node.elements[0])
@@ -454,8 +550,8 @@ fn checkIndex(checker, node) {
     constrain(checker, indexType, typeNumber(), node.index.id,
       "Array index must be number")
     resultType = objType.elem
-  } else if objType.kind == "Unknown" {
-    // Refine to Array(Unknown)
+  } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
+    // Refine to Array(TypeVar) - this binds the Unknown/TypeVar
     let elemType = freshTypeVar(checker)
     let arrayType = typeArray(elemType)
     constrain(checker, objType, arrayType, node.object.id,
@@ -509,8 +605,8 @@ fn checkDot(checker, node) {
     } else {
       resultType = fieldType
     }
-  } else if objType.kind == "Unknown" {
-    // Refine to Record with this field
+  } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
+    // Refine to Record with this field - this binds the Unknown/TypeVar
     let fieldType = freshTypeVar(checker)
     let recordFields = .{}
     recordFields[propName] = fieldType
@@ -585,14 +681,15 @@ fn checkCall(checker, node) {
   let resultType = nil
 
   if calleeType.kind == "Function" {
-    // Constrain arguments (exact arity in core subset)
+    // Arity widening: allow extra arguments (ignore them), error on missing
     let paramCount = len(calleeType.params)
     let argCount = len(argTypes)
 
-    if argCount != paramCount {
+    if argCount < paramCount {
       addError(checker, node.id,
         "Function expects " + str(paramCount) + " arguments, got " + str(argCount))
     } else {
+      // Unify provided arguments with parameters (ignore extras)
       for let i = 0; i < paramCount; i = i + 1 {
         constrain(checker, argTypes[i], calleeType.params[i],
           node.args[i].id, "Argument type mismatch")
@@ -899,6 +996,7 @@ fn makeChecker(resolveResult, opts) {
     // Type variable state
     nextTypeVarId: 1,
     typeVarBindings: .{},
+    globalTypeCache: .{},  // declNodeId -> TypeVar for globals/imports
 
     // Environment
     currentEnv: nil,

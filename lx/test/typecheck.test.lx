@@ -373,4 +373,76 @@ test("typecheck - shadowing", fn(assert) {
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
 
+// ========================================
+// Arity Widening Tests
+// ========================================
+
+test("typecheck - arity widening allows extra args", fn(assert) {
+  let result = parseAndTypecheck("{ let f = fn(x) { x + 1 }\nf(1, 2, 3) }")
+  assert.truthy(result.success, "Should allow extra arguments")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - arity error on missing args", fn(assert) {
+  let result = parseAndTypecheck("{ let f = fn(x, y) { x + y }\nf(1) }")
+  assert.equal(result.success, false, "Should fail with missing arguments")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+// ========================================
+// Builtin Function Signature Tests
+// ========================================
+
+test("typecheck - len with array", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlet n = len(arr)\nn + 1 }")
+  assert.truthy(result.success, "Should typecheck len")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - push with array", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\npush(arr, 4) }")
+  assert.truthy(result.success, "Should typecheck push")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - push type error", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\npush(arr, \"hello\") }")
+  assert.equal(result.success, false, "Should fail with type mismatch")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - map with array", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlet doubled = map(arr, fn(x) { x * 2 })\ndoubled }")
+  assert.truthy(result.success, "Should typecheck map")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - fold with array", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlet sum = fold(arr, 0, fn(acc, x) { acc + x })\nsum }")
+  assert.truthy(result.success, "Should typecheck fold")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - join with strings", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [\"a\", \"b\", \"c\"]\nlet s = join(arr, \",\")\ns }")
+  assert.truthy(result.success, "Should typecheck join")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - range returns array of numbers", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = range(5)\nlet x = arr[0]\nx + 1 }")
+  assert.truthy(result.success, "Should typecheck range")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+// ========================================
+// TypeVar Refinement Tests
+// ========================================
+
+test("typecheck - empty array refinement via index", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = []\narr[0] = 5\nlet x = arr[0]\nx + 1 }")
+  assert.truthy(result.success, "Should refine empty array element type")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
 suite.run()

@@ -67,6 +67,10 @@ fn typeScheme(typeVars, type) {
   .{ kind: "Scheme", typeVars: typeVars, type: type }
 }
 
+fn typeTagged(tagField, cases) {
+  .{ kind: "Tagged", tagField: tagField, cases: cases }
+}
+
 // ========================================
 // Type Bindings (Mono/Poly)
 // ========================================
@@ -143,6 +147,28 @@ fn sameType(t1, t2) {
         return false
       }
       if !sameType(t1.fields[k], t2.fields[k]) {
+        return false
+      }
+    }
+    return true
+  }
+
+  // Tagged types
+  if t1.kind == "Tagged" and t2.kind == "Tagged" {
+    if t1.tagField != t2.tagField {
+      return false
+    }
+    let keys1 = keys(t1.cases)
+    let keys2 = keys(t2.cases)
+    if len(keys1) != len(keys2) {
+      return false
+    }
+    for let i = 0; i < len(keys1); i = i + 1 {
+      let k = keys1[i]
+      if !t2.cases[k] {
+        return false
+      }
+      if !sameType(t1.cases[k], t2.cases[k]) {
         return false
       }
     }
@@ -226,9 +252,29 @@ fn refineForTypeTest(checker, env, guard, truthy) {
 }
 
 fn refineForTagCheck(checker, env, guard, truthy) {
-  // Stub for Phase 1
   if !truthy { return }
-  // Future: refine to specific tagged case
+
+  // Get variable's current type
+  let originalBinding = lookupDecl(checker, guard.declNodeId)
+  if !originalBinding or originalBinding.kind == "Poly" {
+    return
+  }
+
+  let varType = deref(checker, originalBinding.typeVar)
+  if !varType or varType.kind != "Tagged" {
+    return
+  }
+
+  // Verify tag field and value match
+  if varType.tagField != guard.tagField {
+    return
+  }
+  if !varType.cases[guard.tagValue] {
+    return
+  }
+
+  // Store known tag
+  checker.knownTags[guard.declNodeId] = guard.tagValue
 }
 
 fn refineEnv(checker, env, guard, truthy) {
@@ -382,6 +428,40 @@ fn unify(checker, t1, t2) {
     return true
   }
 
+  // Structural unification - Tagged
+  if t1.kind == "Tagged" and t2.kind == "Tagged" {
+    // Tag field must match
+    if t1.tagField != t2.tagField {
+      return false
+    }
+
+    // Unify overlapping cases and merge cases from t2 into t1
+    let keys2 = keys(t2.cases)
+    for let i = 0; i < len(keys2); i = i + 1 {
+      let k = keys2[i]
+      let case1 = t1.cases[k]
+      let case2 = t2.cases[k]
+
+      if case1 {
+        // Overlapping case - unify
+        if !unify(checker, case1, case2) {
+          return false
+        }
+      } else {
+        // New case from t2 - merge it into t1
+        t1.cases[k] = case2
+      }
+    }
+
+    return true
+  }
+
+  // Tagged with Record: strict mode - incompatible
+  if (t1.kind == "Tagged" and t2.kind == "Record") or
+     (t1.kind == "Record" and t2.kind == "Tagged") {
+    return false
+  }
+
   // Incompatible types
   false
 }
@@ -430,6 +510,18 @@ fn ftv(type) {
       let fieldVars = ftv(type.fields[fieldKeys[i]])
       for let j = 0; j < len(fieldVars); j = j + 1 {
         push(vars, fieldVars[j])
+      }
+    }
+    return vars
+  }
+
+  if type.kind == "Tagged" {
+    let vars = []
+    let caseKeys = keys(type.cases)
+    for let i = 0; i < len(caseKeys); i = i + 1 {
+      let caseVars = ftv(type.cases[caseKeys[i]])
+      for let j = 0; j < len(caseVars); j = j + 1 {
+        push(vars, caseVars[j])
       }
     }
     return vars
@@ -503,6 +595,16 @@ fn derefAll(checker, type) {
     return typeRecord(newFields)
   }
 
+  if type.kind == "Tagged" {
+    let newCases = .{}
+    let caseKeys = keys(type.cases)
+    for let i = 0; i < len(caseKeys); i = i + 1 {
+      let tagValue = caseKeys[i]
+      newCases[tagValue] = derefAll(checker, type.cases[tagValue])
+    }
+    return typeTagged(type.tagField, newCases)
+  }
+
   // TypeVar, Unknown, Any, Nil, Number, Bool, String - already deref'd
   return type
 }
@@ -555,6 +657,16 @@ fn substitute(type, subst) {
       newFields[key] = substitute(type.fields[key], subst)
     }
     return typeRecord(newFields)
+  }
+
+  if type.kind == "Tagged" {
+    let newCases = .{}
+    let caseKeys = keys(type.cases)
+    for let i = 0; i < len(caseKeys); i = i + 1 {
+      let tagValue = caseKeys[i]
+      newCases[tagValue] = substitute(type.cases[tagValue], subst)
+    }
+    return typeTagged(type.tagField, newCases)
   }
 
   // Unknown, Any, Nil, Number, Bool, String unchanged
@@ -873,25 +985,136 @@ fn checkIndex(checker, node) {
 }
 
 fn checkHashmap(checker, node) {
-  let fields = .{}
+  // Get tag field names from opts (default: ["kind", "type", "tag"])
+  let tagFieldNames = ["kind", "type", "tag"]
+  if checker.opts.tagFieldNames {
+    tagFieldNames = checker.opts.tagFieldNames
+  }
+
+  // First pass: check for tag field with literal value
+  let tagFieldName = nil
+  let tagValue = nil
+  let tagPairIndex = -1
 
   for let i = 0; i < len(node.pairs); i = i + 1 {
     let pair = node.pairs[i]
-    let keyType = checkExpr(checker, pair.key)
-    let valueType = checkExpr(checker, pair.value)
-
-    // In core subset, keys must be string literals
     if pair.key.type == "String" {
       let keyName = pair.key.value
-      fields[keyName] = valueType
-    } else {
-      addError(checker, pair.key.id, "Record keys must be string literals")
+
+      // Check if this is a tag field
+      for let j = 0; j < len(tagFieldNames); j = j + 1 {
+        if keyName == tagFieldNames[j] {
+          // Found potential tag field - check if value is literal
+          if pair.value.type == "String" {
+            tagFieldName = keyName
+            tagValue = pair.value.value
+            tagPairIndex = i
+          }
+        }
+      }
     }
   }
 
-  let resultType = typeRecord(fields)
-  checker.types[node.id] = resultType
-  resultType
+  // Second pass: build type
+  if tagFieldName {
+    // Build Tagged type - exclude tag field from case fields
+    let caseFields = .{}
+
+    for let i = 0; i < len(node.pairs); i = i + 1 {
+      if i == tagPairIndex {
+        // Skip tag field - it's not part of the case Record
+        let dummy = 0
+      } else {
+        let pair = node.pairs[i]
+        let valueType = checkExpr(checker, pair.value)
+
+        if pair.key.type == "String" {
+          let keyName = pair.key.value
+          caseFields[keyName] = valueType
+        } else {
+          addError(checker, pair.key.id, "Record keys must be string literals")
+        }
+      }
+    }
+
+    // Create single-case Tagged
+    let cases = .{}
+    cases[tagValue] = typeRecord(caseFields)
+
+    let resultType = typeTagged(tagFieldName, cases)
+    checker.types[node.id] = resultType
+    return resultType
+  } else {
+    // Build regular Record (existing logic)
+    let fields = .{}
+
+    for let i = 0; i < len(node.pairs); i = i + 1 {
+      let pair = node.pairs[i]
+      let keyType = checkExpr(checker, pair.key)
+      let valueType = checkExpr(checker, pair.value)
+
+      if pair.key.type == "String" {
+        let keyName = pair.key.value
+        fields[keyName] = valueType
+      } else {
+        addError(checker, pair.key.id, "Record keys must be string literals")
+      }
+    }
+
+    let resultType = typeRecord(fields)
+    checker.types[node.id] = resultType
+    return resultType
+  }
+}
+
+fn checkFieldInAllCases(checker, cases, fieldName, nodeId) {
+  // Check if field exists in all cases with same type
+  let caseKeys = keys(cases)
+
+  if len(caseKeys) == 0 {
+    addError(checker, nodeId, "Cannot access field on empty tagged union")
+    return typeAny()
+  }
+
+  let firstCase = cases[caseKeys[0]]
+  let commonFieldType = firstCase.fields[fieldName]
+
+  if !commonFieldType {
+    addError(checker, nodeId, "Field '" + fieldName + "' not present in all cases")
+    return typeAny()
+  }
+
+  // Check all other cases have this field with same type
+  for let i = 1; i < len(caseKeys); i = i + 1 {
+    let caseRecord = cases[caseKeys[i]]
+    let fieldType = caseRecord.fields[fieldName]
+
+    if !fieldType {
+      addError(checker, nodeId, "Field '" + fieldName + "' not present in all cases")
+      return typeAny()
+    }
+
+    if !sameType(commonFieldType, fieldType) {
+      addError(checker, nodeId, "Field '" + fieldName + "' has incompatible types across cases")
+      return typeAny()
+    }
+  }
+
+  return commonFieldType
+}
+
+fn getKnownTag(checker, objNode) {
+  // Get known tag for an identifier from narrowing context
+  if objNode.type != "Identifier" {
+    return nil
+  }
+
+  let binding = checker.resolvedNames[objNode.id]
+  if !binding {
+    return nil
+  }
+
+  return checker.knownTags[binding.declaredAt]
 }
 
 fn checkDot(checker, node) {
@@ -903,7 +1126,35 @@ fn checkDot(checker, node) {
 
   let resultType = nil
 
-  if objType.kind == "Record" {
+  if objType.kind == "Tagged" {
+    // Accessing tag field itself
+    if propName == objType.tagField {
+      resultType = typeString()
+    } else {
+      // Accessing non-tag field
+      let knownTag = getKnownTag(checker, node.object)
+
+      if knownTag {
+        // Tag is known via narrowing - lookup in specific case
+        let caseRecord = objType.cases[knownTag]
+        if !caseRecord {
+          addError(checker, node.id, "Unknown tag value '" + knownTag + "'")
+          resultType = typeAny()
+        } else {
+          let fieldType = caseRecord.fields[propName]
+          if !fieldType {
+            addError(checker, node.id, "Field '" + propName + "' not in case '" + knownTag + "'")
+            resultType = typeAny()
+          } else {
+            resultType = fieldType
+          }
+        }
+      } else {
+        // Tag unknown - field must exist in all cases
+        resultType = checkFieldInAllCases(checker, objType.cases, propName, node.id)
+      }
+    }
+  } else if objType.kind == "Record" {
     let fieldType = objType.fields[propName]
     if !fieldType {
       addError(checker, node.id, "Property '" + propName + "' not found in record")
@@ -1295,6 +1546,11 @@ fn mergeEnvs(checker, originalEnv, thenEnv, elseEnv, guard) {
       unify(checker, elseBinding.typeVar, originalBinding.typeVar)
     }
   }
+
+  // Clear tag narrowing after merge
+  if guard and guard.kind == "tag-check" {
+    checker.knownTags[guard.declNodeId] = nil
+  }
 }
 
 fn checkIf(checker, node) {
@@ -1524,6 +1780,9 @@ fn makeChecker(resolveResult, opts) {
 
     // Environment
     currentEnv: nil,
+
+    // Type narrowing
+    knownTags: .{},  // declNodeId → tagValue for tag narrowing
 
     // Function tracking
     currentReturnType: nil,

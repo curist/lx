@@ -850,4 +850,177 @@ test("typecheck - narrowing: non-identifier expressions ignored", fn(assert) {
   assert.truthy(result.success, "Should ignore non-identifier type tests")
 })
 
+// ========================================
+// Tagged Records Tests
+// ========================================
+
+test("typecheck - tagged: detect literal with kind field", fn(assert) {
+  let code = "{ .{ kind: \"Int\", value: 42 } }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should typecheck")
+
+  let exprType = getExprType(result, 0)
+  assert.equal(exprType.kind, "Tagged", "Should be Tagged type")
+  assert.equal(exprType.tagField, "kind", "Should use kind as tag field")
+
+  let intCase = exprType.cases["Int"]
+  assert.truthy(intCase, "Should have Int case")
+  assert.equal(intCase.kind, "Record", "Case should be Record")
+  assert.truthy(intCase.fields["value"], "Should have value field")
+})
+
+test("typecheck - tagged: non-literal tag value remains Record", fn(assert) {
+  let code = "{
+    let x = \"Int\"
+    .{ kind: x, value: 42 }
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should typecheck")
+
+  let exprType = getExprType(result, 1)
+  assert.equal(exprType.kind, "Record", "Should be Record type with non-literal tag")
+})
+
+test("typecheck - tagged: tag field access returns String", fn(assert) {
+  let code = "{
+    let x = .{ kind: \"Int\", value: 42 }
+    x.kind
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should typecheck")
+
+  let accessType = getExprType(result, 1)
+  assert.equal(accessType.kind, "String", "Tag field access should return String")
+})
+
+test("typecheck - tagged: unify creates multi-case union", fn(assert) {
+  let code = "{
+    let x = if true { .{ kind: \"Int\", value: 42 } } else { .{ kind: \"Str\", text: \"hi\" } }
+    x
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should typecheck")
+
+  let xType = getExprType(result, 0)
+  assert.equal(xType.kind, "Tagged", "Should be Tagged type")
+  assert.truthy(xType.cases["Int"], "Should have Int case")
+  assert.truthy(xType.cases["Str"], "Should have Str case")
+})
+
+test("typecheck - tagged: incompatible tag fields error", fn(assert) {
+  let code = "{
+    let x = if true { .{ kind: \"Int\", value: 42 } } else { .{ type: \"Str\", text: \"hi\" } }
+    x
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(!result.success, "Should fail with incompatible tag fields")
+})
+
+test("typecheck - tagged: common field accessible without narrowing", fn(assert) {
+  let code = "{
+    let x = if true { .{ kind: \"A\", id: 1 } } else { .{ kind: \"B\", id: 2 } }
+    x.id
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should access common field")
+
+  let idType = getExprType(result, 1)
+  assert.equal(idType.kind, "Number", "Common field should have Number type")
+})
+
+test("typecheck - tagged: case-specific field without narrowing errors", fn(assert) {
+  let code = "{
+    let x = if true { .{ kind: \"Int\", value: 42 } } else { .{ kind: \"Str\", text: \"hi\" } }
+    x.value
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(!result.success, "Should error accessing case-specific field without narrowing")
+})
+
+test("typecheck - tagged: field type mismatch across cases errors", fn(assert) {
+  let code = "{
+    let x = if true { .{ kind: \"A\", data: 42 } } else { .{ kind: \"B\", data: \"str\" } }
+    x.data
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(!result.success, "Should error with incompatible field types across cases")
+})
+
+test("typecheck - tagged: tag check enables case-specific access", fn(assert) {
+  let code = "{
+    let x = if true { .{ kind: \"Int\", value: 42 } } else { .{ kind: \"Str\", text: \"hi\" } }
+    if x.kind == \"Int\" {
+      x.value
+    } else {
+      0
+    }
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should enable case-specific access after tag check")
+})
+
+test("typecheck - tagged: narrowed access in both branches", fn(assert) {
+  let code = "{
+    let x = if true { .{ kind: \"Int\", value: 42 } } else { .{ kind: \"Str\", text: \"hi\" } }
+    let intAccess = if x.kind == \"Int\" { x.value } else { 0 }
+    let strAccess = if x.kind == \"Str\" { x.text } else { \"\" }
+    0
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should work with narrowing in both branches")
+})
+
+test("typecheck - tagged: nested tagged records", fn(assert) {
+  let code = "{
+    let outer = .{ kind: \"Container\", inner: .{ type: \"Leaf\", value: 42 } }
+    outer.inner.type
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should handle nested tagged records")
+
+  let accessType = getExprType(result, 1)
+  assert.equal(accessType.kind, "String", "Nested tag field access should return String")
+})
+
+test("typecheck - tagged: array of tagged", fn(assert) {
+  let code = "{
+    let arr = [.{ kind: \"Int\", value: 1 }, .{ kind: \"Int\", value: 2 }]
+    arr
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should handle array of tagged records")
+
+  // Arrays with tagged records should work
+  // Note: We don't verify the exact type structure as it may vary
+})
+
+test("typecheck - tagged: with polymorphic functions", fn(assert) {
+  let code = "{
+    let identity = fn(x) { x }
+    identity(.{ kind: \"Int\", value: 42 })
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should work with polymorphic functions")
+
+  let callType = getExprType(result, 1)
+  assert.equal(callType.kind, "Tagged", "Should preserve Tagged type through generic function")
+})
+
+test("typecheck - tagged: multiple tag field names", fn(assert) {
+  let code1 = "{ .{ kind: \"A\", x: 1 } }"
+  let result1 = parseAndTypecheck(code1)
+  assert.truthy(result1.success, "Should support kind")
+  assert.equal(getExprType(result1, 0).kind, "Tagged", "kind should create Tagged")
+
+  let code2 = "{ .{ type: \"B\", y: 2 } }"
+  let result2 = parseAndTypecheck(code2)
+  assert.truthy(result2.success, "Should support type")
+  assert.equal(getExprType(result2, 0).kind, "Tagged", "type should create Tagged")
+
+  let code3 = "{ .{ tag: \"C\", z: 3 } }"
+  let result3 = parseAndTypecheck(code3)
+  assert.truthy(result3.success, "Should support tag")
+  assert.equal(getExprType(result3, 0).kind, "Tagged", "tag should create Tagged")
+})
+
 suite.run()

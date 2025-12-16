@@ -1,0 +1,170 @@
+// Typecheck Phase Tests
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let parse = import "src/parser.lx"
+let lower = import "src/lower.lx"
+let resolve = import "src/resolve.lx"
+let typecheck = import "src/typecheck.lx"
+
+// Helper: parse → lower → resolve → typecheck
+fn parseAndTypecheck(source) {
+  let parseResult = parse(source, "test.lx")
+  if !parseResult.success {
+    return .{ success: false, phase: "parse", parseErrors: parseResult.errors }
+  }
+
+  let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
+  if !lowerResult.success {
+    return .{ success: false, phase: "lower", lowerErrors: lowerResult.errors }
+  }
+
+  let resolveResult = resolve(lowerResult.ast, .{})
+  if !resolveResult.success {
+    return .{ success: false, phase: "resolve", resolveErrors: resolveResult.errors }
+  }
+
+  let typecheckResult = typecheck(lowerResult.ast, resolveResult, .{})
+  .{
+    success: typecheckResult.success,
+    phase: "typecheck",
+    types: typecheckResult.types,
+    errors: typecheckResult.errors,
+    parseResult: parseResult,
+    lowerResult: lowerResult,
+    resolveResult: resolveResult,
+  }
+}
+
+// Helper: Get type of expression in test block
+fn getExprType(result, exprIndex) {
+  // For tests like "{ expr1\nexpr2 }", ast.body[0] is the Block
+  // and the expressions are in Block.expressions
+  let ast = result.lowerResult.ast
+  if !ast or !ast.body or len(ast.body) == 0 {
+    return nil
+  }
+
+  let blockNode = ast.body[0]
+  if !blockNode or blockNode.type != "Block" or !blockNode.expressions {
+    return nil
+  }
+
+  if exprIndex >= len(blockNode.expressions) {
+    return nil
+  }
+
+  let node = blockNode.expressions[exprIndex]
+
+  // For Let nodes, get the type of the bound variable (from name.id)
+  if node.type == "Let" {
+    return result.types[node.name.id]
+  }
+
+  // Direct expression - return its type
+  return result.types[node.id]
+}
+
+// Helper: Get the actual AST node at an index
+fn getExprNode(result, exprIndex) {
+  let ast = result.lowerResult.ast
+  if len(ast.body) > 0 {
+    let blockNode = ast.body[0]
+    if blockNode.type == "Block" and exprIndex < len(blockNode.expressions) {
+      return blockNode.expressions[exprIndex]
+    }
+  }
+  nil
+}
+
+// ========================================
+// Type Verification Tests (checking actual inferred types)
+// ========================================
+
+test("typecheck - verify literal types", fn(assert) {
+  let result = parseAndTypecheck("{ 42\n\"hello\"\ntrue\nnil }")
+  assert.truthy(result.success, "Should typecheck")
+
+  let t0 = getExprType(result, 0)
+  assert.equal(t0.kind, "Number", "42 should be Number")
+
+  let t1 = getExprType(result, 1)
+  assert.equal(t1.kind, "String", "\"hello\" should be String")
+
+  let t2 = getExprType(result, 2)
+  assert.equal(t2.kind, "Bool", "true should be Bool")
+
+  let t3 = getExprType(result, 3)
+  assert.equal(t3.kind, "Nil", "nil should be Nil")
+})
+
+test("typecheck - verify array type", fn(assert) {
+  let result = parseAndTypecheck("{ [1, 2, 3] }")
+  assert.truthy(result.success, "Should typecheck")
+
+  let arrayType = getExprType(result, 0)
+  assert.equal(arrayType.kind, "Array", "Should be Array type")
+  assert.equal(arrayType.elem.kind, "Number", "Element type should be Number")
+})
+
+test("typecheck - verify record type", fn(assert) {
+  let result = parseAndTypecheck("{ .{ x: 42, y: \"hello\" } }")
+  assert.truthy(result.success, "Should typecheck")
+
+  let recordType = getExprType(result, 0)
+  assert.equal(recordType.kind, "Record", "Should be Record type")
+  assert.equal(recordType.fields.x.kind, "Number", "Field x should be Number")
+  assert.equal(recordType.fields.y.kind, "String", "Field y should be String")
+})
+
+test("typecheck - verify function type", fn(assert) {
+  let result = parseAndTypecheck("{ fn(x, y) { x + y } }")
+  assert.truthy(result.success, "Should typecheck")
+
+  let fnType = getExprType(result, 0)
+  assert.equal(fnType.kind, "Function", "Should be Function type")
+  assert.equal(len(fnType.params), 2, "Should have 2 parameters")
+  assert.equal(fnType.params[0].kind, "Number", "First param should be Number")
+  assert.equal(fnType.params[1].kind, "Number", "Second param should be Number")
+  assert.equal(fnType.return.kind, "Number", "Return type should be Number")
+})
+
+test("typecheck - verify builtin len returns Number", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlen(arr) }")
+  assert.truthy(result.success, "Should typecheck")
+
+  let lenCallType = getExprType(result, 1)
+  assert.equal(lenCallType.kind, "Number", "len should return Number")
+})
+
+test("typecheck - verify map returns Array", fn(assert) {
+  let result = parseAndTypecheck("{ let nums = [1, 2, 3]\nmap(nums, fn(x) { x * 2 }) }")
+  assert.truthy(result.success, "Should typecheck")
+
+  let mapType = getExprType(result, 1)
+  assert.equal(mapType.kind, "Array", "map should return Array")
+  assert.equal(mapType.elem.kind, "Number", "Mapped array should contain Numbers")
+})
+
+test("typecheck - verify polymorphic instantiation creates different types", fn(assert) {
+  let result = parseAndTypecheck("{ let id = fn(x) { x }\nid(42)\nid(\"hello\") }")
+  assert.truthy(result.success, "Should typecheck")
+
+  let call1Type = getExprType(result, 1)
+  assert.equal(call1Type.kind, "Number", "First call should return Number")
+
+  let call2Type = getExprType(result, 2)
+  assert.equal(call2Type.kind, "String", "Second call should return String")
+})
+
+test("typecheck - verify let binding gets correct type", fn(assert) {
+  let result = parseAndTypecheck("{ let x = 42\nx }")
+  assert.truthy(result.success, "Should typecheck")
+
+  // The second expression is the identifier reference
+  let xType = getExprType(result, 1)
+  assert.equal(xType.kind, "Number", "Variable x should have type Number")
+})
+
+suite.run()

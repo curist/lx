@@ -1093,12 +1093,35 @@ fn checkLogical(checker, node) {
   let leftType = checkExpr(checker, node.left)
   let rightType = checkExpr(checker, node.right)
 
-  // Logical operators with short-circuit semantics can return either operand
-  // If both types are compatible (unify), use that type; otherwise use Any
   leftType = deref(checker, leftType)
   rightType = deref(checker, rightType)
 
   let resultType = typeAny()
+
+  // Special handling for 'or' with Option types (safe defaulting)
+  if node.op == "or" {
+    // Option(T) or T -> T (unwrap with default)
+    if leftType.kind == "Option" and rightType.kind != "Option" {
+      // Check if Option's inner type unifies with right type
+      if unify(checker, leftType.inner, rightType) {
+        resultType = rightType
+        checker.types[node.id] = resultType
+        return resultType
+      }
+    }
+
+    // T or Option(T) -> T (symmetric)
+    if rightType.kind == "Option" and leftType.kind != "Option" {
+      // Check if Option's inner type unifies with left type
+      if unify(checker, rightType.inner, leftType) {
+        resultType = leftType
+        checker.types[node.id] = resultType
+        return resultType
+      }
+    }
+  }
+
+  // General case: if both types are compatible (unify), use that type; otherwise use Any
   if unify(checker, leftType, rightType) {
     resultType = leftType
   }

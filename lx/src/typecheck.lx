@@ -79,6 +79,10 @@ fn typeLenableTop() {
   .{ kind: "LenableTop" }
 }
 
+fn typeOption(inner) {
+  .{ kind: "Option", inner: inner }
+}
+
 // ========================================
 // Type Bindings (Mono/Poly)
 // ========================================
@@ -163,6 +167,10 @@ fn occurs(checker, typeVarId, type) {
     return false
   }
 
+  if type.kind == "Option" {
+    return occurs(checker, typeVarId, type.inner)
+  }
+
   // For other types (primitives, Unknown, Any, etc.), no occurrence
   false
 }
@@ -230,7 +238,12 @@ fn sameType(t1, t2) {
     return true
   }
 
-  // Primitive types (Unknown, Any, Nil, Number, Bool, String)
+  // Option types
+  if t1.kind == "Option" and t2.kind == "Option" {
+    return sameType(t1.inner, t2.inner)
+  }
+
+  // Primitive types (Unknown, Any, Nil, Number, Bool, String, RecordTop, LenableTop)
   true
 }
 
@@ -289,9 +302,18 @@ fn refineForNilCheck(checker, env, guard, truthy) {
     env.bindings[guard.declNodeId] = newBinding
   } else {
     // Variable is non-nil
-    // Best-effort: we don't create a NonNil type form
-    // Just leave the binding as-is for now
-    // This is sufficient to mark that we've validated non-nil
+    // If the variable has type Option(T), unwrap to T
+    let originalBinding = lookupDecl(checker, guard.declNodeId)
+    if originalBinding and originalBinding.kind == "Mono" {
+      let varType = deref(checker, originalBinding.typeVar)
+      if varType and varType.kind == "Option" {
+        // Unwrap Option(T) to T
+        let freshVar = freshTypeVar(checker)
+        bindTypeVar(checker, freshVar.id, varType.inner)
+        let newBinding = bindingMono(freshVar)
+        env.bindings[guard.declNodeId] = newBinding
+      }
+    }
   }
 }
 
@@ -541,6 +563,19 @@ fn unify(checker, t1, t2) {
     return true
   }
 
+  // Option unification
+  if t1.kind == "Option" and t2.kind == "Option" {
+    return unify(checker, t1.inner, t2.inner)
+  }
+
+  // Option(T) unifies with Nil (Option can be nil at runtime)
+  if t1.kind == "Option" and t2.kind == "Nil" {
+    return true
+  }
+  if t1.kind == "Nil" and t2.kind == "Option" {
+    return true
+  }
+
   // Incompatible types
   false
 }
@@ -604,6 +639,10 @@ fn ftv(type) {
       }
     }
     return vars
+  }
+
+  if type.kind == "Option" {
+    return ftv(type.inner)
   }
 
   // Unknown, Any, Nil, Number, Bool, String have no free vars
@@ -684,6 +723,10 @@ fn derefAll(checker, type) {
     return typeTagged(type.tagField, newCases)
   }
 
+  if type.kind == "Option" {
+    return typeOption(derefAll(checker, type.inner))
+  }
+
   // TypeVar, Unknown, Any, Nil, Number, Bool, String - already deref'd
   return type
 }
@@ -746,6 +789,10 @@ fn substitute(type, subst) {
       newCases[tagValue] = substitute(type.cases[tagValue], subst)
     }
     return typeTagged(type.tagField, newCases)
+  }
+
+  if type.kind == "Option" {
+    return typeOption(substitute(type.inner, subst))
   }
 
   // Unknown, Any, Nil, Number, Bool, String unchanged
@@ -1725,10 +1772,9 @@ fn checkIf(checker, node) {
     // Restore original environment
     checker.currentEnv = originalEnv
 
-    // No else branch - return then-branch type
-    // Note: This is unsound (result could be Nil at runtime), but without union types
-    // we cannot properly represent "ThenType | Nil"
-    resultType = thenType
+    // No else branch - return Option(thenType)
+    // At runtime, result is thenType when condition is true, nil when false
+    resultType = typeOption(thenType)
   }
 
   checker.types[node.id] = resultType

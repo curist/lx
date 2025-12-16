@@ -1092,10 +1092,7 @@ test("typecheck - regression: invalid dot assignment", fn(assert) {
   assert.truthy(!result.success, "Should error: field y doesn't exist")
 })
 
-test("typecheck - regression: if without else known limitation", fn(assert) {
-  // Note: Without union types, if-without-else cannot be properly typed as "T | Nil"
-  // This is a known limitation - the typecheck phase returns the then-branch type
-  // even though the result could be Nil at runtime
+test("typecheck - if without else returns Option(T)", fn(assert) {
   let code = "{
     fn f(cond) {
       if cond { 1 }
@@ -1103,7 +1100,42 @@ test("typecheck - regression: if without else known limitation", fn(assert) {
     f(true)
   }"
   let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Currently allows if-without-else (known limitation)")
+  assert.truthy(result.success, "Should typecheck if-without-else")
+})
+
+test("typecheck - Option(Number) cannot be used in arithmetic", fn(assert) {
+  let code = "{
+    let x = if true { 1 }
+    x + 1
+  }"
+  let result = parseAndTypecheck(code)
+  assert.equal(result.success, false, "Should reject arithmetic on Option(Number)")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - nil-check unwraps Option(T)", fn(assert) {
+  let code = "{
+    let x = if true { 1 }
+    if x != nil {
+      x + 1
+    } else {
+      0
+    }
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should accept arithmetic after nil-check")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - Option(T) can unify with Nil", fn(assert) {
+  let code = "{
+    let x = if true { 1 }
+    let y = nil
+    x == y
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should allow comparing Option(T) with nil")
+  assert.equal(len(result.errors), 0, "Should have no errors")
 })
 
 suite.run()

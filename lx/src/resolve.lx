@@ -425,7 +425,8 @@ resolveBlockWithHoisting = fn(resolver, node, context) {
     if expr.type == "Function" and expr.name {
       // Named function declaration - hoist it
       let fnName = expr.name.name
-      let local = declareLocal(resolver, fnName, "fn", expr.name.id)
+      // Declare at function node id, not name node id - the function type belongs to the function
+      let local = declareLocal(resolver, fnName, "fn", expr.id)
 
       // Mark as initialized immediately (hoisting!)
       // This allows mutual recursion in function bodies

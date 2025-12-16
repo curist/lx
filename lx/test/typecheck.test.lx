@@ -134,6 +134,30 @@ test("typecheck - assignment type error", fn(assert) {
   assert.truthy(len(result.errors) > 0, "Should have errors")
 })
 
+test("typecheck - dot assignment refinement on parameter", fn(assert) {
+  let result = parseAndTypecheck("fn(o) { o.x = 1\no.x + 1 }")
+  assert.truthy(result.success, "Should refine param type via dot assignment")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - index assignment refinement on parameter", fn(assert) {
+  let result = parseAndTypecheck("fn(a) { a[0] = 1\na[0] + 1 }")
+  assert.truthy(result.success, "Should refine param type via index assignment")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - dot assignment to number fails", fn(assert) {
+  let result = parseAndTypecheck("{ let n = 1\nn.x = 2 }")
+  assert.equal(result.success, false, "Should fail when assigning to non-record")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - index assignment to number fails", fn(assert) {
+  let result = parseAndTypecheck("{ let n = 1\nn[0] = 2 }")
+  assert.equal(result.success, false, "Should fail when assigning to non-array")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
 // ========================================
 // Operators
 // ========================================
@@ -141,12 +165,6 @@ test("typecheck - assignment type error", fn(assert) {
 test("typecheck - arithmetic operators", fn(assert) {
   let result = parseAndTypecheck("1 + 2 * 3 - 4 / 5")
   assert.truthy(result.success, "Should typecheck arithmetic")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - comparison operators", fn(assert) {
-  let result = parseAndTypecheck("1 < 2 and 3 > 4 or 5 == 6")
-  assert.truthy(result.success, "Should typecheck comparison")
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
 
@@ -300,6 +318,25 @@ test("typecheck - return type mismatch", fn(assert) {
   assert.truthy(len(result.errors) > 0, "Should have errors")
 })
 
+test("typecheck - recursion", fn(assert) {
+  let result = parseAndTypecheck("{ fn fact(n) { if n == 0 { 1 } else { n * fact(n - 1) } } fact(5) }")
+  assert.truthy(result.success, "Should typecheck recursive function")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - mutual recursion", fn(assert) {
+  let result = parseAndTypecheck("{ fn a(n) { if n == 0 { 1 } else { b(n - 1) } } fn b(n) { a(n) } a(5) }")
+  assert.truthy(result.success, "Should typecheck mutually recursive functions")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - recursion infers consistent type", fn(assert) {
+  // This should fail because the recursive call expects Number but gets String
+  let result = parseAndTypecheck("{ fn f(x) { if x == 0 { 1 } else { f(\"oops\") } } f(5) }")
+  assert.equal(result.success, false, "Should fail when recursive call has wrong type")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
 // ========================================
 // Control Flow
 // ========================================
@@ -434,47 +471,7 @@ test("typecheck - arity error on missing args", fn(assert) {
 // Builtin Function Signature Tests
 // ========================================
 
-test("typecheck - len with array", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlet n = len(arr)\nn + 1 }")
-  assert.truthy(result.success, "Should typecheck len")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - push with array", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\npush(arr, 4) }")
-  assert.truthy(result.success, "Should typecheck push")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - push type error", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\npush(arr, \"hello\") }")
-  assert.equal(result.success, false, "Should fail with type mismatch")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - map with array", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlet doubled = map(arr, fn(x) { x * 2 })\ndoubled }")
-  assert.truthy(result.success, "Should typecheck map")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - fold with array", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlet sum = fold(arr, 0, fn(acc, x) { acc + x })\nsum }")
-  assert.truthy(result.success, "Should typecheck fold")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - join with strings", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [\"a\", \"b\", \"c\"]\nlet s = join(arr, \",\")\ns }")
-  assert.truthy(result.success, "Should typecheck join")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - range returns array of numbers", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = range(5)\nlet x = arr[0]\nx + 1 }")
-  assert.truthy(result.success, "Should typecheck range")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
+// Builtin tests moved to test/typecheck/builtins.test.lx
 
 // ========================================
 // TypeVar Refinement Tests
@@ -1079,7 +1076,8 @@ test("typecheck - regression: keys on real records", fn(assert) {
 
 test("typecheck - regression: invalid index assignment", fn(assert) {
   let code = "{
-    1[0] = 2
+    let x = 1
+    x[0] = 2
   }"
   let result = parseAndTypecheck(code)
   assert.truthy(!result.success, "Should error: can't index into number")

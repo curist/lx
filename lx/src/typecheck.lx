@@ -71,6 +71,14 @@ fn typeTagged(tagField, cases) {
   .{ kind: "Tagged", tagField: tagField, cases: cases }
 }
 
+fn typeRecordTop() {
+  .{ kind: "RecordTop" }
+}
+
+fn typeLenableTop() {
+  .{ kind: "LenableTop" }
+}
+
 // ========================================
 // Type Bindings (Mono/Poly)
 // ========================================
@@ -110,6 +118,53 @@ fn deref(checker, type) {
     }
   }
   type
+}
+
+// Occurs check: does typeVarId occur in type?
+fn occurs(checker, typeVarId, type) {
+  type = deref(checker, type)
+
+  if type.kind == "TypeVar" {
+    return type.id == typeVarId
+  }
+
+  if type.kind == "Function" {
+    for let i = 0; i < len(type.params); i = i + 1 {
+      if occurs(checker, typeVarId, type.params[i]) {
+        return true
+      }
+    }
+    return occurs(checker, typeVarId, type.return)
+  }
+
+  if type.kind == "Array" {
+    return occurs(checker, typeVarId, type.elem)
+  }
+
+  if type.kind == "Record" {
+    let fieldKeys = keys(type.fields)
+    for let i = 0; i < len(fieldKeys); i = i + 1 {
+      let key = fieldKeys[i]
+      if occurs(checker, typeVarId, type.fields[key]) {
+        return true
+      }
+    }
+    return false
+  }
+
+  if type.kind == "Tagged" {
+    let caseKeys = keys(type.cases)
+    for let i = 0; i < len(caseKeys); i = i + 1 {
+      let tagValue = caseKeys[i]
+      if occurs(checker, typeVarId, type.cases[tagValue]) {
+        return true
+      }
+    }
+    return false
+  }
+
+  // For other types (primitives, Unknown, Any, etc.), no occurrence
+  false
 }
 
 // ========================================
@@ -375,10 +430,18 @@ fn unify(checker, t1, t2) {
 
   // TypeVar unification
   if t1.kind == "TypeVar" {
+    // Occurs check: prevent infinite types
+    if occurs(checker, t1.id, t2) {
+      return false
+    }
     bindTypeVar(checker, t1.id, t2)
     return true
   }
   if t2.kind == "TypeVar" {
+    // Occurs check: prevent infinite types
+    if occurs(checker, t2.id, t1) {
+      return false
+    }
     bindTypeVar(checker, t2.id, t1)
     return true
   }
@@ -460,6 +523,22 @@ fn unify(checker, t1, t2) {
   if (t1.kind == "Tagged" and t2.kind == "Record") or
      (t1.kind == "Record" and t2.kind == "Tagged") {
     return false
+  }
+
+  // RecordTop unifies with any Record
+  if t1.kind == "RecordTop" and t2.kind == "Record" {
+    return true
+  }
+  if t1.kind == "Record" and t2.kind == "RecordTop" {
+    return true
+  }
+
+  // LenableTop unifies with String and Array
+  if t1.kind == "LenableTop" and (t2.kind == "String" or t2.kind == "Array") {
+    return true
+  }
+  if (t1.kind == "String" or t1.kind == "Array") and t2.kind == "LenableTop" {
+    return true
   }
 
   // Incompatible types
@@ -726,9 +805,8 @@ fn getBuiltinType(checker, name) {
   // Using TypeVars to approximate polymorphism
 
   if name == "len" {
-    // len: Array(T) | String -> Number
-    let tv = freshTypeVar(checker)
-    return typeFunction([typeArray(tv)], typeNumber())
+    // len: LenableTop -> Number (accepts String or Array)
+    return typeFunction([typeLenableTop()], typeNumber())
   }
 
   if name == "push" {
@@ -786,9 +864,8 @@ fn getBuiltinType(checker, name) {
   }
 
   if name == "keys" {
-    // keys: Record(any shape) -> Array(String)
-    // Use Any to accept any record shape (could also use a TypeVar)
-    return typeFunction([typeAny()], typeArray(typeString()))
+    // keys: RecordTop -> Array(String) (accepts any Record)
+    return typeFunction([typeRecordTop()], typeArray(typeString()))
   }
 
   if name == "join" {
@@ -928,9 +1005,15 @@ fn checkLogical(checker, node) {
   let leftType = checkExpr(checker, node.left)
   let rightType = checkExpr(checker, node.right)
 
-  // Logical operators don't constrain operands in lx
-  // Result type is the right operand's type (short-circuit semantics)
-  let resultType = rightType
+  // Logical operators with short-circuit semantics can return either operand
+  // If both types are compatible (unify), use that type; otherwise use Any
+  leftType = deref(checker, leftType)
+  rightType = deref(checker, rightType)
+
+  let resultType = typeAny()
+  if unify(checker, leftType, rightType) {
+    resultType = leftType
+  }
 
   checker.types[node.id] = resultType
   resultType
@@ -1182,7 +1265,7 @@ fn checkDot(checker, node) {
 
 fn checkFunction(checker, node) {
   // If this is a named function, pre-bind its declaration ID to allow recursion
-  // The resolve phase sets declaredAt to the function node ID for named functions
+  // The resolve phase declares named functions at the function node ID (not the name identifier ID)
   let functionBinding = nil
   if node.name {
     functionBinding = bindDeclMono(checker, node.id)
@@ -1377,8 +1460,17 @@ fn checkAssignment(checker, node) {
       constrain(checker, objType.elem, valueType, node.value.id,
         "Array element assignment type mismatch")
       targetType = valueType
-    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" or objType.kind == "Any" {
-      // Allow assignment to unknown types
+    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
+      // Refine unknown/typevar to Array(valueType)
+      let elemType = freshTypeVar(checker)
+      let arrayType = typeArray(elemType)
+      constrain(checker, objType, arrayType, node.target.object.id,
+        "Index assignment requires array")
+      constrain(checker, elemType, valueType, node.value.id,
+        "Array element assignment type mismatch")
+      targetType = valueType
+    } else if objType.kind == "Any" {
+      // Allow assignment to Any (dynamic escape hatch)
       targetType = valueType
     } else {
       addError(checker, node.target.object.id,
@@ -1403,8 +1495,20 @@ fn checkAssignment(checker, node) {
           "Field '" + propName + "' does not exist on record")
         targetType = typeAny()
       }
-    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" or objType.kind == "Any" {
-      // Allow assignment to unknown types
+    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
+      // Refine unknown/typevar to Record with this field
+      let propName = node.target.property.value
+      let fieldType = freshTypeVar(checker)
+      let fields = .{}
+      fields[propName] = fieldType
+      let recordType = typeRecord(fields)
+      constrain(checker, objType, recordType, node.target.object.id,
+        "Dot assignment requires record")
+      constrain(checker, fieldType, valueType, node.value.id,
+        "Record field assignment type mismatch")
+      targetType = valueType
+    } else if objType.kind == "Any" {
+      // Allow assignment to Any (dynamic escape hatch)
       targetType = valueType
     } else {
       addError(checker, node.target.object.id,

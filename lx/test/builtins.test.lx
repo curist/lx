@@ -1,0 +1,99 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let parse = import "src/parser.lx"
+let lower = import "src/lower.lx"
+let resolve = import "src/resolve.lx"
+let typecheck = import "src/typecheck.lx"
+
+fn parseAndTypecheck(code) {
+  let parseResult = parse(code, "test.lx")
+  if !parseResult.success {
+    return .{ success: false, errors: [.{ message: "Parse failed" }] }
+  }
+
+  let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
+  if !lowerResult.success {
+    return .{ success: false, errors: [.{ message: "Lower failed" }] }
+  }
+
+  let resolveResult = resolve(lowerResult.ast, .{})
+  if !resolveResult.success {
+    return .{ success: false, errors: resolveResult.errors }
+  }
+
+  let typecheckResult = typecheck(lowerResult.ast, resolveResult, .{})
+  typecheckResult
+}
+
+// ========================================
+// Builtin Function Tests
+// ========================================
+
+test("typecheck - len with array", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlet n = len(arr)\nn + 1 }")
+  assert.truthy(result.success, "Should typecheck len with array")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - len with string", fn(assert) {
+  let result = parseAndTypecheck("len(\"hello\")")
+  assert.truthy(result.success, "Should accept string")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - len rejects number", fn(assert) {
+  let result = parseAndTypecheck("len(42)")
+  assert.equal(result.success, false, "Should reject number")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - keys with record", fn(assert) {
+  let result = parseAndTypecheck("keys(.{a:1, b:2})")
+  assert.truthy(result.success, "Should accept record")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - keys rejects number", fn(assert) {
+  let result = parseAndTypecheck("keys(42)")
+  assert.equal(result.success, false, "Should reject number")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - keys rejects array", fn(assert) {
+  let result = parseAndTypecheck("keys([1, 2, 3])")
+  assert.equal(result.success, false, "Should reject array")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - push with array", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\npush(arr, 4) }")
+  assert.truthy(result.success, "Should typecheck push")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - push type error", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\npush(arr, \"hello\") }")
+  assert.equal(result.success, false, "Should fail with type mismatch")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - occurs check prevents infinite type", fn(assert) {
+  let result = parseAndTypecheck("{ let x = []\npush(x, x) }")
+  assert.equal(result.success, false, "Should prevent infinite type")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - map with array", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlet doubled = map(arr, fn(x) { x * 2 })\ndoubled }")
+  assert.truthy(result.success, "Should typecheck map")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - fold with array", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\nlet sum = fold(arr, 0, fn(acc, x) { acc + x })\nsum }")
+  assert.truthy(result.success, "Should typecheck fold")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+suite.run()

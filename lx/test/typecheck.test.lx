@@ -735,4 +735,16 @@ test("typecheck - regression: print with no arguments", fn(assert) {
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
 
+test("typecheck - regression: type(map) narrows to Map (dot rejected)", fn(assert) {
+  let code = "{
+    let x = .{}
+    if type(x) == \"map\" {
+      x.a
+    } else { 0 }
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(!result.success, "Should reject dot access on Map after narrowing")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
 suite.run()

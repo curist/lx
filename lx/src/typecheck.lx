@@ -1837,7 +1837,7 @@ fn extractGuard(checker, condNode) {
 
 fn mergeEnvs(checker, originalEnv, thenEnv, elseEnv, guard) {
   // After if/else, reconcile refined bindings
-  // Unify both branches back to the original binding
+  // Unify branches back to the original binding (including one-sided refinements)
   if !guard { return }
 
   let declNodeId = guard.declNodeId
@@ -1849,11 +1849,12 @@ fn mergeEnvs(checker, originalEnv, thenEnv, elseEnv, guard) {
   let thenBinding = thenEnv.bindings[declNodeId]
   let elseBinding = elseEnv.bindings[declNodeId]
 
-  // If both branches refined the type, unify them back
-  if thenBinding and elseBinding and thenBinding.kind == "Mono" and elseBinding.kind == "Mono" {
-    // Unify refined types back to original
-    // This ensures the original binding reflects constraints from both branches
+  // Merge refinements from either branch (one-sided or both)
+  // This preserves constraints learned in any branch
+  if thenBinding and thenBinding.kind == "Mono" {
     unify(checker, thenBinding.typeVar, originalBinding.typeVar)
+  }
+  if elseBinding and elseBinding.kind == "Mono" {
     unify(checker, elseBinding.typeVar, originalBinding.typeVar)
   }
 

@@ -1289,9 +1289,17 @@ fn typecheck(ast, resolveResult, opts) {
     checkExpr(checker, ast.body[i])
   }
 
+  // Post-process: dereference all stored types for cleaner output
+  let derefedTypes = .{}
+  let typeKeys = keys(checker.types)
+  for let i = 0; i < len(typeKeys); i = i + 1 {
+    let nodeId = typeKeys[i]
+    derefedTypes[nodeId] = derefAll(checker, checker.types[nodeId])
+  }
+
   .{
     success: !checker.hadError,
-    types: checker.types,
+    types: derefedTypes,
     errors: checker.errors,
   }
 }

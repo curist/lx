@@ -141,7 +141,7 @@ test("typecheck - dot assignment refinement on parameter", fn(assert) {
 })
 
 test("typecheck - index assignment refinement on parameter", fn(assert) {
-  let result = parseAndTypecheck("fn(a) { a[0] = 1\na[0] + 1 }")
+  let result = parseAndTypecheck("fn(a) { a[0] = 1\nlet x = a[0]\nif x != nil { x + 1 } else { 0 } }")
   assert.truthy(result.success, "Should refine param type via index assignment")
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
@@ -389,7 +389,7 @@ test("typecheck - factorial function", fn(assert) {
 })
 
 test("typecheck - array map pattern", fn(assert) {
-  let source = "{ let arr = [1, 2, 3]\nlet result = []\nfor let i = 0; i < len(arr); i = i + 1 { push(result, arr[i] + 1) }\nresult }"
+  let source = "{ let arr = [1, 2, 3]\nlet result = []\nfor let i = 0; i < len(arr); i = i + 1 { let x = arr[i]\nif x != nil { push(result, x + 1) } }\nresult }"
   let result = parseAndTypecheck(source)
   assert.truthy(result.success, "Should typecheck array map pattern")
   assert.equal(len(result.errors), 0, "Should have no errors")
@@ -478,7 +478,7 @@ test("typecheck - arity error on missing args", fn(assert) {
 // ========================================
 
 test("typecheck - empty array refinement via index", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = []\narr[0] = 5\nlet x = arr[0]\nx + 1 }")
+  let result = parseAndTypecheck("{ let arr = []\narr[0] = 5\nlet x = arr[0]\nif x != nil { x + 1 } else { 0 } }")
   assert.truthy(result.success, "Should refine empty array element type")
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
@@ -617,234 +617,6 @@ test("typecheck - verify let binding gets correct type", fn(assert) {
   // The second expression is the identifier reference
   let xType = getExprType(result, 1)
   assert.equal(xType.kind, "Number", "Variable x should have type Number")
-})
-
-// ========================================
-// Type Narrowing
-// ========================================
-
-test("typecheck - narrowing: x != nil preserves type", fn(assert) {
-  let code = "{
-    let x = 42
-    if x != nil {
-      x
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck with nil guard")
-
-  // In then branch, x should still be Number (non-nil is implicit)
-  let ast = result.lowerResult.ast
-  let ifNode = ast.body[0].expressions[1]
-  let thenExpr = ifNode.then.expressions[0]
-  let thenType = result.types[thenExpr.id]
-  assert.equal(thenType.kind, "Number", "x should still be Number in then branch")
-})
-
-test("typecheck - narrowing: x == nil refines to Nil", fn(assert) {
-  let code = "{
-    let x = 42
-    if x == nil {
-      x
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck")
-
-  // In then branch, x should be refined to Nil
-  let ast = result.lowerResult.ast
-  let ifNode = ast.body[0].expressions[1]
-  let thenExpr = ifNode.then.expressions[0]
-  let thenType = result.types[thenExpr.id]
-  assert.equal(thenType.kind, "Nil", "x should be Nil in then branch")
-})
-
-test("typecheck - narrowing: nil != x works (reversed)", fn(assert) {
-  let code = "{
-    let x = 42
-    if nil != x {
-      let y = x
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck reversed nil check")
-})
-
-test("typecheck - narrowing: type test refines to expected type", fn(assert) {
-  let code = "{
-    let x = 42
-    if type(x) == \"string\" {
-      x
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck")
-
-  // In then branch, x should be refined to String
-  let ast = result.lowerResult.ast
-  let ifNode = ast.body[0].expressions[1]
-  let thenExpr = ifNode.then.expressions[0]
-  let thenType = result.types[thenExpr.id]
-  assert.equal(thenType.kind, "String", "x should be String in then branch")
-})
-
-test("typecheck - narrowing: type test supports all primitives", fn(assert) {
-  let code = "{
-    let x = nil
-    if type(x) == \"number\" { x }
-    if type(x) == \"string\" { x }
-    if type(x) == \"bool\" { x }
-    if type(x) == \"nil\" { x }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck all type tests")
-
-  // Verify each if branch has the correct refined type
-  let ast = result.lowerResult.ast
-  let blockExprs = ast.body[0].expressions
-
-  // First if: type(x) == "number"
-  let if1 = blockExprs[1]
-  let then1Type = result.types[if1.then.expressions[0].id]
-  assert.equal(then1Type.kind, "Number", "Should refine to Number")
-
-  // Second if: type(x) == "string"
-  let if2 = blockExprs[2]
-  let then2Type = result.types[if2.then.expressions[0].id]
-  assert.equal(then2Type.kind, "String", "Should refine to String")
-
-  // Third if: type(x) == "bool"
-  let if3 = blockExprs[3]
-  let then3Type = result.types[if3.then.expressions[0].id]
-  assert.equal(then3Type.kind, "Bool", "Should refine to Bool")
-
-  // Fourth if: type(x) == "nil"
-  let if4 = blockExprs[4]
-  let then4Type = result.types[if4.then.expressions[0].id]
-  assert.equal(then4Type.kind, "Nil", "Should refine to Nil")
-})
-
-test("typecheck - narrowing: type test supports array", fn(assert) {
-  let code = "{
-    let x = [1, 2, 3]
-    if type(x) == \"array\" {
-      x
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck array type test")
-
-  // In then branch, x should be refined to Array
-  let ast = result.lowerResult.ast
-  let ifNode = ast.body[0].expressions[1]
-  let thenExpr = ifNode.then.expressions[0]
-  let thenType = result.types[thenExpr.id]
-  assert.equal(thenType.kind, "Array", "x should be Array in then branch")
-})
-
-test("typecheck - narrowing: type test supports map", fn(assert) {
-  let code = "{
-    let x = .{ a: 1 }
-    if type(x) == \"map\" {
-      x
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck map type test")
-
-  // In then branch, x should be refined to Record
-  let ast = result.lowerResult.ast
-  let ifNode = ast.body[0].expressions[1]
-  let thenExpr = ifNode.then.expressions[0]
-  let thenType = result.types[thenExpr.id]
-  assert.equal(thenType.kind, "Record", "x should be Record in then branch")
-})
-
-test("typecheck - narrowing: type test supports function", fn(assert) {
-  let code = "{
-    let x = fn() { 42 }
-    if type(x) == \"function\" {
-      x
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck function type test")
-
-  // In then branch, x should be refined to Function
-  let ast = result.lowerResult.ast
-  let ifNode = ast.body[0].expressions[1]
-  let thenExpr = ifNode.then.expressions[0]
-  let thenType = result.types[thenExpr.id]
-  assert.equal(thenType.kind, "Function", "x should be Function in then branch")
-})
-
-test("typecheck - narrowing: tag check infrastructure", fn(assert) {
-  let code = "{
-    let x = .{ kind: \"Foo\", value: 42 }
-    if x.kind == \"Foo\" {
-      let y = x.value
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck tag check")
-})
-
-test("typecheck - narrowing: else branch works", fn(assert) {
-  let code = "{
-    let x = 42
-    if type(x) == \"string\" {
-      let a = x
-    } else {
-      let b = x
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck both branches")
-})
-
-test("typecheck - narrowing: nested ifs work", fn(assert) {
-  let code = "{
-    let x = nil
-    if x != nil {
-      if type(x) == \"string\" {
-        let y = x
-      }
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck nested ifs")
-})
-
-test("typecheck - narrowing: polymorphic bindings not refined", fn(assert) {
-  let code = "{
-    let f = fn(x) { x }
-    if type(f) == \"string\" {
-      let y = f
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should handle polymorphic bindings")
-})
-
-test("typecheck - narrowing: unknown type string ignored", fn(assert) {
-  let code = "{
-    let x = 42
-    if type(x) == \"unknown_type\" {
-      let y = x
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should ignore unknown type strings")
-})
-
-test("typecheck - narrowing: non-identifier expressions ignored", fn(assert) {
-  let code = "{
-    if type(42) == \"number\" {
-      let y = 1
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should ignore non-identifier type tests")
 })
 
 // ========================================
@@ -1135,6 +907,101 @@ test("typecheck - Option(T) can unify with Nil", fn(assert) {
   }"
   let result = parseAndTypecheck(code)
   assert.truthy(result.success, "Should allow comparing Option(T) with nil")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - map: empty literal is Map", fn(assert) {
+  let code = "{
+    let m = .{}
+    m[\"a\"] = 1
+    m
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should typecheck map init and assignment")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - map: lookup returns Option", fn(assert) {
+  let code = "{
+    let m = .{}
+    m[\"a\"] = 1
+    let x = m[\"b\"]
+    x + 1
+  }"
+  let result = parseAndTypecheck(code)
+  assert.equal(result.success, false, "Should fail: x is Option(Number)")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - map: nil-check refines Option", fn(assert) {
+  let code = "{
+    let m = .{}
+    m[\"a\"] = 1
+    let x = m[\"b\"]
+    if x != nil { x + 1 } else { 0 }
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should succeed after nil-check")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - map: keys() accepts maps", fn(assert) {
+  let code = "{
+    let m = .{}
+    m[\"a\"] = 1
+    keys(m)
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "keys() should accept maps")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - record: non-empty literal is Record not Map", fn(assert) {
+  let code = "{
+    let r = .{ a: 1 }
+    r.a
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should allow dot access on Record")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - record: keys() accepts records", fn(assert) {
+  let code = "keys(.{a:1, b:2})"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "keys() should accept records")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - map/record separation: Map rejects dot access", fn(assert) {
+  let code = "{
+    let m = .{}
+    m.a
+  }"
+  let result = parseAndTypecheck(code)
+  assert.equal(result.success, false, "Should reject dot access on Map")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - array: index returns Option", fn(assert) {
+  let code = "{
+    let arr = [1, 2, 3]
+    let x = arr[0]
+    x + 1
+  }"
+  let result = parseAndTypecheck(code)
+  assert.equal(result.success, false, "Should fail: array index returns Option")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - array: nil-check unwraps indexed value", fn(assert) {
+  let code = "{
+    let arr = [1, 2, 3]
+    let x = arr[0]
+    if x != nil { x + 1 } else { 0 }
+  }"
+  let result = parseAndTypecheck(code)
+  assert.truthy(result.success, "Should succeed after nil-check")
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
 

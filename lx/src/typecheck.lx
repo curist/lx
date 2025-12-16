@@ -83,6 +83,10 @@ fn typeOption(inner) {
   .{ kind: "Option", inner: inner }
 }
 
+fn typeMap(key, value) {
+  .{ kind: "Map", key: key, value: value }
+}
+
 // ========================================
 // Type Bindings (Mono/Poly)
 // ========================================
@@ -171,6 +175,10 @@ fn occurs(checker, typeVarId, type) {
     return occurs(checker, typeVarId, type.inner)
   }
 
+  if type.kind == "Map" {
+    return occurs(checker, typeVarId, type.key) or occurs(checker, typeVarId, type.value)
+  }
+
   // For other types (primitives, Unknown, Any, etc.), no occurrence
   false
 }
@@ -241,6 +249,11 @@ fn sameType(t1, t2) {
   // Option types
   if t1.kind == "Option" and t2.kind == "Option" {
     return sameType(t1.inner, t2.inner)
+  }
+
+  // Map types
+  if t1.kind == "Map" and t2.kind == "Map" {
+    return sameType(t1.key, t2.key) and sameType(t1.value, t2.value)
   }
 
   // Primitive types (Unknown, Any, Nil, Number, Bool, String, RecordTop, LenableTop)
@@ -563,6 +576,17 @@ fn unify(checker, t1, t2) {
     return true
   }
 
+  // Map unification
+  if t1.kind == "Map" and t2.kind == "Map" {
+    return unify(checker, t1.key, t2.key) and unify(checker, t1.value, t2.value)
+  }
+
+  // Map incompatible with Record/Tagged (strict separation)
+  if (t1.kind == "Map" and (t2.kind == "Record" or t2.kind == "Tagged")) or
+     ((t1.kind == "Record" or t1.kind == "Tagged") and t2.kind == "Map") {
+    return false
+  }
+
   // Option unification
   if t1.kind == "Option" and t2.kind == "Option" {
     return unify(checker, t1.inner, t2.inner)
@@ -643,6 +667,15 @@ fn ftv(type) {
 
   if type.kind == "Option" {
     return ftv(type.inner)
+  }
+
+  if type.kind == "Map" {
+    let vars = ftv(type.key)
+    let valueVars = ftv(type.value)
+    for let j = 0; j < len(valueVars); j = j + 1 {
+      push(vars, valueVars[j])
+    }
+    return vars
   }
 
   // Unknown, Any, Nil, Number, Bool, String have no free vars
@@ -727,6 +760,10 @@ fn derefAll(checker, type) {
     return typeOption(derefAll(checker, type.inner))
   }
 
+  if type.kind == "Map" {
+    return typeMap(derefAll(checker, type.key), derefAll(checker, type.value))
+  }
+
   // TypeVar, Unknown, Any, Nil, Number, Bool, String - already deref'd
   return type
 }
@@ -793,6 +830,10 @@ fn substitute(type, subst) {
 
   if type.kind == "Option" {
     return typeOption(substitute(type.inner, subst))
+  }
+
+  if type.kind == "Map" {
+    return typeMap(substitute(type.key, subst), substitute(type.value, subst))
   }
 
   // Unknown, Any, Nil, Number, Bool, String unchanged
@@ -911,8 +952,8 @@ fn getBuiltinType(checker, name) {
   }
 
   if name == "keys" {
-    // keys: RecordTop -> Array(String) (accepts any Record)
-    return typeFunction([typeRecordTop()], typeArray(typeString()))
+    // keys: Any -> Array(String) (accepts Record or Map, validated in checkCall)
+    return typeFunction([typeAny()], typeArray(typeString()))
   }
 
   if name == "join" {
@@ -1090,23 +1131,49 @@ fn checkIndex(checker, node) {
   let indexType = checkExpr(checker, node.index)
 
   objType = deref(checker, objType)
+  indexType = deref(checker, indexType)
 
   let resultType = nil
 
   if objType.kind == "Array" {
-    // Index should be number (optional check)
+    // Index should be number
     constrain(checker, indexType, typeNumber(), node.index.id,
       "Array index must be number")
-    resultType = objType.elem
+    // Array index returns Option(T) (may be out of bounds -> nil)
+    resultType = typeOption(objType.elem)
+  } else if objType.kind == "Map" {
+    // Index should be String for map
+    constrain(checker, indexType, typeString(), node.index.id,
+      "Map index must be string")
+    // Map index returns Option(V) (key may not exist -> nil)
+    resultType = typeOption(objType.value)
   } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
-    // Refine to Array(TypeVar) - this binds the Unknown/TypeVar
-    let elemType = freshTypeVar(checker)
-    let arrayType = typeArray(elemType)
-    constrain(checker, objType, arrayType, node.object.id,
-      "Index access requires array")
-    resultType = elemType
+    // Ambiguous - could be Array or Map
+    // Decide based on index type
+    if indexType.kind == "Number" {
+      // Refine to Array
+      let elemType = freshTypeVar(checker)
+      let arrayType = typeArray(elemType)
+      constrain(checker, objType, arrayType, node.object.id,
+        "Index access with number requires array")
+      resultType = typeOption(elemType)
+    } else if indexType.kind == "String" {
+      // Refine to Map
+      let valueType = freshTypeVar(checker)
+      let mapType = typeMap(typeString(), valueType)
+      constrain(checker, objType, mapType, node.object.id,
+        "Index access with string requires map")
+      resultType = typeOption(valueType)
+    } else {
+      // Index type is also unknown - default to Array for now
+      let elemType = freshTypeVar(checker)
+      let arrayType = typeArray(elemType)
+      constrain(checker, objType, arrayType, node.object.id,
+        "Index access requires array or map")
+      resultType = typeOption(elemType)
+    }
   } else {
-    addError(checker, node.id, "Index access requires array, got: " + objType.kind)
+    addError(checker, node.id, "Index access requires array or map, got: " + objType.kind)
     resultType = typeAny()
   }
 
@@ -1175,6 +1242,13 @@ fn checkHashmap(checker, node) {
     checker.types[node.id] = resultType
     return resultType
   } else {
+    // Empty hashmap literal -> Map with fresh type variable
+    if len(node.pairs) == 0 {
+      let resultType = typeMap(typeString(), freshTypeVar(checker))
+      checker.types[node.id] = resultType
+      return resultType
+    }
+
     // Build regular Record (existing logic)
     let fields = .{}
 
@@ -1377,6 +1451,18 @@ fn checkCall(checker, node) {
 
   calleeType = deref(checker, calleeType)
 
+  // Special validation for keys builtin
+  if node.callee.type == "Identifier" and node.callee.name == "keys" {
+    if len(argTypes) > 0 {
+      let argType = deref(checker, argTypes[0])
+      if argType.kind != "Record" and argType.kind != "Map" and
+         argType.kind != "Any" and argType.kind != "Unknown" and argType.kind != "TypeVar" {
+        addError(checker, node.args[0].id,
+          "keys() requires Record or Map, got: " + argType.kind)
+      }
+    }
+  }
+
   let resultType = nil
 
   if calleeType.kind == "Function" {
@@ -1497,31 +1583,52 @@ fn checkAssignment(checker, node) {
     constrain(checker, targetType, valueType, node.value.id,
       "Assignment type mismatch")
   } else if node.target.type == "Index" {
-    // arr[i] = value
+    // arr[i] = value or map[k] = value
     let objType = checkExpr(checker, node.target.object)
     let indexType = checkExpr(checker, node.target.index)
 
     objType = deref(checker, objType)
+    indexType = deref(checker, indexType)
 
     if objType.kind == "Array" {
+      constrain(checker, indexType, typeNumber(), node.target.index.id,
+        "Array index must be number")
       constrain(checker, objType.elem, valueType, node.value.id,
         "Array element assignment type mismatch")
       targetType = valueType
-    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
-      // Refine unknown/typevar to Array(valueType)
-      let elemType = freshTypeVar(checker)
-      let arrayType = typeArray(elemType)
-      constrain(checker, objType, arrayType, node.target.object.id,
-        "Index assignment requires array")
-      constrain(checker, elemType, valueType, node.value.id,
-        "Array element assignment type mismatch")
+    } else if objType.kind == "Map" {
+      constrain(checker, indexType, typeString(), node.target.index.id,
+        "Map index must be string")
+      constrain(checker, objType.value, valueType, node.value.id,
+        "Map value assignment type mismatch")
       targetType = valueType
+    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
+      // Refine based on index type
+      if indexType.kind == "String" {
+        // Refine to Map(String, valueType)
+        let mapValueType = freshTypeVar(checker)
+        let mapType = typeMap(typeString(), mapValueType)
+        constrain(checker, objType, mapType, node.target.object.id,
+          "Index assignment with string requires map")
+        constrain(checker, mapValueType, valueType, node.value.id,
+          "Map value assignment type mismatch")
+        targetType = valueType
+      } else {
+        // Default to Array (including Number and Unknown index types)
+        let elemType = freshTypeVar(checker)
+        let arrayType = typeArray(elemType)
+        constrain(checker, objType, arrayType, node.target.object.id,
+          "Index assignment requires array or map")
+        constrain(checker, elemType, valueType, node.value.id,
+          "Array element assignment type mismatch")
+        targetType = valueType
+      }
     } else if objType.kind == "Any" {
       // Allow assignment to Any (dynamic escape hatch)
       targetType = valueType
     } else {
       addError(checker, node.target.object.id,
-        "Index assignment requires array, got: " + objType.kind)
+        "Index assignment requires array or map, got: " + objType.kind)
       targetType = typeAny()
     }
   } else if node.target.type == "Dot" {

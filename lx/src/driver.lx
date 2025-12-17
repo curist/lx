@@ -1,0 +1,139 @@
+// Driver - Orchestrates compilation pipeline: parse → lower → resolve → typecheck
+//
+// Responsibilities:
+// - Coordinate phase execution
+// - Manage import cache for multi-file compilation
+// - Handle circular import detection
+// - Provide compilation artifacts for query service and codegen
+
+let parse = import "src/parser.lx"
+let lower = import "src/lower.lx"
+let resolve = import "src/resolve.lx"
+let typecheck = import "src/typecheck.lx"
+
+// ========================================
+// Driver Factory
+// ========================================
+
+fn make(opts) {
+  let driver = .{}
+  driver.cache = .{}
+  driver.compiledModules = []  // Track compilation order
+  driver.loadSource = opts and opts.loadSource or nil
+  driver.withTypecheck = !(opts and opts.withTypecheck == false)  // Default: true
+
+  driver.compileModule = fn(path) {
+    // Track compilation
+    push(driver.compiledModules, path)
+
+    // Check cache first
+    let cached = driver.cache[path]
+    if cached {
+      return cached
+    }
+
+    // Mark as compiling (for circular import detection)
+    driver.cache[path] = .{
+      status: "compiling",
+      path: path,
+    }
+
+    // Load source via callback
+    let source = nil
+    if driver.loadSource {
+      source = driver.loadSource(path)
+    }
+
+    if !source {
+      // Source loading failed
+      let result = .{
+        status: "failed",
+        path: path,
+        errors: [.{ message: "Failed to load source: " + path }],
+      }
+      driver.cache[path] = result
+      return result
+    }
+
+    // ========================================
+    // PHASE 1: Parse
+    // ========================================
+    let parseResult = parse(source, path)
+    if !parseResult.success {
+      let result = .{
+        status: "failed",
+        path: path,
+        parseErrors: parseResult.errors,
+      }
+      driver.cache[path] = result
+      return result
+    }
+
+    // ========================================
+    // PHASE 2: Lower
+    // ========================================
+    let lowerResult = lower(parseResult.ast, .{
+      startNodeId: parseResult.nextNodeId,
+    })
+    if !lowerResult.success {
+      let result = .{
+        status: "failed",
+        path: path,
+        lowerErrors: lowerResult.errors,
+      }
+      driver.cache[path] = result
+      return result
+    }
+
+    // ========================================
+    // PHASE 3: Resolve
+    // ========================================
+    let resolveOpts = .{
+      importCache: driver.cache,
+      compileModule: driver.compileModule,
+    }
+    let resolveResult = resolve(lowerResult.ast, resolveOpts)
+
+    if !resolveResult.success {
+      let result = .{
+        status: "failed",
+        path: path,
+        parseResult: parseResult,
+        lowerResult: lowerResult,
+        resolveResult: resolveResult,
+      }
+      driver.cache[path] = result
+      return result
+    }
+
+    // ========================================
+    // PHASE 4: Typecheck (optional)
+    // ========================================
+    let typecheckResult = nil
+    if driver.withTypecheck {
+      typecheckResult = typecheck(lowerResult.ast, resolveResult, .{})
+    }
+
+    // Store result in cache
+    let result = .{
+      status: "done",
+      path: path,
+      parseResult: parseResult,
+      lowerResult: lowerResult,
+      resolveResult: resolveResult,
+      typecheckResult: typecheckResult,
+    }
+    driver.cache[path] = result
+    return result
+  }
+
+  driver
+}
+
+// ========================================
+// Module Exports
+// ========================================
+
+.{
+  make: make
+}

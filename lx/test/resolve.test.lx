@@ -5,6 +5,7 @@ let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
 let parse = import "src/parser.lx"
+let lower = import "src/lower.lx"
 let resolve = import "src/resolve.lx"
 
 // Helper to parse from fixture file
@@ -608,103 +609,31 @@ test("resolve - import node in nodes map", fn(assert) {
 // Import Driver Tests
 // ========================================
 
-let lower = import "src/lower.lx"
+let Driver = import "src/driver.lx"
 
 // Helper: Create a driver that compiles modules through parse → lower → resolve
 fn makeDriver() {
-  let driver = .{}
-  driver.cache = .{}
-  driver.compiledModules = []  // Track compilation order
-
-  driver.compileModule = fn(path) {
-    // Track compilation
-    push(driver.compiledModules, path)
-
-    // Check cache first
-    let cached = driver.cache[path]
-    if cached {
-      return cached
-    }
-
-    // Mark as compiling (for circular import detection)
-    driver.cache[path] = .{
-      status: "compiling",
-      path: path,
-    }
-
-    // Load source: check mocks first, then try file system
-    // This pattern allows adding new fixture files without updating this code
-    let source = nil
-
-    // Mock sources for specific tests (no fixture files needed)
-    if path == "test/fixtures/imports/simple.lx" {
-      source = "42"
-    } else if path == "test/fixtures/imports/math.lx" {
-      source = "fn add(a, b) { a + b }\nadd"
-    } else if path == "test/fixtures/imports/circular-a.lx" {
-      source = "let b = import \"test/fixtures/imports/circular-b.lx\"\nb"
-    } else if path == "test/fixtures/imports/circular-b.lx" {
-      source = "let a = import \"test/fixtures/imports/circular-a.lx\"\na"
-    } else if path == "test/fixtures/imports/nonexistent.lx" {
-      // Test case for missing modules
-      let result = .{
-        status: "failed",
-        path: path,
-        errors: [.{ message: "Module not found: " + path }],
+  Driver.make(.{
+    loadSource: fn(path) {
+      // Mock sources for specific tests (no fixture files needed)
+      if path == "test/fixtures/imports/simple.lx" {
+        return "42"
+      } else if path == "test/fixtures/imports/math.lx" {
+        return "fn add(a, b) { a + b }\nadd"
+      } else if path == "test/fixtures/imports/circular-a.lx" {
+        return "let b = import \"test/fixtures/imports/circular-b.lx\"\nb"
+      } else if path == "test/fixtures/imports/circular-b.lx" {
+        return "let a = import \"test/fixtures/imports/circular-a.lx\"\na"
+      } else if path == "test/fixtures/imports/nonexistent.lx" {
+        return nil  // Will trigger "Failed to load source" error
+      } else {
+        // Default: read from file system
+        // Any new fixture file in test/fixtures/imports/ will be automatically loaded
+        return slurp(path)
       }
-      driver.cache[path] = result
-      return result
-    } else {
-      // Default: read from file system
-      // Any new fixture file in test/fixtures/imports/ will be automatically loaded
-      source = slurp(path)
-    }
-
-    // Parse → lower → resolve
-    let parseResult = parse(source, path)
-    if !parseResult.success {
-      let result = .{
-        status: "failed",
-        path: path,
-        parseErrors: parseResult.errors,
-      }
-      driver.cache[path] = result
-      return result
-    }
-
-    let lowerResult = lower(parseResult.ast, .{
-      startNodeId: parseResult.nextNodeId,
-    })
-    if !lowerResult.success {
-      let result = .{
-        status: "failed",
-        path: path,
-        lowerErrors: lowerResult.errors,
-      }
-      driver.cache[path] = result
-      return result
-    }
-
-    // Resolve with driver's cache and compileModule
-    let resolveOpts = .{
-      importCache: driver.cache,
-      compileModule: driver.compileModule,
-    }
-    let resolveResult = resolve(lowerResult.ast, resolveOpts)
-
-    // Store result in cache
-    let result = .{
-      status: resolveResult.success and "done" or "failed",
-      path: path,
-      parseResult: parseResult,
-      lowerResult: lowerResult,
-      resolveResult: resolveResult,
-    }
-    driver.cache[path] = result
-    return result
-  }
-
-  driver
+    },
+    withTypecheck: false,  // Resolve tests don't need typecheck
+  })
 }
 
 test("resolve - driver compiles module via compileModule callback", fn(assert) {

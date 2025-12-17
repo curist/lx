@@ -3,45 +3,59 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
-let parse = import "src/parser.lx"
-let lower = import "src/lower.lx"
-let resolve = import "src/resolve.lx"
-let typecheck = import "src/typecheck.lx"
+let Driver = import "src/driver.lx"
 let query = import "services/query.lx"
 
 // Helper: compile source through full pipeline and create query context
 fn compileAndQuery(source, filename) {
-  let parseResult = parse(source, filename)
-  if !parseResult.success {
-    return .{ success: false, phase: "parse", errors: parseResult.errors }
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      // For single-file tests, return source if path matches filename
+      if path == filename {
+        return source
+      }
+      // Otherwise try to load from filesystem (for potential imports)
+      return slurp(path)
+    },
+    withTypecheck: true,
+  })
+
+  let result = driver.compileModule(filename)
+
+  // Check for compilation failure
+  if result.status != "done" {
+    let phase = "unknown"
+    let errors = []
+
+    if result.parseErrors {
+      phase = "parse"
+      errors = result.parseErrors
+    } else if result.lowerErrors {
+      phase = "lower"
+      errors = result.lowerErrors
+    } else if result.resolveResult and !result.resolveResult.success {
+      phase = "resolve"
+      errors = result.resolveResult.errors
+    }
+
+    return .{ success: false, phase: phase, errors: errors }
   }
 
-  let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
-  if !lowerResult.success {
-    return .{ success: false, phase: "lower", errors: lowerResult.errors }
-  }
-
-  let resolveResult = resolve(lowerResult.ast, .{})
-  if !resolveResult.success {
-    return .{ success: false, phase: "resolve", errors: resolveResult.errors }
-  }
-
-  let typecheckResult = typecheck(lowerResult.ast, resolveResult, .{})
-
+  // Initialize query context
   let initResult = query.queryInit(
-    lowerResult.ast,
-    resolveResult,
-    typecheckResult,
+    result.lowerResult.ast,
+    result.resolveResult,
+    result.typecheckResult,
     .{ buildIndex: true }
   )
 
   .{
     success: initResult.success,
     ctx: initResult.ctx,
-    parseResult: parseResult,
-    lowerResult: lowerResult,
-    resolveResult: resolveResult,
-    typecheckResult: typecheckResult,
+    parseResult: result.parseResult,
+    lowerResult: result.lowerResult,
+    resolveResult: result.resolveResult,
+    typecheckResult: result.typecheckResult,
   }
 }
 

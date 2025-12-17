@@ -193,7 +193,7 @@ static bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
 
-static void concatenate() {
+inline static void concatenate() {
   ObjString* b = AS_STRING(peek(0));
   ObjString* a = AS_STRING(peek(1));
 
@@ -211,6 +211,8 @@ static void concatenate() {
 
 static InterpretResult run() {
   CallFrame* frame = &vm.frames[vm.frameCount - 1];
+  ObjClosure* closure = frame->closure;
+  Value* slots = frame->slots;
 
   static void* dispatch_table[] = {
     &&DO_OP_NOP,
@@ -356,10 +358,10 @@ DO_OP_POP_LOCAL:
     pop_local();
     DISPATCH();
 DO_OP_GET_LOCAL:
-    push(frame->slots[READ_BYTE()]);
+    push(slots[READ_BYTE()]);
     DISPATCH();
 DO_OP_SET_LOCAL:
-    frame->slots[READ_BYTE()] = peek(0);
+    slots[READ_BYTE()] = peek(0);
     DISPATCH();
 DO_OP_GET_GLOBAL:
     {
@@ -392,13 +394,13 @@ DO_OP_SET_GLOBAL:
 DO_OP_GET_UPVALUE:
     {
       uint8_t slot = READ_BYTE();
-      push(*frame->closure->upvalues[slot]->location);
+      push(*closure->upvalues[slot]->location);
       DISPATCH();
     }
 DO_OP_SET_UPVALUE:
     {
       uint8_t slot = READ_BYTE();
-      *frame->closure->upvalues[slot]->location = peek(0);
+      *closure->upvalues[slot]->location = peek(0);
       DISPATCH();
     }
 DO_OP_GET_BY_INDEX:
@@ -674,20 +676,22 @@ DO_OP_CALL:
         return INTERPRET_RUNTIME_ERROR;
       }
       frame = &vm.frames[vm.frameCount - 1];
+      closure = frame->closure;
+      slots = frame->slots;
       DISPATCH();
     }
 DO_OP_CLOSURE:
     {
       ObjFunction* function = AS_FUNCTION(READ_CONSTANT());
-      ObjClosure* closure = newClosure(function);
-      push(OBJ_VAL(closure));
-      for (int i = 0; i < closure->upvalueCount; i++) {
+      ObjClosure* newClosureObj = newClosure(function);
+      push(OBJ_VAL(newClosureObj));
+      for (int i = 0; i < newClosureObj->upvalueCount; i++) {
         uint8_t isLocal = READ_BYTE();
         uint8_t index = READ_BYTE();
         if (isLocal) {
-          closure->upvalues[i] = captureUpvalue(frame->slots + index);
+          newClosureObj->upvalues[i] = captureUpvalue(slots + index);
         } else {
-          closure->upvalues[i] = frame->closure->upvalues[index];
+          newClosureObj->upvalues[i] = closure->upvalues[index];
         }
       }
       DISPATCH();
@@ -706,6 +710,8 @@ DO_OP_RETURN:
       }
       vm.localsTop = frame->slots;
       frame = &vm.frames[vm.frameCount - 1];
+      closure = frame->closure;
+      slots = frame->slots;
       DISPATCH();
     }
   }

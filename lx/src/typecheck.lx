@@ -268,9 +268,10 @@ fn sameType(t1, t2) {
 // Forward Declarations
 // ========================================
 
-let lookupDecl = nil
-let addError = nil
-let checkExpr = nil
+let lookupDecl
+let addError
+let checkExpr
+let synthExpr
 
 // ========================================
 // Type Environment
@@ -1164,8 +1165,8 @@ fn checkIdentifier(checker, node) {
 }
 
 fn checkBinary(checker, node) {
-  let leftType = checkExpr(checker, node.left)
-  let rightType = checkExpr(checker, node.right)
+  let leftType = synthExpr(checker, node.left)
+  let rightType = synthExpr(checker, node.right)
 
   let resultType = nil
   let op = node.operator.lexeme
@@ -1231,7 +1232,7 @@ fn checkBinary(checker, node) {
 }
 
 fn checkUnary(checker, node) {
-  let operandType = checkExpr(checker, node.operand)
+  let operandType = synthExpr(checker, node.operand)
 
   let resultType = nil
   let op = node.operator.lexeme
@@ -1253,8 +1254,8 @@ fn checkUnary(checker, node) {
 }
 
 fn checkLogical(checker, node) {
-  let leftType = checkExpr(checker, node.left)
-  let rightType = checkExpr(checker, node.right)
+  let leftType = synthExpr(checker, node.left)
+  let rightType = synthExpr(checker, node.right)
 
   leftType = deref(checker, leftType)
   rightType = deref(checker, rightType)
@@ -1298,10 +1299,10 @@ fn checkArray(checker, node) {
   let elemType = freshTypeVar(checker)
 
   if len(node.elements) > 0 {
-    elemType = checkExpr(checker, node.elements[0])
+    elemType = synthExpr(checker, node.elements[0])
 
     for let i = 1; i < len(node.elements); i = i + 1 {
-      let eltType = checkExpr(checker, node.elements[i])
+      let eltType = synthExpr(checker, node.elements[i])
       constrain(checker, elemType, eltType, node.elements[i].id,
         "Array elements must have compatible types")
     }
@@ -1313,8 +1314,8 @@ fn checkArray(checker, node) {
 }
 
 fn checkIndex(checker, node) {
-  let objType = checkExpr(checker, node.object)
-  let indexType = checkExpr(checker, node.index)
+  let objType = synthExpr(checker, node.object)
+  let indexType = synthExpr(checker, node.index)
 
   objType = deref(checker, objType)
   indexType = deref(checker, indexType)
@@ -1431,7 +1432,7 @@ fn checkHashmap(checker, node) {
         let dummy = 0
       } else {
         let pair = node.pairs[i]
-        let valueType = deref(checker, checkExpr(checker, pair.value))
+        let valueType = deref(checker, synthExpr(checker, pair.value))
 
         if pair.key.type == "String" {
           let keyName = pair.key.value
@@ -1462,8 +1463,8 @@ fn checkHashmap(checker, node) {
 
     for let i = 0; i < len(node.pairs); i = i + 1 {
       let pair = node.pairs[i]
-      let keyType = checkExpr(checker, pair.key)
-      let valueType = deref(checker, checkExpr(checker, pair.value))
+      let keyType = synthExpr(checker, pair.key)
+      let valueType = deref(checker, synthExpr(checker, pair.value))
 
       if pair.key.type == "String" {
         let keyName = pair.key.value
@@ -1530,7 +1531,7 @@ fn getKnownTag(checker, objNode) {
 }
 
 fn checkDot(checker, node) {
-  let objType = checkExpr(checker, node.object)
+  let objType = synthExpr(checker, node.object)
   objType = deref(checker, objType)
 
   // Property must be a string literal (from parser)
@@ -1672,13 +1673,14 @@ fn checkFunction(checker, node) {
   let prevReturnType = checker.currentReturnType
   checker.currentReturnType = returnType
 
-  // Check body
-  let bodyType = checkExpr(checker, node.body)
+  // Check body - use bidirectional checking for implicit returns
+  let bodyType = synthExpr(checker, node.body)
 
   // Body type unifies with return type (implicit return)
   // But only if the body doesn't end with an explicit return (which evaluates to Nil)
   bodyType = deref(checker, bodyType)
   if bodyType.kind != "Nil" {
+    // Implicit return - constrain body type against expected return type
     constrain(checker, bodyType, returnType, node.body.id,
       "Function body type incompatible with return type")
   }
@@ -1705,12 +1707,12 @@ fn checkFunction(checker, node) {
 }
 
 fn checkCall(checker, node) {
-  let calleeType = checkExpr(checker, node.callee)
+  let calleeType = synthExpr(checker, node.callee)
 
   // Check arguments
   let argTypes = []
   for let i = 0; i < len(node.args); i = i + 1 {
-    push(argTypes, checkExpr(checker, node.args[i]))
+    push(argTypes, synthExpr(checker, node.args[i]))
   }
 
   calleeType = deref(checker, calleeType)
@@ -1795,7 +1797,7 @@ fn checkLet(checker, node) {
 
   // Check initializer if present
   if node.init {
-    let initType = checkExpr(checker, node.init)
+    let initType = synthExpr(checker, node.init)
 
     // Value restriction: only generalize function literals
     if node.init.type == "Function" {
@@ -1835,7 +1837,7 @@ fn checkLet(checker, node) {
 
 fn checkAssignment(checker, node) {
   // Check value first
-  let valueType = checkExpr(checker, node.value)
+  let valueType = synthExpr(checker, node.value)
 
   // Check target
   let targetType = nil
@@ -1855,14 +1857,14 @@ fn checkAssignment(checker, node) {
       }
     }
 
-    targetType = checkExpr(checker, node.target)
+    targetType = synthExpr(checker, node.target)
     // Unify target with value
     constrain(checker, targetType, valueType, node.value.id,
       "Assignment type mismatch")
   } else if node.target.type == "Index" {
     // arr[i] = value or map[k] = value
-    let objType = checkExpr(checker, node.target.object)
-    let indexType = checkExpr(checker, node.target.index)
+    let objType = synthExpr(checker, node.target.object)
+    let indexType = synthExpr(checker, node.target.index)
 
     objType = deref(checker, objType)
     indexType = deref(checker, indexType)
@@ -1942,7 +1944,7 @@ fn checkAssignment(checker, node) {
     }
   } else if node.target.type == "Dot" {
     // obj.field = value
-    let objType = checkExpr(checker, node.target.object)
+    let objType = synthExpr(checker, node.target.object)
     objType = deref(checker, objType)
 
     if objType.kind == "Record" {
@@ -2169,7 +2171,7 @@ fn mergeEnvs(checker, originalEnv, thenEnv, elseEnv, guard) {
 
 fn checkIf(checker, node) {
   // Check condition
-  let condType = checkExpr(checker, node.condition)
+  let condType = synthExpr(checker, node.condition)
 
   // Extract guard information
   let guard = extractGuard(checker, node.condition)
@@ -2180,7 +2182,7 @@ fn checkIf(checker, node) {
   // Create refined environment for then branch
   let thenEnv = refineEnv(checker, originalEnv, guard, true)
   checker.currentEnv = thenEnv
-  let thenType = checkExpr(checker, node.then)
+  let thenType = synthExpr(checker, node.then)
 
   let resultType = nil
 
@@ -2188,7 +2190,7 @@ fn checkIf(checker, node) {
     // Create refined environment for else branch
     let elseEnv = refineEnv(checker, originalEnv, guard, false)
     checker.currentEnv = elseEnv
-    let elseType = checkExpr(checker, node.else)
+    let elseType = synthExpr(checker, node.else)
 
     // Restore original environment
     checker.currentEnv = originalEnv
@@ -2220,21 +2222,21 @@ fn checkFor(checker, node) {
 
   // Check init
   if node.init {
-    checkExpr(checker, node.init)
+    synthExpr(checker, node.init)
   }
 
   // Check condition
   if node.condition {
-    checkExpr(checker, node.condition)
+    synthExpr(checker, node.condition)
   }
 
   // Check update
   if node.update {
-    checkExpr(checker, node.update)
+    synthExpr(checker, node.update)
   }
 
   // Check body
-  checkExpr(checker, node.body)
+  synthExpr(checker, node.body)
 
   exitScope(checker)
 
@@ -2248,15 +2250,15 @@ fn checkReturn(checker, node) {
   let valueType = nil
 
   if node.value {
-    valueType = checkExpr(checker, node.value)
+    // Check return value against expected return type (bidirectional)
+    valueType = checkExpr(checker, node.value, checker.currentReturnType)
   } else {
     valueType = typeNil()
-  }
-
-  // Constrain with current function's return type
-  if checker.currentReturnType {
-    constrain(checker, valueType, checker.currentReturnType,
-      node.id, "Return type mismatch")
+    // Still need to constrain Nil against expected return type
+    if checker.currentReturnType {
+      constrain(checker, valueType, checker.currentReturnType,
+        node.id, "Return type mismatch")
+    }
   }
 
   // Return statements have no value (never reached)
@@ -2269,7 +2271,7 @@ fn checkBreak(checker, node) {
   let valueType = nil
 
   if node.value {
-    valueType = checkExpr(checker, node.value)
+    valueType = synthExpr(checker, node.value)
   } else {
     valueType = typeNil()
   }
@@ -2293,7 +2295,7 @@ fn checkBlock(checker, node) {
   let resultType = typeNil()
 
   for let i = 0; i < len(node.expressions); i = i + 1 {
-    resultType = checkExpr(checker, node.expressions[i])
+    resultType = synthExpr(checker, node.expressions[i])
   }
 
   // Block evaluates to last expression
@@ -2307,7 +2309,9 @@ fn checkBlock(checker, node) {
 // Main Expression Dispatcher
 // ========================================
 
-checkExpr = fn(checker, node) {
+// synthExpr: Pure type synthesis (bottom-up inference)
+// Returns the inferred type of an expression without expected type context
+synthExpr = fn(checker, node) {
   if !node {
     return typeNil()
   }
@@ -2325,7 +2329,7 @@ checkExpr = fn(checker, node) {
   } else if node.type == "Logical" {
     return checkLogical(checker, node)
   } else if node.type == "Grouping" {
-    return checkExpr(checker, node.expression)
+    return synthExpr(checker, node.expression)
   } else if node.type == "Array" {
     return checkArray(checker, node)
   } else if node.type == "Index" {
@@ -2405,13 +2409,28 @@ checkExpr = fn(checker, node) {
     // Program node - check body
     let resultType = typeNil()
     for let i = 0; i < len(node.body); i = i + 1 {
-      resultType = checkExpr(checker, node.body[i])
+      resultType = synthExpr(checker, node.body[i])
     }
     return resultType
   } else {
     addError(checker, node.id, "Type checking not implemented for: " + node.type)
     return typeAny()
   }
+}
+
+// checkExpr: Bidirectional type checking
+// Checks expression against expected type, or synthesizes if expectedType is nil
+checkExpr = fn(checker, node, expectedType) {
+  // No expected type or expected type is Any: use pure synthesis
+  if !expectedType or expectedType.kind == "Any" {
+    return synthExpr(checker, node)
+  }
+
+  // Synthesize type, then constrain against expected type
+  let synthType = synthExpr(checker, node)
+  constrain(checker, synthType, expectedType, node.id,
+    "Expression type doesn't match expected type")
+  return synthType
 }
 
 // ========================================
@@ -2445,7 +2464,7 @@ fn finalizeTypes(checker) {
     checker.currentReturnType = fnDecl.returnType
 
     // Re-check body with refined parameter types
-    let bodyType = checkExpr(checker, node.body)
+    let bodyType = synthExpr(checker, node.body)
 
     // Unify body type with return type (may refine further)
     bodyType = deref(checker, bodyType)
@@ -2527,7 +2546,7 @@ fn typecheck(ast, resolveResult, opts) {
   // PASS 1: Collect type skeletons and constraints
   checker.currentPass = 1
   for let i = 0; i < len(ast.body); i = i + 1 {
-    checkExpr(checker, ast.body[i])
+    synthExpr(checker, ast.body[i])
   }
 
   // PASS 2: Refine function bodies with complete type context

@@ -1,0 +1,12 @@
+fn sumLoop(n) {
+  let acc = 0
+  for let i = 1; i <= n; i = i + 1 {
+    acc = acc + i
+  }
+  acc
+}
+
+// Entry point
+let raw = Lx.args[3]
+let n = raw and tonumber(raw) or 0
+print(sumLoop(n))

@@ -1,0 +1,17 @@
+fn mapHitMiss(n) {
+  let m = .{}
+  for let i = 0; i < n; i = i + 1 {
+    m[i] = i + 1
+  }
+  let sum = 0
+  for let i = 0; i < n; i = i + 1 {
+    let k = if i % 2 == 0 { i } else { i + n } // half misses
+    let v = m[k]
+    sum = sum + (v or 1)
+  }
+  sum
+}
+
+let raw = Lx.args[3]
+let n = raw and tonumber(raw) or 0
+print(mapHitMiss(n))

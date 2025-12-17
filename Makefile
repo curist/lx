@@ -39,10 +39,12 @@ EMFLAGS=-sASYNCIFY -sINVOKE_RUN=0 -sENVIRONMENT=web \
 emcc: prepare
 	emcc $(CFLAGS) -DWASM $(EMFLAGS) src/*.c -o docs/lx.js
 
+benchmark: build
+	@cd benchmarks && LX="$(PWD)/out/lx" ./run.sh
+
 clean:
 	rm -rf out
 	rm include/lx/*
 
 test:
 	@cd lx && make runall && make test
-

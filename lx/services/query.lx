@@ -346,10 +346,84 @@ fn queryGotoDefinition(ctx, filename, line, col) {
 }
 
 // ========================================
+// High-Level API
+// ========================================
+
+let Driver = import "src/driver.lx"
+
+// Compile file and create query context in one step
+// This is the recommended API for IDE/LSP tooling
+fn compile(filepath) {
+  // Create driver that loads from filesystem
+  let driver = Driver.make(.{
+    loadSource: fn(path) { slurp(path) },
+    withTypecheck: true,
+  })
+
+  // Compile module through full pipeline
+  let result = driver.compileModule(filepath)
+
+  // Check for compilation failure
+  if result.status != "done" {
+    let phase = "unknown"
+    let errors = []
+
+    if result.parseErrors {
+      phase = "parse"
+      errors = result.parseErrors
+    } else if result.lowerErrors {
+      phase = "lower"
+      errors = result.lowerErrors
+    } else if result.resolveResult and !result.resolveResult.success {
+      phase = "resolve"
+      errors = result.resolveResult.errors
+    } else if result.typecheckResult and !result.typecheckResult.success {
+      phase = "typecheck"
+      errors = result.typecheckResult.errors
+    }
+
+    return .{
+      success: false,
+      phase: phase,
+      errors: errors,
+      compileResult: result,
+    }
+  }
+
+  // Initialize query context
+  let initResult = queryInit(
+    result.lowerResult.ast,
+    result.resolveResult,
+    result.typecheckResult,
+    .{ buildIndex: true }
+  )
+
+  if !initResult.success {
+    return .{
+      success: false,
+      phase: "query",
+      errors: ["Failed to initialize query context"],
+      compileResult: result,
+    }
+  }
+
+  // Return query context ready to use
+  .{
+    success: true,
+    ctx: initResult.ctx,
+    compileResult: result,
+  }
+}
+
+// ========================================
 // Module Exports
 // ========================================
 
 .{
+  // High-level API (recommended)
+  compile: compile,
+
+  // Low-level API (for advanced use cases)
   queryInit: queryInit,
   queryHover: queryHover,
   queryGotoDefinition: queryGotoDefinition,

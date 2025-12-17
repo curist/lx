@@ -1,0 +1,10 @@
+// Test fixture for hover queries on imported symbols
+let config = import "test/fixtures/imports/config.lx"
+
+// Hover should show type for config.version (String)
+let version = config.version
+
+// Hover should show type for config.maxItems (Number)
+let maxItems = config.maxItems
+
+version

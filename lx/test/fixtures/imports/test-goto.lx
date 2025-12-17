@@ -1,0 +1,7 @@
+// Test fixture for goto definition across imports
+let config = import "test/fixtures/imports/config.lx"
+let logger = import "test/fixtures/imports/logger.lx"
+
+// Goto on 'config' should jump to line 2
+// Goto on 'logger' should jump to line 3
+config.getName()

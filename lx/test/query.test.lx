@@ -7,14 +7,11 @@ let Driver = import "src/driver.lx"
 let query = import "services/query.lx"
 
 // Helper: compile source through full pipeline and create query context
+// Tests use lower-level APIs for flexibility (inline source, not filesystem)
 fn compileAndQuery(source, filename) {
   let driver = Driver.make(.{
     loadSource: fn(path) {
-      // For single-file tests, return source if path matches filename
-      if path == filename {
-        return source
-      }
-      // Otherwise try to load from filesystem (for potential imports)
+      if path == filename { return source }
       return slurp(path)
     },
     withTypecheck: true,
@@ -22,7 +19,6 @@ fn compileAndQuery(source, filename) {
 
   let result = driver.compileModule(filename)
 
-  // Check for compilation failure
   if result.status != "done" {
     let phase = "unknown"
     let errors = []
@@ -41,7 +37,6 @@ fn compileAndQuery(source, filename) {
     return .{ success: false, phase: phase, errors: errors }
   }
 
-  // Initialize query context
   let initResult = query.queryInit(
     result.lowerResult.ast,
     result.resolveResult,
@@ -163,6 +158,76 @@ test("query - goto on non-identifier fails gracefully", fn(assert) {
 
   assert.equal(gotoResult.success, false, "Goto should fail on non-identifier")
   assert.equal(gotoResult.kind, "goto", "Should be goto result")
+})
+
+// ========================================
+// Multi-Module Import Tests
+// ========================================
+
+test("query - hover on imported symbol shows type", fn(assert) {
+  // Use proper fixture file - showcases real API usage
+  let result = query.compile("test/fixtures/imports/test-hover.lx")
+
+  if !result.success {
+    println("Hover test compilation failed!")
+    println("Phase:", result.phase)
+    if result.errors { println("Errors:", result.errors) }
+  }
+
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Hover on 'config.version' (line 5, col 17 - after "let version = config.")
+  let hoverResult = query.queryHover(result.ctx, "test/fixtures/imports/test-hover.lx", 5, 17)
+
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.truthy(hoverResult.contents, "Should have type information")
+})
+
+test("query - goto definition to imported module", fn(assert) {
+  // Use proper fixture file
+  let result = query.compile("test/fixtures/imports/test-goto.lx")
+
+  if !result.success {
+    println("Compilation failed:", result.phase)
+    println("Errors:", result.errors)
+  }
+
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'config' usage (line 7, col 0)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test/fixtures/imports/test-goto.lx", 7, 0)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.kind, "goto", "Should be goto result")
+  assert.truthy(gotoResult.target, "Should have target location")
+  assert.equal(gotoResult.target.filename, "test/fixtures/imports/test-goto.lx", "Should point to declaration")
+  assert.equal(gotoResult.target.line, 2, "Should point to line 2 (let config = ...)")
+})
+
+test("query - query works across diamond import structure", fn(assert) {
+  // Use proper fixture file with diamond pattern
+  let result = query.compile("test/fixtures/imports/test-diamond.lx")
+
+  if !result.success {
+    println("Diamond test compilation failed!")
+    println("Phase:", result.phase)
+    if result.errors { println("Errors:", result.errors) }
+  }
+
+  assert.truthy(result.success, "Should compile with diamond imports")
+
+  // Hover on 'app.start' (line 8, col 4 - the 'start' part)
+  let hoverResult = query.queryHover(result.ctx, "test/fixtures/imports/test-diamond.lx", 8, 4)
+
+  assert.truthy(hoverResult.success, "Hover should work across imports")
+  assert.truthy(hoverResult.contents, "Should have type information")
+
+  // Goto on 'app' usage (line 8, col 0)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test/fixtures/imports/test-diamond.lx", 8, 0)
+
+  assert.truthy(gotoResult.success, "Goto should work across imports")
+  assert.equal(gotoResult.target.filename, "test/fixtures/imports/test-diamond.lx", "Should point to declaration")
+  assert.equal(gotoResult.target.line, 4, "Should point to line 4 (let app = ...)")
 })
 
 suite.run()

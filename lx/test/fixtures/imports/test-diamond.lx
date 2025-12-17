@@ -1,0 +1,8 @@
+// Test fixture for diamond import pattern
+// This imports app.lx which imports config + logger,
+// both of which import constants.lx (diamond)
+let app = import "test/fixtures/imports/app.lx"
+
+// Hover on app.start should show function type
+// Query service should handle the diamond dependency correctly
+app.start

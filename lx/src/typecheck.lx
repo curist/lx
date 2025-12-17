@@ -1251,35 +1251,44 @@ fn checkIndex(checker, node) {
     // Array index returns Option(T) (may be out of bounds -> nil)
     resultType = typeOption(objType.elem)
   } else if objType.kind == "Map" {
-    // Index should be String for map
-    constrain(checker, indexType, typeString(), node.index.id,
-      "Map index must be string")
+    // Index should match map's key type (String or Number)
+    constrain(checker, indexType, objType.key, node.index.id,
+      "Map index must match key type")
     // Map index returns Option(V) (key may not exist -> nil)
     resultType = typeOption(objType.value)
   } else if objType.kind == "TypeVar" {
     // Ambiguous - could be Array or Map
     // Decide based on index type
     if indexType.kind == "Number" {
-      // Refine to Array
+      // Could be Array or Map(Number, V) - default to Array (more common)
       let elemType = freshTypeVar(checker)
       let arrayType = typeArray(elemType)
       constrain(checker, objType, arrayType, node.object.id,
         "Index access with number requires array")
       resultType = typeOption(elemType)
     } else if indexType.kind == "String" {
-      // Refine to Map
+      // Refine to Map with String keys
       let valueType = freshTypeVar(checker)
       let mapType = typeMap(typeString(), valueType)
       constrain(checker, objType, mapType, node.object.id,
         "Index access with string requires map")
       resultType = typeOption(valueType)
-    } else {
-      // Index type is also unknown - default to Array for now
+    } else if indexType.kind == "TypeVar" {
+      // Both object and index are unknown
+      // Index could constrain to Number (→ Array) or String/Number (→ Map)
+      // For Map key, we need to allow both String and Number
+      // Default to Array with Number index for now
       let elemType = freshTypeVar(checker)
       let arrayType = typeArray(elemType)
+      constrain(checker, indexType, typeNumber(), node.index.id,
+        "Index must be number for array access")
       constrain(checker, objType, arrayType, node.object.id,
         "Index access requires array or map")
       resultType = typeOption(elemType)
+    } else {
+      // Index type is known but not Number or String - error
+      addError(checker, node.index.id, "Index must be number or string")
+      resultType = typeAny()
     }
   } else {
     addError(checker, node.id, "Index access requires array or map, got: " + objType.kind)
@@ -1356,9 +1365,9 @@ fn checkHashmap(checker, node) {
     checker.types[node.id] = resultType
     return resultType
   } else {
-    // Empty hashmap literal -> Map with fresh type variable
+    // Empty hashmap literal -> Map with fresh type variables for both key and value
     if len(node.pairs) == 0 {
-      let resultType = typeMap(typeString(), freshTypeVar(checker))
+      let resultType = typeMap(freshTypeVar(checker), freshTypeVar(checker))
       checker.types[node.id] = resultType
       return resultType
     }
@@ -1737,8 +1746,9 @@ fn checkAssignment(checker, node) {
         "Array element assignment type mismatch")
       targetType = valueType
     } else if objType.kind == "Map" {
-      constrain(checker, indexType, typeString(), node.target.index.id,
-        "Map index must be string")
+      // Map key can be String or Number - constrain to map's key type
+      constrain(checker, indexType, objType.key, node.target.index.id,
+        "Map index must match key type")
       constrain(checker, objType.value, valueType, node.value.id,
         "Map value assignment type mismatch")
       targetType = valueType
@@ -1753,15 +1763,46 @@ fn checkAssignment(checker, node) {
         constrain(checker, mapValueType, valueType, node.value.id,
           "Map value assignment type mismatch")
         targetType = valueType
-      } else {
-        // Default to Array (including Number and Unknown index types)
+      } else if indexType.kind == "Number" {
+        // Could be Array or Map(Number, V)
+        // Need to check if there are other constraints that determine this
+        // For now, check if objType has been constrained to Map elsewhere
+        let derefType = derefAll(checker, objType)
+        if derefType.kind == "Map" {
+          // Already constrained to Map - use Number key
+          let mapValueType = freshTypeVar(checker)
+          let mapType = typeMap(typeNumber(), mapValueType)
+          constrain(checker, objType, mapType, node.target.object.id,
+            "Index assignment with number to map")
+          constrain(checker, mapValueType, valueType, node.value.id,
+            "Map value assignment type mismatch")
+          targetType = valueType
+        } else {
+          // Default to Array for Number index (more common)
+          let elemType = freshTypeVar(checker)
+          let arrayType = typeArray(elemType)
+          constrain(checker, objType, arrayType, node.target.object.id,
+            "Index assignment with number requires array")
+          constrain(checker, elemType, valueType, node.value.id,
+            "Array element assignment type mismatch")
+          targetType = valueType
+        }
+      } else if indexType.kind == "TypeVar" {
+        // Both object and index type are unknown
+        // Default to Array with Number index
         let elemType = freshTypeVar(checker)
         let arrayType = typeArray(elemType)
+        constrain(checker, indexType, typeNumber(), node.target.index.id,
+          "Array index must be number")
         constrain(checker, objType, arrayType, node.target.object.id,
           "Index assignment requires array or map")
         constrain(checker, elemType, valueType, node.value.id,
           "Array element assignment type mismatch")
         targetType = valueType
+      } else {
+        // Index type is known but not String or Number
+        addError(checker, node.target.index.id, "Index must be string or number")
+        targetType = typeAny()
       }
     } else if objType.kind == "Any" {
       // Allow assignment to Any (dynamic escape hatch)

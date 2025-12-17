@@ -932,4 +932,63 @@ test("typecheck - nil-check merge: T | Nil -> Option(T)", fn(assert) {
   assert.truthy(result.success, "T | Nil merge should produce valid type")
 })
 
+// ========================================
+// Map with Number Keys
+// ========================================
+
+test("typecheck - map: number key index access", fn(assert) {
+  let code = "{
+    let m = .{}
+    m[1] = \"value\"
+    m
+  }"
+  let result = parseAndTypecheck(code)
+
+  assert.truthy(result.success, "Should accept Map with Number keys")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - map: number key lookup with nil-check", fn(assert) {
+  let code = "{
+    let m = .{}
+    m[42] = 100
+    let x = m[42]
+    if x != nil { x + 1 } else { 0 }
+  }"
+  let result = parseAndTypecheck(code)
+
+  assert.truthy(result.success, "Should accept Map(Number, Number)")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - map: mixed key types should fail", fn(assert) {
+  // Maps must have consistent key type - can't mix String and Number
+  let code = "{
+    let m = .{}
+    m[\"a\"] = 1
+    m[42] = 2
+    m
+  }"
+  let result = parseAndTypecheck(code)
+
+  // This should fail (can't mix String and Number keys in same map)
+  assert.equal(result.success, false, "Should reject mixed key types")
+  assert.truthy(len(result.errors) > 0, "Should have type mismatch error")
+})
+
+test("typecheck - map: number keys are distinct from array", fn(assert) {
+  // Map with number keys is not the same as Array
+  let code = "{
+    let m = .{}
+    m[5] = \"five\"
+    m[10] = \"ten\"
+    let x = m[5]
+    if x != nil { x } else { \"default\" }
+  }"
+  let result = parseAndTypecheck(code)
+
+  assert.truthy(result.success, "Should work with Number-keyed Map")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
 suite.run()

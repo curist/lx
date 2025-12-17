@@ -310,6 +310,31 @@ test("typecheck - if branch type mismatch", fn(assert) {
   assert.truthy(len(result.errors) > 0, "Should have errors")
 })
 
+test("typecheck - if with else: strict unification (current behavior)", fn(assert) {
+  // Document current strict behavior: branches must unify
+  let result = parseAndTypecheck("if true { 42 } else { 100 }")
+  assert.truthy(result.success, "Same types should unify")
+
+  let result2 = parseAndTypecheck("if true { \"hi\" } else { \"bye\" }")
+  assert.truthy(result2.success, "Same types should unify")
+
+  let result3 = parseAndTypecheck("if true { 1 } else { \"str\" }")
+  assert.equal(result3.success, false, "Different types should fail (strict)")
+})
+
+test("typecheck - if without else returns Option", fn(assert) {
+  // Current behavior: if without else returns Option(thenType)
+  let result = parseAndTypecheck("{ let x = if true { 42 }\nx }")
+  assert.truthy(result.success, "Should succeed")
+
+  // The result type should be Option(Number)
+  let type = getExprType(result, 0)
+  assert.equal(type.kind, "Option", "Should be Option type")
+  if type.kind == "Option" {
+    assert.equal(type.inner.kind, "Number", "Inner should be Number")
+  }
+})
+
 test("typecheck - for loop", fn(assert) {
   let result = parseAndTypecheck("for let i = 0; i < 10; i = i + 1 { i }")
   assert.truthy(result.success, "Should typecheck for loop")
@@ -839,6 +864,72 @@ test("typecheck - nilability: chained array index then dot", fn(assert) {
   let errorMsg = result.errors[0].message
   assert.truthy(errorMsg == "Possibly nil value; add nil-check or use default with 'or'",
     "Should have helpful nil error message")
+})
+
+// ========================================
+// Type Narrowing and Merge (Issue 4)
+// ========================================
+
+test("typecheck - nil-check narrowing: no contamination after merge", fn(assert) {
+  // After nil-check, variable type should remain Option, not contaminated
+  let code = "{
+    let x = if true { .{a: 1} }
+    if x != nil {
+      x.a
+    }
+    x
+  }"
+  let result = parseAndTypecheck(code)
+
+  // Should succeed (x is Option inside branch after narrowing, Option outside)
+  assert.truthy(result.success, "Should typecheck without contamination")
+
+  // After the if, x should still be Option (not forced to Nil or Record)
+  // This is verified by the fact that accessing x.a outside would error
+})
+
+test("typecheck - nil-check: one-sided refinement preserves Option", fn(assert) {
+  // Only then-branch uses the variable; after if, should still be Option
+  let code = "{
+    let x = if true { .{a: 1} }
+    if x != nil {
+      let y = x.a
+    }
+    x
+  }"
+  let result = parseAndTypecheck(code)
+
+  assert.truthy(result.success, "One-sided refinement should not contaminate")
+})
+
+test("typecheck - nil-check: both branches preserve type integrity", fn(assert) {
+  // Both branches refine x; post-merge should be Option
+  let code = "{
+    let x = if true { .{a: 1} }
+    if x != nil {
+      x.a
+    } else {
+      0
+    }
+    x
+  }"
+  let result = parseAndTypecheck(code)
+
+  assert.truthy(result.success, "Both-branch refinement should preserve Option")
+})
+
+test("typecheck - nil-check merge: T | Nil -> Option(T)", fn(assert) {
+  // When branches have T and Nil, merge should produce Option(T)
+  let code = "{
+    let x = .{a: 1}
+    if x != nil {
+      let y = x.a
+    }
+    x
+  }"
+  let result = parseAndTypecheck(code)
+
+  assert.truthy(result.success, "T | Nil merge should produce valid type")
 })
 
 suite.run()

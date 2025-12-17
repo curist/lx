@@ -611,6 +611,63 @@ fn constrain(checker, t1, t2, nodeId, errorMsg) {
   t1
 }
 
+// Join types at control-flow merge points
+// This is a "best-effort join" without full union types:
+// - T | Nil -> Option(T)
+// - Option(T) | Nil -> Option(T) (no double-wrap)
+// - Option(T) | T -> Option(T)
+// - If types unify -> unified result
+// - Otherwise -> Any
+fn joinTypes(checker, t1, t2) {
+  t1 = deref(checker, t1)
+  t2 = deref(checker, t2)
+
+  // Fast path: same type
+  if sameType(t1, t2) {
+    return t1
+  }
+
+  // Any absorbs everything
+  if t1.kind == "Any" { return typeAny() }
+  if t2.kind == "Any" { return typeAny() }
+
+  // Option(T) | Nil -> Option(T) (avoid double-wrap)
+  if t1.kind == "Option" and t2.kind == "Nil" {
+    return t1
+  }
+  if t2.kind == "Option" and t1.kind == "Nil" {
+    return t2
+  }
+
+  // T | Nil -> Option(T) (nilable join)
+  if t1.kind == "Nil" and t2.kind != "Nil" {
+    return typeOption(t2)
+  }
+  if t2.kind == "Nil" and t1.kind != "Nil" {
+    return typeOption(t1)
+  }
+
+  // Option(T) | T -> Option(T) if inner unifies with T
+  if t1.kind == "Option" {
+    if unify(checker, t1.inner, t2) {
+      return t1
+    }
+  }
+  if t2.kind == "Option" {
+    if unify(checker, t2.inner, t1) {
+      return t2
+    }
+  }
+
+  // Try to unify - if successful, return the unified result
+  if unify(checker, t1, t2) {
+    return deref(checker, t1)
+  }
+
+  // Incompatible types - fall back to Any
+  return typeAny()
+}
+
 // ========================================
 // Polymorphism: Schemes, Generalization, Instantiation
 // ========================================
@@ -1897,30 +1954,47 @@ fn extractGuard(checker, condNode) {
 
 fn mergeEnvs(checker, originalEnv, thenEnv, elseEnv, guard) {
   // After if/else, reconcile refined bindings
-  // Unify branches back to the original binding (including one-sided refinements)
+  // For nil-check: use join to avoid contamination (T | Nil -> Option(T))
+  // For other guards: preserve existing behavior or clear facts
   if !guard { return }
 
   let declNodeId = guard.declNodeId
 
-  // Always unify back into the real binding (walks parent chain)
+  // Always work with the real binding (walks parent chain)
   let originalBinding = lookupDecl(checker, declNodeId)
   if !originalBinding or originalBinding.kind != "Mono" { return }
 
   let thenBinding = thenEnv.bindings[declNodeId]
   let elseBinding = elseEnv.bindings[declNodeId]
 
-  // Merge refinements from either branch (one-sided or both)
-  // This preserves constraints learned in any branch
-  if thenBinding and thenBinding.kind == "Mono" {
-    unify(checker, thenBinding.typeVar, originalBinding.typeVar)
-  }
-  if elseBinding and elseBinding.kind == "Mono" {
-    unify(checker, elseBinding.typeVar, originalBinding.typeVar)
-  }
+  // Nil-check: join branch types to avoid contamination
+  if guard.kind == "nil-check" {
+    // Get branch types (missing binding = original type)
+    let thenType = thenBinding and thenBinding.kind == "Mono" and
+                   deref(checker, thenBinding.typeVar) or
+                   deref(checker, originalBinding.typeVar)
+    let elseType = elseBinding and elseBinding.kind == "Mono" and
+                   deref(checker, elseBinding.typeVar) or
+                   deref(checker, originalBinding.typeVar)
 
-  // Clear tag narrowing after merge
-  if guard and guard.kind == "tag-check" {
+    // Join the branch types (T | Nil -> Option(T))
+    let joined = joinTypes(checker, thenType, elseType)
+
+    // Constrain original binding to joined type
+    unify(checker, originalBinding.typeVar, joined)
+  }
+  // Tag-check: just clear tag facts (no type change)
+  else if guard.kind == "tag-check" {
     checker.knownTags[guard.declNodeId] = nil
+  }
+  // Other guards (type-test, future): preserve old unify-back behavior for now
+  else {
+    if thenBinding and thenBinding.kind == "Mono" {
+      unify(checker, thenBinding.typeVar, originalBinding.typeVar)
+    }
+    if elseBinding and elseBinding.kind == "Mono" {
+      unify(checker, elseBinding.typeVar, originalBinding.typeVar)
+    }
   }
 }
 

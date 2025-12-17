@@ -21,14 +21,19 @@ void freeTable(Table* table) {
 }
 
 static uint32_t hashDouble(double value) {
-  union BitCast {
-    double value;
-    uint32_t ints[2];
-  };
+  // Normalize -0.0 and +0.0 to the same hash.
+  if (value == 0) value = 0;
 
-  union BitCast cast;
-  cast.value = (value) + 1.0;
-  return cast.ints[0] + cast.ints[1];
+  uint64_t bits;
+  memcpy(&bits, &value, sizeof(uint64_t));
+
+  // 64-bit mix (similar to splitmix64 finalizer).
+  bits ^= bits >> 33;
+  bits *= 0xff51afd7ed558ccdULL;
+  bits ^= bits >> 33;
+  bits *= 0xc4ceb9fe1a85ec53ULL;
+  bits ^= bits >> 33;
+  return (uint32_t)(bits ^ (bits >> 32));
 }
 
 uint32_t hashValue(Value value) {
@@ -36,7 +41,7 @@ uint32_t hashValue(Value value) {
   if (IS_STRING(value)) {
     return AS_STRING(value)->hash;
   } else if (IS_NUMBER(value)) {
-    return hashDouble(value);
+    return hashDouble(valueToNum(value));
   } else {
     return 0;
   }

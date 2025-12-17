@@ -186,6 +186,34 @@ test("typecheck - logical not", fn(assert) {
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
 
+test("typecheck - string concatenation", fn(assert) {
+  let result = parseAndTypecheck("\"hello\" + \" world\"")
+  assert.truthy(result.success, "Should typecheck string concatenation")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - string concatenation with variables", fn(assert) {
+  let result = parseAndTypecheck("{ let a = \"hello\"\nlet b = \" world\"\na + b }")
+  assert.truthy(result.success, "Should typecheck string concatenation with variables")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+
+  // Check that result type is String
+  let type = getExprType(result, 2)
+  assert.equal(type.kind, "String", "String concatenation should return String")
+})
+
+test("typecheck - string plus number type error", fn(assert) {
+  let result = parseAndTypecheck("\"hello\" + 42")
+  assert.equal(result.success, false, "Should fail on string + number")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+test("typecheck - number plus string type error", fn(assert) {
+  let result = parseAndTypecheck("42 + \"hello\"")
+  assert.equal(result.success, false, "Should fail on number + string")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
 // ========================================
 // Arrays
 // ========================================
@@ -745,6 +773,72 @@ test("typecheck - regression: type(map) narrows to Map (dot rejected)", fn(asser
   let result = parseAndTypecheck(code)
   assert.truthy(!result.success, "Should reject dot access on Map after narrowing")
   assert.truthy(len(result.errors) > 0, "Should have errors")
+})
+
+// ========================================
+// Nilability Diagnostics
+// ========================================
+
+test("typecheck - nilability: dot on Option(Record) emits helpful error", fn(assert) {
+  let result = parseAndTypecheck("{ let x = if true { .{a: 1} }\nx.a }")
+
+  assert.equal(result.success, false, "Should fail with error")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+  // Check that error message is helpful
+  let errorMsg = result.errors[0].message
+  assert.truthy(errorMsg == "Possibly nil value; add nil-check or use default with 'or'",
+    "Should have helpful nil error message")
+})
+
+test("typecheck - nilability: dot on Option after nil-check works", fn(assert) {
+  let result = parseAndTypecheck("{ let x = if true { .{a: 1} }\nif x != nil { x.a } }")
+
+  assert.truthy(result.success, "Should succeed after nil-check")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - nilability: call on Option(Function) emits helpful error", fn(assert) {
+  let result = parseAndTypecheck("{ let f = if true { fn() { 1 } }\nf() }")
+
+  assert.equal(result.success, false, "Should fail with error")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+  let errorMsg = result.errors[0].message
+  assert.truthy(errorMsg == "Possibly nil value; add nil-check or use default with 'or'",
+    "Should have helpful nil error message")
+})
+
+test("typecheck - nilability: call on Option after nil-check works", fn(assert) {
+  let result = parseAndTypecheck("{ let f = if true { fn() { 1 } }\nif f != nil { f() } }")
+
+  assert.truthy(result.success, "Should succeed after nil-check")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - nilability: index on Option(Array) emits helpful error", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = if true { [1, 2, 3] }\narr[0] }")
+
+  assert.equal(result.success, false, "Should fail with error")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+  let errorMsg = result.errors[0].message
+  assert.truthy(errorMsg == "Possibly nil value; add nil-check or use default with 'or'",
+    "Should have helpful nil error message")
+})
+
+test("typecheck - nilability: index on Option after nil-check works", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = if true { [1, 2, 3] }\nif arr != nil { arr[0] } }")
+
+  assert.truthy(result.success, "Should succeed after nil-check")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - nilability: chained array index then dot", fn(assert) {
+  let result = parseAndTypecheck("{ let arr = [.{a: 1}]\nlet x = arr[0]\nx.a }")
+
+  assert.equal(result.success, false, "Should fail - arr[0] returns Option")
+  assert.truthy(len(result.errors) > 0, "Should have errors")
+  let errorMsg = result.errors[0].message
+  assert.truthy(errorMsg == "Possibly nil value; add nil-check or use default with 'or'",
+    "Should have helpful nil error message")
 })
 
 suite.run()

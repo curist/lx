@@ -9,7 +9,7 @@
 // All information stored in side tables keyed by node ID.
 //
 // Core Subset (Phase 1):
-//   - Basic types: Unknown, Any, Nil, Number, Bool, String, TypeVar
+//   - Basic types: Any, Nil, Number, Bool, String, TypeVar
 //   - Monomorphic inference (no Poly/Scheme)
 //   - Function, Array, Record types
 //   - Eager unification
@@ -22,10 +22,6 @@
 // ========================================
 // Type Constructors
 // ========================================
-
-fn typeUnknown() {
-  .{ kind: "Unknown" }
-}
 
 fn typeAny() {
   .{ kind: "Any" }
@@ -128,6 +124,14 @@ fn deref(checker, type) {
   type
 }
 
+// Unwrap Option type to get inner type, or nil if not Option
+fn unwrapOption(type) {
+  if type.kind == "Option" {
+    return type.inner
+  }
+  nil
+}
+
 // Occurs check: does typeVarId occur in type?
 fn occurs(checker, typeVarId, type) {
   type = deref(checker, type)
@@ -179,7 +183,7 @@ fn occurs(checker, typeVarId, type) {
     return occurs(checker, typeVarId, type.key) or occurs(checker, typeVarId, type.value)
   }
 
-  // For other types (primitives, Unknown, Any, etc.), no occurrence
+  // For other types (primitives, Any, etc.), no occurrence
   false
 }
 
@@ -256,7 +260,7 @@ fn sameType(t1, t2) {
     return sameType(t1.key, t2.key) and sameType(t1.value, t2.value)
   }
 
-  // Primitive types (Unknown, Any, Nil, Number, Bool, String, RecordTop, LenableTop)
+  // Primitive types (Any, Nil, Number, Bool, String, RecordTop, LenableTop)
   true
 }
 
@@ -450,11 +454,6 @@ fn unify(checker, t1, t2) {
 
   // Same type - success
   if sameType(t1, t2) {
-    return true
-  }
-
-  // Unknown unifies with anything (stays Unknown for now in core subset)
-  if t1.kind == "Unknown" or t2.kind == "Unknown" {
     return true
   }
 
@@ -678,7 +677,7 @@ fn ftv(type) {
     return vars
   }
 
-  // Unknown, Any, Nil, Number, Bool, String have no free vars
+  // Any, Nil, Number, Bool, String have no free vars
   return []
 }
 
@@ -764,7 +763,7 @@ fn derefAll(checker, type) {
     return typeMap(derefAll(checker, type.key), derefAll(checker, type.value))
   }
 
-  // TypeVar, Unknown, Any, Nil, Number, Bool, String - already deref'd
+  // TypeVar, Any, Nil, Number, Bool, String - already deref'd
   return type
 }
 
@@ -836,7 +835,7 @@ fn substitute(type, subst) {
     return typeMap(substitute(type.key, subst), substitute(type.value, subst))
   }
 
-  // Unknown, Any, Nil, Number, Bool, String unchanged
+  // Any, Nil, Number, Bool, String unchanged
   return type
 }
 
@@ -1029,8 +1028,30 @@ fn checkBinary(checker, node) {
   let resultType = nil
   let op = node.operator.lexeme
 
-  // Arithmetic: +, -, *, /, %
-  if op == "+" or op == "-" or op == "*" or op == "/" or op == "%" {
+  // Special handling for + operator (supports both number and string)
+  if op == "+" {
+    // Dereference to check actual types
+    let leftDeref = deref(checker, leftType)
+    let rightDeref = deref(checker, rightType)
+
+    // String concatenation
+    if leftDeref.kind == "String" or rightDeref.kind == "String" {
+      constrain(checker, leftType, typeString(), node.left.id,
+        "String concatenation requires string")
+      constrain(checker, rightType, typeString(), node.right.id,
+        "String concatenation requires string")
+      resultType = typeString()
+    } else {
+      // Number addition (default)
+      constrain(checker, leftType, typeNumber(), node.left.id,
+        "Arithmetic operation requires number")
+      constrain(checker, rightType, typeNumber(), node.right.id,
+        "Arithmetic operation requires number")
+      resultType = typeNumber()
+    }
+  }
+  // Arithmetic: -, *, /, %
+  else if op == "-" or op == "*" or op == "/" or op == "%" {
     constrain(checker, leftType, typeNumber(), node.left.id,
       "Arithmetic operation requires number")
     constrain(checker, rightType, typeNumber(), node.right.id,
@@ -1158,6 +1179,14 @@ fn checkIndex(checker, node) {
 
   let resultType = nil
 
+  // Handle Option types: emit helpful error, but continue with unwrapped type
+  let wasOption = false
+  if objType.kind == "Option" {
+    addError(checker, node.object.id, "Possibly nil value; add nil-check or use default with 'or'")
+    wasOption = true
+    objType = objType.inner
+  }
+
   if objType.kind == "Array" {
     // Index should be number
     constrain(checker, indexType, typeNumber(), node.index.id,
@@ -1170,7 +1199,7 @@ fn checkIndex(checker, node) {
       "Map index must be string")
     // Map index returns Option(V) (key may not exist -> nil)
     resultType = typeOption(objType.value)
-  } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
+  } else if objType.kind == "TypeVar" {
     // Ambiguous - could be Array or Map
     // Decide based on index type
     if indexType.kind == "Number" {
@@ -1199,6 +1228,11 @@ fn checkIndex(checker, node) {
     addError(checker, node.id, "Index access requires array or map, got: " + objType.kind)
     resultType = typeAny()
   }
+
+  // Note: Index already returns Option for Array/Map access (out of bounds / missing key)
+  // If object was Option, the result is still Option(T), not Option(Option(T))
+  // The single Option covers both "object is nil" and "index out of bounds/missing key"
+  // So we don't need to wrap again
 
   checker.types[node.id] = resultType
   resultType
@@ -1353,6 +1387,14 @@ fn checkDot(checker, node) {
 
   let resultType = nil
 
+  // Handle Option types: emit helpful error, but continue with unwrapped type
+  let wasOption = false
+  if objType.kind == "Option" {
+    addError(checker, node.object.id, "Possibly nil value; add nil-check or use default with 'or'")
+    wasOption = true
+    objType = objType.inner
+  }
+
   if objType.kind == "Tagged" {
     // Accessing tag field itself
     if propName == objType.tagField {
@@ -1389,7 +1431,7 @@ fn checkDot(checker, node) {
     } else {
       resultType = fieldType
     }
-  } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
+  } else if objType.kind == "TypeVar" {
     // Refine to Record with this field - this binds the Unknown/TypeVar
     let fieldType = freshTypeVar(checker)
     let recordFields = .{}
@@ -1401,6 +1443,11 @@ fn checkDot(checker, node) {
   } else {
     addError(checker, node.id, "Dot access requires record, got: " + objType.kind)
     resultType = typeAny()
+  }
+
+  // Wrap result in Option if object was Option
+  if wasOption and resultType.kind != "Any" {
+    resultType = typeOption(resultType)
   }
 
   checker.types[node.id] = resultType
@@ -1474,12 +1521,20 @@ fn checkCall(checker, node) {
 
   calleeType = deref(checker, calleeType)
 
+  // Handle Option types: emit helpful error, but continue with unwrapped type
+  let wasOption = false
+  if calleeType.kind == "Option" {
+    addError(checker, node.callee.id, "Possibly nil value; add nil-check or use default with 'or'")
+    wasOption = true
+    calleeType = calleeType.inner
+  }
+
   // Special validation for keys builtin
   if node.callee.type == "Identifier" and node.callee.name == "keys" {
     if len(argTypes) > 0 {
       let argType = deref(checker, argTypes[0])
       if argType.kind != "Record" and argType.kind != "Map" and
-         argType.kind != "Any" and argType.kind != "Unknown" and argType.kind != "TypeVar" {
+         argType.kind != "Any" and argType.kind != "TypeVar" {
         addError(checker, node.args[0].id,
           "keys() requires Record or Map, got: " + argType.kind)
       }
@@ -1505,7 +1560,7 @@ fn checkCall(checker, node) {
     }
 
     resultType = calleeType.return
-  } else if calleeType.kind == "Unknown" or calleeType.kind == "TypeVar" {
+  } else if calleeType.kind == "TypeVar" {
     // Refine to Function type
     let paramTypes = []
     for let i = 0; i < len(argTypes); i = i + 1 {
@@ -1522,6 +1577,11 @@ fn checkCall(checker, node) {
   } else {
     addError(checker, node.id, "Cannot call non-function type: " + calleeType.kind)
     resultType = typeAny()
+  }
+
+  // Wrap result in Option if callee was Option
+  if wasOption and resultType.kind != "Any" {
+    resultType = typeOption(resultType)
   }
 
   checker.types[node.id] = resultType
@@ -1625,7 +1685,7 @@ fn checkAssignment(checker, node) {
       constrain(checker, objType.value, valueType, node.value.id,
         "Map value assignment type mismatch")
       targetType = valueType
-    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
+    } else if objType.kind == "TypeVar" {
       // Refine based on index type
       if indexType.kind == "String" {
         // Refine to Map(String, valueType)
@@ -1672,7 +1732,7 @@ fn checkAssignment(checker, node) {
           "Field '" + propName + "' does not exist on record")
         targetType = typeAny()
       }
-    } else if objType.kind == "Unknown" or objType.kind == "TypeVar" {
+    } else if objType.kind == "TypeVar" {
       // Refine unknown/typevar to Record with this field
       let propName = node.target.property.value
       let fieldType = freshTypeVar(checker)
@@ -1768,7 +1828,7 @@ fn tryExtractTypeTest(checker, node, op) {
     let retVar = freshTypeVar(checker)
     expectedType = typeFunction([], retVar)
   } else {
-    return nil  // Unknown type string
+    return nil  // Unrecognized type string
   }
 
   let binding = checker.resolvedNames[arg.id]

@@ -87,13 +87,10 @@ fn initScanner(src) {
   }
 
   fn match(expected) {
-    if isAtEnd() {
-      return false
-    }
-    if src[state.current] != expected {
-      return false
-    }
+    if isAtEnd() { return false }
+    if src[state.current] != expected { return false }
     state.current = state.current + 1
+    state.col = state.col + 1
     return true
   }
 
@@ -112,9 +109,9 @@ fn initScanner(src) {
       if c == " " or c == "\r" or c == "\t" {
         advance()
       } else if c == "\n" {
+        advance()
         state.line = state.line + 1
         state.col = 0
-        advance()
       } else if c == "/" {
         if peekNext() == "/" {
           for peek() != "\n" and !isAtEnd() { advance() }

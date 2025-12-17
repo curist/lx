@@ -1,0 +1,154 @@
+// Query Service Tests
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let parse = import "src/parser.lx"
+let lower = import "src/lower.lx"
+let resolve = import "src/resolve.lx"
+let typecheck = import "src/typecheck.lx"
+let query = import "services/query.lx"
+
+// Helper: compile source through full pipeline and create query context
+fn compileAndQuery(source, filename) {
+  let parseResult = parse(source, filename)
+  if !parseResult.success {
+    return .{ success: false, phase: "parse", errors: parseResult.errors }
+  }
+
+  let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
+  if !lowerResult.success {
+    return .{ success: false, phase: "lower", errors: lowerResult.errors }
+  }
+
+  let resolveResult = resolve(lowerResult.ast, .{})
+  if !resolveResult.success {
+    return .{ success: false, phase: "resolve", errors: resolveResult.errors }
+  }
+
+  let typecheckResult = typecheck(lowerResult.ast, resolveResult, .{})
+
+  let initResult = query.queryInit(
+    lowerResult.ast,
+    resolveResult,
+    typecheckResult,
+    .{ buildIndex: true }
+  )
+
+  .{
+    success: initResult.success,
+    ctx: initResult.ctx,
+    parseResult: parseResult,
+    lowerResult: lowerResult,
+    resolveResult: resolveResult,
+    typecheckResult: typecheckResult,
+  }
+}
+
+// ========================================
+// Core Tests (5 minimum)
+// ========================================
+
+test("query - hover on number literal", fn(assert) {
+  let result = compileAndQuery("42", "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  let hoverResult = query.queryHover(result.ctx, "test.lx", 1, 0)
+
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.equal(hoverResult.kind, "hover", "Should be hover result")
+  assert.equal(hoverResult.contents, "Number", "Should show Number type")
+})
+
+test("query - hover on variable shows inferred type", fn(assert) {
+  let result = compileAndQuery("let x = 42\nx", "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Hover on 'x' usage (line 2, col 1)
+  let hoverResult = query.queryHover(result.ctx, "test.lx", 2, 0)
+
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.equal(hoverResult.contents, "Number", "Should show Number type")
+  assert.truthy(hoverResult.details, "Should have details")
+  assert.equal(hoverResult.details.nodeType, "Identifier", "Should identify as Identifier node")
+})
+
+test("query - goto local variable", fn(assert) {
+  let result = compileAndQuery("let x = 1\nx + 1", "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'x' usage (line 2, col 1)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 2, 0)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.kind, "goto", "Should be goto result")
+  assert.truthy(gotoResult.target, "Should have target")
+  assert.equal(gotoResult.target.filename, "test.lx", "Should target same file")
+  assert.equal(gotoResult.target.line, 1, "Should target declaration line")
+})
+
+test("query - goto function parameter", fn(assert) {
+  let result = compileAndQuery("fn f(a) { a + 1 }", "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'a' in body (line 1, col 10)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 1, 10)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.line, 1, "Should target parameter declaration")
+})
+
+test("query - goto named function normalized to name", fn(assert) {
+  let result = compileAndQuery("fn foo() { 1 }\nfoo()", "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'foo' call (line 2, col 1)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 2, 0)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.line, 1, "Should target function declaration line")
+  // The target should be the function name, not the entire function
+  // We can verify it's normalized by checking the span is small
+  let spanSize = (gotoResult.target.endLine - gotoResult.target.line) * 1000 +
+                 (gotoResult.target.endCol - gotoResult.target.col)
+  assert.truthy(spanSize < 100, "Should target function name, not entire function body")
+})
+
+test("query - goto global has no definition", fn(assert) {
+  let result = compileAndQuery("println(42)", "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'println' (line 1, col 0)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 1, 0)
+
+  assert.equal(gotoResult.success, false, "Goto should fail for global")
+  assert.equal(gotoResult.kind, "goto", "Should be goto result")
+})
+
+// ========================================
+// Edge Case Tests (2 additional)
+// ========================================
+
+test("query - hover on empty position returns no node", fn(assert) {
+  let result = compileAndQuery("42", "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Position far beyond code
+  let hoverResult = query.queryHover(result.ctx, "test.lx", 100, 100)
+
+  assert.equal(hoverResult.success, false, "Hover should fail")
+  assert.equal(hoverResult.kind, "hover", "Should be hover result")
+})
+
+test("query - goto on non-identifier fails gracefully", fn(assert) {
+  let result = compileAndQuery("42", "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on number literal
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 1, 0)
+
+  assert.equal(gotoResult.success, false, "Goto should fail on non-identifier")
+  assert.equal(gotoResult.kind, "goto", "Should be goto result")
+})
+
+suite.run()

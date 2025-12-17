@@ -229,8 +229,8 @@ test("parser - hashmap key positions", fn(assert) {
 
   // Scanner reports "a" token with col=3
   // So: startCol = 3 - len("a") = 2, endCol = 3
-  assert.equal(key.col, 2)
-  assert.equal(key.endCol, 3)
+  assert.equal(key.col, 3)
+  assert.equal(key.endCol, 4)
   assert.equal(key.value, "a")
 
   // Should not be zero-length
@@ -983,6 +983,12 @@ test("parser - return with multiple trailing semicolons", fn(assert) {
   let funcNode = first(result)
   assert.equal(funcNode.type, "Function")
   assert.equal(funcNode.body.expressions[0].type, "Return")
+})
+
+test("parser - with linebreak", fn(assert) {
+  let result = parse("let x = 42\nx", "text.lx")
+  assert.truthy(result.success)
+  assert.equal(result.ast.body[len(result.ast.body) - 1].col, 0)
 })
 
 suite.run()

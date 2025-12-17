@@ -1,0 +1,356 @@
+// Query Service - Position-based IDE queries over compiler artifacts
+//
+// Provides hover (type at position) and goto definition (jump to declaration)
+// for editor tooling integration.
+//
+// Read-only: no inference, no unification, just table lookups + span selection.
+
+// ========================================
+// Helpers
+// ========================================
+
+fn rangeOf(n) {
+  .{
+    filename: n.filename,
+    line: n.line,
+    col: n.col,
+    endLine: n.endLine,
+    endCol: n.endCol,
+  }
+}
+
+// ========================================
+// Indexing
+// ========================================
+
+fn collectAllNodes(node, nodes) {
+  if type(node) != "map" { return }
+
+  nodes[node.id] = node
+
+  // Traverse common node fields
+  if node.name { collectAllNodes(node.name, nodes) }
+  if node.init { collectAllNodes(node.init, nodes) }
+  if node.value { collectAllNodes(node.value, nodes) }
+  if node.left { collectAllNodes(node.left, nodes) }
+  if node.right { collectAllNodes(node.right, nodes) }
+  if node.operand { collectAllNodes(node.operand, nodes) }
+  if node.callee { collectAllNodes(node.callee, nodes) }
+  if node.object { collectAllNodes(node.object, nodes) }
+  if node.property { collectAllNodes(node.property, nodes) }
+  if node.index { collectAllNodes(node.index, nodes) }
+  if node.target { collectAllNodes(node.target, nodes) }
+  if node.test { collectAllNodes(node.test, nodes) }
+  if node.then { collectAllNodes(node.then, nodes) }
+  if node.else { collectAllNodes(node.else, nodes) }
+  if node.condition { collectAllNodes(node.condition, nodes) }
+
+  // Traverse arrays
+  if node.params and type(node.params) == "array" {
+    for let i = 0; i < len(node.params); i = i + 1 {
+      collectAllNodes(node.params[i], nodes)
+    }
+  }
+  if node.args and type(node.args) == "array" {
+    for let i = 0; i < len(node.args); i = i + 1 {
+      collectAllNodes(node.args[i], nodes)
+    }
+  }
+  if node.elements and type(node.elements) == "array" {
+    for let i = 0; i < len(node.elements); i = i + 1 {
+      collectAllNodes(node.elements[i], nodes)
+    }
+  }
+  if node.pairs and type(node.pairs) == "array" {
+    for let i = 0; i < len(node.pairs); i = i + 1 {
+      let pair = node.pairs[i]
+      collectAllNodes(pair.key, nodes)
+      collectAllNodes(pair.value, nodes)
+    }
+  }
+  if node.expressions and type(node.expressions) == "array" {
+    for let i = 0; i < len(node.expressions); i = i + 1 {
+      collectAllNodes(node.expressions[i], nodes)
+    }
+  }
+  if node.body and type(node.body) == "array" {
+    for let i = 0; i < len(node.body); i = i + 1 {
+      collectAllNodes(node.body[i], nodes)
+    }
+  }
+}
+
+fn buildFileIndex(ctx) {
+  each(keys(ctx.nodes), fn(id) {
+    let n = ctx.nodes[id]
+    if !n or !n.filename {
+      return
+    }
+
+    let fname = n.filename
+    if !ctx.fileNodeIds[fname] {
+      ctx.fileNodeIds[fname] = []
+    }
+    push(ctx.fileNodeIds[fname], id)
+  })
+}
+
+// ========================================
+// Node Selection
+// ========================================
+
+fn contains(n, line, col) {
+  if line < n.line or line > n.endLine {
+    return false
+  }
+  if line == n.line and col < n.col {
+    return false
+  }
+  if line == n.endLine and col >= n.endCol {
+    return false
+  }
+  true
+}
+
+fn spanScore(n) {
+  (n.endLine - n.line) * 100000 + (n.endCol - n.col)
+}
+
+fn nodeAtPos(ctx, filename, line, col) {
+  let ids = ctx.fileNodeIds[filename] or keys(ctx.nodes)
+
+  let best = nil
+  let bestScore = nil
+
+  each(ids, fn(id) {
+    let n = ctx.nodes[id]
+    if !n or n.filename != filename {
+      return
+    }
+    if !contains(n, line, col) {
+      return
+    }
+
+    let s = spanScore(n)
+    // Prefer smaller span, or if tied, prefer larger ID (more specific/nested node)
+    // Also skip Program nodes if we have alternatives
+    if !best or s < bestScore or (s == bestScore and n.id > best.id) {
+      best = n
+      bestScore = s
+    }
+  })
+
+  best
+}
+
+// ========================================
+// Goto Definition Normalization
+// ========================================
+
+fn normalizeDeclTarget(ctx, declNodeId) {
+  let decl = ctx.nodes[declNodeId]
+  if !decl {
+    return nil
+  }
+
+  // If resolver stored the Function node id for named functions,
+  // prefer jumping to the name identifier span when available.
+  if decl.type == "Function" and decl.name and decl.name.id {
+    let nameNode = ctx.nodes[decl.name.id]
+    if nameNode {
+      return nameNode
+    }
+  }
+
+  // Otherwise use the node itself (Identifier bindings already land perfectly)
+  decl
+}
+
+// ========================================
+// Type Formatting
+// ========================================
+
+fn formatType(ty) {
+  if !ty {
+    return "Unknown"
+  }
+
+  let kind = ty.kind
+
+  // Primitives
+  if kind == "Number" { return "Number" }
+  if kind == "String" { return "String" }
+  if kind == "Bool" { return "Bool" }
+  if kind == "Nil" { return "Nil" }
+  if kind == "Any" { return "Any" }
+  if kind == "Unknown" { return "Unknown" }
+
+  // TypeVar - show as T<id> for now
+  if kind == "TypeVar" {
+    return "T" + str(ty.id)
+  }
+
+  // Array
+  if kind == "Array" {
+    return "Array<" + formatType(ty.elem) + ">"
+  }
+
+  // Option
+  if kind == "Option" {
+    return "Option<" + formatType(ty.inner) + ">"
+  }
+
+  // Map
+  if kind == "Map" {
+    return "Map<" + formatType(ty.key) + ", " + formatType(ty.value) + ">"
+  }
+
+  // Function
+  if kind == "Function" {
+    let params = ty.params
+    let paramStrs = []
+    for let i = 0; i < len(params); i = i + 1 {
+      push(paramStrs, formatType(params[i]))
+    }
+    let paramStr = join(paramStrs, ", ")
+    return "fn(" + paramStr + ") -> " + formatType(ty.return)
+  }
+
+  // Record - check field count for expansion
+  if kind == "Record" {
+    let fields = ty.fields
+    let fieldNames = keys(fields)
+    let fieldCount = len(fieldNames)
+
+    // Small records: expand inline
+    if fieldCount <= 6 {
+      let fieldStrs = []
+      for let i = 0; i < fieldCount; i = i + 1 {
+        let fname = fieldNames[i]
+        push(fieldStrs, fname + ": " + formatType(fields[fname]))
+      }
+      return ".{ " + join(fieldStrs, ", ") + " }"
+    }
+
+    // Large records: collapse
+    return ".{ ... }"
+  }
+
+  // Tagged unions
+  if kind == "Tagged" {
+    let tagField = ty.tagField
+    let cases = ty.cases
+    let caseNames = keys(cases)
+    return tagField + "(" + join(caseNames, " | ") + ")"
+  }
+
+  // RecordTop, LenableTop (constraint types)
+  if kind == "RecordTop" { return "Record" }
+  if kind == "LenableTop" { return "Lenable" }
+
+  // Scheme (polymorphic type schemes)
+  if kind == "Scheme" {
+    return formatType(ty.type)
+  }
+
+  // Fallback
+  "(" + kind + ")"
+}
+
+// ========================================
+// Public API
+// ========================================
+
+fn queryInit(ast, resolveResult, typecheckResult, opts) {
+  // Start with resolver's nodes, then collect any missing nodes from AST
+  let nodes = resolveResult.nodes
+  collectAllNodes(ast, nodes)
+
+  let ctx = .{
+    ast: ast,
+    nodes: nodes,
+    resolvedNames: resolveResult.resolvedNames,
+    types: typecheckResult.types,
+    fileNodeIds: .{},
+  }
+
+  let buildIndex = !(opts and opts.buildIndex == false)
+  if buildIndex {
+    buildFileIndex(ctx)
+  }
+
+  .{ success: true, ctx: ctx }
+}
+
+fn queryHover(ctx, filename, line, col) {
+  let n = nodeAtPos(ctx, filename, line, col)
+  if !n {
+    return .{ success: false, kind: "hover", message: "No node at position" }
+  }
+
+  let ty = ctx.types[n.id]
+  let contents = ty and formatType(ty) or "Unknown"
+
+  let details = .{ nodeType: n.type, nodeId: n.id }
+
+  if n.type == "Identifier" {
+    let r = ctx.resolvedNames[n.id]
+    if r {
+      details.resolved = r
+    }
+  }
+
+  .{
+    success: true,
+    kind: "hover",
+    range: rangeOf(n),
+    contents: contents,
+    details: details,
+  }
+}
+
+fn queryGotoDefinition(ctx, filename, line, col) {
+  let n = nodeAtPos(ctx, filename, line, col)
+  if !n {
+    return .{ success: false, kind: "goto", message: "No node at position" }
+  }
+
+  if n.type != "Identifier" {
+    return .{ success: false, kind: "goto", message: "Not an identifier" }
+  }
+
+  let r = ctx.resolvedNames[n.id]
+  if !r {
+    return .{ success: false, kind: "goto", message: "Unresolved identifier" }
+  }
+
+  if r.kind == "global" {
+    return .{ success: false, kind: "goto", message: "Global has no tracked definition" }
+  }
+
+  let declNodeId = r.declaredAt
+  if !declNodeId {
+    return .{ success: false, kind: "goto", message: "Missing declaredAt (compiler bug)" }
+  }
+
+  let targetNode = normalizeDeclTarget(ctx, declNodeId)
+  if !targetNode {
+    return .{ success: false, kind: "goto", message: "Declaration node missing (compiler bug)" }
+  }
+
+  .{
+    success: true,
+    kind: "goto",
+    target: rangeOf(targetNode),
+  }
+}
+
+// ========================================
+// Module Exports
+// ========================================
+
+.{
+  queryInit: queryInit,
+  queryHover: queryHover,
+  queryGotoDefinition: queryGotoDefinition,
+}

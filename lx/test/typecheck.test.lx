@@ -7,6 +7,7 @@ let parse = import "src/parser.lx"
 let lower = import "src/lower.lx"
 let resolve = import "src/resolve.lx"
 let typecheck = import "src/typecheck.lx"
+let Driver = import "src/driver.lx"
 
 // Helper: parse → lower → resolve → typecheck
 fn parseAndTypecheck(source) {
@@ -73,6 +74,20 @@ fn getExprNode(result, exprIndex) {
     let blockNode = ast.body[0]
     if blockNode.type == "Block" and exprIndex < len(blockNode.expressions) {
       return blockNode.expressions[exprIndex]
+    }
+  }
+  nil
+}
+
+// Find the first Import node in a program AST (simple helper for tests)
+fn findFirstImport(ast) {
+  for let i = 0; i < len(ast.body); i = i + 1 {
+    let expr = ast.body[i]
+    if expr.type == "Import" {
+      return expr
+    }
+    if expr.type == "Let" and expr.init and expr.init.type == "Import" {
+      return expr.init
     }
   }
   nil
@@ -362,6 +377,25 @@ test("typecheck - factorial function", fn(assert) {
   let result = parseAndTypecheck(source)
   assert.truthy(result.success, "Should typecheck factorial")
   assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("typecheck - import carries module value type", fn(assert) {
+  let driver = Driver.make(.{
+    loadSource: fn(path) { return slurp(path) },
+    withTypecheck: true,
+  })
+
+  let result = driver.compileModule("test/fixtures/imports/test-hover.lx")
+  assert.truthy(result.typecheckResult and result.typecheckResult.success, "Should typecheck imported module")
+
+  let importNode = findFirstImport(result.lowerResult.ast)
+  assert.truthy(importNode, "Should find import node")
+
+  let importType = result.typecheckResult.types[importNode.id]
+  assert.truthy(importType, "Should have type for import node")
+  assert.equal(importType.kind, "Record", "Import should have record type from module value")
+  assert.truthy(importType.fields, "Record should have fields")
+  assert.equal(importType.fields.version.kind, "String", "Imported record should carry concrete field types")
 })
 
 test("typecheck - array map pattern", fn(assert) {

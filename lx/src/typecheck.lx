@@ -2227,8 +2227,20 @@ checkExpr = fn(checker, node) {
   } else if node.type == "Block" {
     return checkBlock(checker, node)
   } else if node.type == "Import" {
-    // Import: treat as Any for now
+    // Import: use compiled module result when available
     let t = typeAny()
+    if node.importResult and node.importResult.status == "done" and
+       node.importResult.typecheckResult and node.importResult.typecheckResult.success {
+      let modAst = node.importResult.lowerResult and node.importResult.lowerResult.ast
+      let modTypes = node.importResult.typecheckResult.types
+      if modAst and modAst.body and len(modAst.body) > 0 and modTypes {
+        let lastExpr = modAst.body[len(modAst.body) - 1]
+        let modType = modTypes[lastExpr.id]
+        if modType {
+          t = modType
+        }
+      }
+    }
     checker.types[node.id] = t
     return t
   } else if node.type == "Program" {
@@ -2285,6 +2297,7 @@ fn typecheck(ast, resolveResult, opts) {
     return .{
       success: false,
       types: .{},
+      typeVarBindings: .{},
       errors: [.{ nodeId: nil, message: "Resolve phase failed", severity: "error" }],
     }
   }
@@ -2307,9 +2320,18 @@ fn typecheck(ast, resolveResult, opts) {
     derefedTypes[nodeId] = derefAll(checker, checker.types[nodeId])
   }
 
+  // Also expose dereferenced type var bindings for tooling/hover
+  let derefBindings = .{}
+  let bindingKeys = keys(checker.typeVarBindings)
+  for let i = 0; i < len(bindingKeys); i = i + 1 {
+    let tvId = bindingKeys[i]
+    derefBindings[tvId] = derefAll(checker, checker.typeVarBindings[tvId])
+  }
+
   .{
     success: !checker.hadError,
     types: derefedTypes,
+    typeVarBindings: derefBindings,
     errors: checker.errors,
   }
 }

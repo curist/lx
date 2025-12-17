@@ -342,10 +342,10 @@ fn isInFunction(scope) {
 }
 
 // ========================================
-// Import Handling
-// ========================================
+  // Import Handling
+  // ========================================
 
-fn resolveImport(resolver, node) {
+  fn resolveImport(resolver, node) {
   // Add path node to nodes map if it exists
   if node.path and node.path.id {
     resolver.nodes[node.path.id] = node.path
@@ -360,25 +360,27 @@ fn resolveImport(resolver, node) {
   let path = node.path.value
 
   // Check cache if available
-  if resolver.importCache {
-    let cached = resolver.importCache[path]
-    if cached {
-      // Check for circular import (status is neither done nor failed)
-      if cached.status != "done" and cached.status != "failed" {
-        addError(resolver, node.id, "Circular import detected: " + path)
-        return nil
-      }
+    if resolver.importCache {
+      let cached = resolver.importCache[path]
+      if cached {
+        node.importResult = cached
+        // Check for circular import (status is neither done nor failed)
+        if cached.status != "done" and cached.status != "failed" {
+          addError(resolver, node.id, "Circular import detected: " + path)
+          return nil
+        }
 
       // Already compiled successfully or failed - return cached result
       return cached
     }
   }
 
-  // Compile module via callback if provided
-  if resolver.compileModule {
-    let result = resolver.compileModule(path)
-    return result
-  }
+    // Compile module via callback if provided
+    if resolver.compileModule {
+      let result = resolver.compileModule(path)
+      node.importResult = result
+      return result
+    }
 
   // No callback - import will be handled at runtime
   nil

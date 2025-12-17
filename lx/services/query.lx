@@ -257,6 +257,167 @@ fn formatType(ty) {
   "(" + kind + ")"
 }
 
+fn formatTypeWithBindings(ctx, ty) {
+  fn fmt(t, seen) {
+    if !t {
+      return "Unknown"
+    }
+
+    let kind = t.kind
+
+    if kind == "TypeVar" {
+      let id = t.id
+      if ctx.typeVarBindings and id and !seen[id] {
+        let binding = ctx.typeVarBindings[id]
+        if binding {
+          seen[id] = true
+          return fmt(binding, seen)
+        }
+      }
+      // Unbound type var
+      return "Unbound T" + str(id)
+    }
+
+    if kind == "Array" {
+      return "Array<" + fmt(t.elem, seen) + ">"
+    }
+    if kind == "Option" {
+      return "Option<" + fmt(t.inner, seen) + ">"
+    }
+    if kind == "Map" {
+      return "Map<" + fmt(t.key, seen) + ", " + fmt(t.value, seen) + ">"
+    }
+    if kind == "Function" {
+      let params = t.params
+      let paramStrs = []
+      for let i = 0; i < len(params); i = i + 1 {
+        push(paramStrs, fmt(params[i], seen))
+      }
+      return "fn(" + join(paramStrs, ", ") + ") -> " + fmt(t.return, seen)
+    }
+    if kind == "Record" {
+      let fields = t.fields
+      let fieldNames = keys(fields)
+      let fieldCount = len(fieldNames)
+
+      if fieldCount <= 6 {
+        let fieldStrs = []
+        for let i = 0; i < fieldCount; i = i + 1 {
+          let fname = fieldNames[i]
+          push(fieldStrs, fname + ": " + fmt(fields[fname], seen))
+        }
+        return ".{ " + join(fieldStrs, ", ") + " }"
+      }
+      return ".{ ... }"
+    }
+    if kind == "Tagged" {
+      let tagField = t.tagField
+      let cases = t.cases
+      let caseNames = keys(cases)
+      return tagField + "(" + join(caseNames, " | ") + ")"
+    }
+    if kind == "RecordTop" { return "Record" }
+    if kind == "LenableTop" { return "Lenable" }
+    if kind == "Scheme" { return fmt(t.type, seen) }
+    if kind == "Number" { return "Number" }
+    if kind == "String" { return "String" }
+    if kind == "Bool" { return "Bool" }
+    if kind == "Nil" { return "Nil" }
+    if kind == "Any" { return "Any" }
+    if kind == "Unknown" { return "Unknown" }
+
+    "(" + kind + ")"
+  }
+
+  fmt(ty, .{})
+}
+
+// Given a string key node inside a record literal, return the value's type if known.
+fn valueTypeForRecordKey(ctx, keyNode) {
+  if !keyNode or !keyNode.id {
+    return nil
+  }
+
+  let fname = keyNode.filename
+  let ids = ctx.fileNodeIds[fname] or keys(ctx.nodes)
+
+  for let i = 0; i < len(ids); i = i + 1 {
+    let cand = ctx.nodes[ids[i]]
+    if !cand or cand.type != "Hashmap" or cand.filename != fname {
+      continue
+    }
+
+    if !cand.pairs or type(cand.pairs) != "array" {
+      continue
+    }
+
+    for let j = 0; j < len(cand.pairs); j = j + 1 {
+      let pair = cand.pairs[j]
+      if pair.key and pair.key.id == keyNode.id {
+        if pair.value {
+          return ctx.types[pair.value.id]
+        }
+      }
+    }
+  }
+
+  nil
+}
+
+// Build richer hover payload: always include formatted type, and when possible,
+// attach symbol resolution + declaration info for identifiers.
+fn buildSymbolInfo(ctx, n) {
+  if !n or n.type != "Identifier" {
+    return nil
+  }
+
+  let info = .{ name: n.name or n.lexeme or "(anonymous)" }
+  let r = ctx.resolvedNames[n.id]
+
+  if !r {
+    info.kind = "unresolved"
+    return info
+  }
+
+  info.kind = r.kind
+
+  if r.kind == "global" and r.name {
+    info.globalName = r.name
+  }
+
+  if r.declaredAt {
+    let declNode = ctx.nodes[r.declaredAt]
+    if declNode {
+      info.declaration = rangeOf(declNode)
+      info.declarationNodeType = declNode.type
+
+      let declType = ctx.types[declNode.id]
+      if declType {
+        info.declarationType = formatTypeWithBindings(ctx, declType)
+      }
+    }
+  }
+
+  info
+}
+
+fn buildHoverContents(ctx, n, ty) {
+  // If hovering a record key, prefer the field's value type over the literal String type.
+  if n.type == "String" {
+    let fieldType = valueTypeForRecordKey(ctx, n)
+    if fieldType {
+      ty = fieldType
+    }
+  }
+
+  let contents = .{ type: formatTypeWithBindings(ctx, ty) }
+  let symbol = buildSymbolInfo(ctx, n)
+  if symbol {
+    contents.symbol = symbol
+  }
+  contents
+}
+
 // ========================================
 // Public API
 // ========================================
@@ -271,6 +432,7 @@ fn queryInit(ast, resolveResult, typecheckResult, opts) {
     nodes: nodes,
     resolvedNames: resolveResult.resolvedNames,
     types: typecheckResult.types,
+    typeVarBindings: typecheckResult.typeVarBindings,
     fileNodeIds: .{},
   }
 
@@ -289,7 +451,7 @@ fn queryHover(ctx, filename, line, col) {
   }
 
   let ty = ctx.types[n.id]
-  let contents = ty and formatType(ty) or "Unknown"
+  let contents = buildHoverContents(ctx, n, ty)
 
   let details = .{ nodeType: n.type, nodeId: n.id }
 

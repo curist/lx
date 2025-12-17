@@ -52,6 +52,7 @@ You can always obtain spans via:
 ### Typechecker tables (`typecheckResult`)
 
 * `types: { [nodeId]: Type }`
+* `typeVarBindings: { [typeVarId]: Type }` (deref’d) for resolving type variables in hover payloads
 
 ---
 
@@ -82,6 +83,7 @@ type QueryCtx = .{
   nodes,         // resolveResult.nodes
   resolvedNames, // resolveResult.resolvedNames
   types,         // typecheckResult.types
+  typeVarBindings, // typecheckResult.typeVarBindings
 
   // optional acceleration:
   fileNodeIds,   // { [filename]: [nodeId...] }
@@ -158,7 +160,9 @@ fn nodeAtPos(ctx, filename, line, col) {
 ### Behavior
 
 * Select node at position.
-* Return `types[node.id]` if available, else `"Unknown"`.
+* Build hover payload with `type: formatTypeWithBindings(ctx, types[node.id])` (or `"Unknown"`) and, for identifiers, attach symbol info: resolution kind, name, and declaration span/type when available.
+  * `formatTypeWithBindings` follows `typeVarBindings` to display the bound type where possible; unbound vars show as `Unbound T<n>` even when nested inside functions/records.
+  * When hovering a record literal key (String node), the hover type is taken from the corresponding field value instead of the String key literal.
 * If node is Identifier, optionally include `resolvedNames[node.id]` in `details` for debugging.
 
 ```lx
@@ -167,7 +171,7 @@ fn queryHover(ctx, filename, line, col) {
   if !n { return .{ success: false, kind: "hover", message: "No node at position" } }
 
   let ty = ctx.types[n.id]
-  let contents = ty and formatType(ty) or "Unknown"
+  let contents = buildHoverContents(ctx, n, ty)
 
   let details = .{ nodeType: n.type, nodeId: n.id }
 
@@ -185,6 +189,11 @@ fn queryHover(ctx, filename, line, col) {
   }
 }
 ```
+
+`buildHoverContents` returns `.{
+  type: string,
+  symbol?: .{ name, kind, declaration?, declarationType? },
+}` so editor UIs can surface more than just the raw type string.
 
 ---
 
@@ -311,4 +320,3 @@ Minimum tests:
 ## Notes on Scope and Multi-file
 
 This design is “single compilation unit” friendly. If you later compile multiple files together, the query context simply needs a combined `nodes` dictionary and a `fileNodeIds` index per filename; the algorithm stays identical.
-

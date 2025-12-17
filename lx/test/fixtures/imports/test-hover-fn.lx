@@ -1,0 +1,5 @@
+let greet = import "test/fixtures/imports/fun-return.lx"
+
+let msg = greet("lx")
+
+msg

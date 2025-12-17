@@ -11,12 +11,12 @@ let PREC = {
     ASSIGNMENT: iota(),  // =
     OR:         iota(),  // or
     AND:        iota(),  // and
-    PIPELINE:   iota(),  // -> (binds tighter than logical ops)
     BIT_OR:     iota(),  // |
     BIT_XOR:    iota(),  // ^
     BIT_AND:    iota(),  // &
     EQUALITY:   iota(),  // == !=
     COMPARISON: iota(),  // < > <= >=
+    PIPELINE:   iota(),  // ->
     BIT_SHIFT:  iota(),  // << >>
     TERM:       iota(),  // + -
     FACTOR:     iota(),  // * /

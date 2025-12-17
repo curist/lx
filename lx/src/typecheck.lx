@@ -605,8 +605,20 @@ fn unify(checker, t1, t2) {
 
 fn constrain(checker, t1, t2, nodeId, errorMsg) {
   if !unify(checker, t1, t2) {
-    addError(checker, nodeId, errorMsg)
-    return typeAny()
+    if checker.currentPass == 1 {
+      // Pass 1: defer constraint failures for Pass 2
+      push(checker.deferredConstraints, .{
+        t1: t1,
+        t2: t2,
+        nodeId: nodeId,
+        errorMsg: errorMsg,
+      })
+      return typeAny()
+    } else {
+      // Pass 2: report errors immediately
+      addError(checker, nodeId, errorMsg)
+      return typeAny()
+    }
   }
   t1
 }
@@ -824,6 +836,62 @@ fn derefAll(checker, type) {
   return type
 }
 
+// Apply an external binding map (from another module's typecheck) to a type.
+fn applyBindings(type, bindings, seen) {
+  if !type {
+    return type
+  }
+
+  if type.kind == "TypeVar" {
+    let id = type.id
+    if bindings and id and !seen[id] {
+      let bound = bindings[id]
+      if bound {
+        seen[id] = true
+        return applyBindings(bound, bindings, seen)
+      }
+    }
+    return type
+  }
+
+  if type.kind == "Array" {
+    return typeArray(applyBindings(type.elem, bindings, seen))
+  }
+  if type.kind == "Option" {
+    return typeOption(applyBindings(type.inner, bindings, seen))
+  }
+  if type.kind == "Map" {
+    return typeMap(applyBindings(type.key, bindings, seen), applyBindings(type.value, bindings, seen))
+  }
+  if type.kind == "Function" {
+    let params = []
+    for let i = 0; i < len(type.params); i = i + 1 {
+      push(params, applyBindings(type.params[i], bindings, seen))
+    }
+    return typeFunction(params, applyBindings(type.return, bindings, seen))
+  }
+  if type.kind == "Record" {
+    let fields = .{}
+    let keysArr = keys(type.fields)
+    for let i = 0; i < len(keysArr); i = i + 1 {
+      let k = keysArr[i]
+      fields[k] = applyBindings(type.fields[k], bindings, seen)
+    }
+    return typeRecord(fields)
+  }
+  if type.kind == "Tagged" {
+    let cases = .{}
+    let caseKeys = keys(type.cases)
+    for let i = 0; i < len(caseKeys); i = i + 1 {
+      let ck = caseKeys[i]
+      cases[ck] = applyBindings(type.cases[ck], bindings, seen)
+    }
+    return typeTagged(type.tagField, cases)
+  }
+
+  type
+}
+
 fn generalize(checker, env, type) {
   // First, fully dereference the type to follow all bindings
   type = derefAll(checker, type)
@@ -953,15 +1021,32 @@ fn getBuiltinType(checker, name) {
     return typeFunction([typeLenableTop()], typeNumber())
   }
 
+  if name == "println" or name == "print" {
+    // println/print: (...Any) -> Nil (variadic, approximate with 0-arg + arity widening)
+    return typeFunction([], typeNil())
+  }
+
+  if name == "slurp" {
+    // slurp: String -> String
+    return typeFunction([typeString()], typeString())
+  }
+
+  if name == "tohex" {
+    // tohex: Number -> Number (placeholder, matches usage in main)
+    return typeFunction([typeNumber()], typeNumber())
+  }
+
+  if name == "map" {
+    // map: (Array(T), fn(T) -> U) -> Array(U)
+    let t = freshTypeVar(checker)
+    let u = freshTypeVar(checker)
+    return typeFunction([typeArray(t), typeFunction([t], u)], typeArray(u))
+  }
+
   if name == "push" {
     // push: (Array(T), T) -> Nil
     let tv = freshTypeVar(checker)
     return typeFunction([typeArray(tv), tv], typeNil())
-  }
-
-  if name == "println" or name == "print" {
-    // println/print: (...Any) -> Nil (variadic, approximate with 0-arg + arity widening)
-    return typeFunction([], typeNil())
   }
 
   if name == "type" {
@@ -1156,7 +1241,7 @@ fn checkUnary(checker, node) {
       "Unary negation requires number")
     resultType = typeNumber()
   } else if op == "!" {
-    // No constraint - any type can be negated
+    // Truthiness: any value can be negated; result is Bool
     resultType = typeBool()
   } else {
     addError(checker, node.id, "Unknown unary operator: " + op)
@@ -1346,7 +1431,7 @@ fn checkHashmap(checker, node) {
         let dummy = 0
       } else {
         let pair = node.pairs[i]
-        let valueType = checkExpr(checker, pair.value)
+        let valueType = deref(checker, checkExpr(checker, pair.value))
 
         if pair.key.type == "String" {
           let keyName = pair.key.value
@@ -1378,7 +1463,7 @@ fn checkHashmap(checker, node) {
     for let i = 0; i < len(node.pairs); i = i + 1 {
       let pair = node.pairs[i]
       let keyType = checkExpr(checker, pair.key)
-      let valueType = checkExpr(checker, pair.value)
+      let valueType = deref(checker, checkExpr(checker, pair.value))
 
       if pair.key.type == "String" {
         let keyName = pair.key.value
@@ -1528,6 +1613,46 @@ fn checkFunction(checker, node) {
     functionBinding = bindDeclMono(checker, node.id)
   }
 
+  // Pass 1 with named functions: create skeleton and defer body checking
+  if node.name and checker.currentPass == 1 {
+    // Create type variables for parameters
+    let paramTypes = []
+    for let i = 0; i < len(node.params); i = i + 1 {
+      push(paramTypes, freshTypeVar(checker))
+    }
+
+    // Create return type variable
+    let returnType = freshTypeVar(checker)
+
+    // Create function type skeleton
+    let resultType = typeFunction(paramTypes, returnType)
+
+    // Bind skeleton immediately (enables forward references)
+    constrain(checker, functionBinding.typeVar, resultType, node.id,
+      "Function type inconsistent")
+
+    // Also cache in globalTypeCache for cross-scope access
+    checker.globalTypeCache[node.id] = functionBinding
+
+    checker.types[node.id] = resultType
+    if node.name {
+      checker.types[node.name.id] = resultType
+    }
+
+    // Record for Pass 2 processing
+    push(checker.functionDecls, .{
+      nodeId: node.id,
+      nameId: node.name.id,
+      binding: functionBinding,
+      bodyNode: node,
+      paramTypes: paramTypes,
+      returnType: returnType,
+    })
+
+    return resultType
+  }
+
+  // Pass 2 or anonymous functions: full type checking
   // Enter new scope for function
   enterScope(checker)
 
@@ -1566,6 +1691,9 @@ fn checkFunction(checker, node) {
   // Create function type
   let resultType = typeFunction(paramTypes, returnType)
   checker.types[node.id] = resultType
+  if node.name {
+    checker.types[node.name.id] = resultType
+  }
 
   // Bind the function declaration to its inferred type
   if functionBinding {
@@ -2229,10 +2357,18 @@ checkExpr = fn(checker, node) {
   } else if node.type == "Import" {
     // Import: use compiled module result when available
     let t = typeAny()
-    if node.importResult and node.importResult.status == "done" and
-       node.importResult.typecheckResult and node.importResult.typecheckResult.success {
-      let modAst = node.importResult.lowerResult and node.importResult.lowerResult.ast
-      let modTypes = node.importResult.typecheckResult.types
+    let modAst = nil
+    let modTypes = nil
+    let modBindings = nil
+
+    if node.importType {
+      t = node.importType
+      modBindings = node.importBindings
+    } else if node.importResult and node.importResult.status == "done" and
+              node.importResult.typecheckResult and node.importResult.typecheckResult.success {
+      modAst = node.importResult.lowerResult and node.importResult.lowerResult.ast
+      modTypes = node.importResult.typecheckResult.types
+      modBindings = node.importResult.typecheckResult.typeVarBindings
       if modAst and modAst.body and len(modAst.body) > 0 and modTypes {
         let lastExpr = modAst.body[len(modAst.body) - 1]
         let modType = modTypes[lastExpr.id]
@@ -2241,6 +2377,28 @@ checkExpr = fn(checker, node) {
         }
       }
     }
+
+    if modBindings {
+      t = applyBindings(t, modBindings, .{})
+    }
+
+    // Fallback: if still Any but we have importResult, recompute directly
+    if t.kind == "Any" and node.importResult and node.importResult.typecheckResult {
+      let modAst2 = node.importResult.lowerResult and node.importResult.lowerResult.ast
+      let modTypes2 = node.importResult.typecheckResult.types
+      let modBindings2 = node.importResult.typecheckResult.typeVarBindings
+      if modAst2 and modAst2.body and len(modAst2.body) > 0 and modTypes2 {
+        let lastExpr2 = modAst2.body[len(modAst2.body) - 1]
+        let modType2 = modTypes2[lastExpr2.id]
+        if modBindings2 {
+          modType2 = applyBindings(modType2, modBindings2, .{})
+        }
+        if modType2 {
+          t = modType2
+        }
+      }
+    }
+
     checker.types[node.id] = t
     return t
   } else if node.type == "Program" {
@@ -2253,6 +2411,60 @@ checkExpr = fn(checker, node) {
   } else {
     addError(checker, node.id, "Type checking not implemented for: " + node.type)
     return typeAny()
+  }
+}
+
+// ========================================
+// Pass 2: Type Finalization
+// ========================================
+
+fn finalizeTypes(checker) {
+  // Pass 2: Resolve deferred function bodies with complete type context
+  checker.currentPass = 2
+
+  for let i = 0; i < len(checker.functionDecls); i = i + 1 {
+    let fnDecl = checker.functionDecls[i]
+    let node = fnDecl.bodyNode
+
+    // Re-enter function scope
+    enterScope(checker)
+
+    // Bind parameters with TypeVars from Pass 1 skeleton
+    for let j = 0; j < len(node.params); j = j + 1 {
+      let param = node.params[j]
+      let paramType = fnDecl.paramTypes[j]
+
+      // Create binding that references existing TypeVar from skeleton
+      let binding = bindingMono(paramType)
+      checker.currentEnv.bindings[param.id] = binding
+      checker.types[param.id] = paramType
+    }
+
+    // Track return type from skeleton
+    let prevReturnType = checker.currentReturnType
+    checker.currentReturnType = fnDecl.returnType
+
+    // Re-check body with refined parameter types
+    let bodyType = checkExpr(checker, node.body)
+
+    // Unify body type with return type (may refine further)
+    bodyType = deref(checker, bodyType)
+    if bodyType.kind != "Nil" {
+      constrain(checker, bodyType, fnDecl.returnType, node.body.id,
+        "Function body type incompatible with return type")
+    }
+
+    checker.currentReturnType = prevReturnType
+    exitScope(checker)
+  }
+
+  // Re-check deferred constraints with complete type information
+  for let i = 0; i < len(checker.deferredConstraints); i = i + 1 {
+    let constraint = checker.deferredConstraints[i]
+    // Re-try unification now that more types are resolved
+    if !unify(checker, constraint.t1, constraint.t2) {
+      addError(checker, constraint.nodeId, constraint.errorMsg)
+    }
   }
 }
 
@@ -2286,6 +2498,11 @@ fn makeChecker(resolveResult, opts) {
     // Function tracking
     currentReturnType: nil,
 
+    // Two-pass inference state
+    currentPass: 1,  // 1 = skeleton collection, 2 = type refinement
+    deferredConstraints: [],  // Constraints that failed in Pass 1
+    functionDecls: [],  // Function declarations to refine in Pass 2
+
     // Options
     opts: opts or .{},
   }
@@ -2307,10 +2524,14 @@ fn typecheck(ast, resolveResult, opts) {
   // Initialize global environment
   checker.currentEnv = TypeEnv(nil)
 
-  // Check program body
+  // PASS 1: Collect type skeletons and constraints
+  checker.currentPass = 1
   for let i = 0; i < len(ast.body); i = i + 1 {
     checkExpr(checker, ast.body[i])
   }
+
+  // PASS 2: Refine function bodies with complete type context
+  finalizeTypes(checker)
 
   // Post-process: dereference all stored types for cleaner output
   let derefedTypes = .{}

@@ -379,6 +379,18 @@ fn isInFunction(scope) {
     if resolver.compileModule {
       let result = resolver.compileModule(path)
       node.importResult = result
+      // Stash resolved type info for downstream phases
+      if result and result.status == "done" and
+         result.typecheckResult and result.typecheckResult.success {
+        let modAst = result.lowerResult and result.lowerResult.ast
+        let modTypes = result.typecheckResult.types
+        let modBindings = result.typecheckResult.typeVarBindings
+        if modAst and modAst.body and len(modAst.body) > 0 and modTypes {
+          let lastExpr = modAst.body[len(modAst.body) - 1]
+          node.importType = modTypes[lastExpr.id]
+          node.importBindings = modBindings
+        }
+      }
       return result
     }
 

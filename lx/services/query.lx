@@ -446,6 +446,11 @@ fn queryInit(ast, resolveResult, typecheckResult, opts) {
 
 fn queryHover(ctx, filename, line, col) {
   let n = nodeAtPos(ctx, filename, line, col)
+  // If we landed on a Let node but the cursor is within the name span,
+  // prefer the identifier (some resolvers omit name nodes from the index).
+  if n and n.type == "Let" and n.name and contains(n.name, line, col) {
+    n = n.name
+  }
   if !n {
     return .{ success: false, kind: "hover", message: "No node at position" }
   }

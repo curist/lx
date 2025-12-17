@@ -292,6 +292,10 @@ fn lowerImport(lowerer, node) {
   let newNode = copyNodeShallow(lowerer, node)
   // Lower the path (String node)
   newNode.path = lowerExpr(lowerer, node.path)
+  // Preserve resolver-attached module info for downstream phases
+  if node.importResult {
+    newNode.importResult = node.importResult
+  }
   newNode
 }
 

@@ -73,7 +73,7 @@ struct ObjString {
   Obj obj;
   size_t length;
   char* chars;
-  uint32_t hash;
+  uint64_t hash;
 };
 
 typedef struct ObjUpvalue {

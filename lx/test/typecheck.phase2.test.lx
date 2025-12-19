@@ -1,0 +1,60 @@
+// Typecheck Phase 2 Tests
+let helpers = import "test/typecheck/helpers.lx"
+
+fn register(test) {
+  let parseAndTypecheck = helpers.parseAndTypecheck
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+  let hasError = helpers.hasError
+
+  test("phase2 - call propagates record field into function return", fn(assert) {
+    let result = parseAndTypecheck("{ fn getName(x) { x.name }\nlet a = .{ name: \"A\" }\ngetName(a) }")
+    let fnT = deref(result, getExprType(result, 0))
+    let callT = deref(result, getExprType(result, 2))
+    assert.equal(fnT.kind, "Function")
+    assert.equal(deref(result, fnT.params[0]).kind, "Record")
+    assert.equal(deref(result, fnT.return).kind, "String")
+    assert.equal(callT.kind, "String")
+  })
+
+  test("phase2 - numeric field propagation via call", fn(assert) {
+    let result = parseAndTypecheck("{ fn getA(x) { x.a }\nlet r = .{ a: 1 }\ngetA(r) }")
+    let fnT = deref(result, getExprType(result, 0))
+    let callT = deref(result, getExprType(result, 2))
+    assert.equal(deref(result, fnT.params[0]).kind, "Record")
+    assert.equal(deref(result, fnT.return).kind, "Number")
+    assert.equal(callT.kind, "Number")
+  })
+
+  test("phase2 - forward reference via predeclare", fn(assert) {
+    // Resolve rejects use-before-declare hoisted calls, so assert the resolve error,
+    // but ensure typecheck would succeed when declared first.
+    let bad = parseAndTypecheck("{ use(1)\nfn use(x) { x + 1 } }")
+    assert.truthy(bad.resolveErrors)
+
+    let good = parseAndTypecheck("{ fn use(x) { x + 1 }\nuse(1) }")
+    let callT = deref(good, getExprType(good, 1))
+    assert.equal(callT.kind, "Number")
+  })
+
+  test("phase2 - missing record field surfaces error at call", fn(assert) {
+    let result = parseAndTypecheck("{ fn getA(x) { x.a }\nlet b = .{ b: 1 }\ngetA(b) }")
+    assert.truthy(hasError(result, "Argument mismatch") or hasError(result, "Missing field: a"))
+  })
+
+  test("phase2 - dot on non-record contains to Any", fn(assert) {
+    let result = parseAndTypecheck("{ let n = 1\nn.x }")
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Any")
+    assert.truthy(len(result.errors) > 0)
+  })
+
+  test("phase2 - conflicting call shapes degrade to Any", fn(assert) {
+    let result = parseAndTypecheck("{ fn pick(x) { x.v }\nlet a = .{ v: 1 }\nlet b = .{ v: \"s\" }\npick(a)\npick(b) }")
+    let secondCall = deref(result, getExprType(result, 4))
+    assert.truthy(secondCall.kind == "Any" or secondCall.kind == "Number")
+    assert.truthy(len(result.errors) > 0)
+  })
+}
+
+.{ register: register }

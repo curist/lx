@@ -1,0 +1,132 @@
+// Shared helpers for typecheck tests
+
+let parse = import "src/parser.lx"
+let lower = import "src/lower.lx"
+let resolve = import "src/resolve.lx"
+let typecheck = import "src/typecheck.lx"
+
+// Dereference through type variable bindings
+fn deref(result, t) {
+  if t and t.kind == "TypeVar" {
+    let bindings = result.typeVarBindings or .{}
+    let bound = bindings[t.id]
+    if bound { return deref(result, bound) }
+  }
+  t
+}
+
+fn hasError(result, needle) {
+  for let i = 0; i < len(result.errors); i = i + 1 {
+    if result.errors[i].message == needle { return true }
+  }
+  false
+}
+
+// parse → lower → resolve → typecheck
+fn parseAndTypecheck(source) {
+  let parseResult = parse(source, "test.lx")
+  if !parseResult.success {
+    return .{ success: false, phase: "parse", parseErrors: parseResult.errors }
+  }
+
+  let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
+  if !lowerResult.success {
+    return .{ success: false, phase: "lower", lowerErrors: lowerResult.errors }
+  }
+
+  let resolveResult = resolve(lowerResult.ast, .{})
+  if !resolveResult.success {
+    return .{ success: false, phase: "resolve", resolveErrors: resolveResult.errors }
+  }
+
+  let typecheckResult = typecheck(lowerResult.ast, resolveResult, .{})
+  .{
+    success: typecheckResult.success,
+    phase: "typecheck",
+    types: typecheckResult.types,
+    typeVarBindings: typecheckResult.typeVarBindings,
+    errors: typecheckResult.errors,
+    parseResult: parseResult,
+    lowerResult: lowerResult,
+    resolveResult: resolveResult,
+  }
+}
+
+fn normalizeExprList(ast) {
+  if !ast { return nil }
+
+  // Program → Block → expressions
+  if ast.type == "Program" and ast.body {
+    if len(ast.body) == 1 and ast.body[0].type == "Block" and ast.body[0].expressions {
+      return ast.body[0].expressions
+    }
+    return ast.body
+  }
+
+  // Block → expressions
+  if ast.type == "Block" and ast.expressions {
+    return ast.expressions
+  }
+
+  // Legacy container
+  if ast.body {
+    return ast.body
+  }
+
+  if ast.type {
+    return [ast]
+  }
+
+  nil
+}
+
+fn getExprType(result, exprIndex) {
+  if !result or !result.lowerResult or !result.lowerResult.ast { return nil }
+
+  let ast = result.lowerResult.ast
+  let exprs = normalizeExprList(ast)
+  if !exprs or exprIndex >= len(exprs) { return nil }
+
+  let node = exprs[exprIndex]
+  if node.type == "ExprStmt" and node.expr { node = node.expr }
+  if node.type == "Let" and node.name {
+    return result.types[node.name.id]
+  }
+
+  result.types[node.id]
+}
+
+fn getExprNode(result, exprIndex) {
+  if !result or !result.lowerResult or !result.lowerResult.ast { return nil }
+
+  let ast = result.lowerResult.ast
+  let exprs = normalizeExprList(ast)
+  if !exprs or exprIndex >= len(exprs) { return nil }
+
+  let node = exprs[exprIndex]
+  if node.type == "ExprStmt" and node.expr { return node.expr }
+  node
+}
+
+fn findFirstImport(ast) {
+  for let i = 0; i < len(ast.body); i = i + 1 {
+    let expr = ast.body[i]
+    if expr.type == "Import" {
+      return expr
+    }
+    if expr.type == "Let" and expr.init and expr.init.type == "Import" {
+      return expr.init
+    }
+  }
+  nil
+}
+
+.{ 
+  parseAndTypecheck: parseAndTypecheck,
+  normalizeExprList: normalizeExprList,
+  getExprType: getExprType,
+  getExprNode: getExprNode,
+  deref: deref,
+  hasError: hasError,
+  findFirstImport: findFirstImport,
+}

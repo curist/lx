@@ -110,6 +110,34 @@ fn occurs(checker, typeVarId, type) {
   false
 }
 
+fn derefAll(checker, t) {
+  t = deref(checker, t)
+  if !t { return t }
+
+  if t.kind == "Function" {
+    let ps = []
+    for let i = 0; i < len(t.params); i = i + 1 {
+      push(ps, derefAll(checker, t.params[i]))
+    }
+    return typeFunction(ps, derefAll(checker, t.return))
+  }
+
+  if t.kind == "Array" {
+    return typeArray(derefAll(checker, t.elem))
+  }
+
+  if t.kind == "Record" {
+    let fields = .{}
+    let ks = keys(t.fields)
+    for let i = 0; i < len(ks); i = i + 1 {
+      fields[ks[i]] = derefAll(checker, t.fields[ks[i]])
+    }
+    return typeRecord(fields)
+  }
+
+  t
+}
+
 // ========================================================
 // Error Handling
 // ========================================================
@@ -135,7 +163,9 @@ fn unify(checker, t1, t2) {
   // Fast path
   if t1.kind == t2.kind {
     if t1.kind == "TypeVar" {
-      return t1.id == t2.id
+      if t1.id == t2.id { return true }
+      bindTypeVar(checker, t1.id, t2)
+      return true
     }
 
     if t1.kind == "Function" {
@@ -197,6 +227,121 @@ fn constrain(checker, t1, t2, nodeId, msg) {
     return typeAny()
   }
   t1
+}
+
+// ========================================================
+// Constraints (Phase 2)
+// ========================================================
+
+fn emitEq(checker, t1, t2, nodeId, msg) {
+  push(checker.constraints, .{
+    kind: "Eq",
+    t1: t1,
+    t2: t2,
+    nodeId: nodeId,
+    msg: msg,
+  })
+  t2
+}
+
+fn emitHasField(checker, base, name, fieldType, nodeId, msg) {
+  push(checker.constraints, .{
+    kind: "HasField",
+    base: base,
+    fieldName: name,
+    fieldType: fieldType,
+    nodeId: nodeId,
+    msg: msg,
+  })
+  fieldType
+}
+
+fn containEqFailure(checker, t1, t2) {
+  if t1.kind == "TypeVar" { bindTypeVar(checker, t1.id, typeAny()) }
+  if t2.kind == "TypeVar" { bindTypeVar(checker, t2.id, typeAny()) }
+}
+
+fn containHasFieldFailure(checker, fieldType) {
+  if fieldType.kind == "TypeVar" {
+    bindTypeVar(checker, fieldType.id, typeAny())
+  }
+}
+
+fn trySolveConstraint(checker, c) {
+  if c.kind == "Eq" {
+    if !unify(checker, c.t1, c.t2) {
+      addError(checker, c.nodeId, c.msg)
+      containEqFailure(checker, deref(checker, c.t1), deref(checker, c.t2))
+    }
+    return true
+  }
+
+  if c.kind == "HasField" {
+    let base = deref(checker, c.base)
+    let ft = deref(checker, c.fieldType)
+
+    if base.kind == "Any" {
+      if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
+      return true
+    }
+
+    if base.kind == "Record" {
+      let field = base.fields[c.fieldName]
+      if field {
+        if !unify(checker, field, ft) {
+          addError(checker, c.nodeId, c.msg)
+          containHasFieldFailure(checker, ft)
+        }
+      } else {
+        addError(checker, c.nodeId, c.msg)
+        containHasFieldFailure(checker, ft)
+      }
+      return true
+    }
+
+    if base.kind == "TypeVar" {
+      let binding = getTypeVarBinding(checker, base.id)
+      if !binding {
+        let rec = typeRecord(.{ [c.fieldName]: ft })
+        bindTypeVar(checker, base.id, rec)
+        return true
+      }
+      if binding.kind == "Record" {
+        let field = binding.fields[c.fieldName]
+        if !field {
+          binding.fields[c.fieldName] = ft
+        } else if !unify(checker, field, ft) {
+          addError(checker, c.nodeId, c.msg)
+          containHasFieldFailure(checker, ft)
+        }
+        return true
+      }
+      addError(checker, c.nodeId, c.msg)
+      containHasFieldFailure(checker, ft)
+      return true
+    }
+
+    // Non-record base
+    addError(checker, c.nodeId, c.msg)
+    containHasFieldFailure(checker, ft)
+    return true
+  }
+
+  false
+}
+
+fn solveConstraints(checker) {
+  let work = checker.constraints
+  let remaining = []
+
+  for let i = 0; i < len(work); i = i + 1 {
+    let c = work[i]
+    if !trySolveConstraint(checker, c) {
+      push(remaining, c)
+    }
+  }
+
+  checker.constraints = remaining
 }
 
 
@@ -289,10 +434,11 @@ fn checkBinary(checker, node) {
   let op = node.operator.lexeme
 
   if op == "+" or op == "-" or op == "*" or op == "/" {
-    constrain(checker, lt, typeNumber(), node.left.id, "Expected number")
-    constrain(checker, rt, typeNumber(), node.right.id, "Expected number")
-    checker.types[node.id] = typeNumber()
-    return typeNumber()
+    emitEq(checker, lt, typeNumber(), node.left.id, "Expected number")
+    emitEq(checker, rt, typeNumber(), node.right.id, "Expected number")
+    let t = typeNumber()
+    checker.types[node.id] = t
+    return t
   }
 
   if op == "==" or op == "!=" {
@@ -313,31 +459,20 @@ fn checkCall(checker, node) {
     push(args, synthExpr(checker, node.args[i]))
   }
 
-  callee = deref(checker, callee)
+  let paramTvs = []
+  for let i = 0; i < len(args); i = i + 1 {
+    push(paramTvs, freshTypeVar(checker))
+  }
+  let ret = freshTypeVar(checker)
+  let fnType = typeFunction(paramTvs, ret)
 
-  if callee.kind == "Function" {
-    for let i = 0; i < len(callee.params); i = i + 1 {
-      if i < len(args) {
-        constrain(checker, args[i], callee.params[i],
-          node.args[i].id, "Argument mismatch")
-      }
-    }
-    checker.types[node.id] = callee.return
-    return callee.return
+  emitEq(checker, callee, fnType, node.callee.id, "Call requires function")
+  for let i = 0; i < len(args); i = i + 1 {
+    emitEq(checker, args[i], paramTvs[i], node.args[i].id, "Argument mismatch")
   }
 
-  if callee.kind == "TypeVar" {
-    let ret = freshTypeVar(checker)
-    let fnType = typeFunction(args, ret)
-    constrain(checker, callee, fnType, node.callee.id, "Call requires function")
-    checker.types[node.id] = ret
-    return ret
-  }
-
-  addError(checker, node.id, "Cannot call non-function")
-  let t = typeAny()
-  checker.types[node.id] = t
-  t
+  checker.types[node.id] = ret
+  ret
 }
 
 fn checkFunction(checker, node) {
@@ -361,7 +496,7 @@ fn checkFunction(checker, node) {
 
   let ret = freshTypeVar(checker)
   let bodyT = synthExpr(checker, node.body)
-  constrain(checker, bodyT, ret, node.body.id, "Return mismatch")
+  emitEq(checker, bodyT, ret, node.body.id, "Return mismatch")
 
   exitScope(checker)
 
@@ -373,9 +508,17 @@ fn checkFunction(checker, node) {
   let fnT = typeFunction(resolvedParams, deref(checker, ret))
   checker.types[node.id] = fnT
   if fnBinding {
-    constrain(checker, fnBinding, fnT, node.id, "Function declaration mismatch")
+    emitEq(checker, fnBinding, fnT, node.id, "Function declaration mismatch")
     checker.types[node.name.id] = fnBinding
   }
+
+  // Track for second-pass refinement
+  push(checker.functionInfos, .{
+    node: node,
+    params: params,
+    ret: ret,
+    fnType: fnT,
+  })
   fnT
 }
 
@@ -385,7 +528,7 @@ fn checkLet(checker, node) {
 
   if node.init {
     let it = synthExpr(checker, node.init)
-    constrain(checker, tv, it, node.init.id, "Initializer mismatch")
+    emitEq(checker, tv, it, node.init.id, "Initializer mismatch")
   }
 
   checker.types[node.id] = typeNil()
@@ -398,7 +541,7 @@ fn checkIf(checker, node) {
 
   if node.else {
     let elseT = synthExpr(checker, node.else)
-    constrain(checker, thenT, elseT, node.id, "Branch mismatch")
+    emitEq(checker, thenT, elseT, node.id, "Branch mismatch")
     checker.types[node.id] = thenT
     return thenT
   }
@@ -449,15 +592,17 @@ fn checkUnary(checker, node) {
 
   // Minimal Phase-1 semantics
   if op == "-" {
-    constrain(checker, ot, typeNumber(), node.operand.id, "Expected number")
-    checker.types[node.id] = typeNumber()
-    return typeNumber()
+    emitEq(checker, ot, typeNumber(), node.operand.id, "Expected number")
+    let t = typeNumber()
+    checker.types[node.id] = t
+    return t
   }
 
   if op == "!" {
-    constrain(checker, ot, typeBool(), node.operand.id, "Expected bool")
-    checker.types[node.id] = typeBool()
-    return typeBool()
+    emitEq(checker, ot, typeBool(), node.operand.id, "Expected bool")
+    let t = typeBool()
+    checker.types[node.id] = t
+    return t
   }
 
   // Unknown unary -> Any, but still traversed operand
@@ -475,10 +620,11 @@ fn checkLogical(checker, node) {
   let op = node.operator.lexeme
 
   if op == "and" or op == "or" {
-    constrain(checker, lt, typeBool(), node.left.id, "Expected bool")
-    constrain(checker, rt, typeBool(), node.right.id, "Expected bool")
-    checker.types[node.id] = typeBool()
-    return typeBool()
+    emitEq(checker, lt, typeBool(), node.left.id, "Expected bool")
+    emitEq(checker, rt, typeBool(), node.right.id, "Expected bool")
+    let t = typeBool()
+    checker.types[node.id] = t
+    return t
   }
 
   let t = typeAny()
@@ -493,7 +639,7 @@ fn checkFor(checker, node) {
   if node.condition {
     let ct = synthExpr(checker, node.condition)
     // If you want: constrain condition to Bool
-    constrain(checker, ct, typeBool(), node.condition.id, "Expected bool")
+    emitEq(checker, ct, typeBool(), node.condition.id, "Expected bool")
   }
   if node.update    { synthExpr(checker, node.update) }
 
@@ -581,19 +727,16 @@ fn checkDot(checker, node) {
     if node.property { synthExpr(checker, node.property) }
   }
 
-  objT = deref(checker, objT)
-  if objT.kind == "Record" and propName {
-    let fieldT = objT.fields[propName]
-    if fieldT {
-      checker.types[node.id] = fieldT
-      return fieldT
-    }
-    addError(checker, node.id, "Missing field: " + propName)
+  if !propName {
+    let t = typeAny()
+    checker.types[node.id] = t
+    return t
   }
 
-  let t = typeAny()
-  checker.types[node.id] = t
-  t
+  let fieldT = freshTypeVar(checker)
+  emitHasField(checker, objT, propName, fieldT, node.id, "Missing field: " + propName)
+  checker.types[node.id] = fieldT
+  fieldT
 }
 
 fn checkAssignment(checker, node) {
@@ -602,7 +745,7 @@ fn checkAssignment(checker, node) {
   // Minimal: only support assignment to Identifier in Phase 1
   if node.target and node.target.type == "Identifier" {
     let lt = synthExpr(checker, node.target)
-    constrain(checker, lt, vt, node.id, "Assignment mismatch")
+    emitEq(checker, lt, vt, node.id, "Assignment mismatch")
     checker.types[node.id] = vt
     return vt
   }
@@ -631,6 +774,30 @@ fn checkArrow(checker, node) {
   let t = typeAny()
   checker.types[node.id] = t
   t
+}
+
+fn refineFunctions(checker) {
+  let root = checker.rootEnv
+  for let i = 0; i < len(checker.functionInfos); i = i + 1 {
+    let info = checker.functionInfos[i]
+    checker.currentEnv = root
+    enterScope(checker)
+
+    if info.node.name {
+      checker.currentEnv.bindings[info.node.id] = lookupDecl(checker, info.node.id) or info.fnType
+    }
+
+    for let p = 0; p < len(info.params); p = p + 1 {
+      let paramNode = info.node.params[p]
+      checker.currentEnv.bindings[paramNode.id] = info.params[p]
+      checker.types[paramNode.id] = info.params[p]
+    }
+
+    let bodyT = synthExpr(checker, info.node.body)
+    emitEq(checker, bodyT, info.ret, info.node.body.id, "Return mismatch")
+
+    exitScope(checker)
+  }
 }
 
 
@@ -682,6 +849,7 @@ synthExpr = fn(checker, node) {
 // ========================================================
 
 fn makeChecker(resolveResult, opts) {
+  let root = TypeEnv(nil)
   .{
     types: .{},
     typeVarBindings: .{},
@@ -692,7 +860,28 @@ fn makeChecker(resolveResult, opts) {
     resolvedNames: resolveResult.resolvedNames,
 
     nextTypeVarId: 1,
-    currentEnv: TypeEnv(nil),
+    currentEnv: root,
+    rootEnv: root,
+
+    constraints: [],
+    functionInfos: [],
+  }
+}
+
+fn predeclareTopLevel(checker, ast) {
+  if !ast or !ast.body { return }
+
+  for let i = 0; i < len(ast.body); i = i + 1 {
+    let node = ast.body[i]
+    if node.type == "Let" and node.name {
+      if !lookupDecl(checker, node.name.id) {
+        bindDecl(checker, node.name.id)
+      }
+    } else if node.type == "Function" and node.name {
+      if !lookupDecl(checker, node.id) {
+        bindDecl(checker, node.id)
+      }
+    }
   }
 }
 
@@ -712,6 +901,11 @@ fn typecheck(ast, resolveResult, opts) {
     return .{ success: true, types: .{}, typeVarBindings: .{}, errors: [] }
   }
 
+  // Predeclare top-level lets/functions for forward references (Phase 2)
+  if ast.type == "Program" and ast.body {
+    predeclareTopLevel(checker, ast)
+  }
+
   // Prefer: drive from the root node if it is a node
   if ast.type {
     synthExpr(checker, ast)
@@ -721,10 +915,29 @@ fn typecheck(ast, resolveResult, opts) {
     }
   }
 
+  // Solve constraints and refine functions once more
+  solveConstraints(checker)
+  refineFunctions(checker)
+  solveConstraints(checker)
+
+  let outTypes = .{}
+  let typeKeys = keys(checker.types)
+  for let i = 0; i < len(typeKeys); i = i + 1 {
+    let k = typeKeys[i]
+    outTypes[k] = derefAll(checker, checker.types[k])
+  }
+
+  let outBindings = .{}
+  let bindKeys = keys(checker.typeVarBindings)
+  for let i = 0; i < len(bindKeys); i = i + 1 {
+    let k = bindKeys[i]
+    outBindings[k] = derefAll(checker, checker.typeVarBindings[k])
+  }
+
   .{
     success: !checker.hadError,
-    types: checker.types,
-    typeVarBindings: checker.typeVarBindings,
+    types: outTypes,
+    typeVarBindings: outBindings,
     errors: checker.errors,
   }
 }

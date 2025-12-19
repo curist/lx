@@ -1,0 +1,114 @@
+// Typecheck Phase 1 Tests
+let helpers = import "test/typecheck/helpers.lx"
+
+fn register(test) {
+  let parseAndTypecheck = helpers.parseAndTypecheck
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+  let hasError = helpers.hasError
+
+  test("typecheck - let with number (phase1)", fn(assert) {
+    let result = parseAndTypecheck("let x = 42")
+    let ty = getExprType(result, 0)
+    assert.truthy(ty)
+    assert.truthy(ty.kind == "TypeVar" or ty.kind == "Number")
+  })
+
+  test("typecheck - variable reference (phase1)", fn(assert) {
+    let result = parseAndTypecheck("{ let x = 42\nx }")
+    let ty = getExprType(result, 1)
+    assert.truthy(ty)
+  })
+
+  test("phase1 - literals and arithmetic", fn(assert) {
+    let result = parseAndTypecheck("{ 1 \"s\" 1 + 2 }")
+    let numT = deref(result, getExprType(result, 0))
+    let strT = deref(result, getExprType(result, 1))
+    let addT = deref(result, getExprType(result, 2))
+    assert.equal(numT.kind, "Number")
+    assert.equal(strT.kind, "String")
+    assert.equal(addT.kind, "Number")
+  })
+
+  test("phase1 - invalid arithmetic reports error", fn(assert) {
+    let result = parseAndTypecheck("1 + \"x\"")
+    assert.truthy(hasError(result, "Expected number"))
+  })
+
+  test("phase1 - let without initializer stays unknown", fn(assert) {
+    let result = parseAndTypecheck("{ let x\nx }")
+    let t = getExprType(result, 1)
+    assert.truthy(t)
+    assert.equal(deref(result, t).kind, "TypeVar")
+  })
+
+  test("phase1 - function definition only remains unknown", fn(assert) {
+    let result = parseAndTypecheck("fn f(x) { x }")
+    let fnT = deref(result, getExprType(result, 0))
+    assert.equal(fnT.kind, "Function")
+    let pKind = deref(result, fnT.params[0]).kind
+    let rKind = deref(result, fnT.return).kind
+    assert.truthy(pKind == "TypeVar" or pKind == "Any")
+    assert.truthy(rKind == "TypeVar" or rKind == "Any")
+  })
+
+  test("phase1 - function constrained by call", fn(assert) {
+    let result = parseAndTypecheck("{ fn add(a, b) { a + b }\nadd(1, 2) }")
+    let fnT = deref(result, getExprType(result, 0))
+    let callT = deref(result, getExprType(result, 1))
+    assert.equal(fnT.kind, "Function")
+    assert.equal(deref(result, fnT.params[0]).kind, "Number")
+    assert.equal(deref(result, fnT.params[1]).kind, "Number")
+    assert.equal(deref(result, fnT.return).kind, "Number")
+    assert.equal(callT.kind, "Number")
+  })
+
+  test("phase1 - wrong argument type surfaces error", fn(assert) {
+    let result = parseAndTypecheck("{ fn add(a, b) { a + b }\nadd(1, \"x\") }")
+    assert.truthy(hasError(result, "Argument mismatch"))
+  })
+
+  test("phase1 - if expressions", fn(assert) {
+    let resultOk = parseAndTypecheck("{ let cond = true\nif cond { 1 } else { 2 } }")
+    assert.equal(deref(resultOk, getExprType(resultOk, 1)).kind, "Number")
+
+    let resultMismatch = parseAndTypecheck("{ let cond = true\nif cond { 1 } else { \"x\" } }")
+    assert.truthy(hasError(resultMismatch, "Branch mismatch"))
+
+    let resultNoElse = parseAndTypecheck("{ let cond = true\nif cond { 1 } }")
+    assert.equal(deref(resultNoElse, getExprType(resultNoElse, 1)).kind, "Nil")
+  })
+
+  test("phase1 - no narrowing on nil check", fn(assert) {
+    let result = parseAndTypecheck("{ let x = 1\nif x == nil { }\nx }")
+    assert.equal(deref(result, getExprType(result, 2)).kind, "Number")
+  })
+
+  test("phase1 - record literal and field access", fn(assert) {
+    let result = parseAndTypecheck("{ let r = .{ a: 1, b: 2 }\nr.a }")
+    let recordT = deref(result, getExprType(result, 0))
+    assert.equal(recordT.kind, "Record")
+    assert.equal(deref(result, recordT.fields["a"]).kind, "Number")
+    assert.equal(deref(result, recordT.fields["b"]).kind, "Number")
+    let fieldT = deref(result, getExprType(result, 1))
+    assert.equal(fieldT.kind, "Number")
+  })
+
+  test("phase1 - missing record field reports error", fn(assert) {
+    let result = parseAndTypecheck("{ let r = .{ a: 1 }\nr.b }")
+    assert.truthy(hasError(result, "Missing field: b"))
+  })
+
+  test("phase1 - recursive function does not hang", fn(assert) {
+    let result = parseAndTypecheck("fn f(x) { f(x) }")
+    let fnT = getExprType(result, 0)
+    assert.truthy(fnT)
+  })
+
+  test("phase1 - occurs check on self application", fn(assert) {
+    let result = parseAndTypecheck("fn f(x) { x(x) }")
+    assert.truthy(len(result.errors) > 0)
+  })
+}
+
+.{ register: register }

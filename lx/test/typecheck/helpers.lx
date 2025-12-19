@@ -55,22 +55,13 @@ fn parseAndTypecheck(source) {
 fn normalizeExprList(ast) {
   if !ast { return nil }
 
-  // Program → Block → expressions
-  if ast.type == "Program" and ast.body {
-    if len(ast.body) == 1 and ast.body[0].type == "Block" and ast.body[0].expressions {
-      return ast.body[0].expressions
-    }
-    return ast.body
-  }
-
   // Block → expressions
   if ast.type == "Block" and ast.expressions {
+    // Root implicit block often wraps a single `{...}` block in tests.
+    if len(ast.expressions) == 1 and ast.expressions[0].type == "Block" and ast.expressions[0].expressions {
+      return ast.expressions[0].expressions
+    }
     return ast.expressions
-  }
-
-  // Legacy container
-  if ast.body {
-    return ast.body
   }
 
   if ast.type {
@@ -109,8 +100,10 @@ fn getExprNode(result, exprIndex) {
 }
 
 fn findFirstImport(ast) {
-  for let i = 0; i < len(ast.body); i = i + 1 {
-    let expr = ast.body[i]
+  if !ast or ast.type != "Block" or !ast.expressions { return nil }
+
+  for let i = 0; i < len(ast.expressions); i = i + 1 {
+    let expr = ast.expressions[i]
     if expr.type == "Import" {
       return expr
     }

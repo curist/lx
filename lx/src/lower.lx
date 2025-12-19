@@ -357,25 +357,12 @@ lowerExpr = fn(lowerer, node) {
   }
 }
 
-fn lowerProgram(lowerer, node) {
-  let newNode = copyNodeShallow(lowerer, node)
-
-  // Lower all body expressions
-  let loweredBody = []
-  for let i = 0; i < len(node.body); i = i + 1 {
-    push(loweredBody, lowerExpr(lowerer, node.body[i]))
-  }
-  newNode.body = loweredBody
-
-  newNode
-}
-
 // ========================================
 // Main API
 // ========================================
 // lower(ast, opts) → {
 //   success: bool,
-//   ast: ProgramNode,           // Lowered AST (no Arrow nodes)
+//   ast: BlockNode,             // Lowered AST (no Arrow nodes)
 //   origin: { newId → oldId },  // Provenance map
 //   errors: [{ nodeId, message, severity }],
 //   nextNodeId: number,         // For next phase to continue
@@ -392,7 +379,7 @@ fn lower(ast, opts) {
     filename: ast.filename,          // For creating new nodes
   }
 
-  let loweredAst = lowerProgram(lowerer, ast)
+  let loweredAst = lowerExpr(lowerer, ast)
 
   .{
     success: len(lowerer.errors) == 0,

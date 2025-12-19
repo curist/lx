@@ -146,7 +146,7 @@ Keep it minimal. If you’re worried about cascading errors, the solver will con
 
 ## 4. Step 4 — Add “Predeclare Top-Level” Pass (Enables Forward References)
 
-Before collecting constraints from top-level expressions, walk `ast.body` and **pre-bind** all top-level declarations:
+Before collecting constraints from top-level expressions, walk `ast.expressions` (root `Block`) and **pre-bind** all top-level declarations:
 
 * For `Let name = ...`: bind `name.id` to fresh TypeVar in env immediately.
 * For named `Function` declarations (if functions are expressions assigned to a name, treat similarly; if `fn name(...) {}` is an AST node with `node.name`, bind that too).
@@ -157,7 +157,7 @@ Implementation pattern:
 
 ```lx
 fn predeclareTopLevel(checker, ast) {
-  for each expr in ast.body:
+  for each expr in ast.expressions:
     if expr.type == "Let": bindDeclMono(checker, expr.name.id)
     if expr.type == "Function" and expr.name: bindDeclMono(checker, expr.id) // or name.id depending on resolve contract
 }
@@ -416,4 +416,3 @@ To keep the codebase maintainable:
 5. Solver (`solveConstraints`, `trySolveConstraint`, containment)
 6. Refine pass for functions
 7. `typecheck` main API
-

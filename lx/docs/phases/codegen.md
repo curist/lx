@@ -17,7 +17,7 @@ fn codegen(ast, resolveResult, opts) → {
 
 // opts:
 .{
-  main: bool,  // Is this the main/module root?
+  // reserved
 }
 ```
 
@@ -44,7 +44,7 @@ fn codegen(ast, resolveResult, opts) {
     currentLine: 1,
   }
 
-  compileProgram(generator, ast)
+  compileBlock(generator, ast)  // Root is an implicit Block
 
   return .{
     success: true,
@@ -55,10 +55,10 @@ fn codegen(ast, resolveResult, opts) {
 
 ## Key Functions
 
-### Program Compilation
+### Root Compilation
 
 ```lx
-fn compileProgram(gen, ast) {
+fn compileBlock(gen, ast) {
   // Create module root function
   let func = Function(
     name: "",           // ← Module root has empty name!
@@ -69,8 +69,8 @@ fn compileProgram(gen, ast) {
 
   gen.currentFunction = func
 
-  // Compile body in order
-  each(ast.body, fn(expr) {
+  // Compile expressions in order
+  each(ast.expressions, fn(expr) {
     compileExpr(gen, expr)
   })
 
@@ -109,8 +109,9 @@ fn compileIdentifier(gen, node) {
   // Just emit it.
   if resolved.kind == "local" or resolved.kind == "upvalue" {
     emitBytes(resolved.getOp, resolved.slot or resolved.upvalueIndex, node.line)
-  } else if resolved.kind == "global" {
-    emitBytes(resolved.getOp, resolved.globalConst, node.line)
+  } else if resolved.kind == "builtin" {
+    // Builtins are resolved by name into the VM global table.
+    emitBytes(resolved.getOp, identifierConstant(resolved.name), node.line)
   }
 }
 ```

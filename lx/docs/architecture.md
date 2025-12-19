@@ -28,7 +28,7 @@ Later phases consume earlier results but never mutate them.
 * Creates AST with node IDs and position spans
 * Reports **syntax errors only**
 * Preserves full surface syntax (Arrow nodes, etc.)
-* **Structural "everything is expression"**: `Program.body` and `Block.expressions` are `[Expr]`, not `[Stmt]`
+* **Structural "everything is expression"**: the file root is an implicit `Block`, and both root + `{...}` blocks store `[Expr]` in `Block.expressions` (no separate `[Stmt]`)
 * Does **NOT** enforce contextual legality (return/break placement, etc.)
 
 ---
@@ -233,4 +233,3 @@ These paths share the same frontend phases and guarantees.
 * Signature files for modules
 * Richer type narrowing
 * Full LSP server implementation
-

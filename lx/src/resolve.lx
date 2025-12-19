@@ -19,7 +19,7 @@ let OP = types.OP
 fn Scope(enclosing, type) {
   .{
     enclosing: enclosing,
-    type: type,  // "global" | "function" | "block" | "loop"
+    type: type,  // "function" | "block" | "loop"
     depth: enclosing and enclosing.depth + 1 or 0,
 
     localsByName: .{},       // name → Local
@@ -190,7 +190,7 @@ fn markCaptured(local) {
 }
 
 fn resolveUpvalue(resolver, scope, name, nodeId) {
-  if !scope.enclosing { return }  // At global scope
+  if !scope.enclosing { return }  // At root scope
 
   // Look in enclosing scope
   let enclosing = scope.enclosing
@@ -275,9 +275,9 @@ fn resolveName(resolver, name, nodeId) {
     current = current.enclosing
   }
 
-  // Not found in any local scope - assume global
+  // Not found in any local scope - assume builtin/external
   resolver.resolvedNames[nodeId] = .{
-    kind: "global",
+    kind: "builtin",
     getOp: OP.GET_GLOBAL,
     setOp: OP.SET_GLOBAL,
     name: name,
@@ -385,8 +385,8 @@ fn isInFunction(scope) {
         let modAst = result.lowerResult and result.lowerResult.ast
         let modTypes = result.typecheckResult.types
         let modBindings = result.typecheckResult.typeVarBindings
-        if modAst and modAst.body and len(modAst.body) > 0 and modTypes {
-          let lastExpr = modAst.body[len(modAst.body) - 1]
+        if modAst and modAst.expressions and len(modAst.expressions) > 0 and modTypes {
+          let lastExpr = modAst.expressions[len(modAst.expressions) - 1]
           node.importType = modTypes[lastExpr.id]
           node.importBindings = modBindings
         }
@@ -431,6 +431,7 @@ resolveFunction = fn(resolver, node, context) {
 resolveBlockWithHoisting = fn(resolver, node, context) {
   // Two-phase block resolution for hoisting
   let scope = resolver.currentScope
+  let isRootBlock = context and context.atTopLevel and !context.parentBlock
 
   // PHASE 1: Prescan for hoisted functions
   let lastHoistedIndex = -1
@@ -466,6 +467,7 @@ resolveBlockWithHoisting = fn(resolver, node, context) {
     let blockContext = .{
       exprIndex: i,
       inFunctionBody: context and context.inFunctionBody or false,
+      atTopLevel: isRootBlock,
       isLastExpr: i == exprCount - 1,  // Track if this is the last expression
       parentBlock: node,
     }
@@ -557,11 +559,9 @@ resolveExpr = fn(resolver, node, context) {
             kind: "upvalue",
             upvalueIndex: binding.upvalueIndex,
           }
-        } else if binding.kind == "global" {
-          resolver.assignmentInfo[node.id] = .{
-            kind: "global",
-            name: binding.name,
-          }
+        } else if binding.kind == "builtin" {
+          // No userland globals: assigning to an unresolved/builtin name is an error.
+          addError(resolver, node.id, "Cannot assign to undeclared name '" + binding.name + "'")
         }
       } else {
         addError(resolver, node.id, "Cannot assign to identifier (no setOp)")
@@ -686,55 +686,6 @@ resolveExpr = fn(resolver, node, context) {
   }
 }
 
-fn resolveProgram(resolver, ast) {
-  // Program has global scope
-  beginScope(resolver, "global")
-  let scope = resolver.currentScope
-
-  // Note: nodes map is built implicitly during resolveExpr traversal
-  // (no need for explicit buildNodeMap call)
-
-  // PHASE 1: Prescan for top-level hoisted functions
-  let lastHoistedIndex = -1
-  for let i = 0; i < len(ast.body); i = i + 1 {
-    let expr = ast.body[i]
-    if expr.type == "Function" and expr.name {
-      // Named function declaration - hoist it
-      let fnName = expr.name.name
-      let local = declareLocal(resolver, fnName, "fn", expr.name.id)
-
-      // Mark as initialized immediately (hoisting!)
-      markInitialized(resolver, local)
-
-      // Store hoisting metadata
-      scope.hoistedFns[fnName] = HoistedFunction(
-        expr.id,     // declNodeId
-        i,           // declIndex
-        local.slot   // slot
-      )
-
-      lastHoistedIndex = i
-    }
-  }
-
-  scope.lastHoistedFunctionIndex = lastHoistedIndex
-
-  // PHASE 2: Resolve all expressions in program body
-  let bodyCount = len(ast.body)
-  for let i = 0; i < bodyCount; i = i + 1 {
-    let expr = ast.body[i]
-    resolveExpr(resolver, expr, .{
-      exprIndex: i,
-      inFunctionBody: false,
-      isLastExpr: i == bodyCount - 1,
-      parentBlock: nil,  // Top level has no parent block
-      atTopLevel: true,  // Mark as top-level context
-    })
-  }
-
-  endScope(resolver, ast.id)
-}
-
 // ========================================
 // Main API
 // ========================================
@@ -742,7 +693,14 @@ fn resolveProgram(resolver, ast) {
 fn resolve(ast, opts) {
   let resolver = makeResolver(opts or .{})
 
-  resolveProgram(resolver, ast)
+  // Root is an implicit block (same semantics as a Block node).
+  resolveExpr(resolver, ast, .{
+    exprIndex: 0,
+    inFunctionBody: false,
+    atTopLevel: true,
+    isLastExpr: true,
+    parentBlock: nil,
+  })
 
   .{
     success: !resolver.hadError,

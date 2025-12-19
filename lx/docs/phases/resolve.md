@@ -12,7 +12,7 @@ Name resolution, semantic validation, and side table construction.
 ```lx
 fn resolve(ast, opts) → {
   success: bool,
-  ast: ProgramNode,  // Unchanged (no mutation)
+  ast: BlockNode,  // Root is an implicit Block; unchanged (no mutation)
   nodes: .{ nodeId → node },  // O(1) node lookup map
   resolvedNames: .{ nodeId → BindingInfo },
   scopeInfo: .{ nodeId → ScopeInfo },
@@ -34,7 +34,7 @@ For Identifier nodes:
 
 ```lx
 .{
-  kind: "local" | "upvalue" | "global",
+  kind: "local" | "upvalue" | "builtin",
 
   // Opcodes (resolver decides!)
   getOp: OP.GET_LOCAL | OP.GET_UPVALUE | OP.GET_GLOBAL,
@@ -43,7 +43,7 @@ For Identifier nodes:
   // Indices
   slot: number,            // Local slot (stable, monotonic)
   upvalueIndex: number,    // Upvalue index
-  globalConst: number,     // Global constant pool index
+  name: string,            // For builtins/unresolved names
 
   // Metadata
   declaredAt: nodeId,      // Declaration node
@@ -58,7 +58,7 @@ For Block, Function, For nodes:
 
 ```lx
 .{
-  scopeType: "global" | "function" | "block" | "loop",
+  scopeType: "function" | "block" | "loop",
   depth: number,
 
   // CRITICAL: Declaration order preserved!

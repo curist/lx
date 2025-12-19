@@ -1,11 +1,11 @@
-# Parser Phase (parser.lx)
+# Parser Phase (`src/parser.lx`)
 
 ## Responsibility
 
-Convert source text into AST with accurate position information.
+Convert source text into an AST with stable node IDs and accurate source ranges.
 
 **Input**: Source string, filename
-**Output**: AST with node IDs, syntax errors only
+**Output**: AST + syntax errors only
 
 ## API
 
@@ -13,183 +13,130 @@ Convert source text into AST with accurate position information.
 fn parse(src, filename) → {
   success: bool,
   ast: ProgramNode,
-  errors: [string],        // Syntax error messages
-  nextNodeId: number,      // For lowering phase to continue
+  errors: [string],        // Syntax errors (strings)
+  nextNodeId: number,      // For later phases to continue allocating IDs
 }
 ```
 
-## Implementation Tasks
-
-### 1. Add Node ID Counter
+## Usage
 
 ```lx
-fn parse(src, filename) {
-  let scanner = initScanner(src)
-
-  // Add node ID counter
-  let nodeIdCounter = 0
-  fn nextNodeId() {
-    nodeIdCounter = nodeIdCounter + 1
-    nodeIdCounter
-  }
-
-  // ... rest of parser
-
-  return .{
-    success: !parser.hadError,
-    ast: ProgramNode(filename, body),
-    errors: parser.errors,
-    nextNodeId: nodeIdCounter + 1,  // ← NEW
-  }
-}
+let parse = import "src/parser.lx"
+let result = parse(sourceCode, filename)
 ```
 
-### 2. Modify Node Constructor
+## Syntax Model
+
+The parser is expression-oriented: it returns a root `Block` node (no braces) whose `expressions` are the file’s top-level expressions (including “statement-like” forms).
+
+Supported forms include:
+- Literals: number, string, `true`/`false`, `nil`
+- Identifiers
+- Grouping: `(expr)`
+- Unary: `!expr`, `-expr`
+- Binary: `+ - * / %`, bitwise `| ^ &`, shifts `<< >>`, comparisons, equality
+- Logical: `and`, `or`
+- Calls: `callee(args...)`
+- Index: `obj[expr]`
+- Dot: `obj.key` (property is a `String` node)
+- Arrays: `[a, b, ...]`
+- Hashmaps: `.{ key: value, [expr]: value, ... }`
+- Pipeline operator: `left->right` (produces an `Arrow` node)
+- Block: `{ expr... }`
+- `let name` / `let name = expr`
+- `fn name?(params...) { body }`
+- `if cond { then } else { else }` (including `else if ...`)
+- `for cond { body }` and C-style `for init?; cond?; update? { body }`
+- `return expr?`, `break expr?`, `continue`
+- `import "path.lx"` (parsed as an `Import` node; statement-like)
+
+Statement separators:
+- Semicolons are optional; the parser skips extra `;` at the top level and inside blocks.
+- Newlines/whitespace can separate expressions when the next token can’t continue the previous expression (see `test/parser.test.lx` for examples).
+
+## Operator Precedence & Associativity
+
+From low → high (see `PREC` in `src/parser.lx`):
+1. Assignment: `=` (only valid for identifiers, dot, and index targets)
+2. `or`
+3. `and`
+4. Bitwise: `|`, `^`, `&`
+5. Equality: `==`, `!=`
+6. Comparison: `<`, `>`, `<=`, `>=`
+7. Pipeline: `->`
+8. Shifts: `<<`, `>>`
+9. Term: `+`, `-`
+10. Factor: `*`, `/`, `%`
+11. Unary: `!`, unary `-`
+12. Call/index/dot: `()`, `[]`, `.`
+
+Associativity notes:
+- Binary/logical operators are left-associative.
+- Pipeline `->` is left-associative: `a->f()->g()` parses as `(a->f())->g()`.
+
+## AST Node Model
+
+### Base Fields
+
+Every node has:
 
 ```lx
-fn Node(type, filename, token) {
-  let tokenLen = len(token.lexeme)
-  let startCol = token.col - tokenLen
-  if startCol < 0 { startCol = 0 }
-
-  .{
-    id: nextNodeId(),    // ← NEW: auto-increment ID
-    type: type,
-    filename: filename,
-    line: token.line,
-    col: startCol,
-    endLine: token.line,
-    endCol: token.col,
-  }
+{
+  id: number,          // Unique within a single parse() call
+  type: string,
+  filename: string,
+  line: number,
+  col: number,
+  endLine: number,
+  endCol: number,
+  // ... node-specific fields
 }
 ```
 
-All node constructors automatically inherit IDs through `Node()`.
+Node IDs:
+- `nodeIdCounter` resets to 0 at the start of `parse()`.
+- IDs increment as nodes are constructed; `parse()` returns `nextNodeId: nodeIdCounter + 1`.
 
-### 3. Remove Semantic Validation
+Source ranges:
+- The scanner’s `token.col` points after the token; most leaf nodes compute `col = token.col - len(token.lexeme)` and `endCol = token.col`.
+- Composite nodes typically span from the left-most child (`col`) to the right-most child or closing delimiter (`endCol`).
 
-#### Remove These Variables
+### Node Shapes (selected)
 
-```lx
-// ❌ DELETE
-let functionDepth = 0
-let loopDepth = 0
-```
+- Root `Block`: `{ expressions: [Expr] }`
+- Literals: `Number { value, lexeme }`, `String { value, lexeme }`, `Bool { value, lexeme }`, `Nil { lexeme }`
+- `Identifier`: `{ name, lexeme }`
+- `Grouping`: `{ expression }`
+- `Unary`: `{ operator: {type, lexeme, line, col}, operand }`
+- `Binary`/`Logical`: `{ left, operator: {type, lexeme, line, col}, right }`
+- `Assignment`: `{ target, value }` where `target` is `Identifier` | `Dot` | `Index`
+- `Array`: `{ elements: [Expr] }`
+- `Hashmap`: `{ pairs: [{ key, value }] }` where `key` is either a `String` node (for bare keys) or an expression node (for `[expr]` keys)
+- `Call`: `{ callee, args: [Expr] }`
+- `Index`: `{ object, index }`
+- `Dot`: `{ object, property }` where `property` is a `String` node
+- `Arrow`: `{ left, operator: {type, lexeme, line, col}, right }`
+- `Block`: `{ expressions: [Expr] }`
+- `Let`: `{ name: Identifier, init: Expr? }`
+- `Function`: `{ name: Identifier?, params: [Identifier], body: Block }`
+- `If`: `{ condition, then: Block, else: Block | If | nil }`
+- `For`: `{ init: Expr?, condition: Expr?, update: Expr?, body: Block }`
+- `Return`: `{ value: Expr? }`
+- `Break`: `{ value: Expr? }`
+- `Continue`: `{}` (no extra fields)
+- `Import`: `{ path: String }`
 
-#### Remove These Tracking Updates
+Key detail: dot/hashmap “bare keys” (including keywords like `if`, `return`, `true`, `nil`) are normalized to `String` nodes via `StringKeyNodeFromToken()`.
 
-```lx
-// In fnExpr() - DELETE:
-functionDepth = functionDepth + 1
-// ...
-functionDepth = functionDepth - 1
+## Validation & Errors
 
-// In forExpr() - DELETE:
-loopDepth = loopDepth + 1
-// ...
-loopDepth = loopDepth - 1
-```
+The parser does syntax validation only. Semantic checks live in later phases (e.g. “return not at end”, “break outside loop”, name resolution).
 
-#### Remove These Validation Checks
-
-```lx
-// In returnStatement() - DELETE:
-if functionDepth == 0 {
-  if !check(TOKEN.EOF) {
-    error("Can only return at end of file.")
-  }
-} else {
-  if !check(TOKEN.RIGHT_BRACE) {
-    error("Can only return at end of block.")
-  }
-}
-
-// In breakExpr() - DELETE:
-if loopDepth == 0 {
-  error("Can only break inside a loop.")
-}
-
-// In continueExpr() - DELETE:
-if loopDepth == 0 {
-  error("Can only continue inside a loop.")
-}
-```
-
-### 4. Keep Arrow Nodes
-
-**Do NOT transform arrows!** Just create Arrow nodes:
-
-```lx
-fn arrowExpr() {
-  let left = callExpr()
-
-  if match(TOKEN.ARROW) {
-    let right = arrowExpr()  // Right-associative
-    return ArrowNode(left, right)  // ← Keep as Arrow!
-  }
-
-  return left
-}
-```
-
-Lowering phase will transform them.
-
-## What Parser Should Validate
-
-✅ **Syntax only**:
-- Unexpected tokens
-- Missing delimiters (parens, braces, etc.)
-- Malformed expressions
-- Grammar violations
-
-❌ **NOT semantic**:
-- Variable undefined/redefined
-- Return/break/continue placement
-- Type errors
-- Control flow validity
-
-## Error Handling
-
-```lx
-fn error(message) {
-  if !parser.panicMode {
-    parser.panicMode = true
-    parser.hadError = true
-
-    let errorMsg = "[" + parser.current.filename + ":" +
-                   parser.current.line + ":" +
-                   parser.current.col + "] Error: " + message
-
-    push(parser.errors, errorMsg)
-    groanln(errorMsg)
-  }
-}
-```
-
-Errors are strings (not structured) because parser doesn't have node IDs yet for all positions.
-
-## Node Types
-
-All nodes get these base fields from `Node()`:
-- `id` - Unique within module
-- `type` - Node type string
-- `filename` - Source file
-- `line`, `col` - Start position
-- `endLine`, `endCol` - End position
-
-Specific node types add their own fields:
-- `ProgramNode`: `body: [Expr]`
-- `FunctionNode`: `name: Identifier?, params: [Identifier], body: Block`
-- `ArrowNode`: `left: Expr, right: Expr`
-- `CallNode`: `callee: Expr, args: [Expr]`
-- `IdentifierNode`: `name: string`
-- etc.
+Error behavior:
+- `errors` is an array of strings generated by `errorAt()`.
+- The parser uses panic-mode recovery and `synchronize()` to continue parsing after an error and collect multiple messages.
 
 ## Testing
 
-- ✅ Node IDs unique and sequential
-- ✅ All nodes have IDs (spot check different node types)
-- ✅ Arrow nodes preserved (not transformed)
-- ✅ Only syntax errors in error array
-- ✅ No semantic validation (test return/break outside context → no error)
-- ✅ Position spans accurate
+- Parser tests: `../out/lx run test/parser.test.lx`
+- All tests: `make test`

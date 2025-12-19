@@ -376,29 +376,6 @@ fn ImportNode(filename, startToken, path) {
   node
 }
 
-fn ProgramNode(filename, body) {
-  nodeIdCounter = nodeIdCounter + 1
-
-  let node = .{
-    id: nodeIdCounter,
-    type: "Program",
-    filename: filename,
-    body: body,
-  }
-  if len(body) > 0 {
-    node.line = body[0].line
-    node.col = body[0].col
-    node.endLine = body[len(body) - 1].endLine
-    node.endCol = body[len(body) - 1].endCol
-  } else {
-    node.line = 1
-    node.col = 0
-    node.endLine = 1
-    node.endCol = 0
-  }
-  node
-}
-
 fn StringKeyNodeFromToken(filename, token) {
   // Create a String node from a token's lexeme (for dot/hashmap keys)
   let tokenLen = len(token.lexeme)
@@ -1054,9 +1031,13 @@ fn parse(src, filename) {
     }
   }
 
+  // Root is an implicit block (no braces). Range spans the full file.
+  let rootStartToken = .{ lexeme: "", line: 1, col: 0 }
+  let root = BlockNode(filename, rootStartToken, body, parser.previous)
+
   return .{
     success: !parser.hadError,
-    ast: ProgramNode(filename, body),
+    ast: root,
     errors: parser.errors,
     nextNodeId: nodeIdCounter + 1,
   }

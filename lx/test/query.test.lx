@@ -164,14 +164,14 @@ test("query - goto named function normalized to name", fn(assert) {
   assert.truthy(spanSize < 100, "Should target function name, not entire function body")
 })
 
-test("query - goto global has no definition", fn(assert) {
+test("query - goto builtin has no definition", fn(assert) {
   let result = compileAndQuery("println(42)", "test.lx")
   assert.truthy(result.success, "Should compile successfully")
 
   // Goto on 'println' (line 1, col 0)
   let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 1, 0)
 
-  assert.equal(gotoResult.success, false, "Goto should fail for global")
+  assert.equal(gotoResult.success, false, "Goto should fail for builtin")
   assert.equal(gotoResult.kind, "goto", "Should be goto result")
 })
 

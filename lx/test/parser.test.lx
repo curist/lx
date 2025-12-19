@@ -7,7 +7,7 @@ let TOKEN = types.TOKEN
 
 // Helper to get first statement from parsed program
 fn first(result) {
-  result.ast.body[0]
+  result.ast.expressions[0]
 }
 
 // Helper to parse from fixture file
@@ -456,9 +456,9 @@ test("parser - multiple statements", fn(assert) {
   let result = parse("let x = 1\nlet y = 2", "test.lx")
   assert.truthy(result.success)
 
-  assert.equal(len(result.ast.body), 2)
-  assert.equal(result.ast.body[0].type, "Let")
-  assert.equal(result.ast.body[1].type, "Let")
+  assert.equal(len(result.ast.expressions), 2)
+  assert.equal(result.ast.expressions[0].type, "Let")
+  assert.equal(result.ast.expressions[1].type, "Let")
 })
 
 test("parser - position tracking", fn(assert) {
@@ -499,8 +499,8 @@ test("parser - complex expression", fn(assert) {
 test("parser - demo example 1: let with arithmetic", fn(assert) {
   let result = parse("let x = 1 + 2 * 3", "demo.lx")
   assert.truthy(result.success)
-  assert.equal(result.ast.type, "Program")
-  assert.equal(len(result.ast.body), 1)
+  assert.equal(result.ast.type, "Block")
+  assert.equal(len(result.ast.expressions), 1)
 
   let stmt = first(result)
   assert.equal(stmt.type, "Let")
@@ -576,13 +576,13 @@ test("parser - for loop variations from fixture", fn(assert) {
   assert.truthy(result.success)
 
   // Should have 4 different for-loop styles
-  assert.equal(len(result.ast.body), 4)
+  assert.equal(len(result.ast.expressions), 4)
 
   // All should be For nodes
-  assert.equal(result.ast.body[0].type, "For")
-  assert.equal(result.ast.body[1].type, "For")
-  assert.equal(result.ast.body[2].type, "For")
-  assert.equal(result.ast.body[3].type, "For")
+  assert.equal(result.ast.expressions[0].type, "For")
+  assert.equal(result.ast.expressions[1].type, "For")
+  assert.equal(result.ast.expressions[2].type, "For")
+  assert.equal(result.ast.expressions[3].type, "For")
 })
 
 // Issue #2: Token position accuracy
@@ -959,9 +959,9 @@ test("parser - top level statements with semicolons", fn(assert) {
   let result = parse("let a = 1; let b = 2;", "test.lx")
   assert.truthy(result.success)
 
-  assert.equal(len(result.ast.body), 2)
-  assert.equal(result.ast.body[0].type, "Let")
-  assert.equal(result.ast.body[1].type, "Let")
+  assert.equal(len(result.ast.expressions), 2)
+  assert.equal(result.ast.expressions[0].type, "Let")
+  assert.equal(result.ast.expressions[1].type, "Let")
 })
 
 test("parser - block with semicolons", fn(assert) {
@@ -988,7 +988,7 @@ test("parser - return with multiple trailing semicolons", fn(assert) {
 test("parser - with linebreak", fn(assert) {
   let result = parse("let x = 42\nx", "text.lx")
   assert.truthy(result.success)
-  assert.equal(result.ast.body[len(result.ast.body) - 1].col, 0)
+  assert.equal(result.ast.expressions[len(result.ast.expressions) - 1].col, 0)
 })
 
 suite.run()

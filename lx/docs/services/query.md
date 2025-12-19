@@ -38,13 +38,13 @@ Every AST node includes:
 
 * local: `{ kind: "local", getOp, setOp, slot, declaredAt, depth }`
 * upvalue: `{ kind: "upvalue", getOp, setOp, upvalueIndex, declaredAt, depth }`
-* global: `{ kind: "global", getOp, setOp, name, depth }` (no `declaredAt`)
+* builtin: `{ kind: "builtin", getOp, setOp, name, depth }` (no `declaredAt`)
 
 **declaredAt contract (as implemented):**
 
 * vars/params/locals: `declaredAt` is the declaring **Identifier node id** (`node.name.id`)
 * hoisted/named functions: `declaredAt` is the **Function node id** (`expr.id`) for references to that function
-* globals: no `declaredAt`
+* builtins: no `declaredAt`
 
 You can always obtain spans via:
 `resolveResult.nodes[declaredAt]`
@@ -203,7 +203,7 @@ fn queryHover(ctx, filename, line, col) {
 
 * Only triggers on Identifier nodes.
 * Uses `resolvedNames[id]`.
-* If `kind == "global"`: return “no definition” (globals are external/untracked).
+* If `kind == "builtin"`: return “no definition” (builtins are external/untracked).
 * Otherwise, use `declaredAt` and look up the node in `ctx.nodes`.
 * **Normalize** the target location for function declarations so goto lands on the function name token where possible.
 
@@ -244,8 +244,8 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     return .{ success: false, kind: "goto", message: "Unresolved identifier" }
   }
 
-  if r.kind == "global" {
-    return .{ success: false, kind: "goto", message: "Global has no tracked definition" }
+  if r.kind == "builtin" {
+    return .{ success: false, kind: "goto", message: "Builtin has no tracked definition" }
   }
 
   let declNodeId = r.declaredAt
@@ -308,7 +308,7 @@ Minimum tests:
 
 4. **Global**
 
-   * `println(x)` where `x` is unresolved global (or `print` itself if you treat builtins as globals)
+   * `println(x)` where `x` is unresolved/builtin (or `print` itself if you treat builtins as builtins)
    * returns “Global has no tracked definition”
 
 5. **Hover uses types**

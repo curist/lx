@@ -551,19 +551,6 @@ fn checkIf(checker, node) {
   typeNil()
 }
 
-fn checkProgram(checker, node) {
-  // Program is a container, not a scope in itself (up to you).
-  // If you want each file to be a scope, enterScope here.
-  let lastT = typeNil()
-  if node.body {
-    for let i = 0; i < len(node.body); i = i + 1 {
-      lastT = synthExpr(checker, node.body[i])
-    }
-  }
-  checker.types[node.id] = lastT
-  lastT
-}
-
 fn checkBlock(checker, node) {
   enterScope(checker)
 
@@ -820,7 +807,6 @@ synthExpr = fn(checker, node) {
   if node.type == "Function"   { return checkFunction(checker, node) }
   if node.type == "If"         { return checkIf(checker, node) }
   if node.type == "Let"        { return checkLet(checker, node) }
-  if node.type == "Program"    { return checkProgram(checker, node) }
   if node.type == "Block"      { return checkBlock(checker, node) }
   if node.type == "Grouping"   { return checkGrouping(checker, node) }
   if node.type == "Unary"      { return checkUnary(checker, node) }
@@ -869,10 +855,10 @@ fn makeChecker(resolveResult, opts) {
 }
 
 fn predeclareTopLevel(checker, ast) {
-  if !ast or !ast.body { return }
+  if !ast or ast.type != "Block" or !ast.expressions { return }
 
-  for let i = 0; i < len(ast.body); i = i + 1 {
-    let node = ast.body[i]
+  for let i = 0; i < len(ast.expressions); i = i + 1 {
+    let node = ast.expressions[i]
     if node.type == "Let" and node.name {
       if !lookupDecl(checker, node.name.id) {
         bindDecl(checker, node.name.id)
@@ -902,9 +888,7 @@ fn typecheck(ast, resolveResult, opts) {
   }
 
   // Predeclare top-level lets/functions for forward references (Phase 2)
-  if ast.type == "Program" and ast.body {
-    predeclareTopLevel(checker, ast)
-  }
+  predeclareTopLevel(checker, ast)
 
   // Prefer: drive from the root node if it is a node
   if ast.type {

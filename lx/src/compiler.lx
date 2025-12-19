@@ -111,8 +111,6 @@ fn purifyFunction(func) {.{
 fn compile(src, filename, opts) {
   let scanner = initScanner(src)
 
-  let isModule = !opts.main
-
   // to get around mutual references
   let parseRules
   let getRule
@@ -1102,6 +1100,7 @@ fn compile(src, filename, opts) {
     let getOp
     let setOp
     let arg = resolveLocal(current, name)
+    let isGlobal = false
 
     if arg != -1 {
       getOp = OP.GET_LOCAL
@@ -1113,11 +1112,18 @@ fn compile(src, filename, opts) {
       arg = identifierConstant(name)
       getOp = OP.GET_GLOBAL
       setOp = OP.SET_GLOBAL
+      isGlobal = true
     }
 
     if canAssign and match(TOKEN.EQUAL) {
       expression()
-      emitBytes(setOp, arg, line)
+      if isGlobal {
+        error("Cannot assign to undeclared name: " + name)
+        emitByte(OP.POP, line)
+        emitByte(OP.NIL, line)
+      } else {
+        emitBytes(setOp, arg, line)
+      }
     } else {
       emitBytes(getOp, arg, line)
     }
@@ -1206,7 +1212,8 @@ fn compile(src, filename, opts) {
     }
   }
 
-  isModule and beginScope()
+  // No userland globals: treat the top-level as an implicit scope.
+  beginScope()
 
   advance()
   for !match(TOKEN.EOF) {

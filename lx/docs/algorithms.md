@@ -474,9 +474,7 @@ fn buildNodeMap(resolver, node) {
   }
 
   // Recursively walk children based on node type
-  if node.type == "Program" {
-    each(node.body, fn(child) { buildNodeMap(resolver, child) })
-  } else if node.type == "Block" {
+  if node.type == "Block" {
     each(node.expressions, fn(child) { buildNodeMap(resolver, child) })
   } else if node.type == "Binary" or node.type == "Logical" {
     buildNodeMap(resolver, node.left)

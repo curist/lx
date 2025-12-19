@@ -409,8 +409,8 @@ fn typecheck(ast, resolveResult, opts) {
   // PASS 1: Collect constraints (don't solve yet)
   checker.currentPass = 1
   checker.constraintMode = "collect"
-  for let i = 0; i < len(ast.body); i = i + 1 {
-    synthExpr(checker, ast.body[i])
+  for let i = 0; i < len(ast.expressions); i = i + 1 {
+    synthExpr(checker, ast.expressions[i])
   }
 
   // SOLVE: Apply constraint solver

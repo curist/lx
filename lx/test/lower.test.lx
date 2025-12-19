@@ -20,7 +20,7 @@ fn parseAndLower(src) {
 
 // Helper to get first statement from lowered AST
 fn first(result) {
-  result.lowerResult.ast.body[0]
+  result.lowerResult.ast.expressions[0]
 }
 
 // ========================================
@@ -82,7 +82,7 @@ test("lower - arrow preserves position span", fn(assert) {
   let result = parseAndLower("x->f()")
   assert.truthy(result.success)
 
-  let parsed = result.parseResult.ast.body[0]
+  let parsed = result.parseResult.ast.expressions[0]
   let lowered = first(result)
 
   // Position should be preserved from original arrow node
@@ -113,7 +113,7 @@ test("lower - if without else stays nil", fn(assert) {
   let result = parseAndLower("if true { 1 }")
   assert.truthy(result.success)
 
-  let parsedIf = result.parseResult.ast.body[0]
+  let parsedIf = result.parseResult.ast.expressions[0]
   let loweredIf = first(result)
 
   assert.equal(loweredIf.type, "If")
@@ -146,7 +146,7 @@ test("lower - creates fresh node IDs", fn(assert) {
   let result = parseAndLower("1 + 2")
   assert.truthy(result.success)
 
-  let parsedNode = result.parseResult.ast.body[0]
+  let parsedNode = result.parseResult.ast.expressions[0]
   let loweredNode = first(result)
 
   // Lowered IDs should be higher (continuing from parse)
@@ -168,7 +168,7 @@ test("lower - origin map tracks provenance", fn(assert) {
   let result = parseAndLower("x")
   assert.truthy(result.success)
 
-  let parsedNode = result.parseResult.ast.body[0]
+  let parsedNode = result.parseResult.ast.expressions[0]
   let loweredNode = first(result)
 
   // Origin map should link new ID to old ID
@@ -262,7 +262,7 @@ test("lower - empty program", fn(assert) {
   let result = parseAndLower("")
   assert.truthy(result.success)
 
-  assert.equal(len(result.lowerResult.ast.body), 0)
+  assert.equal(len(result.lowerResult.ast.expressions), 0)
 })
 
 test("lower - preserves literals", fn(assert) {
@@ -338,7 +338,7 @@ test("lower - grouping with arrow gets fresh IDs", fn(assert) {
   let result = parseAndLower("(x)->f()")
   assert.truthy(result.success)
 
-  let parsedArrow = result.parseResult.ast.body[0]
+  let parsedArrow = result.parseResult.ast.expressions[0]
   let parsedGrouping = parsedArrow.left
   let loweredCall = first(result)
 
@@ -358,7 +358,7 @@ test("lower - let name gets fresh ID", fn(assert) {
   let result = parseAndLower("let x = 42")
   assert.truthy(result.success)
 
-  let parsedLet = result.parseResult.ast.body[0]
+  let parsedLet = result.parseResult.ast.expressions[0]
   let loweredLet = first(result)
 
   // Let node itself should have fresh ID
@@ -370,7 +370,7 @@ test("lower - function name and params get fresh IDs", fn(assert) {
   let result = parseAndLower("fn foo(a, b) { a + b }")
   assert.truthy(result.success)
 
-  let parsedFn = result.parseResult.ast.body[0]
+  let parsedFn = result.parseResult.ast.expressions[0]
   let loweredFn = first(result)
 
   // Function node itself should have fresh ID
@@ -392,7 +392,7 @@ test("lower - dot property gets fresh ID", fn(assert) {
   let result = parseAndLower("obj.foo")
   assert.truthy(result.success)
 
-  let parsedDot = result.parseResult.ast.body[0]
+  let parsedDot = result.parseResult.ast.expressions[0]
   let loweredDot = first(result)
 
   // Dot node itself should have fresh ID
@@ -406,7 +406,7 @@ test("lower - import path gets fresh ID", fn(assert) {
   let result = parseAndLower("import \"foo.lx\"")
   assert.truthy(result.success)
 
-  let parsedImport = result.parseResult.ast.body[0]
+  let parsedImport = result.parseResult.ast.expressions[0]
   let loweredImport = first(result)
 
   // Import node itself should have fresh ID

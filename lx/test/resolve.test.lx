@@ -597,7 +597,7 @@ test("resolve - import node in nodes map", fn(assert) {
   let parseResult = parse("let x = import \"test/makeTestSuite.lx\"", "test.lx")
   let result = resolve(parseResult.ast, .{})
 
-  let importNode = parseResult.ast.body[0].init
+  let importNode = parseResult.ast.expressions[0].init
   assert.equal(importNode.type, "Import", "Should be Import node")
 
   let nodeInfo = result.nodes[importNode.id]

@@ -143,6 +143,85 @@ fn builtinTypeByName(checker, name) {
     })
   }
 
+  // Prelude builtins from `globals.lx`
+  if name == "_1" {
+    let a = freshTypeVar(checker)
+    let b = freshTypeVar(checker)
+    return typeFunction([typeFunction([a], b)], typeFunction([a], b))
+  }
+  if name == "_2" {
+    let a = freshTypeVar(checker)
+    let b = freshTypeVar(checker)
+    let c = freshTypeVar(checker)
+    return typeFunction([typeFunction([a, b], c)], typeFunction([a, b], c))
+  }
+  if name == "_3" {
+    let a = freshTypeVar(checker)
+    let b = freshTypeVar(checker)
+    let c = freshTypeVar(checker)
+    let d = freshTypeVar(checker)
+    return typeFunction([typeFunction([a, b, c], d)], typeFunction([a, b, c], d))
+  }
+  if name == "do" {
+    let a = freshTypeVar(checker)
+    let b = freshTypeVar(checker)
+    return typeFunction([a, typeFunction([a], b)], b)
+  }
+
+  // Collection helpers (array-focused; some prelude fns also accept strings at runtime).
+  if name == "each" {
+    let t = freshTypeVar(checker)
+    let abort = typeFunction([], typeNil())
+    // cb(elem, i, arr, abort) -> Any
+    let cb = typeFunction([t, typeNumber(), typeArray(t), abort], typeAny())
+    return typeFunction([typeArray(t), cb], typeNil())
+  }
+  if name == "fold" or name == "foldr" {
+    let t = freshTypeVar(checker)
+    let acc = freshTypeVar(checker)
+    let abort = typeFunction([], typeNil())
+    // cb(acc, x, i, abort) -> acc
+    let cb = typeFunction([acc, t, typeNumber(), abort], acc)
+    return typeFunction([typeArray(t), acc, cb], acc)
+  }
+  if name == "map" {
+    let t = freshTypeVar(checker)
+    let r = freshTypeVar(checker)
+    let cb = typeFunction([t, typeNumber(), typeArray(t)], r)
+    return typeFunction([typeArray(t), cb], typeArray(r))
+  }
+  if name == "filter" {
+    let t = freshTypeVar(checker)
+    let cb = typeFunction([t, typeNumber(), typeArray(t)], typeAny())
+    return typeFunction([typeArray(t), cb], typeArray(t))
+  }
+  if name == "take" or name == "drop" {
+    let t = freshTypeVar(checker)
+    return typeFunction([typeArray(t), typeNumber()], typeArray(t))
+  }
+
+  if name == "sort" {
+    let t = freshTypeVar(checker)
+    let cmp = typeFunction([t, t], typeBool())
+    return typeFunction([typeArray(t), cmp], typeArray(t))
+  }
+
+  if name == "startsWith" or name == "endsWith" {
+    return typeFunction([typeString(), typeString()], typeBool())
+  }
+
+  if name == "max" or name == "min" {
+    return typeFunction([typeNumber(), typeNumber()], typeNumber())
+  }
+
+  // These prelude fns are intentionally typed coarsely for now.
+  if name == "first" or name == "last" {
+    return typeFunction([typeAny()], typeAny())
+  }
+  if name == "contains" {
+    return typeFunction([typeAny(), typeAny()], typeBool())
+  }
+
   nil
 }
 

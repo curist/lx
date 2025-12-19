@@ -55,7 +55,31 @@ fn register(test) {
     assert.equal(bt.kind, "Array")
     assert.equal(deref(result, bt.elem).kind, "Number")
   })
+
+  test("typecheck - globals.lx prelude builtins", fn(assert) {
+    let result = parseAndTypecheck("{\n" +
+      "  map([1, 2], fn(x, i, arr) { x + i })\n" +
+      "  fold([1, 2], 0, fn(acc, x, i, abort) { acc + x + i })\n" +
+      "  _2(fn(a, b) { a + b })(1, 2)\n" +
+      "  sort([3, 1, 2], fn(a, b) { a < b })\n" +
+      "  startsWith(\"abc\", \"a\")\n" +
+      "}\n")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let mt = deref(result, getExprType(result, 0))
+    assert.equal(mt.kind, "Array")
+    assert.equal(deref(result, mt.elem).kind, "Number")
+
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 2)).kind, "Number")
+
+    let st = deref(result, getExprType(result, 3))
+    assert.equal(st.kind, "Array")
+    assert.equal(deref(result, st.elem).kind, "Number")
+
+    assert.equal(deref(result, getExprType(result, 4)).kind, "Bool")
+  })
 }
 
 .{ register: register }
-

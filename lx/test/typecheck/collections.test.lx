@@ -1,0 +1,43 @@
+// Typecheck: collections (array/map/hashmap/index)
+let helpers = import "test/typecheck/helpers.lx"
+
+fn register(test) {
+  let parseAndTypecheck = helpers.parseAndTypecheck
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+  let hasError = helpers.hasError
+
+  test("typecheck - computed-key hashmap yields Map", fn(assert) {
+    let result = parseAndTypecheck("{ let m = .{ [1]: \"a\", [2]: \"b\" }\nm }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 0))
+    assert.equal(t.kind, "Map")
+    assert.equal(deref(result, t.key).kind, "Number")
+    assert.equal(deref(result, t.elem).kind, "String")
+  })
+
+  test("typecheck - indexing a Map yields element type", fn(assert) {
+    let result = parseAndTypecheck("{ let m = .{ [1]: \"a\" }\nm[1] }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 1)).kind, "String")
+  })
+
+  test("typecheck - mixed string/computed keys yields Any", fn(assert) {
+    let result = parseAndTypecheck("{ let m = .{ a: 1, [2]: 3 }\nm }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "Any")
+  })
+
+  test("typecheck - map key mismatch reports error", fn(assert) {
+    let result = parseAndTypecheck("{ let m = .{ [1]: \"a\", [\"x\"]: \"b\" }\nm }")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Map key mismatch"))
+  })
+}
+
+.{ register: register }
+

@@ -1,0 +1,49 @@
+// Typecheck: functions and calls
+let helpers = import "test/typecheck/helpers.lx"
+
+fn register(test) {
+  let parseAndTypecheck = helpers.parseAndTypecheck
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+  let hasError = helpers.hasError
+
+  test("typecheck - function definition only remains unknown", fn(assert) {
+    let result = parseAndTypecheck("fn f(x) { x }")
+    let fnT = deref(result, getExprType(result, 0))
+    assert.equal(fnT.kind, "Function")
+    let pKind = deref(result, fnT.params[0]).kind
+    let rKind = deref(result, fnT.return).kind
+    assert.truthy(pKind == "TypeVar" or pKind == "Any")
+    assert.truthy(rKind == "TypeVar" or rKind == "Any")
+  })
+
+  test("typecheck - function constrained by call", fn(assert) {
+    let result = parseAndTypecheck("{ fn add(a, b) { a + b }\nadd(1, 2) }")
+    let fnT = deref(result, getExprType(result, 0))
+    let callT = deref(result, getExprType(result, 1))
+    assert.equal(fnT.kind, "Function")
+    assert.equal(deref(result, fnT.params[0]).kind, "Number")
+    assert.equal(deref(result, fnT.params[1]).kind, "Number")
+    assert.equal(deref(result, fnT.return).kind, "Number")
+    assert.equal(callT.kind, "Number")
+  })
+
+  test("typecheck - wrong argument type surfaces error", fn(assert) {
+    let result = parseAndTypecheck("{ fn add(a, b) { a + b }\nadd(1, \"x\") }")
+    assert.truthy(hasError(result, "Argument mismatch"))
+  })
+
+  test("typecheck - recursive function does not hang", fn(assert) {
+    let result = parseAndTypecheck("fn f(x) { f(x) }")
+    let fnT = getExprType(result, 0)
+    assert.truthy(fnT)
+  })
+
+  test("typecheck - occurs check on self application", fn(assert) {
+    let result = parseAndTypecheck("fn f(x) { x(x) }")
+    assert.truthy(len(result.errors) > 0)
+  })
+}
+
+.{ register: register }
+

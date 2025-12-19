@@ -1,0 +1,32 @@
+// Typecheck: control flow
+let helpers = import "test/typecheck/helpers.lx"
+
+fn register(test) {
+  let parseAndTypecheck = helpers.parseAndTypecheck
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+  let hasError = helpers.hasError
+
+  test("typecheck - if branches must match", fn(assert) {
+    let resultMismatch = parseAndTypecheck("{ let cond = true\nif cond { 1 } else { \"x\" } }")
+    assert.truthy(hasError(resultMismatch, "Branch mismatch"))
+  })
+
+  test("typecheck - no narrowing on nil check", fn(assert) {
+    let result = parseAndTypecheck("{ let x = 1\nif x == nil { }\nx }")
+    assert.equal(deref(result, getExprType(result, 2)).kind, "Number")
+  })
+
+  test("typecheck - forward reference via predeclare", fn(assert) {
+    // Resolve rejects use-before-declare hoisted calls, so assert the resolve error.
+    let bad = parseAndTypecheck("{ use(1)\nfn use(x) { x + 1 } }")
+    assert.truthy(bad.resolveErrors)
+
+    let good = parseAndTypecheck("{ fn use(x) { x + 1 }\nuse(1) }")
+    let callT = deref(good, getExprType(good, 1))
+    assert.equal(callT.kind, "Number")
+  })
+}
+
+.{ register: register }
+

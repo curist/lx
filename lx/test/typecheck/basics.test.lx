@@ -1,0 +1,27 @@
+// Typecheck: literals and operators
+let helpers = import "test/typecheck/helpers.lx"
+
+fn register(test) {
+  let parseAndTypecheck = helpers.parseAndTypecheck
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+  let hasError = helpers.hasError
+
+  test("typecheck - literals and arithmetic", fn(assert) {
+    let result = parseAndTypecheck("{ 1 \"s\" 1 + 2 }")
+    let numT = deref(result, getExprType(result, 0))
+    let strT = deref(result, getExprType(result, 1))
+    let addT = deref(result, getExprType(result, 2))
+    assert.equal(numT.kind, "Number")
+    assert.equal(strT.kind, "String")
+    assert.equal(addT.kind, "Number")
+  })
+
+  test("typecheck - invalid arithmetic reports error", fn(assert) {
+    let result = parseAndTypecheck("1 + \"x\"")
+    assert.truthy(hasError(result, "Expected number"))
+  })
+}
+
+.{ register: register }
+

@@ -1,0 +1,58 @@
+// Typecheck: Option
+let helpers = import "test/typecheck/helpers.lx"
+
+fn register(test) {
+  let parseAndTypecheck = helpers.parseAndTypecheck
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+
+  test("typecheck - if without else yields Option", fn(assert) {
+    let result = parseAndTypecheck("{ let cond = true\nif cond { 1 } }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "Number")
+  })
+
+  test("typecheck - if with else is not Option", fn(assert) {
+    let result = parseAndTypecheck("{ let cond = true\nif cond { 1 } else { 2 } }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+  })
+
+  test("typecheck - nil unifies by promoting to Option", fn(assert) {
+    let result = parseAndTypecheck("{ let x = nil\nx = 1\nx }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 2))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "Number")
+  })
+
+  test("typecheck - if branches nil yields Option", fn(assert) {
+    let result = parseAndTypecheck("{ let cond = true\nif cond { 1 } else { nil } }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "Number")
+  })
+
+  test("typecheck - Option does not double-wrap", fn(assert) {
+    let result = parseAndTypecheck("if true { if true { 1 } }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 0))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "Number")
+  })
+}
+
+.{ register: register }
+

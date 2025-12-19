@@ -411,6 +411,14 @@ resolveFunction = fn(resolver, node, context) {
   // Create function scope
   beginScope(resolver, "function")
 
+  // Named function expressions bind their name inside their own body
+  // (enables recursion without introducing an outer-scope binding).
+  if node.name and node.name.type == "Identifier" {
+    let local = declareLocal(resolver, node.name.name, "fn", node.id)
+    // Mark initialized immediately so the name is usable within the body.
+    markInitialized(resolver, local)
+  }
+
   // Declare parameters as locals
   for let i = 0; i < len(node.params); i = i + 1 {
     let param = node.params[i]

@@ -605,6 +605,12 @@ test("resolve - import node in nodes map", fn(assert) {
   assert.equal(nodeInfo.type, "Import", "Should track node type")
 })
 
+test("resolve - named function expression binds name in its own body", fn(assert) {
+  let result = parseAndResolve("let foo = fn bar() { bar() }\nfoo()", "test.lx")
+  assert.truthy(result.success, "Named function expression recursion should resolve")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
 // ========================================
 // Import Driver Tests
 // ========================================

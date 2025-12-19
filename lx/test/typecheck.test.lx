@@ -2,7 +2,12 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
-{import "test/typecheck.phase1.test.lx"}.register(test)
-{import "test/typecheck.phase2.test.lx"}.register(test)
+{import "test/typecheck/basics.test.lx"}.register(test)
+{import "test/typecheck/bindings.test.lx"}.register(test)
+{import "test/typecheck/control_flow.test.lx"}.register(test)
+{import "test/typecheck/functions.test.lx"}.register(test)
+{import "test/typecheck/records.test.lx"}.register(test)
+{import "test/typecheck/collections.test.lx"}.register(test)
+{import "test/typecheck/option.test.lx"}.register(test)
 
 suite.run()

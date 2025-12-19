@@ -1,0 +1,30 @@
+// Typecheck: bindings (let/identifier)
+let helpers = import "test/typecheck/helpers.lx"
+
+fn register(test) {
+  let parseAndTypecheck = helpers.parseAndTypecheck
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+
+  test("typecheck - let with number", fn(assert) {
+    let result = parseAndTypecheck("let x = 42")
+    let ty = getExprType(result, 0)
+    assert.truthy(ty)
+    assert.truthy(ty.kind == "TypeVar" or ty.kind == "Number")
+  })
+
+  test("typecheck - let without initializer stays unknown", fn(assert) {
+    let result = parseAndTypecheck("{ let x\nx }")
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "TypeVar")
+  })
+
+  test("typecheck - variable reference", fn(assert) {
+    let result = parseAndTypecheck("{ let x = 42\nx }")
+    let ty = getExprType(result, 1)
+    assert.truthy(ty)
+  })
+}
+
+.{ register: register }
+

@@ -401,11 +401,15 @@ fn unify(checker, t1, t2) {
     return true
   }
 
-  // Option[T] can unify with T (implicit lifting).
-  if t1.kind == "Option" {
+  // Option[T] can unify with T only when the Option originated from a TypeVar
+  // binding AND the other side is not a TypeVar. This preserves Option at the
+  // binding site (e.g. `let x = if ...`) while still allowing `x = 1` when `x`
+  // is already Option[_], without accidentally unwrapping optionals at use sites
+  // (e.g. function call results).
+  if t1.kind == "Option" and root1 and root1.kind == "TypeVar" and t2.kind != "TypeVar" {
     return unify(checker, t1.value, t2)
   }
-  if t2.kind == "Option" {
+  if t2.kind == "Option" and root2 and root2.kind == "TypeVar" and t1.kind != "TypeVar" {
     return unify(checker, t1, t2.value)
   }
 
@@ -448,7 +452,7 @@ fn emitEq(checker, t1, t2, nodeId, msg) {
   t2
 }
 
-fn emitHasField(checker, base, name, fieldType, nodeId, msg) {
+fn emitHasFieldMode(checker, base, name, fieldType, nodeId, msg, mode) {
   push(checker.constraints, .{
     kind: "HasField",
     base: base,
@@ -456,8 +460,14 @@ fn emitHasField(checker, base, name, fieldType, nodeId, msg) {
     fieldType: fieldType,
     nodeId: nodeId,
     msg: msg,
+    mode: mode or "read",
+    innerFieldType: nil,
   })
   fieldType
+}
+
+fn emitHasField(checker, base, name, fieldType, nodeId, msg) {
+  emitHasFieldMode(checker, base, name, fieldType, nodeId, msg, "read")
 }
 
 fn emitCall(checker, callee, args, argNodeIds, out, nodeId) {
@@ -529,16 +539,47 @@ fn trySolveConstraint(checker, c) {
   }
 
   if c.kind == "HasField" {
-    let ft = deref(checker, c.fieldType)
-
     // Preserve the root typevar (for better containment), but do not "grow" records.
     let baseInfo = derefWithRootVar(checker, c.base)
     let root = baseInfo.root
     let base = baseInfo.type
 
-    // Option[T] can be accessed as T (implicit lifting).
-    if base.kind == "Option" and base.value {
-      base = deref(checker, base.value)
+    let mode = c.mode or "read"
+    let ft = deref(checker, c.fieldType)
+
+    // Option[T].field
+    // - read: Option[field]
+    // - write: error (cannot assign through optional base)
+    if base.kind == "Option" {
+      if mode == "write" {
+        addError(checker, c.nodeId, "Cannot assign to field on optional value")
+        containHasFieldFailure(checker, ft)
+        return true
+      }
+
+      if !c.innerFieldType {
+        c.innerFieldType = freshTypeVar(checker)
+        if !unify(checker, c.fieldType, typeOption(c.innerFieldType)) {
+          addError(checker, c.nodeId, "Optional field access mismatch")
+          containHasFieldFailure(checker, ft)
+          return true
+        }
+      }
+
+      ft = deref(checker, c.innerFieldType)
+
+      if base.value {
+        base = deref(checker, base.value)
+        // Avoid getting stuck on Option[Option[T]] via TypeVar indirection.
+        if base.kind == "Option" and base.value {
+          base = deref(checker, base.value)
+        }
+        if base.kind == "TypeVar" and !getTypeVarBinding(checker, base.id) {
+          return false
+        }
+      } else {
+        return false
+      }
     }
 
     if base.kind == "Any" {
@@ -555,6 +596,55 @@ fn trySolveConstraint(checker, c) {
       }
       if binding.kind == "Any" {
         if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
+        return true
+      }
+      if binding.kind == "Option" {
+        if mode == "write" {
+          addError(checker, c.nodeId, "Cannot assign to field on optional value")
+          containHasFieldFailure(checker, ft)
+          return true
+        }
+
+        if !c.innerFieldType {
+          c.innerFieldType = freshTypeVar(checker)
+          if !unify(checker, c.fieldType, typeOption(c.innerFieldType)) {
+            addError(checker, c.nodeId, "Optional field access mismatch")
+            containHasFieldFailure(checker, ft)
+            return true
+          }
+        }
+        ft = deref(checker, c.innerFieldType)
+
+        if !binding.value {
+          return false
+        }
+        let innerBase = deref(checker, binding.value)
+        if innerBase.kind == "Any" {
+          if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
+          return true
+        }
+        if innerBase.kind == "TypeVar" and !getTypeVarBinding(checker, innerBase.id) {
+          return false
+        }
+        if innerBase.kind == "Option" and innerBase.value {
+          innerBase = deref(checker, innerBase.value)
+          if innerBase.kind == "TypeVar" and !getTypeVarBinding(checker, innerBase.id) {
+            return false
+          }
+        }
+        if innerBase.kind == "Record" {
+          let field = innerBase.fields[c.fieldName]
+          if !field {
+            addError(checker, c.nodeId, c.msg)
+            containHasFieldFailure(checker, ft)
+          } else if !unify(checker, field, ft) {
+            addError(checker, c.nodeId, c.msg)
+            containHasFieldFailure(checker, ft)
+          }
+          return true
+        }
+        addError(checker, c.nodeId, c.msg)
+        containHasFieldFailure(checker, ft)
         return true
       }
       if binding.kind == "Record" {
@@ -1094,6 +1184,13 @@ fn checkBinary(checker, node) {
     return typeBool()
   }
 
+  if op == "<" or op == "<=" or op == ">" or op == ">=" {
+    emitEq(checker, lt, typeNumber(), node.left.id, "Expected number")
+    emitEq(checker, rt, typeNumber(), node.right.id, "Expected number")
+    checker.types[node.id] = typeBool()
+    return typeBool()
+  }
+
   addError(checker, node.id, "Unsupported binary operator")
   let t = typeAny()
   checker.types[node.id] = t
@@ -1249,18 +1346,77 @@ fn checkUnary(checker, node) {
   t
 }
 
+fn typeOptionNormalized(checker, t) {
+  t = derefAll(checker, t)
+  if t.kind == "Nil" { return typeNil() }
+  if t.kind == "Option" { return t }
+  typeOption(t)
+}
+
+fn joinTypes(checker, t1, t2) {
+  t1 = derefAll(checker, t1)
+  t2 = derefAll(checker, t2)
+
+  if t1.kind == "Any" or t2.kind == "Any" { return typeAny() }
+  if typeEquals(checker, t1, t2) { return t1 }
+
+  if t1.kind == "Nil" { return typeOptionNormalized(checker, t2) }
+  if t2.kind == "Nil" { return typeOptionNormalized(checker, t1) }
+
+  if t1.kind == "Option" and t2.kind == "Option" {
+    return typeOptionNormalized(checker, joinTypes(checker, t1.value, t2.value))
+  }
+  if t1.kind == "Option" {
+    return typeOptionNormalized(checker, joinTypes(checker, t1.value, t2))
+  }
+  if t2.kind == "Option" {
+    return typeOptionNormalized(checker, joinTypes(checker, t1, t2.value))
+  }
+
+  // No unions yet: fall back to Any.
+  typeAny()
+}
+
+fn definitelyTruthyNode(node) {
+  if !node { return nil }
+  if node.type == "Grouping" { return definitelyTruthyNode(node.expression) }
+
+  if node.type == "Nil" { return false }
+  if node.type == "Bool" { return node.value == true }
+
+  // Literal-ish nodes are always truthy.
+  if node.type == "Number" { return true }
+  if node.type == "String" { return true }
+  if node.type == "Array" { return true }
+  if node.type == "Hashmap" { return true }
+  if node.type == "Function" { return true }
+
+  nil
+}
+
 fn checkLogical(checker, node) {
   // NOTE: pick semantics. If Lx is Lua-like and returns operands,
   // you cannot type it as Bool in general.
-  // For Phase 1, simplest is to require bool operands and return bool.
   let lt = synthExpr(checker, node.left)
   let rt = synthExpr(checker, node.right)
   let op = node.operator.lexeme
 
   if op == "and" or op == "or" {
-    emitEq(checker, lt, typeBool(), node.left.id, "Expected bool")
-    emitEq(checker, rt, typeBool(), node.right.id, "Expected bool")
-    let t = typeBool()
+    let truthy = definitelyTruthyNode(node.left)
+    if truthy == true {
+      // left always truthy -> `and` yields right; `or` yields left
+      let t = op == "and" and rt or lt
+      checker.types[node.id] = t
+      return t
+    }
+    if truthy == false {
+      // left always falsy -> `and` yields left; `or` yields right
+      let t = op == "and" and lt or rt
+      checker.types[node.id] = t
+      return t
+    }
+
+    let t = joinTypes(checker, lt, rt)
     checker.types[node.id] = t
     return t
   }
@@ -1435,7 +1591,7 @@ fn checkDot(checker, node) {
   }
 
   let fieldT = freshTypeVar(checker)
-  emitHasField(checker, objT, propName, fieldT, node.id, "Missing field: " + propName)
+  emitHasFieldMode(checker, objT, propName, fieldT, node.id, "Missing field: " + propName, "read")
   checker.types[node.id] = fieldT
   fieldT
 }
@@ -1466,7 +1622,7 @@ fn checkAssignment(checker, node) {
 
     if propName {
       let fieldT = freshTypeVar(checker)
-      emitHasField(checker, objT, propName, fieldT, node.target.id, "Missing field: " + propName)
+      emitHasFieldMode(checker, objT, propName, fieldT, node.target.id, "Missing field: " + propName, "write")
       emitEq(checker, fieldT, vt, node.id, "Assignment mismatch")
       checker.types[node.target.id] = fieldT
       checker.types[node.id] = vt

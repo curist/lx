@@ -26,7 +26,17 @@ fn register(test) {
     let callT = deref(good, getExprType(good, 1))
     assert.equal(callT.kind, "Number")
   })
+
+  test("typecheck - logical and/or returns operands", fn(assert) {
+    let result = parseAndTypecheck("{ \"a\" or 1\nnil or 1\nfalse and 1\nnil and 1 }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    assert.equal(deref(result, getExprType(result, 0)).kind, "String")
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 2)).kind, "Bool")
+    assert.equal(deref(result, getExprType(result, 3)).kind, "Nil")
+  })
 }
 
 .{ register: register }
-

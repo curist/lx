@@ -5,6 +5,7 @@ fn register(test) {
   let parseAndTypecheck = helpers.parseAndTypecheck
   let getExprType = helpers.getExprType
   let deref = helpers.deref
+  let hasError = helpers.hasError
 
   test("typecheck - if without else yields Option", fn(assert) {
     let result = parseAndTypecheck("{ let cond = true\nif cond { 1 } }")
@@ -58,6 +59,48 @@ fn register(test) {
     if !result.success { return }
 
     let t = deref(result, getExprType(result, 0))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "Number")
+  })
+
+  test("typecheck - dot access on Option yields Option", fn(assert) {
+    let result = parseAndTypecheck("{ let cond = true\nlet x = if cond { .{ a: 1 } }\nx.a }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 2))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "Number")
+  })
+
+  test("typecheck - cannot assign field on Option", fn(assert) {
+    let result = parseAndTypecheck("{ let cond = true\nlet x = if cond { .{ a: 1 } }\nx.a = 2 }")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Cannot assign to field on optional value"))
+  })
+
+  test("typecheck - function can return Option[T]", fn(assert) {
+    let result = parseAndTypecheck("{ let cond = true\nfn f() { if cond { 1 } }\nf() }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 2))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "Number")
+  })
+
+  test("typecheck - optional value cannot be used as Number", fn(assert) {
+    let result = parseAndTypecheck("1 + (if true { 1 })")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Expected number"))
+  })
+
+  test("typecheck - Option.field defers through nested Option indirection", fn(assert) {
+    let result = parseAndTypecheck("{ let cond = true\nlet x = if cond { .{ a: 1 } }\nlet y = if cond { x }\ny.a }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 3))
     assert.equal(t.kind, "Option")
     assert.equal(deref(result, t.value).kind, "Number")
   })

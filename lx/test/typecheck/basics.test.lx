@@ -21,6 +21,22 @@ fn register(test) {
     let result = parseAndTypecheck("1 + \"x\"")
     assert.truthy(hasError(result, "Expected number") or hasError(result, "Expected string"))
   })
+
+  test("typecheck - comparisons return Bool", fn(assert) {
+    let result = parseAndTypecheck("{ 1 < 2\n1 <= 2\n1 > 2\n1 >= 2 }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "Bool")
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Bool")
+    assert.equal(deref(result, getExprType(result, 2)).kind, "Bool")
+    assert.equal(deref(result, getExprType(result, 3)).kind, "Bool")
+  })
+
+  test("typecheck - invalid comparison reports error", fn(assert) {
+    let result = parseAndTypecheck("\"a\" < \"b\"")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Expected number"))
+  })
 }
 
 .{ register: register }

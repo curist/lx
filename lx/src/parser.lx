@@ -376,27 +376,6 @@ fn ImportNode(filename, startToken, path) {
   node
 }
 
-fn StringKeyNodeFromToken(filename, token) {
-  // Create a String node from a token's lexeme (for dot/hashmap keys)
-  let tokenLen = len(token.lexeme)
-  let startCol = token.col - tokenLen
-  if startCol < 0 { startCol = 0 }
-
-  nodeIdCounter = nodeIdCounter + 1
-
-  .{
-    id: nodeIdCounter,
-    type: "String",
-    filename: filename,
-    line: token.line,
-    col: startCol,
-    endLine: token.line,
-    endCol: token.col,
-    value: token.lexeme,
-    lexeme: token.lexeme,
-  }
-}
-
 fn ProgramNode(filename, body) {
   nodeIdCounter = nodeIdCounter + 1
 
@@ -418,6 +397,27 @@ fn ProgramNode(filename, body) {
     node.endCol = 0
   }
   node
+}
+
+fn StringKeyNodeFromToken(filename, token) {
+  // Create a String node from a token's lexeme (for dot/hashmap keys)
+  let tokenLen = len(token.lexeme)
+  let startCol = token.col - tokenLen
+  if startCol < 0 { startCol = 0 }
+
+  nodeIdCounter = nodeIdCounter + 1
+
+  .{
+    id: nodeIdCounter,
+    type: "String",
+    filename: filename,
+    line: token.line,
+    col: startCol,
+    endLine: token.line,
+    endCol: token.col,
+    value: token.lexeme,
+    lexeme: token.lexeme,
+  }
 }
 
 fn parse(src, filename) {

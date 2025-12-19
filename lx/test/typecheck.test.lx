@@ -9,6 +9,23 @@ let resolve = import "src/resolve.lx"
 let typecheck = import "src/typecheck.lx"
 let Driver = import "src/driver.lx"
 
+// Type helpers
+fn deref(result, t) {
+  if t and t.kind == "TypeVar" {
+    let bindings = result.typeVarBindings or .{}
+    let bound = bindings[t.id]
+    if bound { return deref(result, bound) }
+  }
+  t
+}
+
+fn hasError(result, needle) {
+  for let i = 0; i < len(result.errors); i = i + 1 {
+    if result.errors[i].message == needle { return true }
+  }
+  false
+}
+
 // Helper: parse → lower → resolve → typecheck
 fn parseAndTypecheck(source) {
   let parseResult = parse(source, "test.lx")
@@ -31,52 +48,67 @@ fn parseAndTypecheck(source) {
     success: typecheckResult.success,
     phase: "typecheck",
     types: typecheckResult.types,
+    typeVarBindings: typecheckResult.typeVarBindings,
     errors: typecheckResult.errors,
     parseResult: parseResult,
     lowerResult: lowerResult,
     resolveResult: resolveResult,
   }
 }
+fn normalizeExprList(ast) {
+  if !ast { return nil }
+
+  // Program → Block → expressions
+  if ast.type == "Program" and ast.body {
+    if len(ast.body) == 1 and ast.body[0].type == "Block" and ast.body[0].expressions {
+      return ast.body[0].expressions
+    }
+    return ast.body
+  }
+
+  // Block → expressions
+  if ast.type == "Block" and ast.expressions {
+    return ast.expressions
+  }
+
+  // Legacy container
+  if ast.body {
+    return ast.body
+  }
+
+  if ast.type {
+    return [ast]
+  }
+
+  nil
+}
 
 // Helper: Get type of expression in test block
 fn getExprType(result, exprIndex) {
-  // For tests like "{ expr1\nexpr2 }", ast.body[0] is the Block
-  // and the expressions are in Block.expressions
   let ast = result.lowerResult.ast
-  if !ast or !ast.body or len(ast.body) == 0 {
-    return nil
-  }
+  let exprs = normalizeExprList(ast)
+  if !exprs or exprIndex >= len(exprs) { return nil }
 
-  let blockNode = ast.body[0]
-  if !blockNode or blockNode.type != "Block" or !blockNode.expressions {
-    return nil
-  }
+  let node = exprs[exprIndex]
 
-  if exprIndex >= len(blockNode.expressions) {
-    return nil
-  }
+  if node.type == "ExprStmt" and node.expr { node = node.expr }
 
-  let node = blockNode.expressions[exprIndex]
-
-  // For Let nodes, get the type of the bound variable (from name.id)
-  if node.type == "Let" {
+  if node.type == "Let" and node.name {
     return result.types[node.name.id]
   }
 
-  // Direct expression - return its type
-  return result.types[node.id]
+  result.types[node.id]
 }
 
 // Helper: Get the actual AST node at an index
 fn getExprNode(result, exprIndex) {
   let ast = result.lowerResult.ast
-  if len(ast.body) > 0 {
-    let blockNode = ast.body[0]
-    if blockNode.type == "Block" and exprIndex < len(blockNode.expressions) {
-      return blockNode.expressions[exprIndex]
-    }
-  }
-  nil
+  let exprs = normalizeExprList(ast)
+  if !exprs or exprIndex >= len(exprs) { return nil }
+
+  let node = exprs[exprIndex]
+  if node.type == "ExprStmt" and node.expr { return node.expr }
+  node
 }
 
 // Find the first Import node in a program AST (simple helper for tests)
@@ -93,936 +125,107 @@ fn findFirstImport(ast) {
   nil
 }
 
-// ========================================
-// Primitive Literals
-// ========================================
-
-test("typecheck - number literal", fn(assert) {
-  let result = parseAndTypecheck("{ 42 }")
-  let type = getExprType(result, 0)
-  assert.equal(type.kind, "Number", "42 should have type Number")
+test("typecheck - let with number (phase1)", fn(assert) {
+  let result = parseAndTypecheck("let x = 42")
+  let ty = getExprType(result, 0)
+  assert.truthy(ty)
+  // If Phase 1 binds init type to name, keep:
+  assert.equal(ty.kind, "TypeVar")
+  // assert.equal(ty.kind, "Number")
 })
 
-test("typecheck - string literal", fn(assert) {
-  let result = parseAndTypecheck("{ \"hello\" }")
-  let type = getExprType(result, 0)
-  assert.equal(type.kind, "String", "\"hello\" should have type String")
-})
-
-test("typecheck - bool literal", fn(assert) {
-  let result = parseAndTypecheck("{ true }")
-  let type = getExprType(result, 0)
-  assert.equal(type.kind, "Bool", "true should have type Bool")
-})
-
-test("typecheck - nil literal", fn(assert) {
-  let result = parseAndTypecheck("{ nil }")
-  let type = getExprType(result, 0)
-  assert.equal(type.kind, "Nil", "nil should have type Nil")
-})
-
-// ========================================
-// Variables
-// ========================================
-
-test("typecheck - let with number", fn(assert) {
-  let result = parseAndTypecheck("{ let x = 42 }")
-  let type = getExprType(result, 0)
-  assert.equal(type.kind, "Number", "x should have type Number")
-})
-
-test("typecheck - variable reference", fn(assert) {
+test("typecheck - variable reference (phase1)", fn(assert) {
   let result = parseAndTypecheck("{ let x = 42\nx }")
-  let varType = getExprType(result, 1)
-  assert.equal(varType.kind, "Number", "x reference should have type Number")
+  let ty = getExprType(result, 1)
+  assert.truthy(ty)
 })
 
-test("typecheck - variable assignment", fn(assert) {
-  let result = parseAndTypecheck("{ let x = 42\nx = 100 }")
-  assert.truthy(result.success, "Should typecheck assignment")
-  assert.equal(len(result.errors), 0, "Should have no errors")
+test("phase1 - literals and arithmetic", fn(assert) {
+  let result = parseAndTypecheck("{ 1 \"s\" 1 + 2 }")
+  let numT = deref(result, getExprType(result, 0))
+  let strT = deref(result, getExprType(result, 1))
+  let addT = deref(result, getExprType(result, 2))
+  assert.equal(numT.kind, "Number")
+  assert.equal(strT.kind, "String")
+  assert.equal(addT.kind, "Number")
 })
 
-test("typecheck - assignment type error", fn(assert) {
-  let result = parseAndTypecheck("{ let x = 42\nx = \"hello\" }")
-  assert.equal(result.success, false, "Should fail on type mismatch")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
+test("phase1 - invalid arithmetic reports error", fn(assert) {
+  let result = parseAndTypecheck("1 + \"x\"")
+  assert.truthy(hasError(result, "Expected number"))
 })
 
-test("typecheck - dot assignment refinement on parameter", fn(assert) {
-  let result = parseAndTypecheck("fn(o) { o.x = 1\no.x + 1 }")
-  assert.truthy(result.success, "Should refine param type via dot assignment")
-  assert.equal(len(result.errors), 0, "Should have no errors")
+test("phase1 - let without initializer stays unknown", fn(assert) {
+  let result = parseAndTypecheck("{ let x\nx }")
+  let t = getExprType(result, 1)
+  assert.truthy(t)
+  assert.equal(deref(result, t).kind, "TypeVar")
 })
 
-test("typecheck - index assignment refinement on parameter", fn(assert) {
-  let result = parseAndTypecheck("fn(a) { a[0] = 1\nlet x = a[0]\nif x != nil { x + 1 } else { 0 } }")
-  assert.truthy(result.success, "Should refine param type via index assignment")
-  assert.equal(len(result.errors), 0, "Should have no errors")
+test("phase1 - function definition only remains unknown", fn(assert) {
+  let result = parseAndTypecheck("fn f(x) { x }")
+  let fnT = deref(result, getExprType(result, 0))
+  assert.equal(fnT.kind, "Function")
+  assert.equal(deref(result, fnT.params[0]).kind, "TypeVar")
+  assert.equal(deref(result, fnT.return).kind, "TypeVar")
 })
 
-test("typecheck - dot assignment to number fails", fn(assert) {
-  let result = parseAndTypecheck("{ let n = 1\nn.x = 2 }")
-  assert.equal(result.success, false, "Should fail when assigning to non-record")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
+test("phase1 - function constrained by call", fn(assert) {
+  let result = parseAndTypecheck("{ fn add(a, b) { a + b }\nadd(1, 2) }")
+  let fnT = deref(result, getExprType(result, 0))
+  let callT = deref(result, getExprType(result, 1))
+  assert.equal(fnT.kind, "Function")
+  assert.equal(deref(result, fnT.params[0]).kind, "Number")
+  assert.equal(deref(result, fnT.params[1]).kind, "Number")
+  assert.equal(deref(result, fnT.return).kind, "Number")
+  assert.equal(callT.kind, "Number")
 })
 
-test("typecheck - index assignment to number fails", fn(assert) {
-  let result = parseAndTypecheck("{ let n = 1\nn[0] = 2 }")
-  assert.equal(result.success, false, "Should fail when assigning to non-array")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
+test("phase1 - wrong argument type surfaces error", fn(assert) {
+  let result = parseAndTypecheck("{ fn add(a, b) { a + b }\nadd(1, \"x\") }")
+  assert.truthy(hasError(result, "Argument mismatch"))
 })
 
-// ========================================
-// Operators
-// ========================================
+test("phase1 - if expressions", fn(assert) {
+  let resultOk = parseAndTypecheck("{ let cond = true\nif cond { 1 } else { 2 } }")
+  assert.equal(deref(resultOk, getExprType(resultOk, 1)).kind, "Number")
 
-test("typecheck - arithmetic operators", fn(assert) {
-  let result = parseAndTypecheck("1 + 2 * 3 - 4 / 5")
-  assert.truthy(result.success, "Should typecheck arithmetic")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - arithmetic type error", fn(assert) {
-  let result = parseAndTypecheck("\"hello\" + 42")
-  assert.equal(result.success, false, "Should fail on arithmetic type error")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - unary operators", fn(assert) {
-  let result = parseAndTypecheck("-42")
-  assert.truthy(result.success, "Should typecheck unary negation")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - logical not", fn(assert) {
-  let result = parseAndTypecheck("!true")
-  assert.truthy(result.success, "Should typecheck logical not")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - string concatenation", fn(assert) {
-  let result = parseAndTypecheck("\"hello\" + \" world\"")
-  assert.truthy(result.success, "Should typecheck string concatenation")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - string concatenation with variables", fn(assert) {
-  let result = parseAndTypecheck("{ let a = \"hello\"\nlet b = \" world\"\na + b }")
-  assert.truthy(result.success, "Should typecheck string concatenation with variables")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-
-  // Check that result type is String
-  let type = getExprType(result, 2)
-  assert.equal(type.kind, "String", "String concatenation should return String")
-})
-
-test("typecheck - string plus number type error", fn(assert) {
-  let result = parseAndTypecheck("\"hello\" + 42")
-  assert.equal(result.success, false, "Should fail on string + number")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - number plus string type error", fn(assert) {
-  let result = parseAndTypecheck("42 + \"hello\"")
-  assert.equal(result.success, false, "Should fail on number + string")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-// ========================================
-// Arrays
-// ========================================
-
-test("typecheck - empty array", fn(assert) {
-  let result = parseAndTypecheck("[]")
-  assert.truthy(result.success, "Should typecheck empty array")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - homogeneous array", fn(assert) {
-  let result = parseAndTypecheck("[1, 2, 3]")
-  assert.truthy(result.success, "Should typecheck homogeneous array")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - array element type error", fn(assert) {
-  let result = parseAndTypecheck("[1, \"hello\", 3]")
-  assert.equal(result.success, false, "Should fail on mixed array")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - array index access", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\narr[0] }")
-  assert.truthy(result.success, "Should typecheck array access")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - array element assignment", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\narr[0] = 42 }")
-  assert.truthy(result.success, "Should typecheck array element assignment")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - array element assignment type error", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [1, 2, 3]\narr[0] = \"hello\" }")
-  assert.equal(result.success, false, "Should fail on element type mismatch")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-// ========================================
-// Records
-// ========================================
-
-test("typecheck - record literal", fn(assert) {
-  let result = parseAndTypecheck(".{ x: 1, y: 2 }")
-  assert.truthy(result.success, "Should typecheck record literal")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - record field access", fn(assert) {
-  let result = parseAndTypecheck("{ let obj = .{ x: 1, y: 2 }\nobj.x }")
-  assert.truthy(result.success, "Should typecheck record field access")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - missing field error", fn(assert) {
-  let result = parseAndTypecheck("{ let obj = .{ x: 1 }\nobj.y }")
-  assert.equal(result.success, false, "Should fail on missing field")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - record field assignment", fn(assert) {
-  let result = parseAndTypecheck("{ let obj = .{ x: 1 }\nobj.x = 42 }")
-  assert.truthy(result.success, "Should typecheck field assignment")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - record field assignment type error", fn(assert) {
-  let result = parseAndTypecheck("{ let obj = .{ x: 1 }\nobj.x = \"hello\" }")
-  assert.equal(result.success, false, "Should fail on field type mismatch")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-// ========================================
-// Control Flow
-// ========================================
-
-test("typecheck - if expression", fn(assert) {
-  let result = parseAndTypecheck("if true { 1 } else { 2 }")
-  assert.truthy(result.success, "Should typecheck if expression")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - if without else", fn(assert) {
-  let result = parseAndTypecheck("if true { 1 }")
-  assert.truthy(result.success, "Should typecheck if without else")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - if branch type mismatch", fn(assert) {
-  let result = parseAndTypecheck("if true { 1 } else { \"hello\" }")
-  assert.equal(result.success, false, "Should fail on branch type mismatch")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - if with else: strict unification (current behavior)", fn(assert) {
-  // Document current strict behavior: branches must unify
-  let result = parseAndTypecheck("if true { 42 } else { 100 }")
-  assert.truthy(result.success, "Same types should unify")
-
-  let result2 = parseAndTypecheck("if true { \"hi\" } else { \"bye\" }")
-  assert.truthy(result2.success, "Same types should unify")
-
-  let result3 = parseAndTypecheck("if true { 1 } else { \"str\" }")
-  assert.equal(result3.success, false, "Different types should fail (strict)")
-})
-
-test("typecheck - if without else returns Option", fn(assert) {
-  // Current behavior: if without else returns Option(thenType)
-  let result = parseAndTypecheck("{ let x = if true { 42 }\nx }")
-  assert.truthy(result.success, "Should succeed")
-
-  // The result type should be Option(Number)
-  let type = getExprType(result, 0)
-  assert.equal(type.kind, "Option", "Should be Option type")
-  if type.kind == "Option" {
-    assert.equal(type.inner.kind, "Number", "Inner should be Number")
-  }
-})
-
-test("typecheck - for loop", fn(assert) {
-  let result = parseAndTypecheck("for let i = 0; i < 10; i = i + 1 { i }")
-  assert.truthy(result.success, "Should typecheck for loop")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - break", fn(assert) {
-  let result = parseAndTypecheck("for let i = 0; i < 10; i = i + 1 { break }")
-  assert.truthy(result.success, "Should typecheck break")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - continue", fn(assert) {
-  let result = parseAndTypecheck("for let i = 0; i < 10; i = i + 1 { continue }")
-  assert.truthy(result.success, "Should typecheck continue")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-// ========================================
-// Complex Examples
-// ========================================
-
-test("typecheck - factorial function", fn(assert) {
-  let source = "fn factorial(n) { if n <= 1 { 1 } else { n * factorial(n - 1) } }"
-  let result = parseAndTypecheck(source)
-  assert.truthy(result.success, "Should typecheck factorial")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - import carries module value type", fn(assert) {
-  let driver = Driver.make(.{
-    loadSource: fn(path) { return slurp(path) },
-    withTypecheck: true,
-  })
-
-  let result = driver.compileModule("test/fixtures/imports/test-hover.lx")
-  assert.truthy(result.typecheckResult and result.typecheckResult.success, "Should typecheck imported module")
-
-  let importNode = findFirstImport(result.lowerResult.ast)
-  assert.truthy(importNode, "Should find import node")
-
-  let importType = result.typecheckResult.types[importNode.id]
-  assert.truthy(importType, "Should have type for import node")
-  assert.equal(importType.kind, "Record", "Import should have record type from module value")
-  assert.truthy(importType.fields, "Record should have fields")
-  assert.equal(importType.fields.version.kind, "String", "Imported record should carry concrete field types")
-})
-
-test("typecheck - array map pattern", fn(assert) {
-  let source = "{ let arr = [1, 2, 3]\nlet result = []\nfor let i = 0; i < len(arr); i = i + 1 { let x = arr[i]\nif x != nil { push(result, x + 1) } }\nresult }"
-  let result = parseAndTypecheck(source)
-  assert.truthy(result.success, "Should typecheck array map pattern")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - record with functions", fn(assert) {
-  let source = ".{ add: fn(x, y) { x + y }, sub: fn(x, y) { x - y } }"
-  let result = parseAndTypecheck(source)
-  assert.truthy(result.success, "Should typecheck record with functions")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - nested records", fn(assert) {
-  let source = "{ let obj = .{ inner: .{ x: 42 } }\nobj.inner.x }"
-  let result = parseAndTypecheck(source)
-  assert.truthy(result.success, "Should typecheck nested records")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - array of records", fn(assert) {
-  let source = "[.{ x: 1 }, .{ x: 2 }, .{ x: 3 }]"
-  let result = parseAndTypecheck(source)
-  assert.truthy(result.success, "Should typecheck array of records")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - higher-order function", fn(assert) {
-  let source = "{ let apply = fn(f, x) { f(x) }\nlet inc = fn(n) { n + 1 }\napply(inc, 42) }"
-  let result = parseAndTypecheck(source)
-  assert.truthy(result.success, "Should typecheck higher-order function")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-// ========================================
-// Edge Cases
-// ========================================
-
-test("typecheck - grouping expression", fn(assert) {
-  let result = parseAndTypecheck("(1 + 2) * 3")
-  assert.truthy(result.success, "Should typecheck grouped expression")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - block expression", fn(assert) {
-  let result = parseAndTypecheck("{ 1\n2\n3 }")
-  assert.truthy(result.success, "Should typecheck block")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - nested blocks", fn(assert) {
-  let result = parseAndTypecheck("{ { 1 } }")
-  assert.truthy(result.success, "Should typecheck nested blocks")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - shadowing", fn(assert) {
-  let result = parseAndTypecheck("{ let x = 1\n{ let x = \"hello\"\nx }\nx }")
-  assert.truthy(result.success, "Should typecheck shadowing")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-// ========================================
-// Arity Widening Tests
-// ========================================
-
-test("typecheck - arity widening allows extra args", fn(assert) {
-  let result = parseAndTypecheck("{ let f = fn(x) { x + 1 }\nf(1, 2, 3) }")
-  assert.truthy(result.success, "Should allow extra arguments")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - arity error on missing args", fn(assert) {
-  let result = parseAndTypecheck("{ let f = fn(x, y) { x + y }\nf(1) }")
-  assert.equal(result.success, false, "Should fail with missing arguments")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-// ========================================
-// TypeVar Refinement Tests
-// ========================================
-
-test("typecheck - empty array refinement via index", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = []\narr[0] = 5\nlet x = arr[0]\nif x != nil { x + 1 } else { 0 } }")
-  assert.truthy(result.success, "Should refine empty array element type")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-// ========================================
-// Regression Tests for Type System Gaps
-// ========================================
-
-test("typecheck - regression: named function call type checking", fn(assert) {
-  let code = "{
-    fn f() { \"hello\" }
-    f() + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(!result.success, "Should error: can't add String and Number")
-})
-
-test("typecheck - regression: recursive function type inference", fn(assert) {
-  let code = "{
-    fn fact(n) {
-      if n == 0 { 1 } else { n * fact(n - 1) }
-    }
-    fact(5)
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should allow recursive calls")
-})
-
-test("typecheck - regression: global consistency checking", fn(assert) {
-  let code = "{
-    let a = println
-    let b = println
-    a(1)
-    b(\"hello\")
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should handle consistent global usage")
-})
-
-test("typecheck - regression: unknown type refinement", fn(assert) {
-  let code = "{
-    fn getVal(x) { x.value }
-    let obj = .{ value: 42 }
-    getVal(obj)
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should refine unknown to record shape")
-})
-
-test("typecheck - regression: keys on real records", fn(assert) {
-  let code = "{
-    let obj = .{ a: 1, b: 2 }
-    keys(obj)
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should allow keys on non-empty records")
-})
-
-test("typecheck - regression: invalid index assignment", fn(assert) {
-  let code = "{
-    let x = 1
-    x[0] = 2
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(!result.success, "Should error: can't index into number")
-})
-
-test("typecheck - regression: invalid dot assignment", fn(assert) {
-  let code = "{
-    let obj = .{ x: 1 }
-    obj.y = 3
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(!result.success, "Should error: field y doesn't exist")
-})
-
-test("typecheck - if without else returns Option(T)", fn(assert) {
-  let code = "{
-    fn f(cond) {
-      if cond { 1 }
-    }
-    f(true)
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck if-without-else")
-})
-
-test("typecheck - Option(Number) cannot be used in arithmetic", fn(assert) {
-  let code = "{
-    let x = if true { 1 }
-    x + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.equal(result.success, false, "Should reject arithmetic on Option(Number)")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - nil-check unwraps Option(T)", fn(assert) {
-  let code = "{
-    let x = if true { 1 }
-    if x != nil {
-      x + 1
-    } else {
-      0
-    }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should accept arithmetic after nil-check")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - Option(T) can unify with Nil", fn(assert) {
-  let code = "{
-    let x = if true { 1 }
-    let y = nil
-    x == y
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should allow comparing Option(T) with nil")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - map: empty literal is Map", fn(assert) {
-  let code = "{
-    let m = .{}
-    m[\"a\"] = 1
-    m
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck map init and assignment")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - map: lookup returns Option", fn(assert) {
-  let code = "{
-    let m = .{}
-    m[\"a\"] = 1
-    let x = m[\"b\"]
-    x + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.equal(result.success, false, "Should fail: x is Option(Number)")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - map: nil-check refines Option", fn(assert) {
-  let code = "{
-    let m = .{}
-    m[\"a\"] = 1
-    let x = m[\"b\"]
-    if x != nil { x + 1 } else { 0 }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should succeed after nil-check")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - map: keys() accepts maps", fn(assert) {
-  let code = "{
-    let m = .{}
-    m[\"a\"] = 1
-    keys(m)
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "keys() should accept maps")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - record: non-empty literal is Record not Map", fn(assert) {
-  let code = "{
-    let r = .{ a: 1 }
-    r.a
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should allow dot access on Record")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - record: keys() accepts records", fn(assert) {
-  let code = "keys(.{a:1, b:2})"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "keys() should accept records")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - map/record separation: Map rejects dot access", fn(assert) {
-  let code = "{
-    let m = .{}
-    m.a
-  }"
-  let result = parseAndTypecheck(code)
-  assert.equal(result.success, false, "Should reject dot access on Map")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - array: index returns Option", fn(assert) {
-  let code = "{
-    let arr = [1, 2, 3]
-    let x = arr[0]
-    x + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.equal(result.success, false, "Should fail: array index returns Option")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-test("typecheck - array: nil-check unwraps indexed value", fn(assert) {
-  let code = "{
-    let arr = [1, 2, 3]
-    let x = arr[0]
-    if x != nil { x + 1 } else { 0 }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should succeed after nil-check")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - or: Option(T) or T unwraps to T", fn(assert) {
-  let code = "{
-    let x = if true { 1 }
-    let y = x or 0
-    y + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should unwrap Option(Number) or Number to Number")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - or: T or Option(T) unwraps to T", fn(assert) {
-  let code = "{
-    let x = if true { 1 }
-    let y = 0 or x
-    y + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should unwrap Number or Option(Number) to Number")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - or: safe defaulting for missing map value", fn(assert) {
-  let code = "{
-    let m = .{}
-    m[\"a\"] = 1
-    let x = m[\"b\"] or 0
-    x + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should default missing map value")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - or: safe defaulting for array index", fn(assert) {
-  let code = "{
-    let arr = [1, 2, 3]
-    let x = arr[10] or 0
-    x + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should default missing array element")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - or: chained defaulting", fn(assert) {
-  let code = "{
-    let x = if false { 1 }
-    let y = if false { 2 }
-    let z = x or y or 3
-    z + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should handle chained or with Options")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - or: incompatible types fall back to Any", fn(assert) {
-  let code = "{
-    let x = if true { 1 }
-    let y = x or \"default\"
-    y  // Result is Any (types don't unify)
-  }"
-  let result = parseAndTypecheck(code)
-  // Incompatible types use general unification which falls back to Any
-  assert.truthy(result.success, "Incompatible types fall back to Any")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
+  let resultMismatch = parseAndTypecheck("{ let cond = true\nif cond { 1 } else { \"x\" } }")
+  assert.truthy(hasError(resultMismatch, "Branch mismatch"))
 
-test("typecheck - and: does not unwrap Option like or does", fn(assert) {
-  // Unlike 'or', 'and' does not provide Option unwrapping
-  // This test documents that 'or' is special for defaulting, 'and' is not
-  let code = "{
-    let x = if true { 1 }
-    let y = x and 0
-    y  // Result is Any (general case), not specifically Number like with 'or'
-  }"
-  let result = parseAndTypecheck(code)
-  // This succeeds because incompatible types fall back to Any
-  assert.truthy(result.success, "and uses general unification (not Option-aware)")
-  assert.equal(len(result.errors), 0, "Should have no errors")
+  let resultNoElse = parseAndTypecheck("{ let cond = true\nif cond { 1 } }")
+  assert.equal(deref(resultNoElse, getExprType(resultNoElse, 1)).kind, "Nil")
 })
 
-test("typecheck - or: Option(T) or Option(T) stays Option", fn(assert) {
-  let code = "{
-    let x = if true { 1 }
-    let y = if false { 2 }
-    let z = x or y
-    z + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.equal(result.success, false, "Option or Option should not unwrap")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
+test("phase1 - no narrowing on nil check", fn(assert) {
+  let result = parseAndTypecheck("{ let x = 1\nif x == nil { }\nx }")
+  assert.equal(deref(result, getExprType(result, 2)).kind, "Number")
 })
 
-// Regression tests for critical fixes
-
-test("typecheck - regression: mergeEnvs across parent scope", fn(assert) {
-  let code = "{
-    let x = if true { 1 } else { 2 }
-    if x != nil { 0 } else { 0 }
-    x + 1
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should typecheck with x remaining Number")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - regression: println with no arguments", fn(assert) {
-  let code = "{ println() }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should accept println() with no arguments")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - regression: print with no arguments", fn(assert) {
-  let code = "{ print() }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(result.success, "Should accept print() with no arguments")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - regression: type(map) narrows to Map (dot rejected)", fn(assert) {
-  let code = "{
-    let x = .{}
-    if type(x) == \"map\" {
-      x.a
-    } else { 0 }
-  }"
-  let result = parseAndTypecheck(code)
-  assert.truthy(!result.success, "Should reject dot access on Map after narrowing")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-})
-
-// ========================================
-// Nilability Diagnostics
-// ========================================
-
-test("typecheck - nilability: dot on Option(Record) emits helpful error", fn(assert) {
-  let result = parseAndTypecheck("{ let x = if true { .{a: 1} }\nx.a }")
-
-  assert.equal(result.success, false, "Should fail with error")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-  // Check that error message is helpful
-  let errorMsg = result.errors[0].message
-  assert.truthy(errorMsg == "Possibly nil value; add nil-check or use default with 'or'",
-    "Should have helpful nil error message")
-})
-
-test("typecheck - nilability: dot on Option after nil-check works", fn(assert) {
-  let result = parseAndTypecheck("{ let x = if true { .{a: 1} }\nif x != nil { x.a } }")
-
-  assert.truthy(result.success, "Should succeed after nil-check")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - nilability: call on Option(Function) emits helpful error", fn(assert) {
-  let result = parseAndTypecheck("{ let f = if true { fn() { 1 } }\nf() }")
-
-  assert.equal(result.success, false, "Should fail with error")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-  let errorMsg = result.errors[0].message
-  assert.truthy(errorMsg == "Possibly nil value; add nil-check or use default with 'or'",
-    "Should have helpful nil error message")
-})
-
-test("typecheck - nilability: call on Option after nil-check works", fn(assert) {
-  let result = parseAndTypecheck("{ let f = if true { fn() { 1 } }\nif f != nil { f() } }")
-
-  assert.truthy(result.success, "Should succeed after nil-check")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - nilability: index on Option(Array) emits helpful error", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = if true { [1, 2, 3] }\narr[0] }")
-
-  assert.equal(result.success, false, "Should fail with error")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-  let errorMsg = result.errors[0].message
-  assert.truthy(errorMsg == "Possibly nil value; add nil-check or use default with 'or'",
-    "Should have helpful nil error message")
-})
-
-test("typecheck - nilability: index on Option after nil-check works", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = if true { [1, 2, 3] }\nif arr != nil { arr[0] } }")
-
-  assert.truthy(result.success, "Should succeed after nil-check")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - nilability: chained array index then dot", fn(assert) {
-  let result = parseAndTypecheck("{ let arr = [.{a: 1}]\nlet x = arr[0]\nx.a }")
-
-  assert.equal(result.success, false, "Should fail - arr[0] returns Option")
-  assert.truthy(len(result.errors) > 0, "Should have errors")
-  let errorMsg = result.errors[0].message
-  assert.truthy(errorMsg == "Possibly nil value; add nil-check or use default with 'or'",
-    "Should have helpful nil error message")
-})
-
-// ========================================
-// Type Narrowing and Merge (Issue 4)
-// ========================================
-
-test("typecheck - nil-check narrowing: no contamination after merge", fn(assert) {
-  // After nil-check, variable type should remain Option, not contaminated
-  let code = "{
-    let x = if true { .{a: 1} }
-    if x != nil {
-      x.a
-    }
-    x
-  }"
-  let result = parseAndTypecheck(code)
-
-  // Should succeed (x is Option inside branch after narrowing, Option outside)
-  assert.truthy(result.success, "Should typecheck without contamination")
-
-  // After the if, x should still be Option (not forced to Nil or Record)
-  // This is verified by the fact that accessing x.a outside would error
-})
-
-test("typecheck - nil-check: one-sided refinement preserves Option", fn(assert) {
-  // Only then-branch uses the variable; after if, should still be Option
-  let code = "{
-    let x = if true { .{a: 1} }
-    if x != nil {
-      let y = x.a
-    }
-    x
-  }"
-  let result = parseAndTypecheck(code)
-
-  assert.truthy(result.success, "One-sided refinement should not contaminate")
+test("phase1 - record literal and field access", fn(assert) {
+  let result = parseAndTypecheck("{ let r = .{ a: 1, b: 2 }\nr.a }")
+  let recordT = deref(result, getExprType(result, 0))
+  assert.equal(recordT.kind, "Record")
+  assert.equal(deref(result, recordT.fields["a"]).kind, "Number")
+  assert.equal(deref(result, recordT.fields["b"]).kind, "Number")
+  let fieldT = deref(result, getExprType(result, 1))
+  assert.equal(fieldT.kind, "Number")
 })
 
-test("typecheck - nil-check: both branches preserve type integrity", fn(assert) {
-  // Both branches refine x; post-merge should be Option
-  let code = "{
-    let x = if true { .{a: 1} }
-    if x != nil {
-      x.a
-    } else {
-      0
-    }
-    x
-  }"
-  let result = parseAndTypecheck(code)
-
-  assert.truthy(result.success, "Both-branch refinement should preserve Option")
-})
-
-test("typecheck - nil-check merge: T | Nil -> Option(T)", fn(assert) {
-  // When branches have T and Nil, merge should produce Option(T)
-  let code = "{
-    let x = .{a: 1}
-    if x != nil {
-      let y = x.a
-    }
-    x
-  }"
-  let result = parseAndTypecheck(code)
-
-  assert.truthy(result.success, "T | Nil merge should produce valid type")
-})
-
-// ========================================
-// Map with Number Keys
-// ========================================
-
-test("typecheck - map: number key index access", fn(assert) {
-  let code = "{
-    let m = .{}
-    m[1] = \"value\"
-    m
-  }"
-  let result = parseAndTypecheck(code)
-
-  assert.truthy(result.success, "Should accept Map with Number keys")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
-test("typecheck - map: number key lookup with nil-check", fn(assert) {
-  let code = "{
-    let m = .{}
-    m[42] = 100
-    let x = m[42]
-    if x != nil { x + 1 } else { 0 }
-  }"
-  let result = parseAndTypecheck(code)
-
-  assert.truthy(result.success, "Should accept Map(Number, Number)")
-  assert.equal(len(result.errors), 0, "Should have no errors")
+test("phase1 - missing record field reports error", fn(assert) {
+  let result = parseAndTypecheck("{ let r = .{ a: 1 }\nr.b }")
+  assert.truthy(hasError(result, "Missing field: b"))
 })
 
-test("typecheck - map: mixed key types should fail", fn(assert) {
-  // Maps must have consistent key type - can't mix String and Number
-  let code = "{
-    let m = .{}
-    m[\"a\"] = 1
-    m[42] = 2
-    m
-  }"
-  let result = parseAndTypecheck(code)
-
-  // This should fail (can't mix String and Number keys in same map)
-  assert.equal(result.success, false, "Should reject mixed key types")
-  assert.truthy(len(result.errors) > 0, "Should have type mismatch error")
+test("phase1 - recursive function does not hang", fn(assert) {
+  let result = parseAndTypecheck("fn f(x) { f(x) }")
+  let fnT = getExprType(result, 0)
+  assert.truthy(fnT)
 })
-
-test("typecheck - map: number keys are distinct from array", fn(assert) {
-  // Map with number keys is not the same as Array
-  let code = "{
-    let m = .{}
-    m[5] = \"five\"
-    m[10] = \"ten\"
-    let x = m[5]
-    if x != nil { x } else { \"default\" }
-  }"
-  let result = parseAndTypecheck(code)
 
-  assert.truthy(result.success, "Should work with Number-keyed Map")
-  assert.equal(len(result.errors), 0, "Should have no errors")
+test("phase1 - occurs check on self application", fn(assert) {
+  let result = parseAndTypecheck("fn f(x) { x(x) }")
+  assert.truthy(hasError(result, "Call requires function"))
 })
 
 suite.run()

@@ -16,6 +16,15 @@ fn register(test) {
     assert.equal(deref(result, t.value).kind, "Number")
   })
 
+  test("typecheck - if without else on nil is Nil", fn(assert) {
+    let result = parseAndTypecheck("{ let cond = true\nif cond { nil } }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Nil")
+  })
+
   test("typecheck - if with else is not Option", fn(assert) {
     let result = parseAndTypecheck("{ let cond = true\nif cond { 1 } else { 2 } }")
     assert.truthy(result.success)
@@ -55,4 +64,3 @@ fn register(test) {
 }
 
 .{ register: register }
-

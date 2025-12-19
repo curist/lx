@@ -33,6 +33,20 @@ fn register(test) {
     assert.truthy(hasError(result, "Argument mismatch"))
   })
 
+  test("typecheck - call allows extra args", fn(assert) {
+    let result = parseAndTypecheck("{ fn f(x) { x }\nf(1, 2) }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+  })
+
+  test("typecheck - call rejects too few args", fn(assert) {
+    let result = parseAndTypecheck("{ fn f(x, y) { x }\nf(1) }")
+    assert.truthy(len(result.errors) > 0)
+    // Error message includes counts.
+    assert.truthy(hasError(result, "Too few arguments: expected at least 2, got 1"))
+  })
+
   test("typecheck - recursive function does not hang", fn(assert) {
     let result = parseAndTypecheck("fn f(x) { f(x) }")
     let fnT = getExprType(result, 0)
@@ -46,4 +60,3 @@ fn register(test) {
 }
 
 .{ register: register }
-

@@ -46,6 +46,15 @@ fn typeOption(value) {
   value and value.kind == "Option" and value or .{ kind: "Option", value: value }
 }
 
+fn typeIndexable(elem, key, nodeId) {
+  .{
+    kind: "Indexable",
+    elem: elem,
+    key: key,
+    nodeId: nodeId,
+  }
+}
+
 // ========================================================
 // Type Variable Management
 // ========================================================
@@ -54,10 +63,6 @@ fn freshTypeVar(checker) {
   let id = checker.nextTypeVarId
   checker.nextTypeVarId = id + 1
   typeVar(id)
-}
-
-fn bindTypeVar(checker, id, type) {
-  checker.typeVarBindings[id] = type
 }
 
 fn getTypeVarBinding(checker, id) {
@@ -73,6 +78,74 @@ fn deref(checker, type) {
     }
   }
   type
+}
+
+fn typeEquals(checker, a, b) {
+  let eq
+  eq = fn(x, y, depth) {
+    if depth > 200 {
+      // Defensive: if something went cyclic due to a bug, be conservative and
+      // treat as not equal so we don't suppress progress.
+      return false
+    }
+    x = x and deref(checker, x) or x
+    y = y and deref(checker, y) or y
+
+    if !x and !y { return true }
+    if !x or !y { return false }
+
+    // Fast paths
+    if x.kind != y.kind { return false }
+    if x.kind == "Any" or x.kind == "Nil" or x.kind == "Number" or
+       x.kind == "Bool" or x.kind == "String" {
+      return true
+    }
+    if x.kind == "TypeVar" { return x.id == y.id }
+
+    if x.kind == "Array" { return eq(x.elem, y.elem, depth + 1) }
+    if x.kind == "Map" { return eq(x.key, y.key, depth + 1) and eq(x.elem, y.elem, depth + 1) }
+    if x.kind == "Option" { return eq(x.value, y.value, depth + 1) }
+    if x.kind == "Function" {
+      if len(x.params) != len(y.params) { return false }
+      for let i = 0; i < len(x.params); i = i + 1 {
+        if !eq(x.params[i], y.params[i], depth + 1) { return false }
+      }
+      return eq(x.return, y.return, depth + 1)
+    }
+    if x.kind == "Record" {
+      let kx = keys(x.fields)
+      let ky = keys(y.fields)
+      if len(kx) != len(ky) { return false }
+      for let i = 0; i < len(kx); i = i + 1 {
+        let k = kx[i]
+        if !y.fields[k] { return false }
+        if !eq(x.fields[k], y.fields[k], depth + 1) { return false }
+      }
+      return true
+    }
+
+    // Fallback: treat as not equal.
+    false
+  }
+
+  eq(a, b, 0)
+}
+
+fn bindTypeVar(checker, id, type) {
+  let old = checker.typeVarBindings[id]
+  if !old {
+    checker.typeVarBindings[id] = type
+    checker.changed = true
+    return
+  }
+
+  // Avoid counting no-op rebindings as progress.
+  if typeEquals(checker, old, type) {
+    return
+  }
+
+  checker.typeVarBindings[id] = type
+  checker.changed = true
 }
 
 fn derefWithRootVar(checker, t) {
@@ -148,7 +221,16 @@ fn derefAll(checker, t) {
   }
 
   if t.kind == "Option" {
-    return typeOption(derefAll(checker, t.value))
+    let v = derefAll(checker, t.value)
+    if v and v.kind == "Nil" {
+      return typeNil()
+    }
+    return typeOption(v)
+  }
+
+  if t.kind == "Indexable" {
+    // Should be finalized away; default to Map for a stable printed type.
+    return typeMap(derefAll(checker, t.key), derefAll(checker, t.elem))
   }
 
   if t.kind == "Record" {
@@ -249,6 +331,48 @@ fn unify(checker, t1, t2) {
     return true
   }
 
+  // Indexable can be committed by unifying with a concrete container type.
+  if t1.kind == "Indexable" and root1 and root1.kind == "TypeVar" {
+    if t2.kind == "Array" {
+      unify(checker, t1.elem, t2.elem)
+      unify(checker, t1.key, typeNumber())
+      bindTypeVar(checker, root1.id, typeArray(t1.elem))
+      return true
+    }
+    if t2.kind == "Map" {
+      unify(checker, t1.key, t2.key)
+      unify(checker, t1.elem, t2.elem)
+      bindTypeVar(checker, root1.id, typeMap(t1.key, t1.elem))
+      return true
+    }
+    if t2.kind == "String" {
+      unify(checker, t1.key, typeNumber())
+      unify(checker, t1.elem, typeString())
+      bindTypeVar(checker, root1.id, typeString())
+      return true
+    }
+  }
+  if t2.kind == "Indexable" and root2 and root2.kind == "TypeVar" {
+    if t1.kind == "Array" {
+      unify(checker, t2.elem, t1.elem)
+      unify(checker, t2.key, typeNumber())
+      bindTypeVar(checker, root2.id, typeArray(t2.elem))
+      return true
+    }
+    if t1.kind == "Map" {
+      unify(checker, t2.key, t1.key)
+      unify(checker, t2.elem, t1.elem)
+      bindTypeVar(checker, root2.id, typeMap(t2.key, t2.elem))
+      return true
+    }
+    if t1.kind == "String" {
+      unify(checker, t2.key, typeNumber())
+      unify(checker, t2.elem, typeString())
+      bindTypeVar(checker, root2.id, typeString())
+      return true
+    }
+  }
+
   // Nil promotes to Option[T] (without double-wrapping).
   // This is how `nil` participates in "optional" types.
   fn optionizeRoot(root, baseType) {
@@ -334,6 +458,54 @@ fn emitHasField(checker, base, name, fieldType, nodeId, msg) {
     msg: msg,
   })
   fieldType
+}
+
+fn emitCall(checker, callee, args, argNodeIds, out, nodeId) {
+  push(checker.constraints, .{
+    kind: "Call",
+    callee: callee,
+    args: args,
+    argNodeIds: argNodeIds,
+    out: out,
+    nodeId: nodeId,
+  })
+  out
+}
+
+fn emitKeyLike(checker, t, nodeId) {
+  push(checker.constraints, .{
+    kind: "KeyLike",
+    t: t,
+    nodeId: nodeId,
+    msg: "Hashmap key type must be number or string.",
+  })
+  t
+}
+
+fn emitIndex(checker, base, index, out, nodeId) {
+  push(checker.constraints, .{
+    kind: "Index",
+    base: base,
+    index: index,
+    // If index expression is a literal String/Number (possibly via Grouping),
+    // carry the key so Records can enforce closed-shape access.
+    literalKey: nil,
+    out: out,
+    nodeId: nodeId,
+  })
+  out
+}
+
+fn emitIndexSet(checker, base, index, value, nodeId) {
+  push(checker.constraints, .{
+    kind: "IndexSet",
+    base: base,
+    index: index,
+    literalKey: nil,
+    value: value,
+    nodeId: nodeId,
+  })
+  value
 }
 
 fn containEqFailure(checker, t1, t2) {
@@ -422,15 +594,290 @@ fn trySolveConstraint(checker, c) {
     return true
   }
 
+  if c.kind == "Call" {
+    let callee = derefWithRootVar(checker, c.callee)
+    let root = callee.root
+    let t = callee.type
+
+    // If callee is still an unbound typevar, infer it as a function with
+    // required param count equal to the call arg count (extra args remain allowed).
+    if root and root.kind == "TypeVar" and t.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
+      let params = []
+      for let i = 0; i < len(c.args); i = i + 1 {
+        push(params, freshTypeVar(checker))
+      }
+      bindTypeVar(checker, root.id, typeFunction(params, c.out))
+      return true
+    }
+
+    t = deref(checker, t)
+
+    if t.kind == "Any" {
+      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      return true
+    }
+
+    if t.kind != "Function" {
+      addError(checker, c.nodeId, "Call requires function")
+      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      return true
+    }
+
+    let params = t.params
+    let args = c.args
+
+    if len(args) < len(params) {
+      addError(checker, c.nodeId,
+        "Too few arguments: expected at least " + str(len(params)) + ", got " + str(len(args)))
+      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      return true
+    }
+
+    // Constrain only the required args; ignore extras.
+    for let i = 0; i < len(params); i = i + 1 {
+      let ok = unify(checker, args[i], params[i])
+      if !ok {
+        let nid = (c.argNodeIds and c.argNodeIds[i]) or c.nodeId
+        addError(checker, nid, "Argument mismatch")
+        containEqFailure(checker, deref(checker, args[i]), deref(checker, params[i]))
+      }
+    }
+
+    if !unify(checker, c.out, t.return) {
+      addError(checker, c.nodeId, "Return mismatch")
+      containEqFailure(checker, deref(checker, c.out), deref(checker, t.return))
+      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+    }
+
+    return true
+  }
+
+  if c.kind == "KeyLike" {
+    let info = derefWithRootVar(checker, c.t)
+    let root = info.root
+    let t = deref(checker, info.type)
+
+    if t.kind == "Any" { return true }
+    if t.kind == "Number" or t.kind == "String" { return true }
+
+    if root and root.kind == "TypeVar" and t.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
+      return false
+    }
+
+    addError(checker, c.nodeId, c.msg)
+    if root and root.kind == "TypeVar" { bindTypeVar(checker, root.id, typeAny()) }
+    return true
+  }
+
+  if c.kind == "Index" {
+    let baseInfo = derefWithRootVar(checker, c.base)
+    let root = baseInfo.root
+    let base = deref(checker, baseInfo.type)
+    let idx = deref(checker, c.index)
+
+    if base.kind == "Any" {
+      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      return true
+    }
+
+    if base.kind == "Record" {
+      if c.literalKey == nil {
+        addError(checker, c.nodeId, "Record index must be a literal string or number key")
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        return true
+      }
+      let ft = base.fields[c.literalKey]
+      if !ft {
+        addError(checker, c.nodeId, "Missing field: " + str(c.literalKey))
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        return true
+      }
+      if !unify(checker, c.out, ft) {
+        addError(checker, c.nodeId, "Index result mismatch")
+        containEqFailure(checker, deref(checker, c.out), deref(checker, ft))
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      }
+      return true
+    }
+
+    if base.kind == "Array" {
+      if !unify(checker, c.index, typeNumber()) {
+        addError(checker, c.nodeId, "Array index must be a number")
+        containEqFailure(checker, deref(checker, c.index), typeNumber())
+      }
+      if !unify(checker, c.out, base.elem) {
+        addError(checker, c.nodeId, "Index result mismatch")
+        containEqFailure(checker, deref(checker, c.out), deref(checker, base.elem))
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      }
+      return true
+    }
+    if base.kind == "Map" {
+      emitKeyLike(checker, base.key, c.nodeId)
+      if !unify(checker, c.index, base.key) {
+        addError(checker, c.nodeId, "Map key mismatch")
+        containEqFailure(checker, deref(checker, c.index), deref(checker, base.key))
+      }
+      if !unify(checker, c.out, base.elem) {
+        addError(checker, c.nodeId, "Index result mismatch")
+        containEqFailure(checker, deref(checker, c.out), deref(checker, base.elem))
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      }
+      return true
+    }
+    if base.kind == "String" {
+      if !unify(checker, c.index, typeNumber()) {
+        addError(checker, c.nodeId, "String index must be a number")
+        containEqFailure(checker, deref(checker, c.index), typeNumber())
+      }
+      if !unify(checker, c.out, typeString()) {
+        addError(checker, c.nodeId, "Index result mismatch")
+        containEqFailure(checker, deref(checker, c.out), typeString())
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      }
+      return true
+    }
+
+    if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
+      let elemT = freshTypeVar(checker)
+      let keyT = freshTypeVar(checker)
+      bindTypeVar(checker, root.id, typeIndexable(elemT, keyT, c.nodeId))
+      emitKeyLike(checker, keyT, c.nodeId)
+      return false
+    }
+
+    if base.kind == "Indexable" {
+      // Always unify output with element; commit decisions come from index evidence.
+      unify(checker, c.out, base.elem)
+
+      // If index is non-number, array/string cannot apply -> commit to Map.
+      if idx and idx.kind != "TypeVar" and idx.kind != "Number" {
+        // KeyLike already enforced; now commit to Map.
+        bindTypeVar(checker, root.id, typeMap(base.key, base.elem))
+        if !unify(checker, base.key, c.index) {
+          addError(checker, c.nodeId, "Map key mismatch")
+          containEqFailure(checker, deref(checker, base.key), deref(checker, c.index))
+        }
+        return true
+      }
+
+      // Numeric or unknown: still ambiguous; keep constraint.
+      return false
+    }
+
+    // Not indexable
+    addError(checker, c.nodeId, "Only array / hashmap / string can get value by index.")
+    if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+    return true
+  }
+
+  if c.kind == "IndexSet" {
+    let baseInfo = derefWithRootVar(checker, c.base)
+    let root = baseInfo.root
+    let base = deref(checker, baseInfo.type)
+    let idx = deref(checker, c.index)
+
+    if base.kind == "Any" { return true }
+
+    if base.kind == "Record" {
+      if c.literalKey == nil {
+        addError(checker, c.nodeId, "Record index assignment must use a literal string or number key")
+        return true
+      }
+      let ft = base.fields[c.literalKey]
+      if !ft {
+        addError(checker, c.nodeId, "Missing field: " + str(c.literalKey))
+        return true
+      }
+      if !unify(checker, c.value, ft) {
+        addError(checker, c.nodeId, "Index assignment mismatch")
+        containEqFailure(checker, deref(checker, c.value), deref(checker, ft))
+      }
+      return true
+    }
+
+    if base.kind == "Array" {
+      if !unify(checker, c.index, typeNumber()) {
+        addError(checker, c.nodeId, "Array index must be a number")
+        containEqFailure(checker, deref(checker, c.index), typeNumber())
+      }
+      if !unify(checker, c.value, base.elem) {
+        addError(checker, c.nodeId, "Index assignment mismatch")
+        containEqFailure(checker, deref(checker, c.value), deref(checker, base.elem))
+      }
+      return true
+    }
+    if base.kind == "Map" {
+      emitKeyLike(checker, base.key, c.nodeId)
+      if !unify(checker, c.index, base.key) {
+        addError(checker, c.nodeId, "Map key mismatch")
+        containEqFailure(checker, deref(checker, c.index), deref(checker, base.key))
+      }
+      if !unify(checker, c.value, base.elem) {
+        addError(checker, c.nodeId, "Index assignment mismatch")
+        containEqFailure(checker, deref(checker, c.value), deref(checker, base.elem))
+      }
+      return true
+    }
+    if base.kind == "String" {
+      addError(checker, c.nodeId, "Cannot assign into string by index.")
+      return true
+    }
+
+    if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
+      let elemT = freshTypeVar(checker)
+      let keyT = freshTypeVar(checker)
+      bindTypeVar(checker, root.id, typeIndexable(elemT, keyT, c.nodeId))
+      emitKeyLike(checker, keyT, c.nodeId)
+      return false
+    }
+
+    if base.kind == "Indexable" {
+      unify(checker, c.value, base.elem)
+
+      if idx and idx.kind != "TypeVar" and idx.kind != "Number" {
+        bindTypeVar(checker, root.id, typeMap(base.key, base.elem))
+        if !unify(checker, base.key, c.index) {
+          addError(checker, c.nodeId, "Map key mismatch")
+          containEqFailure(checker, deref(checker, base.key), deref(checker, c.index))
+        }
+        return true
+      }
+
+      return false
+    }
+
+    addError(checker, c.nodeId, "Only array / hashmap / string can set value by index.")
+    return true
+  }
+
   false
 }
 
 fn solveConstraints(checker) {
-  checker.constraints = helper.solveWorklist(
+  let out = helper.solveWorklist(
     checker.constraints,
     fn(c) { trySolveConstraint(checker, c) },
-    .{ maxRounds: 1000 },
+    .{
+      maxRounds: 1000,
+      resetProgress: fn() { checker.changed = false },
+      progress: fn() { checker.changed },
+      onMaxRounds: fn(meta) { checker.solverHitMaxRounds = meta },
+    },
   )
+  checker.constraints = out.remaining
+
+  if out.hitMaxRounds {
+    let kinds = []
+    for let i = 0; i < len(out.remaining) and i < 10; i = i + 1 {
+      let c = out.remaining[i]
+      push(kinds, c.kind)
+    }
+    let nodeId = (len(out.remaining) > 0 and out.remaining[0].nodeId) or 0
+    addError(checker, nodeId,
+      "Constraint solver exceeded maxRounds (" + str(out.rounds) + "); remaining: " +
+      str(len(out.remaining)) + " (" + join(kinds, ", ") + ")")
+  }
 }
 
 fn finalizeConstraints(checker) {
@@ -451,6 +898,60 @@ fn finalizeConstraints(checker) {
       if baseInfo and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
         bindTypeVar(checker, baseInfo.root.id, typeAny())
       }
+    }
+
+    if c.kind == "Call" {
+      addError(checker, c.nodeId, "Unresolved call")
+      if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      let callee = derefWithRootVar(checker, c.callee)
+      if callee and callee.root and callee.root.kind == "TypeVar" and !getTypeVarBinding(checker, callee.root.id) {
+        bindTypeVar(checker, callee.root.id, typeAny())
+      }
+    }
+
+    if c.kind == "Index" {
+      addError(checker, c.nodeId, "Unresolved index")
+      if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      let baseInfo = derefWithRootVar(checker, c.base)
+      if baseInfo and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
+        bindTypeVar(checker, baseInfo.root.id, typeAny())
+      }
+    }
+
+    if c.kind == "IndexSet" {
+      addError(checker, c.nodeId, "Unresolved index assignment")
+      let baseInfo = derefWithRootVar(checker, c.base)
+      if baseInfo and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
+        bindTypeVar(checker, baseInfo.root.id, typeAny())
+      }
+    }
+
+    if c.kind == "KeyLike" {
+      // If still unbound at finalize time, degrade to Any without emitting
+      // an additional error (no evidence the key is invalid).
+      let info = derefWithRootVar(checker, c.t)
+      if info and info.root and info.root.kind == "TypeVar" and !getTypeVarBinding(checker, info.root.id) {
+        bindTypeVar(checker, info.root.id, typeAny())
+      } else {
+        // Otherwise, force solver to report a concrete mismatch.
+        addError(checker, c.nodeId, c.msg)
+      }
+    }
+  }
+}
+
+fn finalizeIndexables(checker) {
+  let ids = keys(checker.typeVarBindings)
+  for let i = 0; i < len(ids); i = i + 1 {
+    let id = ids[i]
+    // Defensively ensure we use numeric ids as stored by typeVarBindings.
+    if type(id) == "string" { id = int(tonumber(id) or 0) }
+
+    let t = deref(checker, checker.typeVarBindings[id])
+    if t and t.kind == "Indexable" {
+      let nid = t.nodeId or 0
+      addError(checker, nid, "Ambiguous indexed container; defaulting to Map")
+      bindTypeVar(checker, id, typeMap(t.key, t.elem))
     }
   }
 }
@@ -602,24 +1103,16 @@ fn checkBinary(checker, node) {
 fn checkCall(checker, node) {
   let callee = synthExpr(checker, node.callee)
   let args = []
+  let argNodeIds = []
   for let i = 0; i < len(node.args); i = i + 1 {
     push(args, synthExpr(checker, node.args[i]))
+    push(argNodeIds, node.args[i].id)
   }
 
-  let paramTvs = []
-  for let i = 0; i < len(args); i = i + 1 {
-    push(paramTvs, freshTypeVar(checker))
-  }
-  let ret = freshTypeVar(checker)
-  let fnType = typeFunction(paramTvs, ret)
-
-  emitEq(checker, callee, fnType, node.callee.id, "Call requires function")
-  for let i = 0; i < len(args); i = i + 1 {
-    emitEq(checker, args[i], paramTvs[i], node.args[i].id, "Argument mismatch")
-  }
-
-  checker.types[node.id] = ret
-  ret
+  let out = freshTypeVar(checker)
+  emitCall(checker, callee, args, argNodeIds, out, node.id)
+  checker.types[node.id] = out
+  out
 }
 
 fn checkFunction(checker, node) {
@@ -836,79 +1329,91 @@ fn checkArray(checker, node) {
 }
 
 fn checkHashmap(checker, node) {
-  // Treat hashmap literal as:
-  // - Record when all keys are strings
-  // - Map when keys are computed (no string keys)
-  // - Any for mixed styles
+  // Hashmap literals:
+  // - Empty `.{}` is a Map (hashmap).
+  // - Any non-empty `.{ ... }` is a closed Record.
+  // - Computed keys in a Record must be literal String/Number (Option A).
   let fields = .{}
-  let anyNonStringKey = false
-  let sawStringKey = false
-  let keyT = freshTypeVar(checker)
-  let elemT = freshTypeVar(checker)
 
-  if node.pairs {
-    for let i = 0; i < len(node.pairs); i = i + 1 {
-      let p = node.pairs[i]
-      // Prefer string keys (parser lowers dot keys to String nodes)
-      let isBareStringKey = p.key and p.key.type == "String" and
-        p.key.lexeme and len(p.key.lexeme) > 0 and p.key.lexeme[0] != "\""
-      if isBareStringKey {
-        sawStringKey = true
-        // Store record fields as typevars so later mutations can constrain them.
-        let vType = synthExpr(checker, p.value)
-        let fieldT = freshTypeVar(checker)
-        constrain(checker, fieldT, vType, p.value.id, "Record field mismatch")
-        fields[p.key.value] = fieldT
-        continue
-      }
+  // Empty literal `.{}` is treated as an empty hashmap.
+  if !node.pairs or len(node.pairs) == 0 {
+    let keyT = freshTypeVar(checker)
+    let elemT = freshTypeVar(checker)
+    let t = typeMap(keyT, elemT)
+    emitKeyLike(checker, keyT, node.id)
+    checker.types[node.id] = t
+    return t
+  }
 
-      anyNonStringKey = true
-      if p.key {
-        let kt = synthExpr(checker, p.key)
-        emitEq(checker, kt, keyT, p.key.id, "Map key mismatch")
-      }
-      if p.value {
-        let vt = synthExpr(checker, p.value)
-        emitEq(checker, vt, elemT, p.value.id, "Map value mismatch")
-      }
-      // If your lower uses p[0], p[1], adjust accordingly.
+  for let i = 0; i < len(node.pairs); i = i + 1 {
+    let p = node.pairs[i]
+    if p.key { synthExpr(checker, p.key) }
+    if p.value { synthExpr(checker, p.value) }
+
+    // Determine record field key.
+    // Bare keys are normalized to String nodes with lexeme not starting with '"'.
+    // Computed keys (`[expr]`) come through as expression nodes; we only accept
+    // literal String/Number for closed record shapes.
+    let key = nil
+    if p.key and p.key.type == "String" and p.key.lexeme and len(p.key.lexeme) > 0 and p.key.lexeme[0] != "\"" {
+      // Bare key: `.{ a: 1 }`
+      key = p.key.value
+    } else if p.key and p.key.type == "String" {
+      // Computed string literal: `.{ [\"a\"]: 1 }`
+      key = p.key.value
+    } else if p.key and p.key.type == "Number" {
+      // Computed number literal: `.{ [1]: \"a\" }`
+      key = p.key.value
+    }
+
+    if key == nil {
+      addError(checker, (p.key and p.key.id) or node.id,
+        "Record literal computed key must be a string or number literal")
+      continue
+    }
+
+    let existing = fields[key]
+    let vType = checker.types[p.value.id] or typeAny()
+    if existing {
+      emitEq(checker, vType, existing, p.value.id, "Record field mismatch")
+    } else {
+      let fieldT = freshTypeVar(checker)
+      emitEq(checker, vType, fieldT, p.value.id, "Record field mismatch")
+      fields[key] = fieldT
     }
   }
 
-  let t = typeAny()
-  if sawStringKey and !anyNonStringKey {
-    t = typeRecord(fields)
-  } else if !sawStringKey and anyNonStringKey {
-    t = typeMap(keyT, elemT)
-  } else if !sawStringKey and !anyNonStringKey {
-    // Empty literal `.{}` is treated as an empty hashmap.
-    t = typeMap(keyT, elemT)
-  }
+  let t = typeRecord(fields)
 
   checker.types[node.id] = t
   t
 }
 
+fn literalKeyFromIndexExpr(node) {
+  if !node { return nil }
+  if node.type == "Grouping" {
+    return literalKeyFromIndexExpr(node.expression)
+  }
+  if node.type == "String" { return node.value }
+  if node.type == "Number" { return node.value }
+  nil
+}
+
 fn checkIndex(checker, node) {
   let objT = synthExpr(checker, node.object)
   let idxT = synthExpr(checker, node.index)
-
-  let o = deref(checker, objT)
-  let t = typeAny()
-
-  if o.kind == "Array" {
-    emitEq(checker, idxT, typeNumber(), node.index.id, "Array index must be a number")
-    t = o.elem
-  } else if o.kind == "Map" {
-    emitEq(checker, idxT, o.key, node.index.id, "Map key mismatch")
-    t = o.elem
-  } else if o.kind == "String" {
-    emitEq(checker, idxT, typeNumber(), node.index.id, "String index must be a number")
-    t = typeString()
+  let out = freshTypeVar(checker)
+  let c = .{
+    kind: "Index",
+    base: objT,
+    index: idxT,
+    literalKey: literalKeyFromIndexExpr(node.index),
+    out: out,
+    nodeId: node.id,
   }
-
-  checker.types[node.id] = t
-  t
+  push(checker.constraints, c)
+  checker.types[node.id] = out
+  out
 }
 
 fn checkDot(checker, node) {
@@ -967,6 +1472,22 @@ fn checkAssignment(checker, node) {
       checker.types[node.id] = vt
       return vt
     }
+  }
+
+  // Index assignment: base[index] = value
+  if node.target and node.target.type == "Index" {
+    let objT = synthExpr(checker, node.target.object)
+    let idxT = synthExpr(checker, node.target.index)
+    push(checker.constraints, .{
+      kind: "IndexSet",
+      base: objT,
+      index: idxT,
+      literalKey: literalKeyFromIndexExpr(node.target.index),
+      value: vt,
+      nodeId: node.id,
+    })
+    checker.types[node.id] = vt
+    return vt
   }
 
   // Traverse target anyway
@@ -1096,6 +1617,9 @@ fn makeChecker(resolveResult) {
     functionInfos: [],
 
     currentReturn: nil,
+
+    changed: false,
+    solverHitMaxRounds: nil,
   }
 }
 
@@ -1141,6 +1665,8 @@ fn typecheck(ast, resolveResult) {
   // Solve constraints and refine functions once more
   solveConstraints(checker)
   refineFunctions(checker)
+  solveConstraints(checker)
+  finalizeIndexables(checker)
   solveConstraints(checker)
   finalizeConstraints(checker)
 

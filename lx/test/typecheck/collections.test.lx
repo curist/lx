@@ -7,37 +7,94 @@ fn register(test) {
   let deref = helpers.deref
   let hasError = helpers.hasError
 
-  test("typecheck - computed-key hashmap yields Map", fn(assert) {
+  test("typecheck - non-empty computed-key hashmap yields Record", fn(assert) {
     let result = parseAndTypecheck("{ let m = .{ [1]: \"a\", [2]: \"b\" }\nm }")
     assert.truthy(result.success)
     if !result.success { return }
 
     let t = deref(result, getExprType(result, 0))
-    assert.equal(t.kind, "Map")
-    assert.equal(deref(result, t.key).kind, "Number")
-    assert.equal(deref(result, t.elem).kind, "String")
+    assert.equal(t.kind, "Record")
+    assert.equal(deref(result, t.fields[1]).kind, "String")
+    assert.equal(deref(result, t.fields[2]).kind, "String")
   })
 
-  test("typecheck - indexing a Map yields element type", fn(assert) {
+  test("typecheck - indexing a Record yields field type", fn(assert) {
     let result = parseAndTypecheck("{ let m = .{ [1]: \"a\" }\nm[1] }")
     assert.truthy(result.success)
     if !result.success { return }
     assert.equal(deref(result, getExprType(result, 1)).kind, "String")
   })
 
-  test("typecheck - mixed string/computed keys yields Any", fn(assert) {
-    let result = parseAndTypecheck("{ let m = .{ a: 1, [2]: 3 }\nm }")
+  test("typecheck - mixed bare/computed keys yields Record", fn(assert) {
+    let result = parseAndTypecheck("{ let m = .{ a: 1, [\"b\"]: 2 }\nm }")
     assert.truthy(result.success)
     if !result.success { return }
-    assert.equal(deref(result, getExprType(result, 0)).kind, "Any")
+    let t = deref(result, getExprType(result, 0))
+    assert.equal(t.kind, "Record")
+    assert.equal(deref(result, t.fields["a"]).kind, "Number")
+    assert.equal(deref(result, t.fields["b"]).kind, "Number")
   })
 
-  test("typecheck - map key mismatch reports error", fn(assert) {
-    let result = parseAndTypecheck("{ let m = .{ [1]: \"a\", [\"x\"]: \"b\" }\nm }")
+  test("typecheck - record literal rejects non-literal computed key", fn(assert) {
+    let result = parseAndTypecheck("{ let k = \"a\"\nlet m = .{ [k]: 1 }\nm }")
     assert.truthy(!result.success)
-    assert.truthy(hasError(result, "Map key mismatch"))
+    assert.truthy(hasError(result, "Record literal computed key must be a string or number literal"))
+  })
+
+  test("typecheck - string indexing yields String", fn(assert) {
+    let result = parseAndTypecheck("\"asdf\"[2]")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "String")
+  })
+
+  test("typecheck - record string indexing works", fn(assert) {
+    let result = parseAndTypecheck("{ let r = .{ a: 1 }\nr[\"a\"] }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+  })
+
+  test("typecheck - record index must be literal", fn(assert) {
+    let result = parseAndTypecheck("{ let k = \"a\"\nlet r = .{ a: 1 }\nr[k] }")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Record index must be a literal string or number key"))
+  })
+
+  test("typecheck - record index set requires existing key", fn(assert) {
+    let result = parseAndTypecheck("{ let r = .{ a: 1 }\nr[\"b\"] = 2 }")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Missing field: b"))
+  })
+
+  test("typecheck - IndexSet infers Map from empty literal", fn(assert) {
+    let result = parseAndTypecheck("{ let m = .{}\nm[\"a\"] = 1\nm[\"a\"] }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 2)).kind, "Number")
+    let mt = deref(result, getExprType(result, 0))
+    assert.equal(mt.kind, "Map")
+    assert.equal(deref(result, mt.key).kind, "String")
+    assert.equal(deref(result, mt.elem).kind, "Number")
+  })
+
+  test("typecheck - index key must be number or string", fn(assert) {
+    let result = parseAndTypecheck("{ let m = .{}\nm[true] = 1 }")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Hashmap key type must be number or string."))
+  })
+
+  test("typecheck - string index must be number", fn(assert) {
+    let result = parseAndTypecheck("\"asdf\"[\"x\"]")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "String index must be a number"))
+  })
+
+  test("typecheck - array index must be number", fn(assert) {
+    let result = parseAndTypecheck("{ let a = [1]\na[\"x\"] }")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Array index must be a number"))
   })
 }
 
 .{ register: register }
-

@@ -7,14 +7,18 @@ fn min2(a, b) {
 // Returns the remaining (unsolved) items once no progress is made.
 fn solveWorklist(items, trySolve, opts) {
   let maxRounds = (opts and opts.maxRounds) or 1000
+  let progress = opts and opts.progress
+  let resetProgress = opts and opts.resetProgress
 
-  let round = 0
+  let round = 0 // number of completed rounds
   let remaining = items or []
+  let hitMaxRounds = false
 
-  for true {
+  for round < maxRounds {
     if len(remaining) == 0 { break }
-    if round >= maxRounds { break }
     round = round + 1
+
+    if resetProgress { resetProgress() }
 
     let work = remaining
     remaining = []
@@ -29,10 +33,22 @@ fn solveWorklist(items, trySolve, opts) {
       }
     }
 
-    if solved == 0 { break }
+    let didProgress = progress and progress() or solved > 0
+    if !didProgress { break }
   }
 
-  remaining
+  if round == maxRounds and len(remaining) > 0 {
+    hitMaxRounds = true
+    if opts and opts.onMaxRounds {
+      opts.onMaxRounds(.{ rounds: round, remaining: remaining })
+    }
+  }
+
+  .{
+    remaining: remaining,
+    rounds: round,
+    hitMaxRounds: hitMaxRounds,
+  }
 }
 
 // Tarjan SCC.
@@ -167,4 +183,3 @@ fn sccTopo(nodes, edgesFor) {
   scc: scc,
   sccTopo: sccTopo,
 }
-

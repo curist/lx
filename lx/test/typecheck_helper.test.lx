@@ -1,0 +1,48 @@
+let helper = import "src/typecheck-helper.lx"
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+test("worklist - stops when no progress", fn(assert) {
+  let rounds = 0
+  let out = helper.solveWorklist(
+    [1],
+    fn(x) {
+      x
+      false
+    },
+    .{
+      maxRounds: 100,
+      resetProgress: fn() {},
+      progress: fn() {
+        rounds = rounds + 1
+        false
+      },
+    }
+  )
+
+  assert.equal(out.hitMaxRounds, false)
+  assert.equal(out.rounds, 1)
+  assert.equal(len(out.remaining), 1)
+})
+
+test("worklist - reports maxRounds exhaustion", fn(assert) {
+  let out = helper.solveWorklist(
+    [1],
+    fn(x) {
+      x
+      false
+    },
+    .{
+      maxRounds: 3,
+      resetProgress: fn() {},
+      // Simulate a buggy progress signal that never stabilizes.
+      progress: fn() { true },
+    }
+  )
+
+  assert.equal(out.hitMaxRounds, true)
+  assert.equal(out.rounds, 3)
+  assert.equal(len(out.remaining), 1)
+})
+
+suite.run()

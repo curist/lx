@@ -65,6 +65,87 @@ fn freshTypeVar(checker) {
   typeVar(id)
 }
 
+fn builtinTypeByName(checker, name) {
+  // Basic I/O (variadic-ish): model as 0-arg fn returning Nil so calls with
+  // extra args are allowed by the call solver.
+  if name == "print" or name == "println" or name == "groan" or name == "groanln" or name == "putc" {
+    return typeFunction([], typeNil())
+  }
+
+  if name == "str" { return typeFunction([typeAny()], typeString()) }
+  if name == "join" { return typeFunction([typeArray(typeAny()), typeString()], typeString()) }
+  if name == "split" { return typeFunction([typeString(), typeString()], typeArray(typeString())) }
+  if name == "tolower" { return typeFunction([typeString()], typeString()) }
+  if name == "toupper" { return typeFunction([typeString()], typeString()) }
+  if name == "tonumber" { return typeFunction([typeString()], typeNumber()) }
+  if name == "int" { return typeFunction([typeNumber()], typeNumber()) }
+  if name == "chr" { return typeFunction([typeNumber()], typeString()) }
+  if name == "ord" { return typeFunction([typeString()], typeNumber()) }
+  if name == "random" { return typeFunction([], typeNumber()) }
+  if name == "sqrt" { return typeFunction([typeNumber()], typeNumber()) }
+  if name == "type" { return typeFunction([typeAny()], typeString()) }
+
+  // Collection helpers (best-effort; some are polymorphic in runtime).
+  if name == "len" { return typeFunction([typeAny()], typeNumber()) }
+  if name == "range" { return typeFunction([typeAny()], typeArray(typeAny())) }
+  if name == "keys" { return typeFunction([typeAny()], typeArray(typeAny())) }
+  if name == "lines" { return typeFunction([typeString()], typeArray(typeString())) }
+
+  // Array ops: typed with fresh vars per use.
+  if name == "push" {
+    let elem = freshTypeVar(checker)
+    let arr = typeArray(elem)
+    return typeFunction([arr, elem], arr)
+  }
+  if name == "pop" {
+    let elem = freshTypeVar(checker)
+    return typeFunction([typeArray(elem)], typeOption(elem))
+  }
+  if name == "concat" {
+    let elem = freshTypeVar(checker)
+    let arr = typeArray(elem)
+    return typeFunction([arr, arr], arr)
+  }
+
+  // I/O helpers
+  if name == "getline" { return typeFunction([], typeOption(typeString())) }
+  if name == "read" { return typeFunction([typeNumber()], typeOption(typeString())) }
+
+  // Shell/process helpers (keep coarse types to avoid modeling filesystem).
+  if name == "system" { return typeFunction([typeString()], typeNumber()) }
+  if name == "slurp" { return typeFunction([typeString()], typeString()) }
+
+  // Returns a small record: { code: Number, out: String }
+  if name == "exec" {
+    return typeFunction([typeString()], typeRecord(.{
+      code: typeNumber(),
+      out: typeString(),
+    }))
+  }
+
+  // Namespaced builtins: model as records so `Date.time()` / `Lx.args` typecheck.
+  if name == "Date" {
+    return typeRecord(.{
+      RFC3339: typeString(),
+      time: typeFunction([], typeNumber()),
+      // format(ts, fmt?) -> String; model required arg only, extra args allowed.
+      format: typeFunction([typeNumber()], typeString()),
+      parse: typeFunction([typeString(), typeString()], typeNumber()),
+    })
+  }
+  if name == "Lx" {
+    return typeRecord(.{
+      args: typeArray(typeString()),
+      globals: typeFunction([], typeArray(typeString())),
+      doubleToUint8Array: typeFunction([typeNumber()], typeArray(typeNumber())),
+      // exit(code?) -> Nil; model as 0-arg fn so `Lx.exit()` works, and extra args are allowed.
+      exit: typeFunction([], typeNil()),
+    })
+  }
+
+  nil
+}
+
 fn getTypeVarBinding(checker, id) {
   checker.typeVarBindings[id]
 }
@@ -1123,9 +1204,10 @@ fn checkIdentifier(checker, node) {
   // Builtins/external names are not tracked by declaredAt.
   // Treat them as Any at this phase.
   if binding.kind == "builtin" {
-    let t = typeAny()
-    checker.types[node.id] = t
-    return t
+    let bt = builtinTypeByName(checker, binding.name)
+    if !bt { bt = typeAny() }
+    checker.types[node.id] = bt
+    return bt
   }
 
   let declId = binding.declaredAt

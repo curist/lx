@@ -1,0 +1,61 @@
+// Typecheck: builtin functions
+let helpers = import "test/typecheck/helpers.lx"
+
+fn register(test) {
+  let parseAndTypecheck = helpers.parseAndTypecheck
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+
+  test("typecheck - numeric/string conversion builtins", fn(assert) {
+    let result = parseAndTypecheck("{ int(123.456)\ntonumber(\"123.456\") }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+  })
+
+  test("typecheck - string builtins", fn(assert) {
+    let result = parseAndTypecheck("{ tolower(\"A\")\ntoupper(\"a\")\nlines(\"a\\nb\")\nsplit(\"a,b\", \",\")\njoin([1, 2], \",\") }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "String")
+    assert.equal(deref(result, getExprType(result, 1)).kind, "String")
+    let lt = deref(result, getExprType(result, 2))
+    assert.equal(lt.kind, "Array")
+    assert.equal(deref(result, lt.elem).kind, "String")
+    let st = deref(result, getExprType(result, 3))
+    assert.equal(st.kind, "Array")
+    assert.equal(deref(result, st.elem).kind, "String")
+    assert.equal(deref(result, getExprType(result, 4)).kind, "String")
+  })
+
+  test("typecheck - array builtins are polymorphic per use", fn(assert) {
+    let result = parseAndTypecheck("{ let a = [1]\npush(a, 2)\npop(a)\nconcat([1], [2]) }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Array")
+    let popt = deref(result, getExprType(result, 2))
+    assert.equal(popt.kind, "Option")
+    assert.equal(deref(result, popt.value).kind, "Number")
+    let ct = deref(result, getExprType(result, 3))
+    assert.equal(ct.kind, "Array")
+    assert.equal(deref(result, ct.elem).kind, "Number")
+  })
+
+  test("typecheck - Date and Lx builtins typecheck via dot access", fn(assert) {
+    let result = parseAndTypecheck("{ Date.RFC3339\nDate.time()\nLx.args\nLx.doubleToUint8Array(1) }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "String")
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+    let at = deref(result, getExprType(result, 2))
+    assert.equal(at.kind, "Array")
+    assert.equal(deref(result, at.elem).kind, "String")
+    let bt = deref(result, getExprType(result, 3))
+    assert.equal(bt.kind, "Array")
+    assert.equal(deref(result, bt.elem).kind, "Number")
+  })
+}
+
+.{ register: register }
+

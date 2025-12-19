@@ -73,14 +73,10 @@ fn register(test) {
     assert.truthy(hasError(result, "Assignment mismatch"))
   })
 
-  test("typecheck - HasField accumulates fields on typevar (write then read)", fn(assert) {
-    // `x` starts unbound; dot-writes should refine it into a record and allow adding fields.
-    let result = parseAndTypecheck("{ let x\nx.a = 1\nx.b = \"s\"\nx.a\nx.b }")
-    assert.truthy(!hasError(result, "Missing field: b"))
-    let aT = deref(result, getExprType(result, 3))
-    let bT = deref(result, getExprType(result, 4))
-    assert.equal(aT.kind, "Number")
-    assert.equal(bT.kind, "String")
+  test("typecheck - dot assignment does not create new record fields", fn(assert) {
+    // Closed record model: `x.a = ...` does not turn `x` into a record.
+    let result = parseAndTypecheck("{ let x\nx.a = 1 }")
+    assert.truthy(hasError(result, "Missing field: a"))
   })
 }
 

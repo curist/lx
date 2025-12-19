@@ -34,11 +34,7 @@ fn typeArray(elem) {
 }
 
 fn typeRecord(fields) {
-  .{ kind: "Record", fields: fields, open: false }
-}
-
-fn typeOpenRecord(fields) {
-  .{ kind: "Record", fields: fields, open: true }
+  .{ kind: "Record", fields: fields }
 }
 
 fn typeMap(key, elem) {
@@ -161,8 +157,7 @@ fn derefAll(checker, t) {
     for let i = 0; i < len(ks); i = i + 1 {
       fields[ks[i]] = derefAll(checker, t.fields[ks[i]])
     }
-    let open = t.open or false
-    return open and typeOpenRecord(fields) or typeRecord(fields)
+    return typeRecord(fields)
   }
 
   t
@@ -227,46 +222,16 @@ fn unify(checker, t1, t2) {
     }
 
     if t1.kind == "Record" {
-      let open1 = t1.open or false
-      let open2 = t2.open or false
-
       let k1 = keys(t1.fields)
       let k2 = keys(t2.fields)
-
-      // Closed records must match exactly.
-      if !open1 and !open2 {
-        if len(k1) != len(k2) { return false }
-      }
-
-      // Unify / extend overlap from t1 -> t2
+      if len(k1) != len(k2) { return false }
       for let i = 0; i < len(k1); i = i + 1 {
         let k = k1[i]
-        let f2 = t2.fields[k]
-        if !f2 {
-          if open2 {
-            t2.fields[k] = t1.fields[k]
-            continue
-          }
-          return false
-        }
-        if !unify(checker, t1.fields[k], f2) {
+        if !t2.fields[k] { return false }
+        if !unify(checker, t1.fields[k], t2.fields[k]) {
           return false
         }
       }
-
-      // Extend t1 with extra fields from t2 if allowed
-      for let i = 0; i < len(k2); i = i + 1 {
-        let k = k2[i]
-        let f1 = t1.fields[k]
-        if !f1 {
-          if open1 {
-            t1.fields[k] = t2.fields[k]
-            continue
-          }
-          return false
-        }
-      }
-
       return true
     }
 
@@ -394,23 +359,27 @@ fn trySolveConstraint(checker, c) {
   if c.kind == "HasField" {
     let ft = deref(checker, c.fieldType)
 
-    // Preserve root typevar so record fields can accumulate across multiple HasField constraints.
+    // Preserve the root typevar (for better containment), but do not "grow" records.
     let baseInfo = derefWithRootVar(checker, c.base)
     let root = baseInfo.root
     let base = baseInfo.type
+
+    // Option[T] can be accessed as T (implicit lifting).
+    if base.kind == "Option" and base.value {
+      base = deref(checker, base.value)
+    }
 
     if base.kind == "Any" {
       if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
       return true
     }
 
-    // If the base is (or was) a typevar, extend its binding in-place.
+    // If the base is (or was) a typevar, consult its binding but do not extend.
     if root and root.kind == "TypeVar" {
       let binding = getTypeVarBinding(checker, root.id)
       if !binding {
-        let rec = typeOpenRecord(.{ [c.fieldName]: ft })
-        bindTypeVar(checker, root.id, rec)
-        return true
+        // Not enough information yet; keep the constraint around.
+        return false
       }
       if binding.kind == "Any" {
         if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
@@ -419,12 +388,8 @@ fn trySolveConstraint(checker, c) {
       if binding.kind == "Record" {
         let field = binding.fields[c.fieldName]
         if !field {
-          if binding.open {
-            binding.fields[c.fieldName] = ft
-          } else {
-            addError(checker, c.nodeId, c.msg)
-            containHasFieldFailure(checker, ft)
-          }
+          addError(checker, c.nodeId, c.msg)
+          containHasFieldFailure(checker, ft)
         } else if !unify(checker, field, ft) {
           addError(checker, c.nodeId, c.msg)
           containHasFieldFailure(checker, ft)
@@ -466,6 +431,28 @@ fn solveConstraints(checker) {
     fn(c) { trySolveConstraint(checker, c) },
     .{ maxRounds: 1000 },
   )
+}
+
+fn finalizeConstraints(checker) {
+  // Any remaining constraints are unsolvable with the collected info;
+  // report errors and contain to Any so downstream tooling doesn't crash.
+  let remaining = checker.constraints
+  checker.constraints = []
+
+  for let i = 0; i < len(remaining); i = i + 1 {
+    let c = remaining[i]
+    if trySolveConstraint(checker, c) { continue }
+
+    if c.kind == "HasField" {
+      addError(checker, c.nodeId, c.msg)
+      containHasFieldFailure(checker, deref(checker, c.fieldType))
+      // If base is still unconstrained, contain it to Any.
+      let baseInfo = derefWithRootVar(checker, c.base)
+      if baseInfo and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
+        bindTypeVar(checker, baseInfo.root.id, typeAny())
+      }
+    }
+  }
 }
 
 
@@ -645,6 +632,10 @@ fn checkFunction(checker, node) {
     }
   }
 
+  // Capture the lexical environment where this function is defined so the
+  // refinement pass can see outer bindings (closures).
+  let defEnv = checker.currentEnv
+
   enterScope(checker)
 
   let params = []
@@ -678,6 +669,7 @@ fn checkFunction(checker, node) {
   // Track for second-pass refinement
   push(checker.functionInfos, .{
     node: node,
+    defEnv: defEnv,
     params: params,
     ret: ret,
     fnType: fnT,
@@ -888,6 +880,9 @@ fn checkHashmap(checker, node) {
     t = typeRecord(fields)
   } else if !sawStringKey and anyNonStringKey {
     t = typeMap(keyT, elemT)
+  } else if !sawStringKey and !anyNonStringKey {
+    // Empty literal `.{}` is treated as an empty hashmap.
+    t = typeMap(keyT, elemT)
   }
 
   checker.types[node.id] = t
@@ -998,10 +993,9 @@ fn checkImport(checker, node) {
 }
 
 fn refineFunctions(checker) {
-  let root = checker.rootEnv
   for let i = 0; i < len(checker.functionInfos); i = i + 1 {
     let info = checker.functionInfos[i]
-    checker.currentEnv = root
+    checker.currentEnv = info.defEnv or checker.rootEnv
     enterScope(checker)
 
     if info.node.name {
@@ -1148,6 +1142,7 @@ fn typecheck(ast, resolveResult) {
   solveConstraints(checker)
   refineFunctions(checker)
   solveConstraints(checker)
+  finalizeConstraints(checker)
 
   let outTypes = .{}
   let typeKeys = keys(checker.types)

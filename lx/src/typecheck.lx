@@ -509,7 +509,22 @@ fn checkIdentifier(checker, node) {
     return t
   }
 
+  // Builtins/external names are not tracked by declaredAt.
+  // Treat them as Any at this phase.
+  if binding.kind == "builtin" {
+    let t = typeAny()
+    checker.types[node.id] = t
+    return t
+  }
+
   let declId = binding.declaredAt
+  if !declId {
+    // Compiler bug / unexpected resolver output; contain to Any.
+    addError(checker, node.id, "Missing declaredAt for identifier: " + node.name)
+    let t = typeAny()
+    checker.types[node.id] = t
+    return t
+  }
   let tv = lookupDecl(checker, declId)
   if !tv {
     tv = bindDecl(checker, declId)
@@ -524,7 +539,28 @@ fn checkBinary(checker, node) {
   let rt = synthExpr(checker, node.right)
   let op = node.operator.lexeme
 
-  if op == "+" or op == "-" or op == "*" or op == "/" {
+  if op == "+" {
+    let l = deref(checker, lt)
+    let r = deref(checker, rt)
+
+    // Overloaded: Number + Number -> Number, String + String -> String
+    if l.kind == "String" or r.kind == "String" {
+      emitEq(checker, lt, typeString(), node.left.id, "Expected string")
+      emitEq(checker, rt, typeString(), node.right.id, "Expected string")
+      let t = typeString()
+      checker.types[node.id] = t
+      return t
+    }
+
+    // Default: numeric add (also helps inference for `fn add(a,b){a+b}`).
+    emitEq(checker, lt, typeNumber(), node.left.id, "Expected number")
+    emitEq(checker, rt, typeNumber(), node.right.id, "Expected number")
+    let t = typeNumber()
+    checker.types[node.id] = t
+    return t
+  }
+
+  if op == "-" or op == "*" or op == "/" {
     emitEq(checker, lt, typeNumber(), node.left.id, "Expected number")
     emitEq(checker, rt, typeNumber(), node.right.id, "Expected number")
     let t = typeNumber()
@@ -879,6 +915,13 @@ fn checkAssignment(checker, node) {
 fn checkImport(checker, node) {
   // Path is usually String or Identifier
   if node.path { synthExpr(checker, node.path) }
+
+  // Resolver may attach module type information for the import expression.
+  if node.importType {
+    checker.types[node.id] = node.importType
+    return node.importType
+  }
+
   let t = typeAny()
   checker.types[node.id] = t
   t

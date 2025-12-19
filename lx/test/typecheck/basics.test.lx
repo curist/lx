@@ -19,9 +19,8 @@ fn register(test) {
 
   test("typecheck - invalid arithmetic reports error", fn(assert) {
     let result = parseAndTypecheck("1 + \"x\"")
-    assert.truthy(hasError(result, "Expected number"))
+    assert.truthy(hasError(result, "Expected number") or hasError(result, "Expected string"))
   })
 }
 
 .{ register: register }
-

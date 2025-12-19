@@ -1,9 +1,9 @@
 // Query Service Tests
 
 let suite = (import "test/makeTestSuite.lx")()
-// let test = suite.defineTest
+let test = suite.defineTest
 
-fn test(name, body) { println(name, "disabled") }
+// fn test(name, body) { println(name, "disabled") }
 
 let Driver = import "src/driver.lx"
 let query = import "services/query.lx"

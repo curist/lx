@@ -381,8 +381,8 @@ fn buildSymbolInfo(ctx, n) {
 
   info.kind = r.kind
 
-  if r.kind == "global" and r.name {
-    info.globalName = r.name
+  if r.kind == "builtin" and r.name {
+    info.builtinName = r.name
   }
 
   if r.declaredAt {
@@ -491,8 +491,8 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     return .{ success: false, kind: "goto", message: "Unresolved identifier" }
   }
 
-  if r.kind == "global" {
-    return .{ success: false, kind: "goto", message: "Global has no tracked definition" }
+  if r.kind == "builtin" {
+    return .{ success: false, kind: "goto", message: "Builtin has no tracked definition" }
   }
 
   let declNodeId = r.declaredAt

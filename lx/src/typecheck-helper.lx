@@ -1,0 +1,170 @@
+fn min2(a, b) {
+  if a < b { return a }
+  b
+}
+
+// Repeatedly scans `items`, removing the ones `trySolve(item)` can solve.
+// Returns the remaining (unsolved) items once no progress is made.
+fn solveWorklist(items, trySolve, opts) {
+  let maxRounds = (opts and opts.maxRounds) or 1000
+
+  let round = 0
+  let remaining = items or []
+
+  for true {
+    if len(remaining) == 0 { break }
+    if round >= maxRounds { break }
+    round = round + 1
+
+    let work = remaining
+    remaining = []
+    let solved = 0
+
+    for let i = 0; i < len(work); i = i + 1 {
+      let item = work[i]
+      if trySolve(item) {
+        solved = solved + 1
+      } else {
+        push(remaining, item)
+      }
+    }
+
+    if solved == 0 { break }
+  }
+
+  remaining
+}
+
+// Tarjan SCC.
+// - `nodes`: array of node ids (string/number)
+// - `edgesFor`: fn(nodeId) -> array of neighbor node ids
+// Returns:
+//   .{ components: [[nodeId]], componentOf: .{ [nodeId]: compIndex } }
+fn scc(nodes, edgesFor) {
+  let indexBy = .{}   // nodeId -> index
+  let lowBy = .{}     // nodeId -> lowlink
+  let onStack = .{}   // nodeId -> bool
+  let stack = []
+  let nextIndex = 0
+
+  let components = []
+  let componentOf = .{}
+
+  let strongConnect
+  strongConnect = fn(v) {
+    indexBy[v] = nextIndex
+    lowBy[v] = nextIndex
+    nextIndex = nextIndex + 1
+
+    push(stack, v)
+    onStack[v] = true
+
+    let neighbors = (edgesFor and edgesFor(v)) or []
+    for let i = 0; i < len(neighbors); i = i + 1 {
+      let w = neighbors[i]
+
+      if indexBy[w] == nil {
+        strongConnect(w)
+        lowBy[v] = min2(lowBy[v], lowBy[w])
+      } else if onStack[w] {
+        lowBy[v] = min2(lowBy[v], indexBy[w])
+      }
+    }
+
+    if lowBy[v] == indexBy[v] {
+      let comp = []
+      for true {
+        let w = pop(stack)
+        onStack[w] = false
+        push(comp, w)
+        if w == v { break }
+      }
+
+      let compIndex = len(components)
+      for let i = 0; i < len(comp); i = i + 1 {
+        componentOf[comp[i]] = compIndex
+      }
+      push(components, comp)
+    }
+  }
+
+  for let i = 0; i < len(nodes); i = i + 1 {
+    let v = nodes[i]
+    if indexBy[v] == nil {
+      strongConnect(v)
+    }
+  }
+
+  .{ components: components, componentOf: componentOf }
+}
+
+// Returns SCCs in a topological order of the condensation graph.
+fn sccTopo(nodes, edgesFor) {
+  let out = scc(nodes, edgesFor)
+  let comps = out.components
+  let compOf = out.componentOf
+
+  // compEdges: compIndex -> set of neighbor compIndex
+  let compEdges = []
+  let indegree = []
+  for let i = 0; i < len(comps); i = i + 1 {
+    push(compEdges, .{})
+    push(indegree, 0)
+  }
+
+  for let i = 0; i < len(nodes); i = i + 1 {
+    let v = nodes[i]
+    let vComp = compOf[v]
+    let neighbors = (edgesFor and edgesFor(v)) or []
+    for let j = 0; j < len(neighbors); j = j + 1 {
+      let w = neighbors[j]
+      let wComp = compOf[w]
+      if vComp != wComp {
+        // Dedup edges with a set.
+        if !compEdges[vComp][wComp] {
+          compEdges[vComp][wComp] = true
+          indegree[wComp] = indegree[wComp] + 1
+        }
+      }
+    }
+  }
+
+  // Kahn's algorithm over SCC DAG.
+  let queue = []
+  for let i = 0; i < len(indegree); i = i + 1 {
+    if indegree[i] == 0 { push(queue, i) }
+  }
+
+  let order = []
+  let head = 0
+  for head < len(queue) {
+    let c = queue[head]
+    head = head + 1
+    push(order, c)
+
+    let outKeys = keys(compEdges[c])
+    for let k = 0; k < len(outKeys); k = k + 1 {
+      let n = outKeys[k]
+      indegree[n] = indegree[n] - 1
+      if indegree[n] == 0 { push(queue, n) }
+    }
+  }
+
+  let orderedComps = []
+  for let i = 0; i < len(order); i = i + 1 {
+    push(orderedComps, comps[order[i]])
+  }
+
+  .{
+    components: orderedComps,
+    componentOf: compOf,
+    componentOrder: order,
+  }
+}
+
+.{
+  solveWorklist: solveWorklist,
+  scc: scc,
+  sccTopo: sccTopo,
+}
+

@@ -59,7 +59,29 @@ fn register(test) {
     assert.truthy(secondCall.kind == "Any" or secondCall.kind == "Number")
     assert.truthy(len(result.errors) > 0)
   })
+
+  test("typecheck - dot assignment constrains field type", fn(assert) {
+    // Demonstrates current limitation: dot-assignment does not constrain the field.
+    let result = parseAndTypecheck("{ let x\nlet r = .{ x: x }\nr.x = 2\nr.x }")
+    let t = deref(result, getExprType(result, 3))
+    assert.equal(t.kind, "Number")
+  })
+
+  test("typecheck - dot assignment mismatch reports error", fn(assert) {
+    // If dot-assignment is typed, the second write should mismatch the first.
+    let result = parseAndTypecheck("{ let x\nlet r = .{ x: x }\nr.x = 1\nr.x = \"s\" }")
+    assert.truthy(hasError(result, "Assignment mismatch"))
+  })
+
+  test("typecheck - HasField accumulates fields on typevar (write then read)", fn(assert) {
+    // `x` starts unbound; dot-writes should refine it into a record and allow adding fields.
+    let result = parseAndTypecheck("{ let x\nx.a = 1\nx.b = \"s\"\nx.a\nx.b }")
+    assert.truthy(!hasError(result, "Missing field: b"))
+    let aT = deref(result, getExprType(result, 3))
+    let bT = deref(result, getExprType(result, 4))
+    assert.equal(aT.kind, "Number")
+    assert.equal(bT.kind, "String")
+  })
 }
 
 .{ register: register }
-

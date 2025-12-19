@@ -206,12 +206,12 @@ fn formatType(ty) {
 
   // Option
   if kind == "Option" {
-    return "Option<" + formatType(ty.inner) + ">"
+    return "Option<" + formatType(ty.value) + ">"
   }
 
   // Map
   if kind == "Map" {
-    return "Map<" + formatType(ty.key) + ", " + formatType(ty.value) + ">"
+    return "Map<" + formatType(ty.key) + ", " + formatType(ty.elem) + ">"
   }
 
   // Function
@@ -284,17 +284,17 @@ fn formatTypeWithBindings(ctx, ty) {
         }
       }
       // Unbound type var
-      return "Unbound T" + str(id)
+      return "'T" + str(id)
     }
 
     if kind == "Array" {
       return "Array<" + fmt(t.elem, seen) + ">"
     }
     if kind == "Option" {
-      return "Option<" + fmt(t.inner, seen) + ">"
+      return "Option<" + fmt(t.value, seen) + ">"
     }
     if kind == "Map" {
-      return "Map<" + fmt(t.key, seen) + ", " + fmt(t.value, seen) + ">"
+      return "Map<" + fmt(t.key, seen) + ", " + fmt(t.elem, seen) + ">"
     }
     if kind == "Function" {
       let params = t.params

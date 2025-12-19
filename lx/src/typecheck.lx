@@ -9,6 +9,8 @@
 // - Structural types: Array[T], Map[K,V], Record{...}, Option[T], Function(...)
 // - Constraint solving + a single function body refinement pass.
 
+let helper = import "src/typecheck-helper.lx"
+
 // ========================================================
 // Type Constructors
 // ========================================================
@@ -32,7 +34,11 @@ fn typeArray(elem) {
 }
 
 fn typeRecord(fields) {
-  .{ kind: "Record", fields: fields }
+  .{ kind: "Record", fields: fields, open: false }
+}
+
+fn typeOpenRecord(fields) {
+  .{ kind: "Record", fields: fields, open: true }
 }
 
 fn typeMap(key, elem) {
@@ -155,7 +161,8 @@ fn derefAll(checker, t) {
     for let i = 0; i < len(ks); i = i + 1 {
       fields[ks[i]] = derefAll(checker, t.fields[ks[i]])
     }
-    return typeRecord(fields)
+    let open = t.open or false
+    return open and typeOpenRecord(fields) or typeRecord(fields)
   }
 
   t
@@ -220,16 +227,46 @@ fn unify(checker, t1, t2) {
     }
 
     if t1.kind == "Record" {
+      let open1 = t1.open or false
+      let open2 = t2.open or false
+
       let k1 = keys(t1.fields)
       let k2 = keys(t2.fields)
-      if len(k1) != len(k2) { return false }
+
+      // Closed records must match exactly.
+      if !open1 and !open2 {
+        if len(k1) != len(k2) { return false }
+      }
+
+      // Unify / extend overlap from t1 -> t2
       for let i = 0; i < len(k1); i = i + 1 {
         let k = k1[i]
-        if !t2.fields[k] { return false }
-        if !unify(checker, t1.fields[k], t2.fields[k]) {
+        let f2 = t2.fields[k]
+        if !f2 {
+          if open2 {
+            t2.fields[k] = t1.fields[k]
+            continue
+          }
+          return false
+        }
+        if !unify(checker, t1.fields[k], f2) {
           return false
         }
       }
+
+      // Extend t1 with extra fields from t2 if allowed
+      for let i = 0; i < len(k2); i = i + 1 {
+        let k = k2[i]
+        let f1 = t1.fields[k]
+        if !f1 {
+          if open1 {
+            t1.fields[k] = t2.fields[k]
+            continue
+          }
+          return false
+        }
+      }
+
       return true
     }
 
@@ -355,14 +392,51 @@ fn trySolveConstraint(checker, c) {
   }
 
   if c.kind == "HasField" {
-    let base = deref(checker, c.base)
     let ft = deref(checker, c.fieldType)
+
+    // Preserve root typevar so record fields can accumulate across multiple HasField constraints.
+    let baseInfo = derefWithRootVar(checker, c.base)
+    let root = baseInfo.root
+    let base = baseInfo.type
 
     if base.kind == "Any" {
       if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
       return true
     }
 
+    // If the base is (or was) a typevar, extend its binding in-place.
+    if root and root.kind == "TypeVar" {
+      let binding = getTypeVarBinding(checker, root.id)
+      if !binding {
+        let rec = typeOpenRecord(.{ [c.fieldName]: ft })
+        bindTypeVar(checker, root.id, rec)
+        return true
+      }
+      if binding.kind == "Any" {
+        if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
+        return true
+      }
+      if binding.kind == "Record" {
+        let field = binding.fields[c.fieldName]
+        if !field {
+          if binding.open {
+            binding.fields[c.fieldName] = ft
+          } else {
+            addError(checker, c.nodeId, c.msg)
+            containHasFieldFailure(checker, ft)
+          }
+        } else if !unify(checker, field, ft) {
+          addError(checker, c.nodeId, c.msg)
+          containHasFieldFailure(checker, ft)
+        }
+        return true
+      }
+      addError(checker, c.nodeId, c.msg)
+      containHasFieldFailure(checker, ft)
+      return true
+    }
+
+    // Closed record: must contain the field.
     if base.kind == "Record" {
       let field = base.fields[c.fieldName]
       if field {
@@ -377,28 +451,6 @@ fn trySolveConstraint(checker, c) {
       return true
     }
 
-    if base.kind == "TypeVar" {
-      let binding = getTypeVarBinding(checker, base.id)
-      if !binding {
-        let rec = typeRecord(.{ [c.fieldName]: ft })
-        bindTypeVar(checker, base.id, rec)
-        return true
-      }
-      if binding.kind == "Record" {
-        let field = binding.fields[c.fieldName]
-        if !field {
-          binding.fields[c.fieldName] = ft
-        } else if !unify(checker, field, ft) {
-          addError(checker, c.nodeId, c.msg)
-          containHasFieldFailure(checker, ft)
-        }
-        return true
-      }
-      addError(checker, c.nodeId, c.msg)
-      containHasFieldFailure(checker, ft)
-      return true
-    }
-
     // Non-record base
     addError(checker, c.nodeId, c.msg)
     containHasFieldFailure(checker, ft)
@@ -409,17 +461,11 @@ fn trySolveConstraint(checker, c) {
 }
 
 fn solveConstraints(checker) {
-  let work = checker.constraints
-  let remaining = []
-
-  for let i = 0; i < len(work); i = i + 1 {
-    let c = work[i]
-    if !trySolveConstraint(checker, c) {
-      push(remaining, c)
-    }
-  }
-
-  checker.constraints = remaining
+  checker.constraints = helper.solveWorklist(
+    checker.constraints,
+    fn(c) { trySolveConstraint(checker, c) },
+    .{ maxRounds: 1000 },
+  )
 }
 
 
@@ -609,7 +655,10 @@ fn checkFunction(checker, node) {
   }
 
   let ret = freshTypeVar(checker)
+  let prevReturn = checker.currentReturn
+  checker.currentReturn = ret
   let bodyT = synthExpr(checker, node.body)
+  checker.currentReturn = prevReturn
   emitEq(checker, bodyT, ret, node.body.id, "Return mismatch")
 
   exitScope(checker)
@@ -757,9 +806,17 @@ fn checkFor(checker, node) {
 }
 
 fn checkReturn(checker, node) {
-  if node.value { synthExpr(checker, node.value) }
-  checker.types[node.id] = typeNil()
-  typeNil()
+  let rt = typeNil()
+  if node.value { rt = synthExpr(checker, node.value) }
+
+  if checker.currentReturn {
+    emitEq(checker, checker.currentReturn, rt, node.id, "Return mismatch")
+  }
+
+  // Treat `return expr` as having the expression's type so block "last expr"
+  // can still drive function return inference.
+  checker.types[node.id] = rt
+  rt
 }
 
 fn checkBreak(checker, node) {
@@ -805,8 +862,11 @@ fn checkHashmap(checker, node) {
         p.key.lexeme and len(p.key.lexeme) > 0 and p.key.lexeme[0] != "\""
       if isBareStringKey {
         sawStringKey = true
+        // Store record fields as typevars so later mutations can constrain them.
         let vType = synthExpr(checker, p.value)
-        fields[p.key.value] = vType
+        let fieldT = freshTypeVar(checker)
+        constrain(checker, fieldT, vType, p.value.id, "Record field mismatch")
+        fields[p.key.value] = fieldT
         continue
       }
 
@@ -891,6 +951,29 @@ fn checkAssignment(checker, node) {
     return vt
   }
 
+  // Property assignment: base.field = value
+  if node.target and node.target.type == "Dot" {
+    let objT = synthExpr(checker, node.target.object)
+
+    let propName = nil
+    if node.target.property and node.target.property.type == "Identifier" {
+      propName = node.target.property.name
+    } else if node.target.property and node.target.property.type == "String" {
+      propName = node.target.property.value
+    } else {
+      if node.target.property { synthExpr(checker, node.target.property) }
+    }
+
+    if propName {
+      let fieldT = freshTypeVar(checker)
+      emitHasField(checker, objT, propName, fieldT, node.target.id, "Missing field: " + propName)
+      emitEq(checker, fieldT, vt, node.id, "Assignment mismatch")
+      checker.types[node.target.id] = fieldT
+      checker.types[node.id] = vt
+      return vt
+    }
+  }
+
   // Traverse target anyway
   if node.target { synthExpr(checker, node.target) }
 
@@ -931,7 +1014,10 @@ fn refineFunctions(checker) {
       checker.types[paramNode.id] = info.params[p]
     }
 
+    let prevReturn = checker.currentReturn
+    checker.currentReturn = info.ret
     let bodyT = synthExpr(checker, info.node.body)
+    checker.currentReturn = prevReturn
     emitEq(checker, bodyT, info.ret, info.node.body.id, "Return mismatch")
 
     exitScope(checker)
@@ -1014,6 +1100,8 @@ fn makeChecker(resolveResult) {
 
     constraints: [],
     functionInfos: [],
+
+    currentReturn: nil,
   }
 }
 

@@ -117,7 +117,16 @@ fn spanScore(n) {
 }
 
 fn nodeAtPos(ctx, filename, line, col) {
-  let ids = ctx.fileNodeIds[filename] or keys(ctx.nodes)
+  if !ctx or !ctx.nodes {
+    return nil
+  }
+
+  let ids = nil
+  if ctx.fileNodeIds and type(ctx.fileNodeIds) == "map" and ctx.fileNodeIds[filename] {
+    ids = ctx.fileNodeIds[filename]
+  } else {
+    ids = keys(ctx.nodes)
+  }
 
   let best = nil
   let bestScore = nil

@@ -1,26 +1,13 @@
-// ========================================================
-// Phase 1 Typechecker (Minimal Core)
-// ========================================================
+// Typechecker - monomorphic type inference with constraints.
 //
-// GOAL:
-//   - Monomorphic, eager type inference
-//   - No flow sensitivity
-//   - No Option, no narrowing, no polymorphism
+// Pipeline assumptions:
+// - Runs on lowered AST (no Arrow nodes; root is an implicit Block).
+// - Uses resolver side tables to map Identifier → declaration (`declaredAt`).
+// - Unresolved names are `builtin` and type as Any at this phase.
 //
-// NON-GOALS (INTENTIONALLY REMOVED):
-//   - Option / nil-joins
-//   - Env cloning / branch refinement
-//   - Tagged unions
-//   - Map vs Record distinction
-//   - Polymorphism (Scheme / generalize / instantiate)
-//   - Two-pass inference
-//   - Deferred constraints
-//
-// This file is the *stable foundation*.
-// Later phases must build on top of this, not inside it.
-//
-// ========================================================
-
+// Features in this implementation:
+// - Structural types: Array[T], Map[K,V], Record{...}, Option[T], Function(...)
+// - Constraint solving + a single function body refinement pass.
 
 // ========================================================
 // Type Constructors

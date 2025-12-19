@@ -1,757 +1,165 @@
-# Typecheck Phase (`typecheck.lx`)
+# Typecheck Phase (`src/typecheck.lx`)
 
 ## Responsibility
 
-Perform **best-effort static analysis** on resolved Lx programs.
+Perform **best-effort** static typing for tooling and early diagnostics.
 
 This phase:
+- infers types for expressions and bindings using a constraint solver
+- reports type/shape mismatches, but **continues** (containment to `Any`)
+- is **monomorphic** (no HM/let-polymorphism), with a few practical “dynamic language” rules
 
-* infers stable types for variables, functions, records, and arrays
-* detects incompatible usages (shape mismatches, conflicting assignments)
-* supports closures, imports, and higher-order functions
-* is **mostly monomorphic**, with **limited polymorphism** for function values
-* is **flow-insensitive** globally, but supports **local narrowing** in `if` branches
-* is **local**, **fast**, and designed for tooling feedback loops
-
-It does **not**:
-
-* affect runtime semantics
-* mutate the AST
-* participate in code generation
-* attempt full soundness or full Hindley–Milner inference
-
-This phase exists primarily to support:
-
-* IDE / LSP diagnostics
-* early error detection
-* developer feedback loops
-
----
+This phase does **not**:
+- change runtime behavior
+- transform the AST
+- guarantee full soundness
 
 ## Position in Pipeline
 
 ```
 Source
-  → parser.lx
-  → lower.lx
-  → resolve.lx
-  → typecheck.lx
-  → (optional) codegen.lx
+  → src/parser.lx
+  → src/lower.lx
+  → src/resolve.lx
+  → src/typecheck.lx
+  → (optional) src/codegen.lx
 ```
 
-**Important:** `typecheck` depends on `resolve` and must run *after* it.
+`typecheck` depends on `resolve` and runs on the **lowered** AST.
 
----
-
-## Inputs
+## API
 
 ```lx
-typecheck(ast, resolveResult, opts)
-```
-
-### AST
-
-* Lowered AST (canonical syntax, no Arrow nodes)
-* Node IDs are stable and unique per module
-
-### resolveResult (required)
-
-Produced by `resolve.lx`:
-
-* `nodes: { nodeId → AST node }`
-* `resolvedNames: { nodeId → BindingInfo }`
-* `scopeInfo: { nodeId → ScopeInfo }`
-
-These are **authoritative** for:
-
-* variable identity
-* closure capture
-* function boundaries
-* import resolution
-
-### opts (optional)
-
-```lx
-.{
-  builtinTypes: BuiltinTypeTable,     // len, push, str, type, etc.
-  importSignatures: SignatureLoader?, // optional future extension
-  tagFieldNames: ["kind", "tag", "type"]?, // optional; default ["kind"]
-}
-```
-
----
-
-## Outputs
-
-```lx
-{
+typecheck(ast, resolveResult) -> .{
   success: bool,
-  types: { nodeId → Type },
-  errors: [{ nodeId, message, severity }],
+  types: { nodeId: Type },
+  typeVarBindings: { typeVarId: Type },
+  errors: [.{ nodeId, message, severity }],
 }
 ```
 
-### `types`
+`types` and `typeVarBindings` are returned **dereferenced/canonicalized** (see `derefAll` in `src/typecheck.lx`).
 
-* Maps **node IDs** (not AST objects) to inferred types
-* Includes:
+## Type Forms
 
-  * identifiers
-  * expressions
-  * function nodes
-  * return expressions
-
-### `errors`
-
-* Non-fatal unless configured otherwise
-* Analysis continues after errors
-* On error, offending type variables are widened to `Any`
-
----
-
-## Type System
-
-### Type Forms
+User-facing (structural) types:
 
 ```
-Type =
-  Unknown
-  Any
-  Nil
-  Number
-  Bool
-  String
-  TypeVar(id)
+Any | Nil | Number | Bool | String
 
-  Function(params: [Type], return: Type)
+TypeVar(id)
 
-  Array(elem: Type)
-
-  Record(fields: map<string, Type>)
-
-  Tagged(
-    tagField: string,
-    cases: map<tagValue, Record>
-  )
+Function(params: [Type], return: Type)
+Array(elem: Type)
+Map(key: Type, elem: Type)         // key restricted to Number|String (best-effort)
+Record(fields: { key: Type })      // closed shape
+Option(value: Type)
 ```
 
-### Semantics
-
-* **Unknown**: initial state; can be refined by constraints
-* **Any**: escape hatch; unifies with everything, suppresses cascades
-* Variables are monomorphic by default; **limited polymorphism exists only for function values**
-* Records and arrays are **structural** (shape-based)
-* Discriminated unions are represented using `Tagged(...)` where detectable
-
----
-
-## Environments and Identity
-
-### Type Bindings
-
-Each resolved declaration identity (`declNodeId`) maps to exactly one binding:
+Internal-only:
 
 ```
-TypeBinding =
-  Mono(TypeVar)   // assignable, monomorphic slot
-  Poly(Scheme)    // immutable, instantiable scheme
+Indexable(elem: Type, key: Type)   // temporary “unknown container” for x[i] / x[i]=v inference
 ```
 
-### Type Environment
+## High-level Strategy
 
-```lx
-TypeEnv = {
-  parent: TypeEnv?,
-  vars: map<declNodeId, TypeBinding>,
-}
-```
+The typechecker is structured as:
 
-**Key invariants:**
+1. A traversal (`synthExpr`) that assigns types to nodes and emits constraints.
+2. A worklist solver (`src/typecheck-helper.lx`) that repeatedly tries to solve constraints until no **binding progress** is made.
+3. A second pass over function bodies (`refineFunctions`) to refine closure-captured types.
+4. Finalization:
+   - resolve remaining `Indexable` bindings (default to `Map` with a diagnostic)
+   - contain remaining unsolved constraints to `Any` so tooling does not crash
 
-* Variable identity is determined solely by `resolveResult`
-* Names are irrelevant during typechecking
-* Captured variables reuse the **same TypeBinding** (Mono or Poly)
+## Constraint Solver
 
----
+Constraints are stored in `checker.constraints` and solved by `trySolveConstraint`.
 
-## Constraint Model
+### Constraint Kinds
 
-Typechecking is a single traversal that:
+- `Eq(t1, t2)`: unification
+- `HasField(base, fieldName, fieldType, mode)`
+  - `mode: "read" | "write"`
+- `Call(callee, args[], out)`
+  - extra args allowed; too-few args is an error
+- `Index(base, index, out, literalKey?)`
+- `IndexSet(base, index, value, literalKey?)`
+- `KeyLike(t)`: enforces “hashmap key type must be number or string” (best-effort)
 
-1. creates fresh `TypeVar`s
-2. emits constraints
-3. unifies eagerly
-4. reports conflicts
+### Progress and Convergence
 
-This is not full HM. The only generalization is a restricted let-polymorphism rule for function literals.
+The worklist is run until **no typevar binding changes** occur (`checker.changed` set by `bindTypeVar`).
 
----
+If the solver hits `maxRounds`, it emits a diagnostic and continues with containment.
 
-## Limited Polymorphism Model
+## Core Semantics (Current)
 
-Prelude/user code often wants polymorphic higher-order helpers (`map`, `each`, `fold`, `_1/_2/_3` adapters). A strictly monomorphic system would either reject common usage or collapse to `Any`.
+### Records vs Maps (`.{ ... }`)
 
-Lx supports **limited parametric polymorphism**:
+- `.{}` (empty) is a `Map[K,V]` (hashmap literal).
+- Any **non-empty** `.{ ... }` is a **closed `Record{...}`**, even when written with computed keys.
+- For non-empty literals, computed keys must be **string/number literals** (e.g. `.{ ["a"]: 1 }`, `.{ [1]: "x" }`).
+  - Non-literal computed keys (e.g. `.{ [k]: v }`) are a type error (“closed shape”).
 
-* `Poly(Scheme)` bindings
-* per-use instantiation
-* strict value restriction: **only function literals are generalized**
-* polymorphic bindings are **not assignable**
+Closed record behavior:
+- `x.a` requires field `a` to exist (no field growth).
+- `x["a"]` is allowed for records only when the index key is a **literal** string/number (so the field is known).
+- `x["newKey"] = ...` is rejected for records (closed shape), but is allowed for `Map`.
 
-This remains lightweight and aligns with typical “safe subset” let-polymorphism.
+### Indexing (`x[i]`) and Index Assignment (`x[i] = v`)
 
----
+Concrete bases:
+- `Array[T][Number] -> T`
+- `Map[K,V][K] -> V` (with `KeyLike(K)`)
+- `String[Number] -> String`
 
-## Schemes, Free Variables, Generalization, Instantiation
+Unknown base:
+- Using `x[i]` or `x[i] = v` on an unbound typevar introduces `Indexable(elem,key)`.
+- When there is enough evidence, `Indexable` can commit to a concrete container.
+- If it remains ambiguous, finalization defaults it to `Map[key, elem]` with a diagnostic.
 
-### Scheme Form
+### Option
 
-```
-Scheme =
-  Forall(typeVars: [TypeVar], type: Type)
-```
+Conditionals:
+- `if cond { expr }` returns `Option[T(expr)]`, except `if cond { nil }` is normalized to `Nil` (no `Option[Nil]`).
 
-### Free Type Variables
+Nil unification (best-effort):
+- `Nil` can promote a typevar binding to `Option[T]` (without double-wrapping).
 
-* `ftv(type)` → free type variables in a `Type`
-* `ftv(binding)` → free vars in Mono/Poly
-* `ftv(env)` → union of all reachable bindings’ free vars
-
-### Generalization
-
-```
-generalize(env, type) =
-  let qs = ftv(type) - ftv(env)
-  Poly(Forall(qs, type))
-```
-
-Only performed for **function literals** (and top-level `fn` declarations, treated as function literals).
-
-### Instantiation
-
-```
-instantiate(Forall([t1..tn], T)) =
-  let [u1..un] = fresh TypeVars
-  substitute(T, { t1 → u1, ... })
-```
-
-Performed on every identifier use of a polymorphic binding.
-
----
-
-## Core Rules
-
-### Let Binding
-
-```lx
-let x = expr
-```
-
-Procedure:
-
-1. Analyze `expr`, producing `T(expr)`.
-2. If `expr` is a **function literal** (`fn (...) { ... }`):
-
-   * Bind `x → generalize(env, T(expr))`.
-3. Otherwise:
-
-   * Create fresh `TypeVar tv`.
-   * Bind `x → Mono(tv)`.
-   * Emit constraint: `tv ≈ T(expr)`.
-
-### Top-Level Function Declarations
-
-```lx
-fn f(a, b) { body }
-```
-
-Treated equivalently to:
-
-```lx
-let f = fn(a, b) { body }
-```
-
-for purposes of generalization only.
-
----
-
-### Reassignment
-
-```lx
-x = expr
-```
-
-Rules:
-
-* If `x → Mono(tv)`:
-
-  ```
-  tv ≈ T(expr)
-  ```
-
-* If `x → Poly(_)`:
-
-  * report error: “Cannot assign to polymorphic binding”
-  * widen assignment result to `Any` to continue analysis
-
----
-
-### Identifier Use
-
-```lx
-x
-```
-
-Rules:
-
-* If `x → Mono(tv)`:
-
-  ```
-  T(x_expr) = tv
-  ```
-
-* If `x → Poly(scheme)`:
-
-  ```
-  T(x_expr) = instantiate(scheme)
-  ```
-
-Undefined variables should already be caught by `resolve`.
-
----
-
-## Records
-
-### Record Literals
-
-```lx
-.{ a: v1, b: v2 }
-```
-
-Type (base case):
-
-```
-Record{ a: T(v1), b: T(v2) }
-```
-
-If the record literal qualifies as a tagged record (see “Tagged Records”), it may instead produce a `Tagged(...)`.
-
-### Record Field Access
-
-```lx
-x.a
-```
-
-Rules:
-
-* If `T(x) = Unknown`:
-
-  * refine to `Record{ a: Unknown }` (best-effort shape introduction)
-* If `T(x) = Record` and `a` missing:
-
-  * error (or optionally extend, if you later adopt grow-only shapes)
-* If `T(x) = Tagged(...)`:
-
-  * use the Tagged field-access rules (below)
-* Shapes are considered stable once established; conflicting constraints produce errors.
-
----
-
-## Arrays
-
-### Array Literals
-
-```lx
-[]
-```
-
-Creates:
-
-```
-Array(elem = Unknown)
-```
-
-### Element Access
-
-```lx
-arr[i]
-```
-
-Rules (best-effort):
-
-* constrain `T(i) ≈ Number` (optional)
-* if `T(arr) = Unknown` ⇒ refine to `Array(Unknown)`
-* if `T(arr) = Array(E)` ⇒ `T(arr[i]) = E`
-* otherwise error/widen to `Any`
-
-### push
-
-```lx
-push(xs, v)
-```
-
-Constraint:
-
-```
-T(xs) ≈ Array(elem = T(v))
-```
-
----
-
-## Functions and Closures
-
-### Function Literals
-
-```lx
-fn(a, b) { body }
-```
-
-Type:
-
-```
-Function([A, B], R)
-```
-
-* `A`, `B`, `R` are fresh `TypeVar`s
-* parameters are always bound as `Mono(TypeVar)`
-* returns unify into `R`
+Field access on Option:
+- Reads: `opt.field` typechecks as `Option[fieldType]` (implicit lifting).
+- Writes: `opt.field = v` is rejected (“Cannot assign to field on optional value”).
 
 ### Calls
 
-```lx
-f(x1, x2, ..., xm)
-```
+Calls are solved by a `Call` constraint (not by baking arity into unification):
+- Too few arguments is an error.
+- Extra arguments are allowed and ignored (no constraints for extras).
 
-First, constrain callee shape:
+### Operators
 
-```
-T(f) ≈ Function([P1..Pk], R)
-```
+- Arithmetic `+ - * /` expects numbers (except `+` supports `String + String -> String`).
+- Comparisons `< <= > >=` expect numbers and return `Bool`.
+- Equality `== !=` returns `Bool` (no operand constraints).
 
-Then apply argument constraints:
+### Logical `and/or`
 
-* for `i = 1 .. min(k, m)`:
+Lua-like semantics:
+- `and/or` return operands (not necessarily `Bool`).
+- The typechecker uses constant-truthiness shortcuts for obvious literals (`true`, `false`, `nil`, literals/containers).
+- Otherwise it uses a conservative `joinTypes`:
+  - `Nil` + `T` becomes `Option[T]`
+  - mixed unrelated types fall back to `Any` (no unions yet)
 
-  ```
-  T(xi) ≈ Pi
-  ```
+## Builtins
 
-* if `m > k`: extra args are **allowed and ignored** (no constraints)
+Resolver marks unknown/global names as `kind: "builtin"`.
 
-* if `m < k`: missing args may be an error or warning (implementation choice)
+Typechecking assigns concrete types to many builtins via `builtinTypeByName`:
+- Native builtins from `include/native_fn.h` (e.g. `int`, `tonumber`, `len`, `keys`, `push/pop/concat`, `Date`, `Lx`, …)
+- Prelude helpers from `globals.lx` (e.g. `_1/_2/_3`, `map`, `fold`, `sort`, …)
 
-* result:
-
-  ```
-  T(call) = R
-  ```
-
-This matches Lx runtime semantics (Lua/JS-style extra args ignored).
-
----
-
-## Function Arity Compatibility
-
-Because extra call arguments are ignored, function values are compatible under **arity widening**.
-
-### Compatibility Rule
-
-A function value of type:
-
-```
-Function([P1..Pk], R)
-```
-
-is compatible with an expected function type:
-
-```
-Function([Q1..Qm], S)
-```
-
-when:
-
-* `k <= m`
-* for all `i = 1..k`: `Pi ≈ Qi`
-* and `R ≈ S`
-
-Intuition: a “short” callback can be passed where a “long” callback is expected, because it will ignore extra arguments at runtime.
-
-### Where Applied
-
-Apply this rule when:
-
-* constraining an argument against an expected callback type
-* constraining a value against an annotated expected function type
-* checking builtin signatures that accept callbacks
-
-This is a targeted rule; no full variance/subtyping system is required.
-
----
-
-## Returns
-
-```lx
-return expr
-```
-
-Constraint:
-
-```
-T(expr) ≈ R
-```
-
-All returns unify to the same return type.
-
----
-
-## Closures
-
-Captured variables:
-
-* reuse the **same TypeBinding**
-* constraints propagate across closures naturally
-
-No special handling beyond `resolve` capture identity.
-
----
-
-## Conditionals and Local Narrowing
-
-The analysis is globally flow-insensitive, but supports **local narrowing** inside `if` branches to reduce false positives for common guard patterns.
-
-### Branch Analysis
-
-For:
-
-```lx
-if cond { A } else { B }
-```
-
-Procedure:
-
-1. Analyze `cond` normally.
-2. Compute two derived environments:
-
-   * `envThen = narrow(env, cond, truthy=true)`
-   * `envElse = narrow(env, cond, truthy=false)`
-3. Analyze `A` under `envThen`, `B` under `envElse`.
-4. Merge environments after the `if` by unifying corresponding bindings.
-
-Narrowing is best-effort and limited to simple syntactic patterns; it never changes runtime semantics.
-
-### Supported Narrowing Patterns
-
-#### Nil checks
-
-```
-x != nil
-```
-
-* truthy branch: treat `x` as non-nil for guarded operations (e.g., field/index access)
-* falsy branch: treat `x` as `Nil`
-
-```
-x == nil
-```
-
-* truthy branch: treat `x` as `Nil`
-* falsy branch: treat `x` as non-nil
-
-(Implementation detail: you may represent “non-nil” as a guard fact rather than a new type form; the requirement is that guarded `x.a` should not fail solely because `x` might be nil.)
-
-#### Type tests
-
-```
-type(x) == "string" | "number" | "bool" | "nil"
-```
-
-* truthy branch: refine `x` to the corresponding primitive type
-* falsy branch: no refinement required
-
-Only applied when `x` is a resolved identifier.
-
-#### Tag checks
-
-```
-x.kind == "Foo"
-```
-
-If `T(x) = Tagged("kind", cases)` and `"Foo"` is a known case:
-
-* truthy branch: treat `x` as the `"Foo"` case for field access
-* falsy branch: no refinement required (future extension could track exclusion)
-
----
-
-## Tagged Records (Discriminated Unions)
-
-### Problem
-
-Dynamic code often encodes tagged unions using records like:
-
-```lx
-.{ kind: "Int",  value: 123 }
-.{ kind: "Str",  value: "hi" }
-.{ kind: "None" }
-```
-
-A naïve frozen-record rule would either:
-
-* flag differing `value` shapes as errors, or
-* collapse everything to `Any`
-
-### Goal
-
-Provide syntax-free discriminated unions via:
-
-```
-Tagged(tagField, cases)
-```
-
-This enables:
-
-* per-tag field typing
-* safe field access when tag is known (directly or via narrowing)
-* fewer false positives for common union patterns
-
----
-
-### Tagged Record Detection
-
-A record literal is a tagged-record candidate if:
-
-* it contains a tag field name in `opts.tagFieldNames` (default `["kind"]`), and
-* the tag value is a **literal string** (or literal number, if enabled)
-
-Example:
-
-```lx
-.{ kind: "Int", value: 123 }
-```
-
-yields:
-
-```
-Tagged("kind", {
-  "Int": Record{ value: Number }
-})
-```
-
-If the tag value is not a literal, the literal does not produce `Tagged` (it remains a plain `Record`) unless you later adopt a heuristic mode.
-
----
-
-### Unification Rules
-
-#### Tagged with Tagged
-
-```
-Tagged(tf, cases1)  ≈  Tagged(tf, cases2)
-```
-
-Rules:
-
-* if tagField differs: error → widen to `Any`
-* merge case maps by tag value
-* for each shared tag value `t`:
-
-  * unify the corresponding case records (`Record1(t) ≈ Record2(t)`)
-  * field conflicts within the same tag → error → widen that field to `Any` (or widen the entire case)
-
-#### Tagged with Unknown
-
-If `T(x) = Unknown` and unified with `Tagged`, set `T(x)` to that Tagged.
-
-#### Tagged with Record
-
-Recommended (strict) behavior:
-
-* error: cannot unify `Tagged` with plain `Record` unless the Record is recognized as a Tagged candidate (literal tag)
-* widen to `Any` to continue analysis
-
-(You may optionally implement a permissive mode that converts a plain record with a literal tag into a single-case Tagged on the fly.)
-
----
-
-### Field Access on Tagged Values
-
-For:
-
-```lx
-x.field
-```
-
-If `T(x) = Tagged(tagField, cases)`:
-
-#### Accessing the tag field
-
-* `x.tagField` is a tag-literal set internally, but exposed as `String` (or `Any`) in `types` if unions are not representable.
-
-#### Accessing a non-tag field
-
-* If the current environment proves `x.tagField == t` for some literal `t`:
-
-  * lookup `cases[t]`
-  * `T(x.field)` = the field type from that case record (error if missing)
-* If the tag is not known:
-
-  * allow access only if `field` exists in **all cases** with the **same type**
-  * otherwise: error (or widen to `Any`, depending on your error strategy)
-
-This makes “safe field access requires known tag” explicit and tool-friendly.
-
----
-
-## Error Handling
-
-On any type error:
-
-* report diagnostic
-* replace conflicting type constraints with `Any`
-* continue analysis
-
-Severity levels:
-
-* `error` (default)
-* `warning`
-* `info`
-
----
-
-## Guarantees
-
-If `success == true`:
-
-* no incompatible constraints were found
-* inferred types are stable and usable for tooling
-
-If `success == false`:
-
-* partial types remain available
-* diagnostics are complete and non-cascading
-
----
-
-## Non-Goals
-
-This phase intentionally does **not**:
-
-* implement full Hindley–Milner
-* infer polymorphic parameters (rank-1 only at let-bound function values)
-* perform effect/reachability/exhaustiveness analysis
-* enforce runtime semantics or optimize codegen
-
----
-
-## Summary
-
-The typecheck phase provides:
-
-* fast, predictable static analysis
-* honest support for polymorphic prelude utilities via restricted schemes
-* callback typing consistent with “extra args ignored”
-* practical narrowing for nil/type/tag guards
-* precise discriminated unions using `Tagged(...)` without syntax changes
-
-It is a frontend value multiplier for diagnostics and IDE support, not a soundness gatekeeper.
+Anything not recognized still defaults to `Any`.
 

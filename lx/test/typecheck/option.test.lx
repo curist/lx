@@ -104,6 +104,45 @@ fn register(test) {
     assert.equal(t.kind, "Option")
     assert.equal(deref(result, t.value).kind, "Number")
   })
+
+  test("typecheck - Option.field defers until base becomes record", fn(assert) {
+    // Exercise both paths:
+    // - direct optional base: (if ... { r }).a
+    // - indirect optional base: let o = if ... { r }; o.a
+    let result = parseAndTypecheck("{
+        fn f(r) {
+          let x = (if true { r }).a
+          let o = if true { r }
+          let y = o.a
+          r = .{ a: 1 }
+          .{ x: x, y: y }
+        }
+        let out = f(.{ a: 1 })
+        out.x
+        out.y
+      }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let xt = deref(result, getExprType(result, 2))
+    assert.equal(xt.kind, "Option")
+    assert.equal(deref(result, xt.value).kind, "Number")
+
+    let yt = deref(result, getExprType(result, 3))
+    assert.equal(yt.kind, "Option")
+    assert.equal(deref(result, yt.value).kind, "Number")
+  })
+
+  test("typecheck - HasField consults TypeVar binding", fn(assert) {
+    let result = parseAndTypecheck("{
+      let o = .{ a: 1 }
+      let x = o
+      x.a
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 2)).kind, "Number")
+  })
 }
 
 .{ register: register }

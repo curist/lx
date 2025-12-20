@@ -17,6 +17,7 @@
 //   then refines function bodies once and finalizes remaining constraints to Any.
 
 let helper = import "src/typecheck-helper.lx"
+let DEBUG = false
 
 // ========================================================
 // Type Constructors
@@ -59,6 +60,7 @@ fn typeIndexable(elem, key, nodeId) {
     elem: elem,
     key: key,
     nodeId: nodeId,
+    sawNumericIndex: false,
   }
 }
 
@@ -275,7 +277,11 @@ fn typeEquals(checker, a, b) {
     if x.kind == "Array" { return eq(x.elem, y.elem, depth + 1) }
     if x.kind == "Map" { return eq(x.key, y.key, depth + 1) and eq(x.elem, y.elem, depth + 1) }
     if x.kind == "Option" { return eq(x.value, y.value, depth + 1) }
+    if x.kind == "Indexable" { return eq(x.key, y.key, depth + 1) and eq(x.elem, y.elem, depth + 1) }
     if x.kind == "Function" {
+      let xMin = (x.minArity != nil) and x.minArity or len(x.params)
+      let yMin = (y.minArity != nil) and y.minArity or len(y.params)
+      if xMin != yMin { return false }
       if len(x.params) != len(y.params) { return false }
       for let i = 0; i < len(x.params); i = i + 1 {
         if !eq(x.params[i], y.params[i], depth + 1) { return false }
@@ -699,11 +705,77 @@ fn containHasFieldFailure(checker, fieldType) {
   }
 }
 
+fn markConstraintError(c) { c.emittedError = true }
+
+fn debugAssert(checker, ok, nodeId, msg) {
+  if DEBUG and !ok {
+    addError(checker, nodeId, msg)
+  }
+}
+
 fn unifyOrContain(checker, nodeId, msg, t1, t2) {
   if unify(checker, t1, t2) { return true }
   addError(checker, nodeId, msg)
   containEqFailure(checker, deref(checker, t1), deref(checker, t2))
   false
+}
+
+fn markIndexableNumeric(checker, root, base) {
+  if root and root.kind == "TypeVar" {
+    let binding = checker.typeVarBindings[root.id]
+    if binding and binding.kind == "Indexable" {
+      binding.sawNumericIndex = true
+      return
+    }
+  }
+  if base and base.kind == "Indexable" {
+    base.sawNumericIndex = true
+  }
+}
+
+fn unwrapOptionalForField(checker, c, mode, base, ft) {
+  // Option[T].field
+  // - read: Option[field]
+  // - write: error (cannot assign through optional base)
+  if mode == "write" {
+    addError(checker, c.nodeId, "Cannot assign to field on optional value")
+    markConstraintError(c)
+    containHasFieldFailure(checker, ft)
+    return .{ status: "solved" }
+  }
+
+  if !c.innerFieldType {
+    c.innerFieldType = freshTypeVar(checker)
+    if !unify(checker, c.fieldType, typeOption(c.innerFieldType)) {
+      addError(checker, c.nodeId, "Optional field access mismatch")
+      markConstraintError(c)
+      containHasFieldFailure(checker, ft)
+      return .{ status: "solved" }
+    }
+  }
+
+  ft = deref(checker, c.innerFieldType)
+
+  if !base.value {
+    return .{ status: "defer" }
+  }
+
+  let innerBase = deref(checker, base.value)
+  // Avoid getting stuck on Option[Option[T]] via TypeVar indirection.
+  if innerBase.kind == "Option" and innerBase.value {
+    innerBase = deref(checker, innerBase.value)
+  }
+
+  if innerBase.kind == "TypeVar" and !getTypeVarBinding(checker, innerBase.id) {
+    return .{ status: "defer" }
+  }
+
+  if innerBase.kind == "Any" {
+    if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
+    return .{ status: "solved", base: typeAny(), ft: ft }
+  }
+
+  .{ status: "solved", base: innerBase, ft: ft }
 }
 
 fn overloadCase(name, matches, apply) {
@@ -1015,137 +1087,47 @@ fn trySolveConstraint(checker, c) {
     // Preserve the root typevar (for better containment), but do not "grow" records.
     let baseInfo = derefWithRootVar(checker, c.base)
     let root = baseInfo.root
-    let base = baseInfo.type
+    let base = deref(checker, baseInfo.type)
+    if root and root.kind == "TypeVar" {
+      let binding = getTypeVarBinding(checker, root.id)
+      if binding {
+        base = deref(checker, binding)
+        base = deref(checker, base)
+      }
+    }
 
     let mode = c.mode or "read"
     let ft = deref(checker, c.fieldType)
 
-    // Option[T].field
-    // - read: Option[field]
-    // - write: error (cannot assign through optional base)
+	    // Option[T].field
     if base.kind == "Option" {
-      if mode == "write" {
-        addError(checker, c.nodeId, "Cannot assign to field on optional value")
-        containHasFieldFailure(checker, ft)
-        return true
-      }
-
-      if !c.innerFieldType {
-        c.innerFieldType = freshTypeVar(checker)
-        if !unify(checker, c.fieldType, typeOption(c.innerFieldType)) {
-          addError(checker, c.nodeId, "Optional field access mismatch")
-          containHasFieldFailure(checker, ft)
-          return true
-        }
-      }
-
-      ft = deref(checker, c.innerFieldType)
-
-      if base.value {
-        base = deref(checker, base.value)
-        // Avoid getting stuck on Option[Option[T]] via TypeVar indirection.
-        if base.kind == "Option" and base.value {
-          base = deref(checker, base.value)
-        }
-        if base.kind == "TypeVar" and !getTypeVarBinding(checker, base.id) {
-          return false
-        }
-      } else {
-        return false
-      }
+      let unwrapped = unwrapOptionalForField(checker, c, mode, base, ft)
+      if unwrapped.status == "defer" { return false }
+      if unwrapped.status == "solved" and !unwrapped.base { return true }
+      base = unwrapped.base
+      ft = unwrapped.ft
     }
 
-    if base.kind == "Any" {
-      if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
-      return true
-    }
+	    if base.kind == "Any" {
+	      if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
+	      return true
+	    }
 
-    // If the base is (or was) a typevar, consult its binding but do not extend.
-    if root and root.kind == "TypeVar" {
-      let binding = getTypeVarBinding(checker, root.id)
-      if !binding {
-        // Not enough information yet; keep the constraint around.
-        return false
-      }
-      if binding.kind == "Any" {
-        if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
-        return true
-      }
-      if binding.kind == "Option" {
-        if mode == "write" {
-          addError(checker, c.nodeId, "Cannot assign to field on optional value")
-          containHasFieldFailure(checker, ft)
-          return true
-        }
+    // If we reached here with a TypeVar base, it's still unresolved; defer.
+    if base.kind == "TypeVar" { return false }
 
-        if !c.innerFieldType {
-          c.innerFieldType = freshTypeVar(checker)
-          if !unify(checker, c.fieldType, typeOption(c.innerFieldType)) {
-            addError(checker, c.nodeId, "Optional field access mismatch")
-            containHasFieldFailure(checker, ft)
-            return true
-          }
-        }
-        ft = deref(checker, c.innerFieldType)
-
-        if !binding.value {
-          return false
-        }
-        let innerBase = deref(checker, binding.value)
-        if innerBase.kind == "Any" {
-          if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
-          return true
-        }
-        if innerBase.kind == "TypeVar" and !getTypeVarBinding(checker, innerBase.id) {
-          return false
-        }
-        if innerBase.kind == "Option" and innerBase.value {
-          innerBase = deref(checker, innerBase.value)
-          if innerBase.kind == "TypeVar" and !getTypeVarBinding(checker, innerBase.id) {
-            return false
-          }
-        }
-        if innerBase.kind == "Record" {
-          let field = innerBase.fields[c.fieldName]
-          if !field {
-            addError(checker, c.nodeId, c.msg)
-            containHasFieldFailure(checker, ft)
-          } else if !unify(checker, field, ft) {
-            addError(checker, c.nodeId, c.msg)
-            containHasFieldFailure(checker, ft)
-          }
-          return true
-        }
-        addError(checker, c.nodeId, c.msg)
-        containHasFieldFailure(checker, ft)
-        return true
-      }
-      if binding.kind == "Record" {
-        let field = binding.fields[c.fieldName]
-        if !field {
-          addError(checker, c.nodeId, c.msg)
-          containHasFieldFailure(checker, ft)
-        } else if !unify(checker, field, ft) {
-          addError(checker, c.nodeId, c.msg)
-          containHasFieldFailure(checker, ft)
-        }
-        return true
-      }
-      addError(checker, c.nodeId, c.msg)
-      containHasFieldFailure(checker, ft)
-      return true
-    }
-
-    // Closed record: must contain the field.
+	    // Closed record: must contain the field.
     if base.kind == "Record" {
       let field = base.fields[c.fieldName]
       if field {
         if !unify(checker, field, ft) {
           addError(checker, c.nodeId, c.msg)
+          markConstraintError(c)
           containHasFieldFailure(checker, ft)
         }
       } else {
         addError(checker, c.nodeId, c.msg)
+        markConstraintError(c)
         containHasFieldFailure(checker, ft)
       }
       return true
@@ -1153,6 +1135,7 @@ fn trySolveConstraint(checker, c) {
 
     // Non-record base
     addError(checker, c.nodeId, c.msg)
+    markConstraintError(c)
     containHasFieldFailure(checker, ft)
     return true
   }
@@ -1169,11 +1152,31 @@ fn trySolveConstraint(checker, c) {
       for let i = 0; i < len(c.args); i = i + 1 {
         push(params, freshTypeVar(checker))
       }
-      bindTypeVar(checker, root.id, typeFunction(params, c.out))
+      let fnT = typeFunction(params, c.out)
+      fnT.minArity = len(params)
+      fnT.inferredFromCall = true
+      bindTypeVar(checker, root.id, fnT)
       return true
     }
 
     t = deref(checker, t)
+
+    // If the callee was inferred as a function, allow the minimum arity to grow
+    // when later calls pass more arguments.
+    if root and root.kind == "TypeVar" and t.kind == "Function" and t.inferredFromCall and len(t.params) < len(c.args) {
+      let params = []
+      for let i = 0; i < len(t.params); i = i + 1 {
+        push(params, t.params[i])
+      }
+      for let i = len(t.params); i < len(c.args); i = i + 1 {
+        push(params, freshTypeVar(checker))
+      }
+      let newFn = typeFunction(params, t.return)
+      newFn.minArity = t.minArity or len(t.params)
+      if t.inferredFromCall { newFn.inferredFromCall = true }
+      bindTypeVar(checker, root.id, newFn)
+      t = newFn
+    }
 
     if t.kind == "Any" {
       if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
@@ -1182,6 +1185,7 @@ fn trySolveConstraint(checker, c) {
 
     if t.kind != "Function" {
       addError(checker, c.nodeId, "Call requires function")
+      markConstraintError(c)
       if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
       return true
     }
@@ -1198,15 +1202,18 @@ fn trySolveConstraint(checker, c) {
     let params = t.params
     let args = c.args
 
-    if len(args) < len(params) {
+    let required = (t.minArity != nil) and t.minArity or len(params)
+    if len(args) < required {
       addError(checker, c.nodeId,
-        "Too few arguments: expected at least " + str(len(params)) + ", got " + str(len(args)))
+        "Too few arguments: expected at least " + str(required) + ", got " + str(len(args)))
+      markConstraintError(c)
       if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
       return true
     }
 
     // Constrain only the required args; ignore extras.
-    for let i = 0; i < len(params); i = i + 1 {
+    let limit = len(params) < len(args) and len(params) or len(args)
+    for let i = 0; i < limit; i = i + 1 {
       let ok = true
 
       // Special-case function arguments: passing a shorter-arity function where
@@ -1241,12 +1248,14 @@ fn trySolveConstraint(checker, c) {
       if !ok {
         let nid = (c.argNodeIds and c.argNodeIds[i]) or c.nodeId
         addError(checker, nid, "Argument mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, args[i]), deref(checker, params[i]))
       }
     }
 
     if !unify(checker, c.out, t.return) {
       addError(checker, c.nodeId, "Return mismatch")
+      markConstraintError(c)
       containEqFailure(checker, deref(checker, c.out), deref(checker, t.return))
       if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
     }
@@ -1285,17 +1294,20 @@ fn trySolveConstraint(checker, c) {
     if base.kind == "Record" {
       if c.literalKey == nil {
         addError(checker, c.nodeId, "Record index must be a literal string or number key")
+        markConstraintError(c)
         if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
         return true
       }
       let ft = base.fields[c.literalKey]
       if !ft {
         addError(checker, c.nodeId, "Missing field: " + str(c.literalKey))
+        markConstraintError(c)
         if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
         return true
       }
       if !unify(checker, c.out, ft) {
         addError(checker, c.nodeId, "Index result mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.out), deref(checker, ft))
         if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
       }
@@ -1305,10 +1317,12 @@ fn trySolveConstraint(checker, c) {
     if base.kind == "Array" {
       if !unify(checker, c.index, typeNumber()) {
         addError(checker, c.nodeId, "Array index must be a number")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.index), typeNumber())
       }
       if !unify(checker, c.out, base.elem) {
         addError(checker, c.nodeId, "Index result mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.out), deref(checker, base.elem))
         if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
       }
@@ -1318,10 +1332,12 @@ fn trySolveConstraint(checker, c) {
       emitKeyLike(checker, base.key, c.nodeId)
       if !unify(checker, c.index, base.key) {
         addError(checker, c.nodeId, "Map key mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.index), deref(checker, base.key))
       }
       if !unify(checker, c.out, base.elem) {
         addError(checker, c.nodeId, "Index result mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.out), deref(checker, base.elem))
         if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
       }
@@ -1330,10 +1346,12 @@ fn trySolveConstraint(checker, c) {
     if base.kind == "String" {
       if !unify(checker, c.index, typeNumber()) {
         addError(checker, c.nodeId, "String index must be a number")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.index), typeNumber())
       }
       if !unify(checker, c.out, typeString()) {
         addError(checker, c.nodeId, "Index result mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.out), typeString())
         if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
       }
@@ -1358,9 +1376,15 @@ fn trySolveConstraint(checker, c) {
         bindTypeVar(checker, root.id, typeMap(base.key, base.elem))
         if !unify(checker, base.key, c.index) {
           addError(checker, c.nodeId, "Map key mismatch")
+          markConstraintError(c)
           containEqFailure(checker, deref(checker, base.key), deref(checker, c.index))
         }
         return true
+      }
+
+      // Numeric evidence: allow defaulting Indexable to Array at finalize time.
+      if idx and idx.kind == "Number" {
+        markIndexableNumeric(checker, root, base)
       }
 
       // Numeric or unknown: still ambiguous; keep constraint.
@@ -1369,6 +1393,7 @@ fn trySolveConstraint(checker, c) {
 
     // Not indexable
     addError(checker, c.nodeId, "Only array / hashmap / string can get value by index.")
+    markConstraintError(c)
     if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
     return true
   }
@@ -1384,15 +1409,18 @@ fn trySolveConstraint(checker, c) {
     if base.kind == "Record" {
       if c.literalKey == nil {
         addError(checker, c.nodeId, "Record index assignment must use a literal string or number key")
+        markConstraintError(c)
         return true
       }
       let ft = base.fields[c.literalKey]
       if !ft {
         addError(checker, c.nodeId, "Missing field: " + str(c.literalKey))
+        markConstraintError(c)
         return true
       }
       if !unify(checker, c.value, ft) {
         addError(checker, c.nodeId, "Index assignment mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.value), deref(checker, ft))
       }
       return true
@@ -1401,10 +1429,12 @@ fn trySolveConstraint(checker, c) {
     if base.kind == "Array" {
       if !unify(checker, c.index, typeNumber()) {
         addError(checker, c.nodeId, "Array index must be a number")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.index), typeNumber())
       }
       if !unify(checker, c.value, base.elem) {
         addError(checker, c.nodeId, "Index assignment mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.value), deref(checker, base.elem))
       }
       return true
@@ -1413,16 +1443,19 @@ fn trySolveConstraint(checker, c) {
       emitKeyLike(checker, base.key, c.nodeId)
       if !unify(checker, c.index, base.key) {
         addError(checker, c.nodeId, "Map key mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.index), deref(checker, base.key))
       }
       if !unify(checker, c.value, base.elem) {
         addError(checker, c.nodeId, "Index assignment mismatch")
+        markConstraintError(c)
         containEqFailure(checker, deref(checker, c.value), deref(checker, base.elem))
       }
       return true
     }
     if base.kind == "String" {
       addError(checker, c.nodeId, "Cannot assign into string by index.")
+      markConstraintError(c)
       return true
     }
 
@@ -1441,15 +1474,21 @@ fn trySolveConstraint(checker, c) {
         bindTypeVar(checker, root.id, typeMap(base.key, base.elem))
         if !unify(checker, base.key, c.index) {
           addError(checker, c.nodeId, "Map key mismatch")
+          markConstraintError(c)
           containEqFailure(checker, deref(checker, base.key), deref(checker, c.index))
         }
         return true
+      }
+
+      if idx and idx.kind == "Number" {
+        markIndexableNumeric(checker, root, base)
       }
 
       return false
     }
 
     addError(checker, c.nodeId, "Only array / hashmap / string can set value by index.")
+    markConstraintError(c)
     return true
   }
 
@@ -1503,7 +1542,9 @@ fn finalizeConstraints(checker) {
     }
 
     if c.kind == "Call" {
-      addError(checker, c.nodeId, "Unresolved call")
+      if !c.emittedError {
+        addError(checker, c.nodeId, "Unresolved call")
+      }
       if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
       let callee = derefWithRootVar(checker, c.callee)
       if callee and callee.root and callee.root.kind == "TypeVar" and !getTypeVarBinding(checker, callee.root.id) {
@@ -1512,7 +1553,9 @@ fn finalizeConstraints(checker) {
     }
 
     if c.kind == "Index" {
-      addError(checker, c.nodeId, "Unresolved index")
+      if !c.emittedError {
+        addError(checker, c.nodeId, "Unresolved index")
+      }
       if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
       let baseInfo = derefWithRootVar(checker, c.base)
       if baseInfo and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
@@ -1521,7 +1564,9 @@ fn finalizeConstraints(checker) {
     }
 
     if c.kind == "IndexSet" {
-      addError(checker, c.nodeId, "Unresolved index assignment")
+      if !c.emittedError {
+        addError(checker, c.nodeId, "Unresolved index assignment")
+      }
       let baseInfo = derefWithRootVar(checker, c.base)
       if baseInfo and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
         bindTypeVar(checker, baseInfo.root.id, typeAny())
@@ -1552,6 +1597,23 @@ fn finalizeIndexables(checker) {
     let t = deref(checker, checker.typeVarBindings[id])
     if t and t.kind == "Indexable" {
       let nid = t.nodeId or 0
+      let keyT = deref(checker, t.key)
+      if t.sawNumericIndex and keyT.kind == "String" {
+        addError(checker, nid, "Conflicting index evidence: saw numeric index but key is String")
+        bindTypeVar(checker, id, typeMap(t.key, t.elem))
+        continue
+      }
+      if t.sawNumericIndex {
+        // Numeric indexing is overwhelmingly used for arrays. Prefer Array over
+        // Map when we've only observed numeric indices and no other evidence.
+        unify(checker, t.key, typeNumber())
+        bindTypeVar(checker, id, typeArray(t.elem))
+        continue
+      }
+      if keyT.kind == "String" {
+        bindTypeVar(checker, id, typeMap(t.key, t.elem))
+        continue
+      }
       addError(checker, nid, "Ambiguous indexed container; defaulting to Map")
       bindTypeVar(checker, id, typeMap(t.key, t.elem))
     }
@@ -2017,7 +2079,7 @@ fn checkHashmap(checker, node) {
   for let i = 0; i < len(node.pairs); i = i + 1 {
     let p = node.pairs[i]
     if p.key { synthExpr(checker, p.key) }
-    if p.value { synthExpr(checker, p.value) }
+    let vType = p.value and synthExpr(checker, p.value) or typeAny()
 
     // Determine record field key.
     // Bare keys are normalized to String nodes with lexeme not starting with '"'.
@@ -2042,12 +2104,12 @@ fn checkHashmap(checker, node) {
     }
 
     let existing = fields[key]
-    let vType = checker.types[p.value.id] or typeAny()
+    let nid = (p.value and p.value.id) or node.id
     if existing {
-      emitEq(checker, vType, existing, p.value.id, "Record field mismatch")
+      emitEq(checker, vType, existing, nid, "Record field mismatch")
     } else {
       let fieldT = freshTypeVar(checker)
-      emitEq(checker, vType, fieldT, p.value.id, "Record field mismatch")
+      emitEq(checker, vType, fieldT, nid, "Record field mismatch")
       fields[key] = fieldT
     }
   }
@@ -2304,6 +2366,11 @@ fn predeclareTopLevel(checker, ast) {
     } else if node.type == "Function" and node.name {
       if !lookupDecl(checker, node.id) {
         bindDecl(checker, node.id)
+      }
+      let binding = checker.resolvedNames[node.name.id]
+      if binding and binding.declaredAt {
+        debugAssert(checker, binding.declaredAt == node.id, node.name.id,
+          "Internal error: function name binding does not resolve to function node id")
       }
     }
   }

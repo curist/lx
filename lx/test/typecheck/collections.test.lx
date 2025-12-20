@@ -59,12 +59,14 @@ fn register(test) {
     let result = parseAndTypecheck("{ let k = \"a\"\nlet r = .{ a: 1 }\nr[k] }")
     assert.truthy(!result.success)
     assert.truthy(hasError(result, "Record index must be a literal string or number key"))
+    assert.truthy(!hasError(result, "Unresolved index"))
   })
 
   test("typecheck - record index set requires existing key", fn(assert) {
     let result = parseAndTypecheck("{ let r = .{ a: 1 }\nr[\"b\"] = 2 }")
     assert.truthy(!result.success)
     assert.truthy(hasError(result, "Missing field: b"))
+    assert.truthy(!hasError(result, "Unresolved index assignment"))
   })
 
   test("typecheck - IndexSet infers Map from empty literal", fn(assert) {
@@ -94,6 +96,85 @@ fn register(test) {
     let result = parseAndTypecheck("{ let a = [1]\na[\"x\"] }")
     assert.truthy(!result.success)
     assert.truthy(hasError(result, "Array index must be a number"))
+  })
+
+  test("typecheck - Indexable defaults to Array with numeric evidence", fn(assert) {
+    let result = parseAndTypecheck("{
+      fn f(xs) {
+        xs[0] = 123
+        xs[1] = 456
+        xs[0]
+      }
+      f
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.truthy(!hasError(result, "Ambiguous indexed container; defaulting to Map"))
+
+    let ft = deref(result, getExprType(result, 0))
+    assert.equal(ft.kind, "Function")
+    let xsT = deref(result, ft.params[0])
+    assert.equal(xsT.kind, "Array")
+    assert.equal(deref(result, xsT.elem).kind, "Number")
+  })
+
+  test("typecheck - Indexable numeric evidence from index var", fn(assert) {
+    let result = parseAndTypecheck("{
+      fn f(xs) {
+        let i = 0
+        xs[i] = 123
+        xs[i]
+      }
+      f
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.truthy(!hasError(result, "Ambiguous indexed container; defaulting to Map"))
+
+    let ft = deref(result, getExprType(result, 0))
+    assert.equal(ft.kind, "Function")
+    let xsT = deref(result, ft.params[0])
+    assert.equal(xsT.kind, "Array")
+    assert.equal(deref(result, xsT.elem).kind, "Number")
+  })
+
+  test("typecheck - Indexable commits to Map with string key evidence", fn(assert) {
+    let result = parseAndTypecheck("{
+      fn f(xs, k) {
+        xs[k]
+        xs[\"a\"] = 1
+        xs[k]
+      }
+      f
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let ft = deref(result, getExprType(result, 0))
+    assert.equal(ft.kind, "Function")
+    let xsT = deref(result, ft.params[0])
+    assert.equal(xsT.kind, "Map")
+    assert.equal(deref(result, xsT.key).kind, "String")
+    assert.equal(deref(result, xsT.elem).kind, "Number")
+  })
+
+  test("typecheck - Indexable commits to Map when key becomes String", fn(assert) {
+    let result = parseAndTypecheck("{
+      fn f(xs, k) {
+        xs[k]
+        k = \"a\"
+        xs[k]
+      }
+      f
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let ft = deref(result, getExprType(result, 0))
+    assert.equal(ft.kind, "Function")
+    let xsT = deref(result, ft.params[0])
+    assert.equal(xsT.kind, "Map")
+    assert.equal(deref(result, xsT.key).kind, "String")
   })
 }
 

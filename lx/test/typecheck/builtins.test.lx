@@ -83,11 +83,11 @@ fn register(test) {
   })
 
   test("typecheck - range works for array/number/string", fn(assert) {
-    let result = parseAndTypecheck("{\n" +
-      "  range([1, 2])[0]\n" +
-      "  range(3)[0]\n" +
-      "  range(\"ab\")[0]\n" +
-      "}\n")
+    let result = parseAndTypecheck("{
+      range([1, 2])[0]
+      range(3)[0]
+      range(\"ab\")[0]
+    }")
     assert.truthy(result.success)
     if !result.success { return }
     assert.equal(deref(result, getExprType(result, 0)).kind, "Number")
@@ -117,14 +117,14 @@ fn register(test) {
   })
 
   test("typecheck - range refines after later evidence", fn(assert) {
-    let result = parseAndTypecheck("{\n" +
-      "  fn f(p) {\n" +
-      "    let k = range(p)[0]\n" +
-      "    p[\"a\"] = 1\n" +
-      "    k\n" +
-      "  }\n" +
-      "  f(.{})\n" +
-      "}\n")
+    let result = parseAndTypecheck("{
+      fn f(p) {
+        let k = range(p)[0]
+        p[\"a\"] = 1
+        k
+      }
+      f(.{})
+    }")
     assert.truthy(result.success)
     if !result.success { return }
     assert.equal(deref(result, getExprType(result, 1)).kind, "String")
@@ -162,27 +162,27 @@ fn register(test) {
     // Regression test: if keys(p) is treated as "solved" while p is still unknown,
     // it will freeze the result to Array[Any] and lose the ability to refine once
     // p becomes a Map via index assignment.
-    let result = parseAndTypecheck("{\n" +
-      "  fn f(p) {\n" +
-      "    let k = keys(p)[0]\n" +
-      "    p[\"a\"] = 1\n" +
-      "    k\n" +
-      "  }\n" +
-      "  f(.{})\n" +
-      "}\n")
+    let result = parseAndTypecheck("{
+      fn f(p) {
+        let k = keys(p)[0]
+        p[\"a\"] = 1
+        k
+      }
+      f(.{})
+    }")
     assert.truthy(result.success)
     if !result.success { return }
     assert.equal(deref(result, getExprType(result, 1)).kind, "String")
   })
 
   test("typecheck - globals.lx prelude builtins", fn(assert) {
-    let result = parseAndTypecheck("{\n" +
-      "  map([1, 2], fn(x, i, arr) { x + i })\n" +
-      "  fold([1, 2], 0, fn(acc, x, i, abort) { acc + x + i })\n" +
-      "  _2(fn(a, b) { a + b })(1, 2)\n" +
-      "  sort([3, 1, 2], fn(a, b) { a < b })\n" +
-      "  startsWith(\"abc\", \"a\")\n" +
-      "}\n")
+    let result = parseAndTypecheck("{
+      map([1, 2], fn(x, i, arr) { x + i })
+      fold([1, 2], 0, fn(acc, x, i, abort) { acc + x + i })
+      _2(fn(a, b) { a + b })(1, 2)
+      sort([3, 1, 2], fn(a, b) { a < b })
+      startsWith(\"abc\", \"a\")
+    }")
     assert.truthy(result.success)
     if !result.success { return }
 
@@ -201,12 +201,12 @@ fn register(test) {
   })
 
   test("typecheck - map preserves element types per use-site", fn(assert) {
-    let result = parseAndTypecheck("{\n" +
-      "  let n = map([1, 2, 3], fn(x) { x })[0]\n" +
-      "  let s = map([\"a\", \"b\"], fn(x) { x })[0]\n" +
-      "  n\n" +
-      "  s\n" +
-      "}\n")
+    let result = parseAndTypecheck("{
+      let n = map([1, 2, 3], fn(x) { x })[0]
+      let s = map([\"a\", \"b\"], fn(x) { x })[0]
+      n
+      s
+    }")
     assert.truthy(result.success)
     if !result.success { return }
     assert.equal(deref(result, getExprType(result, 0)).kind, "Number")

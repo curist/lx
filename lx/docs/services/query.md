@@ -66,6 +66,7 @@ fn queryInit(ast, resolveResult, typecheckResult, opts) -> {
 
 fn queryHover(ctx, filename, line, col) -> HoverResult
 fn queryGotoDefinition(ctx, filename, line, col) -> GotoResult
+fn queryDiagnostics(resultOrCompileResult) -> [Diagnostic]
 
 // opts
 .{
@@ -87,6 +88,25 @@ type QueryCtx = .{
 
   // optional acceleration:
   fileNodeIds,   // { [filename]: [nodeId...] }
+
+  // optional runtime warnings:
+  warnings,      // QueryWarnings
+}
+
+// Optional runtime warnings (set by query utilities).
+// Example: missing node ids after merging.
+type QueryWarnings = [.{ kind, message, count?, sampleIds? }]
+
+type Diagnostic = .{
+  message: string,
+  severity: string,
+  phase?: "parse" | "lower" | "resolve" | "typecheck",
+  filename?: string,
+  line?: int,
+  col?: int,
+  endLine?: int,
+  endCol?: int,
+  nodeId?: int,
 }
 ```
 
@@ -159,11 +179,12 @@ fn nodeAtPos(ctx, filename, line, col) {
 
 ### Behavior
 
-* Select node at position.
+* Select node at position (ties may return `candidates`).
 * Build hover payload with `type: formatTypeWithBindings(ctx, types[node.id])` (or `"Unknown"`) and, for identifiers, attach symbol info: resolution kind, name, and declaration span/type when available.
   * `formatTypeWithBindings` follows `typeVarBindings` to display the bound type where possible; unbound vars show as `Unbound T<n>` even when nested inside functions/records.
   * When hovering a record literal key (String node), the hover type is taken from the corresponding field value instead of the String key literal.
 * `query.compile()` returns a merged context across all compiled modules with globally remapped node ids.
+* For Dot properties, hover may include `contents.property` with definition metadata when resolvable.
 * If node is Identifier, optionally include `resolvedNames[node.id]` in `details` for debugging.
 
 ```lx
@@ -187,6 +208,7 @@ fn queryHover(ctx, filename, line, col) {
     range: rangeOf(n),
     contents: contents,
     details: details,
+    candidates?: [.{ range, nodeType, nodeId }],
   }
 }
 ```
@@ -198,11 +220,17 @@ fn queryHover(ctx, filename, line, col) {
 
 ---
 
+## Diagnostics
+
+`queryDiagnostics` normalizes parse/lower/resolve/typecheck errors into a single list of diagnostics. It accepts either the object returned by `query.compile()` or a raw driver compile result. Location fields are filled when a node span can be resolved.
+
+---
+
 ## Goto Definition
 
 ### High-level behavior
 
-* Only triggers on Identifier nodes.
+* Only triggers on Identifier nodes (Dot properties are handled when resolvable).
 * Uses `resolvedNames[id]`.
 * If `kind == "builtin"`: return “no definition” (builtins are external/untracked).
 * Otherwise, use `declaredAt` and look up the node in `ctx.nodes`.
@@ -263,6 +291,7 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     success: true,
     kind: "goto",
     target: rangeOf(targetNode),
+    candidates?: [.{ range, nodeType, nodeId }],
   }
 }
 ```

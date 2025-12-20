@@ -152,6 +152,58 @@ fn nodeAtPos(ctx, filename, line, col) {
   best
 }
 
+fn nodeAtPosWithTies(ctx, filename, line, col) {
+  if !ctx or !ctx.nodes {
+    return .{ node: nil, ties: [] }
+  }
+
+  let ids = nil
+  if ctx.fileNodeIds and type(ctx.fileNodeIds) == "map" and ctx.fileNodeIds[filename] {
+    ids = ctx.fileNodeIds[filename]
+  } else {
+    ids = keys(ctx.nodes)
+  }
+
+  let best = nil
+  let bestScore = nil
+  let candidates = []
+
+  each(ids, fn(id) {
+    let n = ctx.nodes[id]
+    if !n or n.filename != filename {
+      return
+    }
+    if !contains(n, line, col) {
+      return
+    }
+
+    let s = spanScore(n)
+    if !best or s < bestScore {
+      best = n
+      bestScore = s
+      candidates = [n]
+      return
+    }
+
+    if s == bestScore {
+      push(candidates, n)
+      if n.id > best.id {
+        best = n
+      }
+    }
+  })
+
+  let ties = []
+  for let i = 0; i < len(candidates); i = i + 1 {
+    let cand = candidates[i]
+    if best and cand.id != best.id {
+      push(ties, cand)
+    }
+  }
+
+  .{ node: best, ties: ties }
+}
+
 fn propNameFromNode(n) {
   if !n { return nil }
   if n.type == "Identifier" { return n.name }
@@ -170,20 +222,66 @@ fn lastExprFromAst(ast) {
 }
 
 fn findLetByNameId(ctx, nameId) {
+  if ctx {
+    if !ctx._queryCache { ctx._queryCache = .{} }
+    if !ctx._queryCache.letByNameId { ctx._queryCache.letByNameId = .{} }
+    if !ctx._queryCache.letMiss { ctx._queryCache.letMiss = .{} }
+    let key = str(nameId)
+    if ctx._queryCache.letByNameId[key] {
+      return ctx._queryCache.letByNameId[key]
+    }
+    if ctx._queryCache.letMiss[key] {
+      return nil
+    }
+  }
+
   let ids = keys(ctx.nodes)
   for let i = 0; i < len(ids); i = i + 1 {
     let n = ctx.nodes[ids[i]]
     if n and n.type == "Let" and n.name and n.name.id == nameId {
+      if ctx {
+        ctx._queryCache.letByNameId[str(nameId)] = n
+      }
       return n
     }
+  }
+  if ctx {
+    ctx._queryCache.letMiss[str(nameId)] = true
   }
   nil
 }
 
-fn findDotByPropertyNode(ctx, propNode) {
+fn propNodeCacheKey(propNode) {
   if !propNode {
     return nil
   }
+  join([
+    propNode.filename or "",
+    ":",
+    propNode.line or 0,
+    ":",
+    propNode.col or 0,
+    ":",
+    propNode.endLine or 0,
+    ":",
+    propNode.endCol or 0,
+  ], "")
+}
+
+fn findDotByPropertyNode(ctx, propNode) {
+  if ctx {
+    if !ctx._queryCache { ctx._queryCache = .{} }
+    if !ctx._queryCache.dotByProp { ctx._queryCache.dotByProp = .{} }
+    if !ctx._queryCache.dotMiss { ctx._queryCache.dotMiss = .{} }
+    let key = propNodeCacheKey(propNode)
+    if key and ctx._queryCache.dotByProp[key] {
+      return ctx._queryCache.dotByProp[key]
+    }
+    if key and ctx._queryCache.dotMiss[key] {
+      return nil
+    }
+  }
+
   let ids = keys(ctx.nodes)
   for let i = 0; i < len(ids); i = i + 1 {
     let n = ctx.nodes[ids[i]]
@@ -192,9 +290,17 @@ fn findDotByPropertyNode(ctx, propNode) {
       if p.filename == propNode.filename and
          p.line == propNode.line and p.col == propNode.col and
          p.endLine == propNode.endLine and p.endCol == propNode.endCol {
+        if ctx {
+          let key = propNodeCacheKey(propNode)
+          if key { ctx._queryCache.dotByProp[key] = n }
+        }
         return n
       }
     }
+  }
+  if ctx {
+    let key = propNodeCacheKey(propNode)
+    if key { ctx._queryCache.dotMiss[key] = true }
   }
   nil
 }
@@ -328,6 +434,100 @@ fn resolveExprToRecord(ctx, expr, seen) {
   }
 
   nil
+}
+
+fn posLabel(filename, line, col) {
+  join([filename, ":", line, ":", col], "")
+}
+
+fn candidatesForNodes(nodes) {
+  if !nodes or len(nodes) == 0 {
+    return nil
+  }
+  let out = []
+  for let i = 0; i < len(nodes); i = i + 1 {
+    let n = nodes[i]
+    if n {
+      push(out, .{
+        range: rangeOf(n),
+        nodeType: n.type,
+        nodeId: n.id,
+      })
+    }
+  }
+  out
+}
+
+fn idMapGet(map, id) {
+  if map[id] {
+    return map[id]
+  }
+  let sid = str(id)
+  if map[sid] {
+    return map[sid]
+  }
+  nil
+}
+
+fn validateCtxOnce(ctx) {
+  if !ctx or ctx._validated {
+    return
+  }
+  ctx._validated = true
+  if !ctx.warnings {
+    ctx.warnings = []
+  }
+
+  let missing = []
+
+  if ctx.resolvedNames {
+    let ids = keys(ctx.resolvedNames)
+    for let i = 0; i < len(ids); i = i + 1 {
+      let id = ids[i]
+      if !idMapGet(ctx.nodes, id) {
+        push(missing, id)
+      }
+    }
+  }
+
+  if ctx.types {
+    let ids = keys(ctx.types)
+    for let i = 0; i < len(ids); i = i + 1 {
+      let id = ids[i]
+      if !idMapGet(ctx.nodes, id) {
+        push(missing, id)
+      }
+    }
+  }
+
+  if ctx.fileNodeIds {
+    let files = keys(ctx.fileNodeIds)
+    for let i = 0; i < len(files); i = i + 1 {
+      let ids = ctx.fileNodeIds[files[i]]
+      if ids {
+        for let j = 0; j < len(ids); j = j + 1 {
+          let id = ids[j]
+          if !idMapGet(ctx.nodes, id) {
+            push(missing, id)
+          }
+        }
+      }
+    }
+  }
+
+  if len(missing) > 0 {
+    let sample = []
+    let limit = len(missing) < 5 and len(missing) or 5
+    for let i = 0; i < limit; i = i + 1 {
+      push(sample, missing[i])
+    }
+    push(ctx.warnings, .{
+      kind: "missing-nodes",
+      message: "Query ctx missing node ids",
+      count: len(missing),
+      sampleIds: sample,
+    })
+  }
 }
 
 // ========================================
@@ -632,7 +832,9 @@ fn queryInit(ast, resolveResult, typecheckResult, opts) {
 }
 
 fn queryHover(ctx, filename, line, col) {
-  let n = nodeAtPos(ctx, filename, line, col)
+  validateCtxOnce(ctx)
+  let sel = nodeAtPosWithTies(ctx, filename, line, col)
+  let n = sel.node
   if n and n.type == "String" {
     let dotNode = findDotByPropertyNode(ctx, n)
     if dotNode {
@@ -644,12 +846,31 @@ fn queryHover(ctx, filename, line, col) {
   if n and n.type == "Let" and n.name and contains(n.name, line, col) {
     n = n.name
   }
+  // If cursor is on a named function's identifier, prefer the name node.
+  if n and n.type == "Function" and n.name and contains(n.name, line, col) {
+    n = n.name
+  }
   if !n {
-    return .{ success: false, kind: "hover", message: "No node at position" }
+    return .{ success: false, kind: "hover", message: "No node at position: " + posLabel(filename, line, col) }
   }
 
   let ty = ctx.types[n.id]
   let contents = buildHoverContents(ctx, n, ty)
+  if n.type == "Dot" {
+    let propName = propNameFromNode(n.property)
+    if propName {
+      let record = resolveExprToRecord(ctx, n.object, .{})
+      if record {
+        let field = findRecordField(record, propName)
+        if field and field.key {
+          contents.property = .{
+            name: propName,
+            definedAt: rangeOf(field.key),
+          }
+        }
+      }
+    }
+  }
 
   let details = .{ nodeType: n.type, nodeId: n.id }
 
@@ -660,19 +881,24 @@ fn queryHover(ctx, filename, line, col) {
     }
   }
 
+  let candidates = candidatesForNodes(sel.ties)
+
   .{
     success: true,
     kind: "hover",
     range: rangeOf(n),
     contents: contents,
     details: details,
+    candidates: candidates,
   }
 }
 
 fn queryGotoDefinition(ctx, filename, line, col) {
-  let n = nodeAtPos(ctx, filename, line, col)
+  validateCtxOnce(ctx)
+  let sel = nodeAtPosWithTies(ctx, filename, line, col)
+  let n = sel.node
   if !n {
-    return .{ success: false, kind: "goto", message: "No node at position" }
+    return .{ success: false, kind: "goto", message: "No node at position: " + posLabel(filename, line, col) }
   }
 
   if n.type == "String" {
@@ -687,6 +913,7 @@ fn queryGotoDefinition(ctx, filename, line, col) {
             success: true,
             kind: "goto",
             target: rangeOf(field.key),
+            candidates: candidatesForNodes(sel.ties),
           }
         }
       }
@@ -704,6 +931,7 @@ fn queryGotoDefinition(ctx, filename, line, col) {
             success: true,
             kind: "goto",
             target: rangeOf(field.key),
+            candidates: candidatesForNodes(sel.ties),
           }
         }
       }
@@ -711,7 +939,7 @@ fn queryGotoDefinition(ctx, filename, line, col) {
   }
 
   if n.type != "Identifier" {
-    return .{ success: false, kind: "goto", message: "Not an identifier" }
+    return .{ success: false, kind: "goto", message: "Not an identifier at " + posLabel(filename, line, col) }
   }
 
   let r = ctx.resolvedNames[n.id]
@@ -737,7 +965,113 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     success: true,
     kind: "goto",
     target: rangeOf(targetNode),
+    candidates: candidatesForNodes(sel.ties),
   }
+}
+
+fn buildNodeIndexFromAst(ast) {
+  let nodes = .{}
+  if ast {
+    collectAllNodes(ast, nodes)
+  }
+  nodes
+}
+
+fn parseParseError(err) {
+  if !err {
+    return nil
+  }
+
+  let parts = split(err, "] ")
+  let header = parts[0] or ""
+  let msg = (len(parts) > 1 and parts[1]) or err
+
+  let headerParts = split(header, ":L")
+  if len(headerParts) < 2 {
+    return .{ message: msg, severity: "error" }
+  }
+
+  let fileParts = split(headerParts[0], "[")
+  let filename = fileParts[len(fileParts) - 1]
+  let lcParts = split(headerParts[1], ":C")
+  let line = (len(lcParts) > 0 and tonumber(lcParts[0])) or 0
+  let col = (len(lcParts) > 1 and tonumber(lcParts[1])) or 0
+
+  .{
+    message: msg,
+    severity: "error",
+    filename: filename,
+    line: line,
+    col: col,
+  }
+}
+
+fn diagFromNodeId(nodes, nodeId, err, phase) {
+  let n = nodes and nodeId and nodes[nodeId]
+  let diag = .{
+    message: err.message or err,
+    severity: err.severity or "error",
+    phase: phase,
+  }
+  if n {
+    diag.filename = n.filename
+    diag.line = n.line
+    diag.col = n.col
+    diag.endLine = n.endLine
+    diag.endCol = n.endCol
+    diag.nodeId = nodeId
+  }
+  diag
+}
+
+// Normalize compiler errors into a diagnostics list.
+// Accepts a query.compile result or raw driver compile result.
+fn queryDiagnostics(result) {
+  let compileResult = result and result.compileResult or result
+  let ctx = result and result.ctx or nil
+  let diags = []
+  if !compileResult {
+    return diags
+  }
+
+  if compileResult.parseErrors {
+    for let i = 0; i < len(compileResult.parseErrors); i = i + 1 {
+      let d = parseParseError(compileResult.parseErrors[i])
+      if d { push(diags, d) }
+    }
+  }
+
+  if compileResult.lowerErrors {
+    let nodes = buildNodeIndexFromAst(compileResult.lowerResult and compileResult.lowerResult.ast)
+    for let i = 0; i < len(compileResult.lowerErrors); i = i + 1 {
+      let err = compileResult.lowerErrors[i]
+      let nodeId = err.nodeId
+      push(diags, diagFromNodeId(nodes, nodeId, err, "lower"))
+    }
+  }
+
+  if compileResult.resolveResult and !compileResult.resolveResult.success {
+    let nodes = compileResult.resolveResult.nodes
+    for let i = 0; i < len(compileResult.resolveResult.errors); i = i + 1 {
+      let err = compileResult.resolveResult.errors[i]
+      let nodeId = err.nodeId
+      push(diags, diagFromNodeId(nodes, nodeId, err, "resolve"))
+    }
+  }
+
+  if compileResult.typecheckResult and !compileResult.typecheckResult.success {
+    let nodes = (compileResult.resolveResult and compileResult.resolveResult.nodes) or (ctx and ctx.nodes)
+    if !nodes {
+      nodes = buildNodeIndexFromAst(compileResult.lowerResult and compileResult.lowerResult.ast)
+    }
+    for let i = 0; i < len(compileResult.typecheckResult.errors); i = i + 1 {
+      let err = compileResult.typecheckResult.errors[i]
+      let nodeId = err.nodeId
+      push(diags, diagFromNodeId(nodes, nodeId, err, "typecheck"))
+    }
+  }
+
+  diags
 }
 
 // ========================================
@@ -770,17 +1104,6 @@ fn keyLess(a, b) {
     return a < b
   }
   stringLess(str(a), str(b))
-}
-
-fn idMapGet(map, id) {
-  if map[id] {
-    return map[id]
-  }
-  let sid = str(id)
-  if map[sid] {
-    return map[sid]
-  }
-  nil
 }
 
 // Remap type vars and node ids for merged query context.
@@ -1039,4 +1362,5 @@ fn compile(filepath) {
   queryInit: queryInit,
   queryHover: queryHover,
   queryGotoDefinition: queryGotoDefinition,
+  queryDiagnostics: queryDiagnostics,
 }

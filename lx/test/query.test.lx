@@ -186,6 +186,7 @@ test("query - hover on empty position returns no node", fn(assert) {
 
   assert.equal(hoverResult.success, false, "Hover should fail")
   assert.equal(hoverResult.kind, "hover", "Should be hover result")
+  assert.equal(hoverResult.message, "No node at position: test.lx:100:100", "Hover should include location")
 })
 
 test("query - goto on non-identifier fails gracefully", fn(assert) {
@@ -197,6 +198,7 @@ test("query - goto on non-identifier fails gracefully", fn(assert) {
 
   assert.equal(gotoResult.success, false, "Goto should fail on non-identifier")
   assert.equal(gotoResult.kind, "goto", "Should be goto result")
+  assert.equal(gotoResult.message, "Not an identifier at test.lx:1:0", "Goto should include location")
 })
 
 // ========================================
@@ -343,6 +345,9 @@ test("query - hover dot property shows function type", fn(assert) {
   let hoverGreet = query.queryHover(result.ctx, "test/fixtures/query/use.lx", 6, 6)
   assert.truthy(hoverGreet.success, "Hover should resolve dot property")
   assert.equal(hoverGreet.contents.type, "fn() -> String", "Should show function type")
+  assert.truthy(hoverGreet.contents.property, "Hover should include property definition")
+  assert.equal(hoverGreet.contents.property.definedAt.filename, "test/fixtures/query/module.lx", "Definition should point to module")
+  assert.equal(hoverGreet.contents.property.definedAt.line, 4, "Definition should point to greet key")
 })
 
 test("query - goto dot property resolves enum-like record field", fn(assert) {
@@ -365,6 +370,81 @@ test("query - goto dot property resolves alias from imported module", fn(assert)
   assert.truthy(gotoConst.success, "Goto should resolve OP.CONSTANT")
   assert.equal(gotoConst.target.filename, "test/fixtures/query/alias-module.lx", "Goto should land in module file")
   assert.equal(gotoConst.target.line, 3, "Goto should land on CONSTANT key")
+})
+
+test("query - diagnostics parse error includes location", fn(assert) {
+  let result = query.compile("test/fixtures/query/diag-parse.lx")
+  let diags = query.queryDiagnostics(result)
+  assert.truthy(len(diags) > 0, "Should report parse diagnostics")
+  assert.equal(diags[0].filename, "test/fixtures/query/diag-parse.lx", "Diagnostic filename should match")
+  assert.truthy(diags[0].line > 0, "Diagnostic line should be positive")
+  assert.truthy(diags[0].message, "Diagnostic should include message")
+  assert.truthy(len(split(diags[0].message, "Expect")) > 1, "Parse message should include expected token")
+})
+
+test("query - diagnostics resolve error includes node location", fn(assert) {
+  let result = query.compile("test/fixtures/query/diag-resolve.lx")
+  let diags = query.queryDiagnostics(result)
+  assert.truthy(len(diags) > 0, "Should report resolve diagnostics")
+  assert.equal(diags[0].phase, "resolve", "Diagnostic phase should be resolve")
+  assert.equal(diags[0].filename, "test/fixtures/query/diag-resolve.lx", "Diagnostic filename should match")
+  assert.equal(diags[0].line, 1, "Diagnostic line should match")
+  assert.truthy(diags[0].message, "Diagnostic should include message")
+  assert.truthy(len(split(diags[0].message, "undeclared")) > 1, "Resolve message should include undeclared")
+})
+
+test("query - diagnostics typecheck error includes node location", fn(assert) {
+  let result = query.compile("test/fixtures/query/diag-typecheck.lx")
+  let diags = query.queryDiagnostics(result)
+  assert.truthy(len(diags) > 0, "Should report typecheck diagnostics")
+  assert.equal(diags[0].phase, "typecheck", "Diagnostic phase should be typecheck")
+  assert.equal(diags[0].filename, "test/fixtures/query/diag-typecheck.lx", "Diagnostic filename should match")
+  assert.equal(diags[0].line, 1, "Diagnostic line should match")
+  assert.truthy(diags[0].message, "Diagnostic should include message")
+  assert.truthy(len(split(diags[0].message, "len()")) > 1, "Typecheck message should mention len()")
+})
+
+test("query - hover reports candidates on ambiguous span", fn(assert) {
+  let nodeA = .{ id: 1, type: "Identifier", filename: "test.lx", line: 1, col: 0, endLine: 1, endCol: 1, name: "a" }
+  let nodeB = .{ id: 2, type: "Number", filename: "test.lx", line: 1, col: 0, endLine: 1, endCol: 1, value: 1 }
+
+  let ctx = .{
+    nodes: .{ [1]: nodeA, [2]: nodeB },
+    resolvedNames: .{},
+    types: .{ [1]: .{ kind: "Number" }, [2]: .{ kind: "Number" } },
+    typeVarBindings: .{},
+    fileNodeIds: .{ ["test.lx"]: [1, 2] },
+  }
+
+  let hoverResult = query.queryHover(ctx, "test.lx", 1, 0)
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.truthy(hoverResult.candidates, "Hover should include candidates")
+  assert.equal(len(hoverResult.candidates), 1, "Should include one alternate candidate")
+  assert.equal(hoverResult.candidates[0].nodeId, 1, "Candidate should include the non-selected node")
+})
+
+test("query - hover on function name returns function type", fn(assert) {
+  let result = compileAndQuery("fn foo() { 1 }\nfoo()", "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  let hoverResult = query.queryHover(result.ctx, "test.lx", 1, 3)
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.equal(hoverResult.contents.type, "fn() -> Number", "Should show function type")
+})
+
+test("query - ctx validation warns once on missing nodes", fn(assert) {
+  let result = query.compile("test/fixtures/query/use.lx")
+  assert.truthy(result.success, "Should compile query fixture")
+
+  result.ctx.resolvedNames["999999"] = .{ kind: "local", declaredAt: 999999 }
+  let hoverResult = query.queryHover(result.ctx, "test/fixtures/query/use.lx", 6, 6)
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.truthy(result.ctx.warnings and len(result.ctx.warnings) > 0, "Should warn on missing nodes")
+
+  let count = len(result.ctx.warnings)
+  let hoverResult2 = query.queryHover(result.ctx, "test/fixtures/query/use.lx", 6, 6)
+  assert.truthy(hoverResult2.success, "Hover should still succeed")
+  assert.equal(len(result.ctx.warnings), count, "Warnings should not repeat")
 })
 
 suite.run()

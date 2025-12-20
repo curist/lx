@@ -3,8 +3,6 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
-// fn test(name, body) { println(name, "disabled") }
-
 let Driver = import "src/driver.lx"
 let query = import "services/query.lx"
 
@@ -285,6 +283,88 @@ test("query - query works across diamond import structure", fn(assert) {
   assert.truthy(gotoResult.success, "Goto should work across imports")
   assert.equal(gotoResult.target.filename, "test/fixtures/imports/test-diamond.lx", "Should point to declaration")
   assert.equal(gotoResult.target.line, 4, "Should point to line 4 (let app = ...)")
+
+  // Hover inside an imported module file should work via query context
+  let appHover = query.queryHover(result.ctx, "test/fixtures/imports/app.lx", 6, 2)
+  assert.truthy(appHover.success, "Hover should work in imported module file")
+  assert.truthy(appHover.contents, "Imported module hover should include contents")
+
+  // Goto inside an imported module file should resolve locally
+  let appGoto = query.queryGotoDefinition(result.ctx, "test/fixtures/imports/app.lx", 7, 4)
+  assert.truthy(appGoto.success, "Goto should work in imported module file")
+  assert.equal(appGoto.target.filename, "test/fixtures/imports/app.lx", "Goto should stay in module file")
+  assert.equal(appGoto.target.line, 3, "Goto should land on logger binding")
+})
+
+test("query - hover in imported module shows constant types", fn(assert) {
+  let result = query.compile("test/fixtures/imports/test-diamond.lx")
+  assert.truthy(result.success, "Should compile with diamond imports")
+
+  let versionHover = query.queryHover(result.ctx, "test/fixtures/imports/constants.lx", 3, 2)
+  assert.truthy(versionHover.success, "Hover should work in constants module")
+  assert.equal(versionHover.contents.type, "String", "VERSION should be String")
+
+  let sizeHover = query.queryHover(result.ctx, "test/fixtures/imports/constants.lx", 4, 2)
+  assert.truthy(sizeHover.success, "Hover should work in constants module")
+  assert.equal(sizeHover.contents.type, "Number", "MAX_SIZE should be Number")
+
+  let debugHover = query.queryHover(result.ctx, "test/fixtures/imports/constants.lx", 5, 2)
+  assert.truthy(debugHover.success, "Hover should work in constants module")
+  assert.equal(debugHover.contents.type, "Bool", "DEBUG should be Bool")
+})
+
+test("query - goto in imported module resolves local import binding", fn(assert) {
+  let result = query.compile("test/fixtures/imports/test-diamond.lx")
+  assert.truthy(result.success, "Should compile with diamond imports")
+
+  // Goto on 'constants' usage inside config module (line 5, col 11)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test/fixtures/imports/config.lx", 5, 11)
+  assert.truthy(gotoResult.success, "Goto should work inside imported module")
+  assert.equal(gotoResult.target.filename, "test/fixtures/imports/config.lx", "Goto should stay in config module")
+  assert.equal(gotoResult.target.line, 2, "Goto should land on constants binding")
+})
+
+test("query - goto dot property resolves record field in imported module", fn(assert) {
+  let result = query.compile("test/fixtures/query/use.lx")
+  assert.truthy(result.success, "Should compile query fixture")
+
+  // Goto on 'value' property (line 5, col 6)
+  let gotoValue = query.queryGotoDefinition(result.ctx, "test/fixtures/query/use.lx", 5, 6)
+  assert.truthy(gotoValue.success, "Goto should resolve dot property")
+  assert.equal(gotoValue.target.filename, "test/fixtures/query/module.lx", "Goto should land in module file")
+  assert.equal(gotoValue.target.line, 3, "Goto should land on value key")
+})
+
+test("query - hover dot property shows function type", fn(assert) {
+  let result = query.compile("test/fixtures/query/use.lx")
+  assert.truthy(result.success, "Should compile query fixture")
+
+  // Hover on 'greet' property (line 6, col 6)
+  let hoverGreet = query.queryHover(result.ctx, "test/fixtures/query/use.lx", 6, 6)
+  assert.truthy(hoverGreet.success, "Hover should resolve dot property")
+  assert.equal(hoverGreet.contents.type, "fn() -> String", "Should show function type")
+})
+
+test("query - goto dot property resolves enum-like record field", fn(assert) {
+  let result = query.compile("test/fixtures/query/enum-use.lx")
+  assert.truthy(result.success, "Should compile enum fixture")
+
+  // Goto on 'CONSTANT' in OP.CONSTANT (line 3, col 6)
+  let gotoConst = query.queryGotoDefinition(result.ctx, "test/fixtures/query/enum-use.lx", 3, 6)
+  assert.truthy(gotoConst.success, "Goto should resolve OP.CONSTANT")
+  assert.equal(gotoConst.target.filename, "test/fixtures/query/enum-module.lx", "Goto should land in module file")
+  assert.equal(gotoConst.target.line, 2, "Goto should land on CONSTANT key")
+})
+
+test("query - goto dot property resolves alias from imported module", fn(assert) {
+  let result = query.compile("test/fixtures/query/alias-use.lx")
+  assert.truthy(result.success, "Should compile alias fixture")
+
+  // Goto on 'CONSTANT' in OP.CONSTANT (line 4, col 3)
+  let gotoConst = query.queryGotoDefinition(result.ctx, "test/fixtures/query/alias-use.lx", 4, 3)
+  assert.truthy(gotoConst.success, "Goto should resolve OP.CONSTANT")
+  assert.equal(gotoConst.target.filename, "test/fixtures/query/alias-module.lx", "Goto should land in module file")
+  assert.equal(gotoConst.target.line, 3, "Goto should land on CONSTANT key")
 })
 
 suite.run()

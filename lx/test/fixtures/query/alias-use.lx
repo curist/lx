@@ -1,0 +1,4 @@
+let types = import "test/fixtures/query/alias-module.lx"
+let OP = types.OP
+
+OP.CONSTANT

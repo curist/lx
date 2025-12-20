@@ -1,0 +1,6 @@
+let OP = .{
+  CONSTANT: 1,
+  NIL: 2,
+}
+
+OP

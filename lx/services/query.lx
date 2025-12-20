@@ -152,6 +152,184 @@ fn nodeAtPos(ctx, filename, line, col) {
   best
 }
 
+fn propNameFromNode(n) {
+  if !n { return nil }
+  if n.type == "Identifier" { return n.name }
+  if n.type == "String" { return n.value }
+  nil
+}
+
+fn lastExprFromAst(ast) {
+  if ast and ast.expressions and len(ast.expressions) > 0 {
+    return ast.expressions[len(ast.expressions) - 1]
+  }
+  if ast and ast.body and len(ast.body) > 0 {
+    return ast.body[len(ast.body) - 1]
+  }
+  nil
+}
+
+fn findLetByNameId(ctx, nameId) {
+  let ids = keys(ctx.nodes)
+  for let i = 0; i < len(ids); i = i + 1 {
+    let n = ctx.nodes[ids[i]]
+    if n and n.type == "Let" and n.name and n.name.id == nameId {
+      return n
+    }
+  }
+  nil
+}
+
+fn findDotByPropertyNode(ctx, propNode) {
+  if !propNode {
+    return nil
+  }
+  let ids = keys(ctx.nodes)
+  for let i = 0; i < len(ids); i = i + 1 {
+    let n = ctx.nodes[ids[i]]
+    if n and n.type == "Dot" and n.property {
+      let p = n.property
+      if p.filename == propNode.filename and
+         p.line == propNode.line and p.col == propNode.col and
+         p.endLine == propNode.endLine and p.endCol == propNode.endCol {
+        return n
+      }
+    }
+  }
+  nil
+}
+
+fn findRecordField(recordNode, fieldName) {
+  if !recordNode or recordNode.type != "Hashmap" or !recordNode.pairs {
+    return nil
+  }
+  for let i = 0; i < len(recordNode.pairs); i = i + 1 {
+    let pair = recordNode.pairs[i]
+    let key = pair and pair.key
+    if key and key.type == "String" and key.value == fieldName {
+      return .{ key: key, value: pair.value }
+    }
+  }
+  nil
+}
+
+fn findDotAssignmentValue(ctx, filename, objectName, propName) {
+  let ids = ctx.fileNodeIds and ctx.fileNodeIds[filename] or keys(ctx.nodes)
+  for let i = 0; i < len(ids); i = i + 1 {
+    let n = ctx.nodes[ids[i]]
+    if n and n.type == "Assignment" and n.target and n.target.type == "Dot" {
+      let target = n.target
+      let obj = target.object
+      let prop = target.property
+      if obj and obj.type == "Identifier" and obj.name == objectName {
+        let tProp = propNameFromNode(prop)
+        if tProp == propName {
+          return n.value
+        }
+      }
+    }
+  }
+  nil
+}
+
+fn resolveExprToRecord(ctx, expr, seen) {
+  if !expr {
+    return nil
+  }
+  if expr.id and seen and seen[expr.id] {
+    return nil
+  }
+  if expr.id and seen {
+    seen[expr.id] = true
+  }
+
+  if expr.type == "Hashmap" {
+    return expr
+  }
+
+  if expr.type == "Block" {
+    let last = lastExprFromAst(expr)
+    return resolveExprToRecord(ctx, last, seen)
+  }
+
+  if expr.type == "Grouping" {
+    return resolveExprToRecord(ctx, expr.expression, seen)
+  }
+
+  if expr.type == "Identifier" {
+    let r = ctx.resolvedNames[expr.id]
+    if !r or !r.declaredAt {
+      return nil
+    }
+    let decl = ctx.nodes[r.declaredAt]
+    if !decl {
+      return nil
+    }
+    let letNode = findLetByNameId(ctx, decl.id)
+    if !letNode or !letNode.init {
+      return nil
+    }
+    if letNode.init.type == "Import" and letNode.init.path {
+      let modulePath = letNode.init.path.value
+      let moduleAst = ctx.moduleAsts and ctx.moduleAsts[modulePath]
+      let moduleReturn = moduleAst and lastExprFromAst(moduleAst)
+      if moduleReturn {
+        return resolveExprToRecord(ctx, moduleReturn, seen)
+      }
+    }
+    return resolveExprToRecord(ctx, letNode.init, seen)
+  }
+
+  if expr.type == "Dot" {
+    let propName = propNameFromNode(expr.property)
+    if !propName {
+      return nil
+    }
+
+    // If base is an imported module, look for assignments in the module file.
+    if expr.object and expr.object.type == "Identifier" {
+      let r = ctx.resolvedNames[expr.object.id]
+      if r and r.declaredAt {
+        let decl = ctx.nodes[r.declaredAt]
+        let letNode = decl and findLetByNameId(ctx, decl.id)
+        if letNode and letNode.init and letNode.init.type == "Import" and letNode.init.path {
+          let modulePath = letNode.init.path.value
+          let moduleAst = ctx.moduleAsts and ctx.moduleAsts[modulePath]
+          let moduleReturn = moduleAst and lastExprFromAst(moduleAst)
+          if moduleReturn and moduleReturn.type == "Identifier" {
+            let rootName = moduleReturn.name
+            let assignedValue = findDotAssignmentValue(ctx, modulePath, rootName, propName)
+            if assignedValue {
+              return resolveExprToRecord(ctx, assignedValue, seen)
+            }
+          }
+          // Fall back to module return record literal, if any.
+          if moduleReturn {
+            let moduleRecord = resolveExprToRecord(ctx, moduleReturn, seen)
+            if moduleRecord {
+              let field = findRecordField(moduleRecord, propName)
+              if field and field.value {
+                return resolveExprToRecord(ctx, field.value, seen)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    let baseRecord = resolveExprToRecord(ctx, expr.object, seen)
+    if !baseRecord {
+      return nil
+    }
+    let field = findRecordField(baseRecord, propName)
+    if field and field.value {
+      return resolveExprToRecord(ctx, field.value, seen)
+    }
+  }
+
+  nil
+}
+
 // ========================================
 // Goto Definition Normalization
 // ========================================
@@ -455,6 +633,12 @@ fn queryInit(ast, resolveResult, typecheckResult, opts) {
 
 fn queryHover(ctx, filename, line, col) {
   let n = nodeAtPos(ctx, filename, line, col)
+  if n and n.type == "String" {
+    let dotNode = findDotByPropertyNode(ctx, n)
+    if dotNode {
+      n = dotNode
+    }
+  }
   // If we landed on a Let node but the cursor is within the name span,
   // prefer the identifier (some resolvers omit name nodes from the index).
   if n and n.type == "Let" and n.name and contains(n.name, line, col) {
@@ -489,6 +673,41 @@ fn queryGotoDefinition(ctx, filename, line, col) {
   let n = nodeAtPos(ctx, filename, line, col)
   if !n {
     return .{ success: false, kind: "goto", message: "No node at position" }
+  }
+
+  if n.type == "String" {
+    let dotNode = findDotByPropertyNode(ctx, n)
+    let propName = propNameFromNode(n)
+    if dotNode and propName {
+      let record = resolveExprToRecord(ctx, dotNode.object, .{})
+      if record {
+        let field = findRecordField(record, propName)
+        if field and field.key {
+          return .{
+            success: true,
+            kind: "goto",
+            target: rangeOf(field.key),
+          }
+        }
+      }
+    }
+  }
+
+  if n.type == "Dot" {
+    let propName = propNameFromNode(n.property)
+    if propName {
+      let record = resolveExprToRecord(ctx, n.object, .{})
+      if record {
+        let field = findRecordField(record, propName)
+        if field and field.key {
+          return .{
+            success: true,
+            kind: "goto",
+            target: rangeOf(field.key),
+          }
+        }
+      }
+    }
   }
 
   if n.type != "Identifier" {
@@ -526,6 +745,122 @@ fn queryGotoDefinition(ctx, filename, line, col) {
 // ========================================
 
 let Driver = import "src/driver.lx"
+
+fn stringLess(a, b) {
+  if !a and b { return true }
+  if a and !b { return false }
+  if !a and !b { return false }
+
+  let alen = len(a)
+  let blen = len(b)
+  let n = alen < blen and alen or blen
+  for let i = 0; i < n; i = i + 1 {
+    let ca = ord(a[i])
+    let cb = ord(b[i])
+    if ca < cb { return true }
+    if ca > cb { return false }
+  }
+  alen < blen
+}
+
+fn keyLess(a, b) {
+  let ta = type(a)
+  let tb = type(b)
+  if ta == "Number" and tb == "Number" {
+    return a < b
+  }
+  stringLess(str(a), str(b))
+}
+
+fn idMapGet(map, id) {
+  if map[id] {
+    return map[id]
+  }
+  let sid = str(id)
+  if map[sid] {
+    return map[sid]
+  }
+  nil
+}
+
+// Remap type vars and node ids for merged query context.
+fn remapType(t, typeVarMap, nodeIdMap, nextTypeVarIdRef) {
+  if !t {
+    return nil
+  }
+
+  let out = .{}
+  let ks = keys(t)
+  for let i = 0; i < len(ks); i = i + 1 {
+    let k = ks[i]
+    out[k] = t[k]
+  }
+
+  if t.kind == "TypeVar" {
+    let oldId = t.id
+    let newId = idMapGet(typeVarMap, oldId)
+    if !newId {
+      newId = nextTypeVarIdRef.value
+      nextTypeVarIdRef.value = newId + 1
+      typeVarMap[oldId] = newId
+      typeVarMap[str(oldId)] = newId
+    }
+    out.id = newId
+    return out
+  }
+
+  if t.kind == "Function" {
+    if t.params {
+      let params = []
+      for let i = 0; i < len(t.params); i = i + 1 {
+        push(params, remapType(t.params[i], typeVarMap, nodeIdMap, nextTypeVarIdRef))
+      }
+      out.params = params
+    }
+    out.return = remapType(t.return, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    return out
+  }
+
+  if t.kind == "Array" {
+    out.elem = remapType(t.elem, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    return out
+  }
+
+  if t.kind == "Map" {
+    out.key = remapType(t.key, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    out.elem = remapType(t.elem, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    return out
+  }
+
+  if t.kind == "Record" {
+    let fields = .{}
+    let fieldKeys = t.fields and keys(t.fields) or []
+    for let i = 0; i < len(fieldKeys); i = i + 1 {
+      let k = fieldKeys[i]
+      fields[k] = remapType(t.fields[k], typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    }
+    out.fields = fields
+    return out
+  }
+
+  if t.kind == "Option" {
+    out.value = remapType(t.value, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    return out
+  }
+
+  if t.kind == "Indexable" {
+    out.elem = remapType(t.elem, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    out.key = remapType(t.key, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    let oldNodeId = t.nodeId
+    let newNodeId = idMapGet(nodeIdMap, oldNodeId)
+    if newNodeId {
+      out.nodeId = newNodeId
+    }
+    return out
+  }
+
+  out
+}
 
 // Compile file and create query context in one step
 // This is the recommended API for IDE/LSP tooling
@@ -566,27 +901,128 @@ fn compile(filepath) {
     }
   }
 
-  // Initialize query context
-  let initResult = queryInit(
-    result.lowerResult.ast,
-    result.resolveResult,
-    result.typecheckResult,
-    .{ buildIndex: true }
-  )
+  // Merge all compiled modules into a single query context with global IDs.
+  let merged = .{
+    ast: result.lowerResult and result.lowerResult.ast,
+    nodes: .{},
+    resolvedNames: .{},
+    types: .{},
+    typeVarBindings: .{},
+    fileNodeIds: .{},
+    moduleAsts: .{},
+  }
 
-  if !initResult.success {
-    return .{
-      success: false,
-      phase: "query",
-      errors: ["Failed to initialize query context"],
-      compileResult: result,
+  let nextNodeId = 1
+  let nextTypeVarId = .{ value: 1 }
+  let cacheKeys = keys(driver.cache)
+  cacheKeys->sort(keyLess)
+  for let i = 0; i < len(cacheKeys); i = i + 1 {
+    let k = cacheKeys[i]
+    let mod = driver.cache[k]
+    if mod and mod.status == "done" and mod.resolveResult and mod.typecheckResult {
+      if mod.lowerResult and mod.lowerResult.ast and mod.path {
+        merged.moduleAsts[mod.path] = mod.lowerResult.ast
+      }
+      let moduleNodes = .{}
+      let baseNodeKeys = keys(mod.resolveResult.nodes)
+      for let j = 0; j < len(baseNodeKeys); j = j + 1 {
+        let id = baseNodeKeys[j]
+        moduleNodes[id] = mod.resolveResult.nodes[id]
+      }
+      if mod.lowerResult and mod.lowerResult.ast {
+        collectAllNodes(mod.lowerResult.ast, moduleNodes)
+      }
+
+      let nodeIdMap = .{}
+      let nodeKeys = keys(moduleNodes)
+      nodeKeys->sort(keyLess)
+
+      for let j = 0; j < len(nodeKeys); j = j + 1 {
+        let oldId = nodeKeys[j]
+        nodeIdMap[oldId] = nextNodeId
+        nodeIdMap[str(oldId)] = nextNodeId
+        nextNodeId = nextNodeId + 1
+      }
+
+      // Remap and merge nodes
+      for let j = 0; j < len(nodeKeys); j = j + 1 {
+        let oldId = nodeKeys[j]
+        let node = moduleNodes[oldId]
+        if node {
+          let newId = idMapGet(nodeIdMap, oldId)
+          node.id = newId
+          merged.nodes[newId] = node
+        }
+      }
+
+      // Remap and merge resolved names
+      let resKeys = keys(mod.resolveResult.resolvedNames)
+      resKeys->sort(keyLess)
+      for let j = 0; j < len(resKeys); j = j + 1 {
+        let oldId = resKeys[j]
+        let r = mod.resolveResult.resolvedNames[oldId]
+        if r {
+          let newId = idMapGet(nodeIdMap, oldId)
+          let r2 = .{}
+          let rks = keys(r)
+          for let k = 0; k < len(rks); k = k + 1 {
+            let rk = rks[k]
+            r2[rk] = r[rk]
+          }
+          if r2.declaredAt {
+            let newDecl = idMapGet(nodeIdMap, r2.declaredAt)
+            if newDecl {
+              r2.declaredAt = newDecl
+            }
+          }
+          merged.resolvedNames[newId] = r2
+        }
+      }
+
+      // Remap and merge types + bindings
+      let typeVarMap = .{}
+      let typeKeys = keys(mod.typecheckResult.types)
+      typeKeys->sort(keyLess)
+      for let j = 0; j < len(typeKeys); j = j + 1 {
+        let oldId = typeKeys[j]
+        let newId = idMapGet(nodeIdMap, oldId)
+        if newId {
+          merged.types[newId] = remapType(
+            mod.typecheckResult.types[oldId],
+            typeVarMap,
+            nodeIdMap,
+            nextTypeVarId
+          )
+        }
+      }
+
+      let bindKeys = keys(mod.typecheckResult.typeVarBindings)
+      bindKeys->sort(keyLess)
+      for let j = 0; j < len(bindKeys); j = j + 1 {
+        let oldTid = bindKeys[j]
+        let newTid = idMapGet(typeVarMap, oldTid)
+        if !newTid {
+          newTid = nextTypeVarId.value
+          nextTypeVarId.value = newTid + 1
+          typeVarMap[oldTid] = newTid
+          typeVarMap[str(oldTid)] = newTid
+        }
+        merged.typeVarBindings[newTid] = remapType(
+          mod.typecheckResult.typeVarBindings[oldTid],
+          typeVarMap,
+          nodeIdMap,
+          nextTypeVarId
+        )
+      }
     }
   }
+
+  buildFileIndex(merged)
 
   // Return query context ready to use
   .{
     success: true,
-    ctx: initResult.ctx,
+    ctx: merged,
     compileResult: result,
   }
 }

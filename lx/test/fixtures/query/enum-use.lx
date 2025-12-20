@@ -1,0 +1,3 @@
+let OP = import "test/fixtures/query/enum-module.lx"
+
+OP.CONSTANT

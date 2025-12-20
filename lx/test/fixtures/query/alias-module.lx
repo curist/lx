@@ -1,0 +1,7 @@
+let types = .{
+  OP: .{
+    CONSTANT: 1,
+  },
+}
+
+types

@@ -1,0 +1,8 @@
+let root = .{
+  inner: .{
+    value: 42,
+    greet: fn() { "hi" },
+  },
+}
+
+root

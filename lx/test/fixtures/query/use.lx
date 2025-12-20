@@ -1,0 +1,6 @@
+let m = import "test/fixtures/query/module.lx"
+
+let inner = m.inner
+
+inner.value
+inner.greet()

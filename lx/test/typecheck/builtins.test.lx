@@ -56,6 +56,60 @@ fn register(test) {
     assert.equal(deref(result, bt.elem).kind, "Number")
   })
 
+  test("typecheck - len works for array and string", fn(assert) {
+    let result = parseAndTypecheck("{ len([1, 2])\nlen(\"ab\") }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+  })
+
+  test("typecheck - len rejects map", fn(assert) {
+    let result = parseAndTypecheck("len(.{})")
+    assert.truthy(!result.success)
+    // This is a typecheck error even though runtime checks are dynamic.
+    assert.truthy(helpers.hasError(result, "len() requires array or string"))
+  })
+
+  test("typecheck - len behavior preserved through alias", fn(assert) {
+    let ok = parseAndTypecheck("{ let f = len\nf([1, 2]) }")
+    assert.truthy(ok.success)
+    if !ok.success { return }
+    assert.equal(deref(ok, getExprType(ok, 1)).kind, "Number")
+
+    let bad = parseAndTypecheck("{ let f = len\nf(.{}) }")
+    assert.truthy(!bad.success)
+    assert.truthy(helpers.hasError(bad, "len() requires array or string"))
+  })
+
+  test("typecheck - keys works for Map and preserves key type", fn(assert) {
+    let result = parseAndTypecheck("{ let m = .{}\nm[\"a\"] = 1\nkeys(m)[0] }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 2)).kind, "String")
+  })
+
+  test("typecheck - keys works for Record", fn(assert) {
+    let result = parseAndTypecheck("keys(.{ a: 1 })[0]")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "String")
+  })
+
+  test("typecheck - keys on mixed-key Record yields Any keys", fn(assert) {
+    let result = parseAndTypecheck("keys(.{ a: 1, [2]: 3 })[0]")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "Any")
+  })
+
+  test("typecheck - keys behavior preserved through alias", fn(assert) {
+    let ok = parseAndTypecheck("{ let k = keys\nk(.{ a: 1 })[0] }")
+    assert.truthy(ok.success)
+    if !ok.success { return }
+    assert.equal(deref(ok, getExprType(ok, 1)).kind, "String")
+  })
+
   test("typecheck - globals.lx prelude builtins", fn(assert) {
     let result = parseAndTypecheck("{\n" +
       "  map([1, 2], fn(x, i, arr) { x + i })\n" +
@@ -79,6 +133,19 @@ fn register(test) {
     assert.equal(deref(result, st.elem).kind, "Number")
 
     assert.equal(deref(result, getExprType(result, 4)).kind, "Bool")
+  })
+
+  test("typecheck - map preserves element types per use-site", fn(assert) {
+    let result = parseAndTypecheck("{\n" +
+      "  let n = map([1, 2, 3], fn(x) { x })[0]\n" +
+      "  let s = map([\"a\", \"b\"], fn(x) { x })[0]\n" +
+      "  n\n" +
+      "  s\n" +
+      "}\n")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 1)).kind, "String")
   })
 }
 

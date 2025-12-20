@@ -1,13 +1,20 @@
-// Typechecker - monomorphic type inference with constraints.
+// Typechecker - best-effort monomorphic type inference with constraints.
 //
 // Pipeline assumptions:
 // - Runs on lowered AST (no Arrow nodes; root is an implicit Block).
 // - Uses resolver side tables to map Identifier → declaration (`declaredAt`).
-// - Unresolved names are `builtin` and type as Any at this phase.
+// - Resolver marks unknown/global names as `builtin`; we type known builtins via
+//   `builtinTypeByName` and otherwise fall back to Any.
 //
 // Features in this implementation:
-// - Structural types: Array[T], Map[K,V], Record{...}, Option[T], Function(...)
-// - Constraint solving + a single function body refinement pass.
+// - Structural types: Array[T], Map[K,V], Record{...} (closed), Option[T], Function(...)
+// - Constraints: Eq, HasField (read/write), Call, Index/IndexSet, KeyLike.
+// - Indexable: internal shape-var for `x[i]` / `x[i]=v` that defaults to Map.
+// - Calls: extra args allowed; too-few args is an error.
+// - Option: `if` without else yields Option[T] (except `Option[Nil]` normalizes to Nil);
+//   Option.field reads yield Option[field], writes are rejected.
+// - Solver: worklist runs to a fixed point on binding changes (`checker.changed`),
+//   then refines function bodies once and finalizes remaining constraints to Any.
 
 let helper = import "src/typecheck-helper.lx"
 
@@ -86,9 +93,12 @@ fn builtinTypeByName(checker, name) {
   if name == "type" { return typeFunction([typeAny()], typeString()) }
 
   // Collection helpers (best-effort; some are polymorphic in runtime).
-  if name == "len" { return typeFunction([typeAny()], typeNumber()) }
+  // Some builtins have special typing behavior at call sites (handled in the
+  // Call constraint solver) but still need a function-ish type so they can be
+  // referenced/aliased.
+  if name == "len" { return .{ kind: "Function", params: [typeAny()], return: typeNumber(), builtinName: "len" } }
   if name == "range" { return typeFunction([typeAny()], typeArray(typeAny())) }
-  if name == "keys" { return typeFunction([typeAny()], typeArray(typeAny())) }
+  if name == "keys" { return .{ kind: "Function", params: [typeAny()], return: typeArray(typeAny()), builtinName: "keys" } }
   if name == "lines" { return typeFunction([typeString()], typeArray(typeString())) }
 
   // Array ops: typed with fresh vars per use.
@@ -873,6 +883,116 @@ fn trySolveConstraint(checker, c) {
       return true
     }
 
+    // Special builtin call behavior (preserved even when aliased through locals).
+    if t.builtinName == "len" {
+      if !unify(checker, c.out, typeNumber()) {
+        addError(checker, c.nodeId, "len() result mismatch")
+        containEqFailure(checker, deref(checker, c.out), typeNumber())
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+      }
+
+      let args = c.args
+      if len(args) < 1 {
+        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        return true
+      }
+
+      let baseInfo = derefWithRootVar(checker, args[0])
+      let root = baseInfo.root
+      let base = deref(checker, baseInfo.type)
+
+      if base.kind == "Any" { return true }
+      if base.kind == "Array" { return true }
+      if base.kind == "String" { return true }
+
+      // Lenable route: do not guess or default unknown bases. Keep a deferred
+      // check so we can report an error if it becomes known-non-lenable later.
+      if base.kind == "Indexable" {
+        push(checker.lenChecks, .{ base: args[0], nodeId: c.nodeId })
+        return true
+      }
+
+      if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
+        push(checker.lenChecks, .{ base: args[0], nodeId: c.nodeId })
+        return true
+      }
+
+      addError(checker, c.nodeId, "len() requires array or string")
+      if root and root.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
+        bindTypeVar(checker, root.id, typeAny())
+      }
+      return true
+    }
+
+    if t.builtinName == "keys" {
+      let args = c.args
+      if len(args) < 1 {
+        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        return true
+      }
+
+      let baseInfo = derefWithRootVar(checker, args[0])
+      let root = baseInfo.root
+      let base = deref(checker, baseInfo.type)
+
+      if base.kind == "Any" {
+        // Accept keys(Any) and return Array[Any] without constraining the base.
+        if !unify(checker, c.out, typeArray(typeAny())) {
+          addError(checker, c.nodeId, "keys() result mismatch")
+          containEqFailure(checker, deref(checker, c.out), typeArray(typeAny()))
+          if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        }
+        return true
+      }
+
+      if base.kind == "Map" {
+        emitKeyLike(checker, base.key, c.nodeId)
+        // keys(Map[K,V]) -> Array[K]
+        if !unify(checker, c.out, typeArray(base.key)) {
+          addError(checker, c.nodeId, "keys() result mismatch")
+          containEqFailure(checker, deref(checker, c.out), typeArray(base.key))
+          if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        }
+        return true
+      }
+
+      if base.kind == "Record" {
+        // keys(Record{...}) -> Array[String] or Array[Number] or Array[Any] if mixed.
+        let ks = keys(base.fields)
+        let sawString = false
+        let sawNumber = false
+        for let i = 0; i < len(ks); i = i + 1 {
+          let k = ks[i]
+          if type(k) == "string" { sawString = true } else { sawNumber = true }
+        }
+        let kt = (sawString and sawNumber) and typeAny() or (sawString and typeString() or typeNumber())
+        if !unify(checker, c.out, typeArray(kt)) {
+          addError(checker, c.nodeId, "keys() result mismatch")
+          containEqFailure(checker, deref(checker, c.out), typeArray(kt))
+          if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        }
+        return true
+      }
+
+      // Unknown/unresolved base: do not guess; record a deferred check.
+      if base.kind == "Indexable" {
+        // Best-effort return type for tooling.
+        unify(checker, c.out, typeArray(typeAny()))
+        push(checker.keysChecks, .{ base: args[0], nodeId: c.nodeId })
+        return true
+      }
+      if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
+        unify(checker, c.out, typeArray(typeAny()))
+        push(checker.keysChecks, .{ base: args[0], nodeId: c.nodeId })
+        return true
+      }
+
+      addError(checker, c.nodeId, "keys() requires map or record")
+      return true
+    }
+
     let params = t.params
     let args = c.args
 
@@ -885,7 +1005,37 @@ fn trySolveConstraint(checker, c) {
 
     // Constrain only the required args; ignore extras.
     for let i = 0; i < len(params); i = i + 1 {
-      let ok = unify(checker, args[i], params[i])
+      let ok = true
+
+      // Special-case function arguments: passing a shorter-arity function where
+      // a longer callback is expected is safe (extra args ignored), but passing
+      // a longer-arity function where fewer args are provided is unsafe.
+      let argT = deref(checker, args[i])
+      let paramT = deref(checker, params[i])
+      if paramT.kind == "Function" {
+        if argT.kind == "Function" {
+          if len(argT.params) > len(paramT.params) {
+            ok = false
+          } else {
+            for let p = 0; p < len(argT.params); p = p + 1 {
+              if !unify(checker, argT.params[p], paramT.params[p]) {
+                ok = false
+                break
+              }
+            }
+            if ok and !unify(checker, argT.return, paramT.return) { ok = false }
+          }
+        } else if argT.kind == "TypeVar" and !getTypeVarBinding(checker, argT.id) {
+          // If the argument is still unknown, assume it is a function of the
+          // expected callback shape.
+          bindTypeVar(checker, argT.id, paramT)
+        } else {
+          ok = unify(checker, args[i], params[i])
+        }
+      } else {
+        ok = unify(checker, args[i], params[i])
+      }
+
       if !ok {
         let nid = (c.argNodeIds and c.argNodeIds[i]) or c.nodeId
         addError(checker, nid, "Argument mismatch")
@@ -1935,8 +2085,47 @@ fn makeChecker(resolveResult) {
 
     currentReturn: nil,
 
+    lenChecks: [],
+    keysChecks: [],
+
     changed: false,
     solverHitMaxRounds: nil,
+  }
+}
+
+fn finalizeLenChecks(checker) {
+  for let i = 0; i < len(checker.lenChecks); i = i + 1 {
+    let c = checker.lenChecks[i]
+    let baseInfo = derefWithRootVar(checker, c.base)
+    let base = deref(checker, baseInfo.type)
+
+    if base.kind == "Any" { continue }
+    if base.kind == "Array" { continue }
+    if base.kind == "String" { continue }
+    if base.kind == "Indexable" { continue }
+    if base.kind == "TypeVar" and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
+      continue
+    }
+
+    addError(checker, c.nodeId, "len() requires array or string")
+  }
+}
+
+fn finalizeKeysChecks(checker) {
+  for let i = 0; i < len(checker.keysChecks); i = i + 1 {
+    let c = checker.keysChecks[i]
+    let baseInfo = derefWithRootVar(checker, c.base)
+    let base = deref(checker, baseInfo.type)
+
+    if base.kind == "Any" { continue }
+    if base.kind == "Map" { continue }
+    if base.kind == "Record" { continue }
+    if base.kind == "Indexable" { continue }
+    if base.kind == "TypeVar" and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
+      continue
+    }
+
+    addError(checker, c.nodeId, "keys() requires map or record")
   }
 }
 
@@ -1985,6 +2174,8 @@ fn typecheck(ast, resolveResult) {
   solveConstraints(checker)
   finalizeIndexables(checker)
   solveConstraints(checker)
+  finalizeLenChecks(checker)
+  finalizeKeysChecks(checker)
   finalizeConstraints(checker)
 
   let outTypes = .{}

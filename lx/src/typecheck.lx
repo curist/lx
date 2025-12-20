@@ -97,7 +97,7 @@ fn builtinTypeByName(checker, name) {
   // Call constraint solver) but still need a function-ish type so they can be
   // referenced/aliased.
   if name == "len" { return .{ kind: "Function", params: [typeAny()], return: typeNumber(), builtinName: "len" } }
-  if name == "range" { return typeFunction([typeAny()], typeArray(typeAny())) }
+  if name == "range" { return .{ kind: "Function", params: [typeAny()], return: typeArray(typeAny()), builtinName: "range" } }
   if name == "keys" { return .{ kind: "Function", params: [typeAny()], return: typeArray(typeAny()), builtinName: "keys" } }
   if name == "lines" { return typeFunction([typeString()], typeArray(typeString())) }
 
@@ -699,6 +699,305 @@ fn containHasFieldFailure(checker, fieldType) {
   }
 }
 
+fn unifyOrContain(checker, nodeId, msg, t1, t2) {
+  if unify(checker, t1, t2) { return true }
+  addError(checker, nodeId, msg)
+  containEqFailure(checker, deref(checker, t1), deref(checker, t2))
+  false
+}
+
+fn overloadCase(name, matches, apply) {
+  .{ name: name, matches: matches, apply: apply }
+}
+
+fn overloadCasesByName(name) {
+  if name == "len" {
+    return [
+      overloadCase("len:tooFew", fn(checker, c) { len(c.args) < 1 and "match" or "no" }, fn(checker, c) {
+        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        true
+      }),
+
+      overloadCase("len:any", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Any" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
+        true
+      }),
+
+      overloadCase("len:array", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Array" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
+        true
+      }),
+
+      overloadCase("len:string", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "String" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
+        true
+      }),
+
+      // Lenable route: do not guess or default unknown bases. Keep a deferred
+      // check so we can report an error if it becomes known-non-lenable later.
+      overloadCase("len:unresolved", fn(checker, c) {
+        let baseInfo = derefWithRootVar(checker, c.args[0])
+        let root = baseInfo.root
+        let base = deref(checker, baseInfo.type)
+        if base.kind == "Indexable" { return "defer" }
+        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
+        "no"
+      }, fn(checker, c) { true }),
+
+      overloadCase("len:invalid", fn(checker, c) {
+        let baseInfo = derefWithRootVar(checker, c.args[0])
+        let root = baseInfo.root
+        let base = deref(checker, baseInfo.type)
+        if base.kind == "Any" { return "no" }
+        if base.kind == "Array" { return "no" }
+        if base.kind == "String" { return "no" }
+        if base.kind == "Indexable" { return "defer" }
+        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
+        "match"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
+        let baseInfo = derefWithRootVar(checker, c.args[0])
+        let root = baseInfo.root
+        addError(checker, c.nodeId, "len() requires array or string")
+        if root and root.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
+          bindTypeVar(checker, root.id, typeAny())
+        }
+        true
+      }),
+    ]
+  }
+
+  if name == "range" {
+    return [
+      overloadCase("range:tooFew", fn(checker, c) { len(c.args) < 1 and "match" or "no" }, fn(checker, c) {
+        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        true
+      }),
+
+      // range(Array[T]) -> Array[T] (identity)
+      overloadCase("range:array", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Array" and "match" or "no"
+      }, fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, base)
+        true
+      }),
+
+      // range(Number) -> Array[Number]
+      overloadCase("range:number", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Number" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(typeNumber()))
+        true
+      }),
+
+      // range(String) -> Array[String] (split into UTF-8 chars)
+      overloadCase("range:string", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "String" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(typeString()))
+        true
+      }),
+
+      // range(Map[K,V]) -> Array[K]
+      overloadCase("range:map", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Map" and "match" or "no"
+      }, fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        emitKeyLike(checker, base.key, c.nodeId)
+        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(base.key))
+        true
+      }),
+
+      // range(Record{...}) -> Array[String|Number|Any] (keys)
+      overloadCase("range:record", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Record" and "match" or "no"
+      }, fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        let fs = keys(base.fields)
+        let sawString = false
+        let sawNumber = false
+        for let i = 0; i < len(fs); i = i + 1 {
+          let k = fs[i]
+          if type(k) == "string" { sawString = true } else { sawNumber = true }
+        }
+        let kt = (sawString and sawNumber) and typeAny() or (sawString and typeString() or typeNumber())
+        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(kt))
+        true
+      }),
+
+      // Unknown/unresolved base: defer and allow later refinement.
+      overloadCase("range:unresolved", fn(checker, c) {
+        let baseInfo = derefWithRootVar(checker, c.args[0])
+        let root = baseInfo.root
+        let base = deref(checker, baseInfo.type)
+        if base.kind == "Indexable" { return "defer" }
+        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
+        "no"
+      }, fn(checker, c) { true }),
+
+      // For all other *known* types, runtime returns an empty Array. Do not
+      // apply this fallback while the base is still unknown, otherwise we lose
+      // the ability to refine the result once evidence appears.
+      overloadCase("range:other", fn(checker, c) {
+        let baseInfo = derefWithRootVar(checker, c.args[0])
+        let root = baseInfo.root
+        let base = deref(checker, baseInfo.type)
+        if base.kind == "Indexable" { return "defer" }
+        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
+        "match"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(typeAny()))
+        true
+      }),
+    ]
+  }
+
+  if name == "keys" {
+    return [
+      overloadCase("keys:tooFew", fn(checker, c) { len(c.args) < 1 and "match" or "no" }, fn(checker, c) {
+        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        true
+      }),
+
+      overloadCase("keys:any", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Any" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(typeAny()))
+        true
+      }),
+
+      overloadCase("keys:map", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Map" and "match" or "no"
+      }, fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        emitKeyLike(checker, base.key, c.nodeId)
+        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(base.key))
+        true
+      }),
+
+      overloadCase("keys:record", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Record" and "match" or "no"
+      }, fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        let fs = keys(base.fields)
+        let sawString = false
+        let sawNumber = false
+        for let i = 0; i < len(fs); i = i + 1 {
+          let k = fs[i]
+          if type(k) == "string" { sawString = true } else { sawNumber = true }
+        }
+        let kt = (sawString and sawNumber) and typeAny() or (sawString and typeString() or typeNumber())
+        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(kt))
+        true
+      }),
+
+      // Unknown/unresolved base: do not guess; record a deferred check.
+      overloadCase("keys:unresolved", fn(checker, c) {
+        let baseInfo = derefWithRootVar(checker, c.args[0])
+        let root = baseInfo.root
+        let base = deref(checker, baseInfo.type)
+        if base.kind == "Indexable" { return "defer" }
+        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
+        "no"
+      }, fn(checker, c) { true }),
+
+      overloadCase("keys:invalid", fn(checker, c) {
+        let baseInfo = derefWithRootVar(checker, c.args[0])
+        let root = baseInfo.root
+        let base = deref(checker, baseInfo.type)
+        if base.kind == "Any" { return "no" }
+        if base.kind == "Map" { return "no" }
+        if base.kind == "Record" { return "no" }
+        if base.kind == "Indexable" { return "defer" }
+        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
+        "match"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(typeAny()))
+        addError(checker, c.nodeId, "keys() requires map or record")
+        true
+      }),
+    ]
+  }
+
+  nil
+}
+
+fn applyOverloadDefer(checker, c) {
+  if c.builtinName == "len" {
+    unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
+    return
+  }
+  if c.builtinName == "keys" {
+    if !c.deferKeyVar {
+      c.deferKeyVar = freshTypeVar(checker)
+    }
+    unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(c.deferKeyVar))
+    return
+  }
+  if c.builtinName == "range" {
+    if !c.deferElemVar {
+      c.deferElemVar = freshTypeVar(checker)
+    }
+    unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(c.deferElemVar))
+    return
+  }
+}
+
+fn trySolveOverloadCall(checker, c) {
+  if !c.cases {
+    c.cases = overloadCasesByName(c.builtinName)
+  }
+  if !c.cases {
+    addError(checker, c.nodeId, "Internal error: missing overload cases for " + str(c.builtinName))
+    if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+    return true
+  }
+
+  let sawDefer = false
+
+  for let i = 0; i < len(c.cases); i = i + 1 {
+    let cs = c.cases[i]
+    let status = cs.matches(checker, c)
+    if status == "match" {
+      return cs.apply(checker, c)
+    } else if status == "defer" {
+      sawDefer = true
+    }
+  }
+
+  if sawDefer {
+    // Best-effort: allow a monotone approximation for tooling while keeping
+    // the overload constraint pending so it can refine later.
+    applyOverloadDefer(checker, c)
+    return false
+  }
+
+  addError(checker, c.nodeId, "No overload matches " + str(c.builtinName))
+  if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+  true
+}
+
 fn trySolveConstraint(checker, c) {
   if c.kind == "Eq" {
     if !unify(checker, c.t1, c.t2) {
@@ -706,6 +1005,10 @@ fn trySolveConstraint(checker, c) {
       containEqFailure(checker, deref(checker, c.t1), deref(checker, c.t2))
     }
     return true
+  }
+
+  if c.kind == "OverloadCall" {
+    return trySolveOverloadCall(checker, c)
   }
 
   if c.kind == "HasField" {
@@ -883,114 +1186,13 @@ fn trySolveConstraint(checker, c) {
       return true
     }
 
-    // Special builtin call behavior (preserved even when aliased through locals).
-    if t.builtinName == "len" {
-      if !unify(checker, c.out, typeNumber()) {
-        addError(checker, c.nodeId, "len() result mismatch")
-        containEqFailure(checker, deref(checker, c.out), typeNumber())
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      }
-
-      let args = c.args
-      if len(args) < 1 {
-        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        return true
-      }
-
-      let baseInfo = derefWithRootVar(checker, args[0])
-      let root = baseInfo.root
-      let base = deref(checker, baseInfo.type)
-
-      if base.kind == "Any" { return true }
-      if base.kind == "Array" { return true }
-      if base.kind == "String" { return true }
-
-      // Lenable route: do not guess or default unknown bases. Keep a deferred
-      // check so we can report an error if it becomes known-non-lenable later.
-      if base.kind == "Indexable" {
-        push(checker.lenChecks, .{ base: args[0], nodeId: c.nodeId })
-        return true
-      }
-
-      if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
-        push(checker.lenChecks, .{ base: args[0], nodeId: c.nodeId })
-        return true
-      }
-
-      addError(checker, c.nodeId, "len() requires array or string")
-      if root and root.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
-        bindTypeVar(checker, root.id, typeAny())
-      }
-      return true
-    }
-
-    if t.builtinName == "keys" {
-      let args = c.args
-      if len(args) < 1 {
-        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        return true
-      }
-
-      let baseInfo = derefWithRootVar(checker, args[0])
-      let root = baseInfo.root
-      let base = deref(checker, baseInfo.type)
-
-      if base.kind == "Any" {
-        // Accept keys(Any) and return Array[Any] without constraining the base.
-        if !unify(checker, c.out, typeArray(typeAny())) {
-          addError(checker, c.nodeId, "keys() result mismatch")
-          containEqFailure(checker, deref(checker, c.out), typeArray(typeAny()))
-          if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        }
-        return true
-      }
-
-      if base.kind == "Map" {
-        emitKeyLike(checker, base.key, c.nodeId)
-        // keys(Map[K,V]) -> Array[K]
-        if !unify(checker, c.out, typeArray(base.key)) {
-          addError(checker, c.nodeId, "keys() result mismatch")
-          containEqFailure(checker, deref(checker, c.out), typeArray(base.key))
-          if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        }
-        return true
-      }
-
-      if base.kind == "Record" {
-        // keys(Record{...}) -> Array[String] or Array[Number] or Array[Any] if mixed.
-        let ks = keys(base.fields)
-        let sawString = false
-        let sawNumber = false
-        for let i = 0; i < len(ks); i = i + 1 {
-          let k = ks[i]
-          if type(k) == "string" { sawString = true } else { sawNumber = true }
-        }
-        let kt = (sawString and sawNumber) and typeAny() or (sawString and typeString() or typeNumber())
-        if !unify(checker, c.out, typeArray(kt)) {
-          addError(checker, c.nodeId, "keys() result mismatch")
-          containEqFailure(checker, deref(checker, c.out), typeArray(kt))
-          if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        }
-        return true
-      }
-
-      // Unknown/unresolved base: do not guess; record a deferred check.
-      if base.kind == "Indexable" {
-        // Best-effort return type for tooling.
-        unify(checker, c.out, typeArray(typeAny()))
-        push(checker.keysChecks, .{ base: args[0], nodeId: c.nodeId })
-        return true
-      }
-      if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
-        unify(checker, c.out, typeArray(typeAny()))
-        push(checker.keysChecks, .{ base: args[0], nodeId: c.nodeId })
-        return true
-      }
-
-      addError(checker, c.nodeId, "keys() requires map or record")
-      return true
+    // Overload-builtins (preserved even when aliased through locals).
+    let overloadCases = t.builtinName and overloadCasesByName(t.builtinName)
+    if overloadCases {
+      c.kind = "OverloadCall"
+      c.builtinName = t.builtinName
+      c.cases = overloadCases
+      return trySolveOverloadCall(checker, c)
     }
 
     let params = t.params
@@ -2085,47 +2287,8 @@ fn makeChecker(resolveResult) {
 
     currentReturn: nil,
 
-    lenChecks: [],
-    keysChecks: [],
-
     changed: false,
     solverHitMaxRounds: nil,
-  }
-}
-
-fn finalizeLenChecks(checker) {
-  for let i = 0; i < len(checker.lenChecks); i = i + 1 {
-    let c = checker.lenChecks[i]
-    let baseInfo = derefWithRootVar(checker, c.base)
-    let base = deref(checker, baseInfo.type)
-
-    if base.kind == "Any" { continue }
-    if base.kind == "Array" { continue }
-    if base.kind == "String" { continue }
-    if base.kind == "Indexable" { continue }
-    if base.kind == "TypeVar" and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
-      continue
-    }
-
-    addError(checker, c.nodeId, "len() requires array or string")
-  }
-}
-
-fn finalizeKeysChecks(checker) {
-  for let i = 0; i < len(checker.keysChecks); i = i + 1 {
-    let c = checker.keysChecks[i]
-    let baseInfo = derefWithRootVar(checker, c.base)
-    let base = deref(checker, baseInfo.type)
-
-    if base.kind == "Any" { continue }
-    if base.kind == "Map" { continue }
-    if base.kind == "Record" { continue }
-    if base.kind == "Indexable" { continue }
-    if base.kind == "TypeVar" and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
-      continue
-    }
-
-    addError(checker, c.nodeId, "keys() requires map or record")
   }
 }
 
@@ -2174,8 +2337,6 @@ fn typecheck(ast, resolveResult) {
   solveConstraints(checker)
   finalizeIndexables(checker)
   solveConstraints(checker)
-  finalizeLenChecks(checker)
-  finalizeKeysChecks(checker)
   finalizeConstraints(checker)
 
   let outTypes = .{}

@@ -82,6 +82,54 @@ fn register(test) {
     assert.truthy(helpers.hasError(bad, "len() requires array or string"))
   })
 
+  test("typecheck - range works for array/number/string", fn(assert) {
+    let result = parseAndTypecheck("{\n" +
+      "  range([1, 2])[0]\n" +
+      "  range(3)[0]\n" +
+      "  range(\"ab\")[0]\n" +
+      "}\n")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 2)).kind, "String")
+  })
+
+  test("typecheck - range works for Map and preserves key type", fn(assert) {
+    let result = parseAndTypecheck("{ let m = .{}\nm[\"a\"] = 1\nrange(m)[0] }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 2)).kind, "String")
+  })
+
+  test("typecheck - range works for Record", fn(assert) {
+    let result = parseAndTypecheck("range(.{ a: 1 })[0]")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "String")
+  })
+
+  test("typecheck - range behavior preserved through alias", fn(assert) {
+    let ok = parseAndTypecheck("{ let r = range\nr(3)[0] }")
+    assert.truthy(ok.success)
+    if !ok.success { return }
+    assert.equal(deref(ok, getExprType(ok, 1)).kind, "Number")
+  })
+
+  test("typecheck - range refines after later evidence", fn(assert) {
+    let result = parseAndTypecheck("{\n" +
+      "  fn f(p) {\n" +
+      "    let k = range(p)[0]\n" +
+      "    p[\"a\"] = 1\n" +
+      "    k\n" +
+      "  }\n" +
+      "  f(.{})\n" +
+      "}\n")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 1)).kind, "String")
+  })
+
   test("typecheck - keys works for Map and preserves key type", fn(assert) {
     let result = parseAndTypecheck("{ let m = .{}\nm[\"a\"] = 1\nkeys(m)[0] }")
     assert.truthy(result.success)
@@ -108,6 +156,23 @@ fn register(test) {
     assert.truthy(ok.success)
     if !ok.success { return }
     assert.equal(deref(ok, getExprType(ok, 1)).kind, "String")
+  })
+
+  test("typecheck - keys refines after later evidence", fn(assert) {
+    // Regression test: if keys(p) is treated as "solved" while p is still unknown,
+    // it will freeze the result to Array[Any] and lose the ability to refine once
+    // p becomes a Map via index assignment.
+    let result = parseAndTypecheck("{\n" +
+      "  fn f(p) {\n" +
+      "    let k = keys(p)[0]\n" +
+      "    p[\"a\"] = 1\n" +
+      "    k\n" +
+      "  }\n" +
+      "  f(.{})\n" +
+      "}\n")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 1)).kind, "String")
   })
 
   test("typecheck - globals.lx prelude builtins", fn(assert) {

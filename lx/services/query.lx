@@ -9,6 +9,43 @@
 // Helpers
 // ========================================
 
+fn stringLess(a, b) {
+  if !a and b { return true }
+  if a and !b { return false }
+  if !a and !b { return false }
+
+  let alen = len(a)
+  let blen = len(b)
+  let n = alen < blen and alen or blen
+  for let i = 0; i < n; i = i + 1 {
+    let ca = ord(a[i])
+    let cb = ord(b[i])
+    if ca < cb { return true }
+    if ca > cb { return false }
+  }
+  alen < blen
+}
+
+fn keyLess(a, b) {
+  let ta = type(a)
+  let tb = type(b)
+  if ta == "Number" and tb == "Number" {
+    return a < b
+  }
+  stringLess(str(a), str(b))
+}
+
+fn idMapGet(map, id) {
+  if map[id] {
+    return map[id]
+  }
+  let sid = str(id)
+  if map[sid] {
+    return map[sid]
+  }
+  nil
+}
+
 fn rangeOf(n) {
   .{
     filename: n.filename,
@@ -26,7 +63,9 @@ fn rangeOf(n) {
 fn collectAllNodes(node, nodes) {
   if type(node) != "map" { return }
 
-  nodes[node.id] = node
+  if !nodes[node.id] {
+    nodes[node.id] = node
+  }
 
   // Traverse common node fields
   if node.name { collectAllNodes(node.name, nodes) }
@@ -458,17 +497,6 @@ fn candidatesForNodes(nodes) {
   out
 }
 
-fn idMapGet(map, id) {
-  if map[id] {
-    return map[id]
-  }
-  let sid = str(id)
-  if map[sid] {
-    return map[sid]
-  }
-  nil
-}
-
 fn validateCtxOnce(ctx) {
   if !ctx or ctx._validated {
     return
@@ -607,6 +635,7 @@ fn formatType(ty) {
   if kind == "Record" {
     let fields = ty.fields
     let fieldNames = keys(fields)
+    fieldNames->sort(keyLess)
     let fieldCount = len(fieldNames)
 
     // Small records: expand inline
@@ -685,6 +714,7 @@ fn formatTypeWithBindings(ctx, ty) {
     if kind == "Record" {
       let fields = t.fields
       let fieldNames = keys(fields)
+      fieldNames->sort(keyLess)
       let fieldCount = len(fieldNames)
 
       if fieldCount <= 6 {
@@ -1080,32 +1110,6 @@ fn queryDiagnostics(result) {
 
 let Driver = import "src/driver.lx"
 
-fn stringLess(a, b) {
-  if !a and b { return true }
-  if a and !b { return false }
-  if !a and !b { return false }
-
-  let alen = len(a)
-  let blen = len(b)
-  let n = alen < blen and alen or blen
-  for let i = 0; i < n; i = i + 1 {
-    let ca = ord(a[i])
-    let cb = ord(b[i])
-    if ca < cb { return true }
-    if ca > cb { return false }
-  }
-  alen < blen
-}
-
-fn keyLess(a, b) {
-  let ta = type(a)
-  let tb = type(b)
-  if ta == "Number" and tb == "Number" {
-    return a < b
-  }
-  stringLess(str(a), str(b))
-}
-
 // Remap type vars and node ids for merged query context.
 fn remapType(t, typeVarMap, nodeIdMap, nextTypeVarIdRef) {
   if !t {
@@ -1185,6 +1189,79 @@ fn remapType(t, typeVarMap, nodeIdMap, nextTypeVarIdRef) {
   out
 }
 
+fn cloneNodeShallow(node) {
+  let out = .{}
+  let ks = keys(node)
+  for let i = 0; i < len(ks); i = i + 1 {
+    let k = ks[i]
+    out[k] = node[k]
+  }
+  out
+}
+
+fn remapChild(child, cloneByOldId) {
+  if type(child) != "map" {
+    return child
+  }
+  if child.id and cloneByOldId[child.id] {
+    return cloneByOldId[child.id]
+  }
+  child
+}
+
+fn remapArray(arr, cloneByOldId) {
+  if !arr or type(arr) != "array" { return arr }
+  let out = []
+  for let i = 0; i < len(arr); i = i + 1 {
+    push(out, remapChild(arr[i], cloneByOldId))
+  }
+  out
+}
+
+fn remapPairs(pairs, cloneByOldId) {
+  if !pairs or type(pairs) != "array" { return pairs }
+  let out = []
+  for let i = 0; i < len(pairs); i = i + 1 {
+    let pair = pairs[i]
+    let p2 = .{}
+    let ks = keys(pair)
+    for let j = 0; j < len(ks); j = j + 1 {
+      let k = ks[j]
+      p2[k] = pair[k]
+    }
+    p2.key = remapChild(pair.key, cloneByOldId)
+    p2.value = remapChild(pair.value, cloneByOldId)
+    push(out, p2)
+  }
+  out
+}
+
+fn rewireNode(node, cloneByOldId) {
+  if node.name { node.name = remapChild(node.name, cloneByOldId) }
+  if node.init { node.init = remapChild(node.init, cloneByOldId) }
+  if node.value { node.value = remapChild(node.value, cloneByOldId) }
+  if node.left { node.left = remapChild(node.left, cloneByOldId) }
+  if node.right { node.right = remapChild(node.right, cloneByOldId) }
+  if node.operand { node.operand = remapChild(node.operand, cloneByOldId) }
+  if node.callee { node.callee = remapChild(node.callee, cloneByOldId) }
+  if node.object { node.object = remapChild(node.object, cloneByOldId) }
+  if node.property { node.property = remapChild(node.property, cloneByOldId) }
+  if node.index { node.index = remapChild(node.index, cloneByOldId) }
+  if node.target { node.target = remapChild(node.target, cloneByOldId) }
+  if node.test { node.test = remapChild(node.test, cloneByOldId) }
+  if node.then { node.then = remapChild(node.then, cloneByOldId) }
+  if node.else { node.else = remapChild(node.else, cloneByOldId) }
+  if node.condition { node.condition = remapChild(node.condition, cloneByOldId) }
+  if node.path { node.path = remapChild(node.path, cloneByOldId) }
+
+  if node.params { node.params = remapArray(node.params, cloneByOldId) }
+  if node.args { node.args = remapArray(node.args, cloneByOldId) }
+  if node.elements { node.elements = remapArray(node.elements, cloneByOldId) }
+  if node.expressions { node.expressions = remapArray(node.expressions, cloneByOldId) }
+  if node.body { node.body = remapArray(node.body, cloneByOldId) }
+  if node.pairs { node.pairs = remapPairs(node.pairs, cloneByOldId) }
+}
+
 // Compile file and create query context in one step
 // This is the recommended API for IDE/LSP tooling
 fn compile(filepath) {
@@ -1226,7 +1303,7 @@ fn compile(filepath) {
 
   // Merge all compiled modules into a single query context with global IDs.
   let merged = .{
-    ast: result.lowerResult and result.lowerResult.ast,
+    ast: nil,
     nodes: .{},
     resolvedNames: .{},
     types: .{},
@@ -1237,15 +1314,13 @@ fn compile(filepath) {
 
   let nextNodeId = 1
   let nextTypeVarId = .{ value: 1 }
+  let entryRootClone = nil
   let cacheKeys = keys(driver.cache)
   cacheKeys->sort(keyLess)
   for let i = 0; i < len(cacheKeys); i = i + 1 {
     let k = cacheKeys[i]
     let mod = driver.cache[k]
     if mod and mod.status == "done" and mod.resolveResult and mod.typecheckResult {
-      if mod.lowerResult and mod.lowerResult.ast and mod.path {
-        merged.moduleAsts[mod.path] = mod.lowerResult.ast
-      }
       let moduleNodes = .{}
       let baseNodeKeys = keys(mod.resolveResult.nodes)
       for let j = 0; j < len(baseNodeKeys); j = j + 1 {
@@ -1267,14 +1342,36 @@ fn compile(filepath) {
         nextNodeId = nextNodeId + 1
       }
 
-      // Remap and merge nodes
+      let cloneByOldId = .{}
       for let j = 0; j < len(nodeKeys); j = j + 1 {
         let oldId = nodeKeys[j]
         let node = moduleNodes[oldId]
         if node {
           let newId = idMapGet(nodeIdMap, oldId)
-          node.id = newId
-          merged.nodes[newId] = node
+          let clone = cloneNodeShallow(node)
+          clone.id = newId
+          cloneByOldId[oldId] = clone
+        }
+      }
+
+      // Rewire and merge cloned nodes
+      for let j = 0; j < len(nodeKeys); j = j + 1 {
+        let oldId = nodeKeys[j]
+        let clone = cloneByOldId[oldId]
+        if clone {
+          rewireNode(clone, cloneByOldId)
+          merged.nodes[clone.id] = clone
+        }
+      }
+
+      if mod.lowerResult and mod.lowerResult.ast and mod.path {
+        let rootId = mod.lowerResult.ast.id
+        let rootClone = cloneByOldId[rootId]
+        if rootClone {
+          merged.moduleAsts[mod.path] = rootClone
+          if mod.path == filepath {
+            entryRootClone = rootClone
+          }
         }
       }
 
@@ -1338,6 +1435,10 @@ fn compile(filepath) {
         )
       }
     }
+  }
+
+  if entryRootClone {
+    merged.ast = entryRootClone
   }
 
   buildFileIndex(merged)

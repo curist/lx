@@ -447,4 +447,20 @@ test("query - ctx validation warns once on missing nodes", fn(assert) {
   assert.equal(len(result.ctx.warnings), count, "Warnings should not repeat")
 })
 
+test("query - compile twice yields stable goto targets", fn(assert) {
+  let result1 = query.compile("test/fixtures/query/enum-use.lx")
+  assert.truthy(result1.success, "First compile should succeed")
+  let goto1 = query.queryGotoDefinition(result1.ctx, "test/fixtures/query/enum-use.lx", 3, 6)
+  assert.truthy(goto1.success, "First goto should succeed")
+
+  let result2 = query.compile("test/fixtures/query/enum-use.lx")
+  assert.truthy(result2.success, "Second compile should succeed")
+  let goto2 = query.queryGotoDefinition(result2.ctx, "test/fixtures/query/enum-use.lx", 3, 6)
+  assert.truthy(goto2.success, "Second goto should succeed")
+
+  assert.equal(goto1.target.filename, goto2.target.filename, "Goto filename should match")
+  assert.equal(goto1.target.line, goto2.target.line, "Goto line should match")
+  assert.equal(goto1.target.col, goto2.target.col, "Goto col should match")
+})
+
 suite.run()

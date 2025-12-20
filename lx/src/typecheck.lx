@@ -1720,48 +1720,85 @@ fn checkIdentifier(checker, node) {
   tv
 }
 
+// Bidirectional type checking: check expression against expected type.
+// This is used for hot paths like calls, returns, and operators to reduce
+// constraint volume by eagerly unifying when we have type expectations.
+fn checkExpr(checker, node, expected, blameNodeId, msg) {
+  let actual = synthExpr(checker, node)
+
+  // Use unify eagerly for bidirectional hot paths (lower latency, fewer constraints).
+  if !unify(checker, actual, expected) {
+    addError(checker, blameNodeId or node.id, msg or "Type mismatch")
+    // Containment: bind unresolved typevars to Any to prevent cascading errors.
+    containEqFailure(checker, deref(checker, actual), deref(checker, expected))
+  }
+
+  checker.types[node.id] = expected
+  expected
+}
+
+// Bidirectional type checking with precomputed actual type.
+// Use this when you've already synthesized the expression to avoid double-synth.
+fn checkExprWithActual(checker, node, actual, expected, blameNodeId, msg) {
+  if !unify(checker, actual, expected) {
+    addError(checker, blameNodeId or node.id, msg or "Type mismatch")
+    containEqFailure(checker, deref(checker, actual), deref(checker, expected))
+  }
+  checker.types[node.id] = expected
+  expected
+}
+
 fn checkBinary(checker, node) {
-  let lt = synthExpr(checker, node.left)
-  let rt = synthExpr(checker, node.right)
   let op = node.operator.lexeme
 
+  // Bidirectional typing: for arithmetic and comparison operators, check operands
   if op == "+" {
+    // Synth first to detect string concatenation
+    let lt = synthExpr(checker, node.left)
+    let rt = synthExpr(checker, node.right)
     let l = deref(checker, lt)
     let r = deref(checker, rt)
 
     // Overloaded: Number + Number -> Number, String + String -> String
     if l.kind == "String" or r.kind == "String" {
-      emitEq(checker, lt, typeString(), node.left.id, "Expected string")
-      emitEq(checker, rt, typeString(), node.right.id, "Expected string")
+      checkExprWithActual(checker, node.left, lt, typeString(), node.left.id, "Expected string")
+      checkExprWithActual(checker, node.right, rt, typeString(), node.right.id, "Expected string")
       let t = typeString()
       checker.types[node.id] = t
       return t
     }
 
     // Default: numeric add (also helps inference for `fn add(a,b){a+b}`).
-    emitEq(checker, lt, typeNumber(), node.left.id, "Expected number")
-    emitEq(checker, rt, typeNumber(), node.right.id, "Expected number")
+    checkExprWithActual(checker, node.left, lt, typeNumber(), node.left.id, "Expected number")
+    checkExprWithActual(checker, node.right, rt, typeNumber(), node.right.id, "Expected number")
     let t = typeNumber()
     checker.types[node.id] = t
     return t
   }
 
   if op == "-" or op == "*" or op == "/" {
-    emitEq(checker, lt, typeNumber(), node.left.id, "Expected number")
-    emitEq(checker, rt, typeNumber(), node.right.id, "Expected number")
+    let lt = synthExpr(checker, node.left)
+    let rt = synthExpr(checker, node.right)
+    checkExprWithActual(checker, node.left, lt, typeNumber(), node.left.id, "Expected number")
+    checkExprWithActual(checker, node.right, rt, typeNumber(), node.right.id, "Expected number")
     let t = typeNumber()
     checker.types[node.id] = t
     return t
   }
 
   if op == "==" or op == "!=" {
+    // For equality, we don't constrain types - any types can be compared
+    synthExpr(checker, node.left)
+    synthExpr(checker, node.right)
     checker.types[node.id] = typeBool()
     return typeBool()
   }
 
   if op == "<" or op == "<=" or op == ">" or op == ">=" {
-    emitEq(checker, lt, typeNumber(), node.left.id, "Expected number")
-    emitEq(checker, rt, typeNumber(), node.right.id, "Expected number")
+    let lt = synthExpr(checker, node.left)
+    let rt = synthExpr(checker, node.right)
+    checkExprWithActual(checker, node.left, lt, typeNumber(), node.left.id, "Expected number")
+    checkExprWithActual(checker, node.right, rt, typeNumber(), node.right.id, "Expected number")
     checker.types[node.id] = typeBool()
     return typeBool()
   }
@@ -1773,16 +1810,85 @@ fn checkBinary(checker, node) {
 }
 
 fn checkCall(checker, node) {
-  let callee = synthExpr(checker, node.callee)
-  let args = []
-  let argNodeIds = []
-  for let i = 0; i < len(node.args); i = i + 1 {
-    push(args, synthExpr(checker, node.args[i]))
-    push(argNodeIds, node.args[i].id)
+  let calleeT = synthExpr(checker, node.callee)
+
+  // Synth args once so types table is populated
+  let argsNodes = node.args or []
+  let argsTs = []
+  for let i = 0; i < len(argsNodes); i = i + 1 {
+    push(argsTs, synthExpr(checker, argsNodes[i]))
   }
 
+  // Bidirectional typing: if callee is known to be a Function, check args immediately.
+  // However, skip this for builtins with special overload handling (they need constraint solver).
+  let calleeD = deref(checker, calleeT)
+  if calleeD.kind == "Function" and !calleeD.builtinName {
+    let params = calleeD.params
+    let required = (calleeD.minArity != nil) and calleeD.minArity or len(params)
+
+    if len(argsNodes) < required {
+      addError(checker, node.id, "Too few arguments: expected at least " + str(required) + ", got " + str(len(argsNodes)))
+      let t = typeAny()
+      checker.types[node.id] = t
+      return t
+    }
+
+    let limit = len(params) < len(argsNodes) and len(params) or len(argsNodes)
+    for let i = 0; i < limit; i = i + 1 {
+      let paramT = params[i]
+      let paramD = deref(checker, paramT)
+
+      // Special-case function arguments: preserve callback arity rule.
+      // Passing shorter-arity function where longer callback expected is safe.
+      if paramD.kind == "Function" {
+        let argT = argsTs[i]
+        let argD = deref(checker, argT)
+        if argD.kind == "Function" {
+          // Check arity compatibility
+          if len(argD.params) > len(paramD.params) {
+            addError(checker, argsNodes[i].id, "Argument mismatch: function has too many parameters")
+            containEqFailure(checker, argD, paramD)
+          } else {
+            // Check param types and return type
+            for let p = 0; p < len(argD.params); p = p + 1 {
+              if !unify(checker, argD.params[p], paramD.params[p]) {
+                addError(checker, argsNodes[i].id, "Argument mismatch: function parameter type")
+                containEqFailure(checker, deref(checker, argD.params[p]), deref(checker, paramD.params[p]))
+              }
+            }
+            if !unify(checker, argD.return, paramD.return) {
+              addError(checker, argsNodes[i].id, "Argument mismatch: function return type")
+              containEqFailure(checker, deref(checker, argD.return), deref(checker, paramD.return))
+            }
+          }
+        } else if argD.kind == "TypeVar" and !getTypeVarBinding(checker, argD.id) {
+          // Unknown arg, assume it matches expected function type
+          bindTypeVar(checker, argD.id, paramT)
+        } else {
+          // Non-function arg where function expected
+          if !unify(checker, argsTs[i], paramT) {
+            addError(checker, argsNodes[i].id, "Argument mismatch")
+            containEqFailure(checker, deref(checker, argsTs[i]), deref(checker, paramT))
+          }
+        }
+      } else {
+        // Non-function parameter: use checkExprWithActual (args already synthesized)
+        checkExprWithActual(checker, argsNodes[i], argsTs[i], paramT, argsNodes[i].id, "Argument mismatch")
+      }
+    }
+
+    // Return type
+    checker.types[node.id] = calleeD.return
+    return calleeD.return
+  }
+
+  // Fallback: emit Call constraint for unknown callee
+  let argNodeIds = []
+  for let i = 0; i < len(argsNodes); i = i + 1 {
+    push(argNodeIds, argsNodes[i].id)
+  }
   let out = freshTypeVar(checker)
-  emitCall(checker, callee, args, argNodeIds, out, node.id)
+  emitCall(checker, calleeT, argsTs, argNodeIds, out, node.id)
   checker.types[node.id] = out
   out
 }
@@ -1897,25 +2003,25 @@ fn checkGrouping(checker, node) {
 }
 
 fn checkUnary(checker, node) {
-  let ot = synthExpr(checker, node.operand)
   let op = node.operator.lexeme
 
-  // Minimal Phase-1 semantics
+  // Bidirectional typing: check operand against expected type
   if op == "-" {
-    emitEq(checker, ot, typeNumber(), node.operand.id, "Expected number")
+    checkExpr(checker, node.operand, typeNumber(), node.operand.id, "Expected number")
     let t = typeNumber()
     checker.types[node.id] = t
     return t
   }
 
   if op == "!" {
-    emitEq(checker, ot, typeBool(), node.operand.id, "Expected bool")
+    checkExpr(checker, node.operand, typeBool(), node.operand.id, "Expected bool")
     let t = typeBool()
     checker.types[node.id] = t
     return t
   }
 
-  // Unknown unary -> Any, but still traversed operand
+  // Unknown unary -> Any, but still traverse operand
+  synthExpr(checker, node.operand)
   let t = typeAny()
   checker.types[node.id] = t
   t
@@ -2023,10 +2129,20 @@ fn checkFor(checker, node) {
 
 fn checkReturn(checker, node) {
   let rt = typeNil()
-  if node.value { rt = synthExpr(checker, node.value) }
 
-  if checker.currentReturn {
-    emitEq(checker, checker.currentReturn, rt, node.id, "Return mismatch")
+  // Bidirectional typing: if we have an expected return type, check against it
+  if checker.currentReturn and node.value {
+    rt = checkExpr(checker, node.value, checker.currentReturn, node.id, "Return mismatch")
+  } else if node.value {
+    rt = synthExpr(checker, node.value)
+  }
+
+  // If we have a return expectation but no value, unify Nil with expectation
+  if checker.currentReturn and !node.value {
+    if !unify(checker, typeNil(), checker.currentReturn) {
+      addError(checker, node.id, "Return mismatch")
+      containEqFailure(checker, typeNil(), deref(checker, checker.currentReturn))
+    }
   }
 
   // Treat `return expr` as having the expression's type so block "last expr"

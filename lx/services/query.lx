@@ -56,6 +56,18 @@ fn rangeOf(n) {
   }
 }
 
+fn nodeKeyFromParts(filename, id) {
+  join([filename or "", ":", id], "")
+}
+
+fn nodeKeyFor(ctx, node) {
+  if !node { return nil }
+  if ctx and ctx.nodes and ctx.nodes[node.id] {
+    return node.id
+  }
+  nodeKeyFromParts(node.filename, node.id)
+}
+
 // ========================================
 // Indexing
 // ========================================
@@ -119,7 +131,37 @@ fn collectAllNodes(node, nodes) {
   }
 }
 
+fn propNameFromNode(n) {
+  if !n { return nil }
+  if n.type == "Identifier" { return n.name }
+  if n.type == "String" { return n.value }
+  nil
+}
+
+fn spanKeyFromNode(n) {
+  if !n {
+    return nil
+  }
+  join([
+    n.filename or "",
+    ":",
+    n.line or 0,
+    ":",
+    n.col or 0,
+    ":",
+    n.endLine or 0,
+    ":",
+    n.endCol or 0,
+  ], "")
+}
+
 fn buildFileIndex(ctx) {
+  if !ctx.fileNodeIds { ctx.fileNodeIds = .{} }
+  ctx.letsByNameSpan = .{}
+  ctx.dotsByPropertySpan = .{}
+  ctx.hashmapsByFilename = .{}
+  ctx.assignmentsByObjectProp = .{}
+
   each(keys(ctx.nodes), fn(id) {
     let n = ctx.nodes[id]
     if !n or !n.filename {
@@ -131,6 +173,45 @@ fn buildFileIndex(ctx) {
       ctx.fileNodeIds[fname] = []
     }
     push(ctx.fileNodeIds[fname], id)
+
+    if n.type == "Let" and n.name {
+      let key = spanKeyFromNode(n.name)
+      if key {
+        ctx.letsByNameSpan[key] = n
+      }
+    }
+
+    if n.type == "Dot" and n.property {
+      let key = spanKeyFromNode(n.property)
+      if key and !ctx.dotsByPropertySpan[key] {
+        ctx.dotsByPropertySpan[key] = n
+      }
+    }
+
+    if n.type == "Hashmap" {
+      if !ctx.hashmapsByFilename[fname] {
+        ctx.hashmapsByFilename[fname] = []
+      }
+      push(ctx.hashmapsByFilename[fname], n)
+    }
+
+    if n.type == "Assignment" and n.target and n.target.type == "Dot" {
+      let target = n.target
+      let obj = target.object
+      let prop = target.property
+      if obj and obj.type == "Identifier" and prop {
+        let propName = propNameFromNode(prop)
+        if propName {
+          let key = obj.name + "." + propName
+          if !ctx.assignmentsByObjectProp[fname] {
+            ctx.assignmentsByObjectProp[fname] = .{}
+          }
+          if !ctx.assignmentsByObjectProp[fname][key] {
+            ctx.assignmentsByObjectProp[fname][key] = n.value
+          }
+        }
+      }
+    }
   })
 }
 
@@ -243,13 +324,6 @@ fn nodeAtPosWithTies(ctx, filename, line, col) {
   .{ node: best, ties: ties }
 }
 
-fn propNameFromNode(n) {
-  if !n { return nil }
-  if n.type == "Identifier" { return n.name }
-  if n.type == "String" { return n.value }
-  nil
-}
-
 fn lastExprFromAst(ast) {
   if ast and ast.expressions and len(ast.expressions) > 0 {
     return ast.expressions[len(ast.expressions) - 1]
@@ -260,16 +334,20 @@ fn lastExprFromAst(ast) {
   nil
 }
 
-fn findLetByNameId(ctx, nameId) {
+fn findLetByNameNode(ctx, nameNode) {
+  let key = spanKeyFromNode(nameNode)
+  if ctx and ctx.letsByNameSpan and key and ctx.letsByNameSpan[key] {
+    return ctx.letsByNameSpan[key]
+  }
   if ctx {
     if !ctx._queryCache { ctx._queryCache = .{} }
     if !ctx._queryCache.letByNameId { ctx._queryCache.letByNameId = .{} }
     if !ctx._queryCache.letMiss { ctx._queryCache.letMiss = .{} }
-    let key = str(nameId)
-    if ctx._queryCache.letByNameId[key] {
-      return ctx._queryCache.letByNameId[key]
+    let cacheKey = key or (nameNode and nameNode.id and str(nameNode.id)) or nil
+    if cacheKey and ctx._queryCache.letByNameId[cacheKey] {
+      return ctx._queryCache.letByNameId[cacheKey]
     }
-    if ctx._queryCache.letMiss[key] {
+    if cacheKey and ctx._queryCache.letMiss[cacheKey] {
       return nil
     }
   }
@@ -277,37 +355,36 @@ fn findLetByNameId(ctx, nameId) {
   let ids = keys(ctx.nodes)
   for let i = 0; i < len(ids); i = i + 1 {
     let n = ctx.nodes[ids[i]]
-    if n and n.type == "Let" and n.name and n.name.id == nameId {
+    if n and n.type == "Let" and n.name and nameNode and spanKeyFromNode(n.name) == key {
       if ctx {
-        ctx._queryCache.letByNameId[str(nameId)] = n
+        let cacheKey = key or (nameNode and nameNode.id and str(nameNode.id)) or nil
+        if cacheKey {
+          ctx._queryCache.letByNameId[cacheKey] = n
+        }
       }
       return n
     }
   }
   if ctx {
-    ctx._queryCache.letMiss[str(nameId)] = true
+    let cacheKey = key or (nameNode and nameNode.id and str(nameNode.id)) or nil
+    if cacheKey {
+      ctx._queryCache.letMiss[cacheKey] = true
+    }
   }
   nil
 }
 
 fn propNodeCacheKey(propNode) {
-  if !propNode {
-    return nil
-  }
-  join([
-    propNode.filename or "",
-    ":",
-    propNode.line or 0,
-    ":",
-    propNode.col or 0,
-    ":",
-    propNode.endLine or 0,
-    ":",
-    propNode.endCol or 0,
-  ], "")
+  spanKeyFromNode(propNode)
 }
 
 fn findDotByPropertyNode(ctx, propNode) {
+  if ctx and ctx.dotsByPropertySpan {
+    let key = spanKeyFromNode(propNode)
+    if key and ctx.dotsByPropertySpan[key] {
+      return ctx.dotsByPropertySpan[key]
+    }
+  }
   if ctx {
     if !ctx._queryCache { ctx._queryCache = .{} }
     if !ctx._queryCache.dotByProp { ctx._queryCache.dotByProp = .{} }
@@ -359,6 +436,13 @@ fn findRecordField(recordNode, fieldName) {
 }
 
 fn findDotAssignmentValue(ctx, filename, objectName, propName) {
+  if ctx and ctx.assignmentsByObjectProp and ctx.assignmentsByObjectProp[filename] {
+    let key = objectName + "." + propName
+    let value = ctx.assignmentsByObjectProp[filename][key]
+    if value {
+      return value
+    }
+  }
   let ids = ctx.fileNodeIds and ctx.fileNodeIds[filename] or keys(ctx.nodes)
   for let i = 0; i < len(ids); i = i + 1 {
     let n = ctx.nodes[ids[i]]
@@ -381,6 +465,17 @@ fn resolveExprToRecord(ctx, expr, seen) {
   if !expr {
     return nil
   }
+  if ctx and expr.id {
+    if !ctx._queryCache { ctx._queryCache = .{} }
+    if !ctx._queryCache.recordByNodeId { ctx._queryCache.recordByNodeId = .{} }
+    if !ctx._queryCache.recordMiss { ctx._queryCache.recordMiss = .{} }
+    if ctx._queryCache.recordByNodeId[expr.id] {
+      return ctx._queryCache.recordByNodeId[expr.id]
+    }
+    if ctx._queryCache.recordMiss[expr.id] {
+      return nil
+    }
+  }
   if expr.id and seen and seen[expr.id] {
     return nil
   }
@@ -389,28 +484,42 @@ fn resolveExprToRecord(ctx, expr, seen) {
   }
 
   if expr.type == "Hashmap" {
+    if ctx and expr.id {
+      ctx._queryCache.recordByNodeId[expr.id] = expr
+    }
     return expr
   }
 
   if expr.type == "Block" {
     let last = lastExprFromAst(expr)
-    return resolveExprToRecord(ctx, last, seen)
+    let rec = resolveExprToRecord(ctx, last, seen)
+    if ctx and expr.id {
+      if rec { ctx._queryCache.recordByNodeId[expr.id] = rec }
+      else { ctx._queryCache.recordMiss[expr.id] = true }
+    }
+    return rec
   }
 
   if expr.type == "Grouping" {
-    return resolveExprToRecord(ctx, expr.expression, seen)
+    let rec = resolveExprToRecord(ctx, expr.expression, seen)
+    if ctx and expr.id {
+      if rec { ctx._queryCache.recordByNodeId[expr.id] = rec }
+      else { ctx._queryCache.recordMiss[expr.id] = true }
+    }
+    return rec
   }
 
   if expr.type == "Identifier" {
-    let r = ctx.resolvedNames[expr.id]
+    let r = ctx.resolvedNames[nodeKeyFor(ctx, expr)]
     if !r or !r.declaredAt {
       return nil
     }
-    let decl = ctx.nodes[r.declaredAt]
+    let declKey = r.declaredAtKey or r.declaredAt
+    let decl = ctx.nodes[declKey]
     if !decl {
       return nil
     }
-    let letNode = findLetByNameId(ctx, decl.id)
+    let letNode = findLetByNameNode(ctx, decl)
     if !letNode or !letNode.init {
       return nil
     }
@@ -419,10 +528,20 @@ fn resolveExprToRecord(ctx, expr, seen) {
       let moduleAst = ctx.moduleAsts and ctx.moduleAsts[modulePath]
       let moduleReturn = moduleAst and lastExprFromAst(moduleAst)
       if moduleReturn {
-        return resolveExprToRecord(ctx, moduleReturn, seen)
+        let rec = resolveExprToRecord(ctx, moduleReturn, seen)
+        if ctx and expr.id {
+          if rec { ctx._queryCache.recordByNodeId[expr.id] = rec }
+          else { ctx._queryCache.recordMiss[expr.id] = true }
+        }
+        return rec
       }
     }
-    return resolveExprToRecord(ctx, letNode.init, seen)
+    let rec = resolveExprToRecord(ctx, letNode.init, seen)
+    if ctx and expr.id {
+      if rec { ctx._queryCache.recordByNodeId[expr.id] = rec }
+      else { ctx._queryCache.recordMiss[expr.id] = true }
+    }
+    return rec
   }
 
   if expr.type == "Dot" {
@@ -433,10 +552,11 @@ fn resolveExprToRecord(ctx, expr, seen) {
 
     // If base is an imported module, look for assignments in the module file.
     if expr.object and expr.object.type == "Identifier" {
-      let r = ctx.resolvedNames[expr.object.id]
+      let r = ctx.resolvedNames[nodeKeyFor(ctx, expr.object)]
       if r and r.declaredAt {
-        let decl = ctx.nodes[r.declaredAt]
-        let letNode = decl and findLetByNameId(ctx, decl.id)
+        let declKey = r.declaredAtKey or r.declaredAt
+        let decl = ctx.nodes[declKey]
+        let letNode = decl and findLetByNameNode(ctx, decl)
         if letNode and letNode.init and letNode.init.type == "Import" and letNode.init.path {
           let modulePath = letNode.init.path.value
           let moduleAst = ctx.moduleAsts and ctx.moduleAsts[modulePath]
@@ -445,7 +565,12 @@ fn resolveExprToRecord(ctx, expr, seen) {
             let rootName = moduleReturn.name
             let assignedValue = findDotAssignmentValue(ctx, modulePath, rootName, propName)
             if assignedValue {
-              return resolveExprToRecord(ctx, assignedValue, seen)
+              let rec = resolveExprToRecord(ctx, assignedValue, seen)
+              if ctx and expr.id {
+                if rec { ctx._queryCache.recordByNodeId[expr.id] = rec }
+                else { ctx._queryCache.recordMiss[expr.id] = true }
+              }
+              return rec
             }
           }
           // Fall back to module return record literal, if any.
@@ -454,7 +579,12 @@ fn resolveExprToRecord(ctx, expr, seen) {
             if moduleRecord {
               let field = findRecordField(moduleRecord, propName)
               if field and field.value {
-                return resolveExprToRecord(ctx, field.value, seen)
+                let rec = resolveExprToRecord(ctx, field.value, seen)
+                if ctx and expr.id {
+                  if rec { ctx._queryCache.recordByNodeId[expr.id] = rec }
+                  else { ctx._queryCache.recordMiss[expr.id] = true }
+                }
+                return rec
               }
             }
           }
@@ -464,14 +594,25 @@ fn resolveExprToRecord(ctx, expr, seen) {
 
     let baseRecord = resolveExprToRecord(ctx, expr.object, seen)
     if !baseRecord {
+      if ctx and expr.id {
+        ctx._queryCache.recordMiss[expr.id] = true
+      }
       return nil
     }
     let field = findRecordField(baseRecord, propName)
     if field and field.value {
-      return resolveExprToRecord(ctx, field.value, seen)
+      let rec = resolveExprToRecord(ctx, field.value, seen)
+      if ctx and expr.id {
+        if rec { ctx._queryCache.recordByNodeId[expr.id] = rec }
+        else { ctx._queryCache.recordMiss[expr.id] = true }
+      }
+      return rec
     }
   }
 
+  if ctx and expr.id {
+    ctx._queryCache.recordMiss[expr.id] = true
+  }
   nil
 }
 
@@ -497,6 +638,13 @@ fn candidatesForNodes(nodes) {
   out
 }
 
+fn isCompositeKey(key) {
+  if type(key) != "String" {
+    return false
+  }
+  len(split(key, ":")) > 1
+}
+
 fn validateCtxOnce(ctx) {
   if !ctx or ctx._validated {
     return
@@ -508,11 +656,18 @@ fn validateCtxOnce(ctx) {
 
   let missing = []
 
+  let nodeKeys = keys(ctx.nodes)
+  let composite = len(nodeKeys) > 0 and isCompositeKey(nodeKeys[0])
+
   if ctx.resolvedNames {
     let ids = keys(ctx.resolvedNames)
     for let i = 0; i < len(ids); i = i + 1 {
       let id = ids[i]
-      if !idMapGet(ctx.nodes, id) {
+      if composite {
+        if !ctx.nodes[id] {
+          push(missing, id)
+        }
+      } else if !idMapGet(ctx.nodes, id) {
         push(missing, id)
       }
     }
@@ -522,7 +677,11 @@ fn validateCtxOnce(ctx) {
     let ids = keys(ctx.types)
     for let i = 0; i < len(ids); i = i + 1 {
       let id = ids[i]
-      if !idMapGet(ctx.nodes, id) {
+      if composite {
+        if !ctx.nodes[id] {
+          push(missing, id)
+        }
+      } else if !idMapGet(ctx.nodes, id) {
         push(missing, id)
       }
     }
@@ -535,7 +694,11 @@ fn validateCtxOnce(ctx) {
       if ids {
         for let j = 0; j < len(ids); j = j + 1 {
           let id = ids[j]
-          if !idMapGet(ctx.nodes, id) {
+          if composite {
+            if !ctx.nodes[id] {
+              push(missing, id)
+            }
+          } else if !idMapGet(ctx.nodes, id) {
             push(missing, id)
           }
         }
@@ -756,10 +919,16 @@ fn valueTypeForRecordKey(ctx, keyNode) {
   }
 
   let fname = keyNode.filename
-  let ids = ctx.fileNodeIds[fname] or keys(ctx.nodes)
+  let hashmaps = ctx.hashmapsByFilename and ctx.hashmapsByFilename[fname] or nil
+  let ids = nil
+  if hashmaps {
+    ids = hashmaps
+  } else {
+    ids = ctx.fileNodeIds[fname] or keys(ctx.nodes)
+  }
 
   for let i = 0; i < len(ids); i = i + 1 {
-    let cand = ctx.nodes[ids[i]]
+    let cand = hashmaps and ids[i] or ctx.nodes[ids[i]]
     if !cand or cand.type != "Hashmap" or cand.filename != fname {
       continue
     }
@@ -772,7 +941,7 @@ fn valueTypeForRecordKey(ctx, keyNode) {
       let pair = cand.pairs[j]
       if pair.key and pair.key.id == keyNode.id {
         if pair.value {
-          return ctx.types[pair.value.id]
+          return ctx.types[nodeKeyFor(ctx, pair.value)]
         }
       }
     }
@@ -789,7 +958,7 @@ fn buildSymbolInfo(ctx, n) {
   }
 
   let info = .{ name: n.name or n.lexeme or "(anonymous)" }
-  let r = ctx.resolvedNames[n.id]
+  let r = ctx.resolvedNames[nodeKeyFor(ctx, n)]
 
   if !r {
     info.kind = "unresolved"
@@ -803,12 +972,13 @@ fn buildSymbolInfo(ctx, n) {
   }
 
   if r.declaredAt {
-    let declNode = ctx.nodes[r.declaredAt]
+    let declKey = r.declaredAtKey or r.declaredAt
+    let declNode = ctx.nodes[declKey]
     if declNode {
       info.declaration = rangeOf(declNode)
       info.declarationNodeType = declNode.type
 
-      let declType = ctx.types[declNode.id]
+      let declType = ctx.types[nodeKeyFor(ctx, declNode)]
       if declType {
         info.declarationType = formatTypeWithBindings(ctx, declType)
       }
@@ -884,7 +1054,7 @@ fn queryHover(ctx, filename, line, col) {
     return .{ success: false, kind: "hover", message: "No node at position: " + posLabel(filename, line, col) }
   }
 
-  let ty = ctx.types[n.id]
+  let ty = ctx.types[nodeKeyFor(ctx, n)]
   let contents = buildHoverContents(ctx, n, ty)
   if n.type == "Dot" {
     let propName = propNameFromNode(n.property)
@@ -905,7 +1075,7 @@ fn queryHover(ctx, filename, line, col) {
   let details = .{ nodeType: n.type, nodeId: n.id }
 
   if n.type == "Identifier" {
-    let r = ctx.resolvedNames[n.id]
+    let r = ctx.resolvedNames[nodeKeyFor(ctx, n)]
     if r {
       details.resolved = r
     }
@@ -972,7 +1142,7 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     return .{ success: false, kind: "goto", message: "Not an identifier at " + posLabel(filename, line, col) }
   }
 
-  let r = ctx.resolvedNames[n.id]
+  let r = ctx.resolvedNames[nodeKeyFor(ctx, n)]
   if !r {
     return .{ success: false, kind: "goto", message: "Unresolved identifier" }
   }
@@ -981,7 +1151,7 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     return .{ success: false, kind: "goto", message: "Builtin has no tracked definition" }
   }
 
-  let declNodeId = r.declaredAt
+  let declNodeId = r.declaredAtKey or r.declaredAt
   if !declNodeId {
     return .{ success: false, kind: "goto", message: "Missing declaredAt (compiler bug)" }
   }
@@ -1111,7 +1281,7 @@ fn queryDiagnostics(result) {
 let Driver = import "src/driver.lx"
 
 // Remap type vars and node ids for merged query context.
-fn remapType(t, typeVarMap, nodeIdMap, nextTypeVarIdRef) {
+fn remapType(t, typeVarMap, nextTypeVarIdRef) {
   if !t {
     return nil
   }
@@ -1140,22 +1310,22 @@ fn remapType(t, typeVarMap, nodeIdMap, nextTypeVarIdRef) {
     if t.params {
       let params = []
       for let i = 0; i < len(t.params); i = i + 1 {
-        push(params, remapType(t.params[i], typeVarMap, nodeIdMap, nextTypeVarIdRef))
+        push(params, remapType(t.params[i], typeVarMap, nextTypeVarIdRef))
       }
       out.params = params
     }
-    out.return = remapType(t.return, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    out.return = remapType(t.return, typeVarMap, nextTypeVarIdRef)
     return out
   }
 
   if t.kind == "Array" {
-    out.elem = remapType(t.elem, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    out.elem = remapType(t.elem, typeVarMap, nextTypeVarIdRef)
     return out
   }
 
   if t.kind == "Map" {
-    out.key = remapType(t.key, typeVarMap, nodeIdMap, nextTypeVarIdRef)
-    out.elem = remapType(t.elem, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    out.key = remapType(t.key, typeVarMap, nextTypeVarIdRef)
+    out.elem = remapType(t.elem, typeVarMap, nextTypeVarIdRef)
     return out
   }
 
@@ -1164,102 +1334,24 @@ fn remapType(t, typeVarMap, nodeIdMap, nextTypeVarIdRef) {
     let fieldKeys = t.fields and keys(t.fields) or []
     for let i = 0; i < len(fieldKeys); i = i + 1 {
       let k = fieldKeys[i]
-      fields[k] = remapType(t.fields[k], typeVarMap, nodeIdMap, nextTypeVarIdRef)
+      fields[k] = remapType(t.fields[k], typeVarMap, nextTypeVarIdRef)
     }
     out.fields = fields
     return out
   }
 
   if t.kind == "Option" {
-    out.value = remapType(t.value, typeVarMap, nodeIdMap, nextTypeVarIdRef)
+    out.value = remapType(t.value, typeVarMap, nextTypeVarIdRef)
     return out
   }
 
   if t.kind == "Indexable" {
-    out.elem = remapType(t.elem, typeVarMap, nodeIdMap, nextTypeVarIdRef)
-    out.key = remapType(t.key, typeVarMap, nodeIdMap, nextTypeVarIdRef)
-    let oldNodeId = t.nodeId
-    let newNodeId = idMapGet(nodeIdMap, oldNodeId)
-    if newNodeId {
-      out.nodeId = newNodeId
-    }
+    out.elem = remapType(t.elem, typeVarMap, nextTypeVarIdRef)
+    out.key = remapType(t.key, typeVarMap, nextTypeVarIdRef)
     return out
   }
 
   out
-}
-
-fn cloneNodeShallow(node) {
-  let out = .{}
-  let ks = keys(node)
-  for let i = 0; i < len(ks); i = i + 1 {
-    let k = ks[i]
-    out[k] = node[k]
-  }
-  out
-}
-
-fn remapChild(child, cloneByOldId) {
-  if type(child) != "map" {
-    return child
-  }
-  if child.id and cloneByOldId[child.id] {
-    return cloneByOldId[child.id]
-  }
-  child
-}
-
-fn remapArray(arr, cloneByOldId) {
-  if !arr or type(arr) != "array" { return arr }
-  let out = []
-  for let i = 0; i < len(arr); i = i + 1 {
-    push(out, remapChild(arr[i], cloneByOldId))
-  }
-  out
-}
-
-fn remapPairs(pairs, cloneByOldId) {
-  if !pairs or type(pairs) != "array" { return pairs }
-  let out = []
-  for let i = 0; i < len(pairs); i = i + 1 {
-    let pair = pairs[i]
-    let p2 = .{}
-    let ks = keys(pair)
-    for let j = 0; j < len(ks); j = j + 1 {
-      let k = ks[j]
-      p2[k] = pair[k]
-    }
-    p2.key = remapChild(pair.key, cloneByOldId)
-    p2.value = remapChild(pair.value, cloneByOldId)
-    push(out, p2)
-  }
-  out
-}
-
-fn rewireNode(node, cloneByOldId) {
-  if node.name { node.name = remapChild(node.name, cloneByOldId) }
-  if node.init { node.init = remapChild(node.init, cloneByOldId) }
-  if node.value { node.value = remapChild(node.value, cloneByOldId) }
-  if node.left { node.left = remapChild(node.left, cloneByOldId) }
-  if node.right { node.right = remapChild(node.right, cloneByOldId) }
-  if node.operand { node.operand = remapChild(node.operand, cloneByOldId) }
-  if node.callee { node.callee = remapChild(node.callee, cloneByOldId) }
-  if node.object { node.object = remapChild(node.object, cloneByOldId) }
-  if node.property { node.property = remapChild(node.property, cloneByOldId) }
-  if node.index { node.index = remapChild(node.index, cloneByOldId) }
-  if node.target { node.target = remapChild(node.target, cloneByOldId) }
-  if node.test { node.test = remapChild(node.test, cloneByOldId) }
-  if node.then { node.then = remapChild(node.then, cloneByOldId) }
-  if node.else { node.else = remapChild(node.else, cloneByOldId) }
-  if node.condition { node.condition = remapChild(node.condition, cloneByOldId) }
-  if node.path { node.path = remapChild(node.path, cloneByOldId) }
-
-  if node.params { node.params = remapArray(node.params, cloneByOldId) }
-  if node.args { node.args = remapArray(node.args, cloneByOldId) }
-  if node.elements { node.elements = remapArray(node.elements, cloneByOldId) }
-  if node.expressions { node.expressions = remapArray(node.expressions, cloneByOldId) }
-  if node.body { node.body = remapArray(node.body, cloneByOldId) }
-  if node.pairs { node.pairs = remapPairs(node.pairs, cloneByOldId) }
 }
 
 // Compile file and create query context in one step
@@ -1303,7 +1395,7 @@ fn compile(filepath) {
 
   // Merge all compiled modules into a single query context with global IDs.
   let merged = .{
-    ast: nil,
+    ast: result.lowerResult and result.lowerResult.ast,
     nodes: .{},
     resolvedNames: .{},
     types: .{},
@@ -1312,9 +1404,7 @@ fn compile(filepath) {
     moduleAsts: .{},
   }
 
-  let nextNodeId = 1
   let nextTypeVarId = .{ value: 1 }
-  let entryRootClone = nil
   let cacheKeys = keys(driver.cache)
   cacheKeys->sort(keyLess)
   for let i = 0; i < len(cacheKeys); i = i + 1 {
@@ -1331,48 +1421,19 @@ fn compile(filepath) {
         collectAllNodes(mod.lowerResult.ast, moduleNodes)
       }
 
-      let nodeIdMap = .{}
       let nodeKeys = keys(moduleNodes)
       nodeKeys->sort(keyLess)
-
-      for let j = 0; j < len(nodeKeys); j = j + 1 {
-        let oldId = nodeKeys[j]
-        nodeIdMap[oldId] = nextNodeId
-        nodeIdMap[str(oldId)] = nextNodeId
-        nextNodeId = nextNodeId + 1
-      }
-
-      let cloneByOldId = .{}
       for let j = 0; j < len(nodeKeys); j = j + 1 {
         let oldId = nodeKeys[j]
         let node = moduleNodes[oldId]
-        if node {
-          let newId = idMapGet(nodeIdMap, oldId)
-          let clone = cloneNodeShallow(node)
-          clone.id = newId
-          cloneByOldId[oldId] = clone
-        }
-      }
-
-      // Rewire and merge cloned nodes
-      for let j = 0; j < len(nodeKeys); j = j + 1 {
-        let oldId = nodeKeys[j]
-        let clone = cloneByOldId[oldId]
-        if clone {
-          rewireNode(clone, cloneByOldId)
-          merged.nodes[clone.id] = clone
+        if node and node.filename {
+          let key = nodeKeyFromParts(node.filename, node.id)
+          merged.nodes[key] = node
         }
       }
 
       if mod.lowerResult and mod.lowerResult.ast and mod.path {
-        let rootId = mod.lowerResult.ast.id
-        let rootClone = cloneByOldId[rootId]
-        if rootClone {
-          merged.moduleAsts[mod.path] = rootClone
-          if mod.path == filepath {
-            entryRootClone = rootClone
-          }
-        }
+        merged.moduleAsts[mod.path] = mod.lowerResult.ast
       }
 
       // Remap and merge resolved names
@@ -1382,7 +1443,9 @@ fn compile(filepath) {
         let oldId = resKeys[j]
         let r = mod.resolveResult.resolvedNames[oldId]
         if r {
-          let newId = idMapGet(nodeIdMap, oldId)
+          let node = moduleNodes[oldId]
+          let newId = node and node.filename and nodeKeyFromParts(node.filename, oldId) or nil
+          if !newId { continue }
           let r2 = .{}
           let rks = keys(r)
           for let k = 0; k < len(rks); k = k + 1 {
@@ -1390,9 +1453,9 @@ fn compile(filepath) {
             r2[rk] = r[rk]
           }
           if r2.declaredAt {
-            let newDecl = idMapGet(nodeIdMap, r2.declaredAt)
-            if newDecl {
-              r2.declaredAt = newDecl
+            let declNode = moduleNodes[r2.declaredAt]
+            if declNode and declNode.filename {
+              r2.declaredAtKey = nodeKeyFromParts(declNode.filename, declNode.id)
             }
           }
           merged.resolvedNames[newId] = r2
@@ -1405,12 +1468,12 @@ fn compile(filepath) {
       typeKeys->sort(keyLess)
       for let j = 0; j < len(typeKeys); j = j + 1 {
         let oldId = typeKeys[j]
-        let newId = idMapGet(nodeIdMap, oldId)
+        let node = moduleNodes[oldId]
+        let newId = node and node.filename and nodeKeyFromParts(node.filename, oldId) or nil
         if newId {
           merged.types[newId] = remapType(
             mod.typecheckResult.types[oldId],
             typeVarMap,
-            nodeIdMap,
             nextTypeVarId
           )
         }
@@ -1430,15 +1493,10 @@ fn compile(filepath) {
         merged.typeVarBindings[newTid] = remapType(
           mod.typecheckResult.typeVarBindings[oldTid],
           typeVarMap,
-          nodeIdMap,
           nextTypeVarId
         )
       }
     }
-  }
-
-  if entryRootClone {
-    merged.ast = entryRootClone
   }
 
   buildFileIndex(merged)

@@ -183,7 +183,7 @@ fn nodeAtPos(ctx, filename, line, col) {
 * Build hover payload with `type: formatTypeWithBindings(ctx, types[node.id])` (or `"Unknown"`) and, for identifiers, attach symbol info: resolution kind, name, and declaration span/type when available.
   * `formatTypeWithBindings` follows `typeVarBindings` to display the bound type where possible; unbound vars show as `Unbound T<n>` even when nested inside functions/records.
   * When hovering a record literal key (String node), the hover type is taken from the corresponding field value instead of the String key literal.
-* `query.compile()` returns a merged context across all compiled modules with globally remapped node ids.
+* `query.compile()` returns a merged context across all compiled modules keyed by composite ids (`filename:id`).
 * For Dot properties, hover may include `contents.property` with definition metadata when resolvable.
 * If node is Identifier, optionally include `resolvedNames[node.id]` in `details` for debugging.
 

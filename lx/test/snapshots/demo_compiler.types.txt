@@ -1,0 +1,12 @@
+# demo_compiler.lx type snapshot
+success: false
+errors: 14
+
+FunctionType: Record{FUNCTION: Number, SCRIPT: Number}
+Compiler: fn(Number) -> Record{6 fields}
+Function: fn(String, Number, Number, Record{6 fields}) -> Record{name: String, type: Number, arity: Number, chunk: Record{6 fields}, upvalueCount: Number}
+Chunk: fn(String) -> Record{6 fields}
+Local: fn(String, Number) -> Record{name: String, depth: Number, isCaptured: Bool}
+purifyFunction: fn(Record{name: 'T144, arity: 'T146, upvalueCount: 'T148, chunk: Record{filename: 'T151, bytecode: 'T154, constants: 'T157, lines: 'T160}}) -> Record{name: 'T144, arity: 'T146, upvalueCount: 'T148, chunk: Record{filename: 'T151, bytecode: 'T154, constants: 'T157, lines: 'T160}}
+endCompiler: fn(Record{6 fields}) -> Record{name: 'T144, arity: 'T146, upvalueCount: 'T148, chunk: Record{filename: 'T151, bytecode: 'T154, constants: 'T157, lines: 'T160}}
+compile: fn(String) -> Record{success: Bool, function: Record{name: 'T144, arity: 'T146, upvalueCount: 'T148, chunk: Record{filename: 'T151, bytecode: 'T154, constants: 'T157, lines: 'T160}}}

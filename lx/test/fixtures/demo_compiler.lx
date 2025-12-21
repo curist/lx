@@ -1,0 +1,80 @@
+let FunctionType = .{
+  FUNCTION: 0,
+  SCRIPT:   1,
+}
+
+fn Compiler(type) {.{
+  enclosing: nil,
+  locals: [],
+  upvalues: .{},
+  scopeDepth: 0,
+  function: nil,
+  type: type,
+}}
+
+fn Function(name, type, arity, chunk) {.{
+  name: name,
+  type: type,
+  arity: arity,
+  chunk: chunk,
+  upvalueCount: 0,
+}}
+
+fn Chunk(filename) {.{
+  filename: filename,
+  bytecode: [],
+  constants: [],
+  lines: [],
+  constantsCache: .{},
+  importConstCache: .{},
+}}
+
+fn Local(name, depth) {.{
+  name: name,
+  depth: depth,
+  isCaptured: false,
+}}
+
+fn purifyFunction(func) {.{
+  name: func.name,
+  arity: func.arity,
+  upvalueCount: func.upvalueCount,
+  chunk: .{
+    filename: func.chunk.filename,
+    bytecode: func.chunk.bytecode,
+    constants: func.chunk.constants,
+    lines: func.chunk.lines,
+  },
+}}
+
+fn endCompiler(current) {
+  let func = current.function
+  return purifyFunction(func)
+}
+
+fn compile(filename) {
+  let success = 1 == 1
+  let current = nil
+
+  fn initCompiler(type, filename) {
+    let compiler = Compiler(type)
+    compiler.enclosing = current
+    compiler.function = Function("", type, 0, Chunk(filename))
+    compiler.locals = [Local("", 0)]
+    current = compiler
+
+    if type != FunctionType.SCRIPT {
+      current.function.name = "SCRIPT_NAME"
+    }
+    return compiler
+  }
+
+  let compiler = initCompiler(FunctionType.SCRIPT, filename)
+  let func = endCompiler(compiler)
+
+  return .{
+    success: success,
+    function: purifyFunction(func),
+  }
+}
+compile("hello")

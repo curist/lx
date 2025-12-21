@@ -1,0 +1,91 @@
+// Snapshot tests: capture and compare typecheck output for complex fixtures
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+let helpers = import "test/typecheck/helpers.lx"
+
+// Helper to format type for snapshot comparison
+fn formatType(result, t, depth) {
+  if depth > 15 { return "..." }
+  if !t { return "nil" }
+
+  t = helpers.deref(result, t)
+
+  if t.kind == "Number" { return "Number" }
+  if t.kind == "String" { return "String" }
+  if t.kind == "Bool" { return "Bool" }
+  if t.kind == "Nil" { return "Nil" }
+  if t.kind == "Any" { return "Any" }
+
+  if t.kind == "Function" {
+    let params = []
+    for let i = 0; i < len(t.params); i = i + 1 {
+      push(params, formatType(result, t.params[i], depth + 1))
+    }
+    return "fn(" + join(params, ", ") + ") -> " + formatType(result, t.return, depth + 1)
+  }
+
+  if t.kind == "Record" {
+    let fields = keys(t.fields)
+    if len(fields) > 5 { return "Record{" + str(len(fields)) + " fields}" }
+    let parts = []
+    for let i = 0; i < len(fields); i = i + 1 {
+      push(parts, fields[i] + ": " + formatType(result, t.fields[fields[i]], depth + 1))
+    }
+    return "Record{" + join(parts, ", ") + "}"
+  }
+
+  if t.kind == "Array" {
+    return "Array[" + formatType(result, t.elem, depth + 1) + "]"
+  }
+
+  if t.kind == "Map" {
+    return "Map[" + formatType(result, t.key, depth + 1) + ", " + formatType(result, t.elem, depth + 1) + "]"
+  }
+
+  if t.kind == "Option" {
+    return "Option[" + formatType(result, t.value, depth + 1) + "]"
+  }
+
+  if t.kind == "TypeVar" { return "'T" + str(t.id) }
+
+  t.kind
+}
+
+test("snapshot - demo_compiler.lx types", fn(assert) {
+  let source = slurp("test/fixtures/demo_compiler.lx")
+  let result = helpers.parseAndTypecheck(source)
+
+  // Load expected snapshot
+  let snapshot = slurp("test/snapshots/demo_compiler.types.txt")
+
+  // Build actual output
+  let lines = []
+  push(lines, "# demo_compiler.lx type snapshot")
+  push(lines, "success: " + str(result.success))
+  push(lines, "errors: " + str(len(result.errors)))
+  push(lines, "")
+
+  // Extract top-level binding types
+  let names = ["FunctionType", "Compiler", "Function", "Chunk", "Local", "purifyFunction", "endCompiler", "compile"]
+  for let i = 0; i < len(names); i = i + 1 {
+    let t = helpers.getExprType(result, i)
+    if t {
+      push(lines, names[i] + ": " + formatType(result, t, 0))
+    }
+  }
+
+  let actual = join(lines, "\n") + "\n"
+
+  // Compare or update
+  if snapshot != actual {
+    // Save actual for review
+    println("Snapshot mismatch for demo_compiler.lx")
+    println("Expected:")
+    println(snapshot)
+    println("\nActual:")
+    println(actual)
+  }
+  assert.equal(actual, snapshot, "Snapshot should match (run with UPDATE_SNAPSHOTS=1 to update)")
+})
+
+suite.run()

@@ -1,0 +1,29 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+let helpers = import "test/anf/helpers.lx"
+let validate = import "src/anf_validate.lx"
+
+fn assertValid(assert, source) {
+  let result = helpers.parseLowerAnf(source)
+  assert.truthy(result.success)
+  let validation = validate(result.anfResult.ast, .{})
+  assert.truthy(validation.success)
+}
+
+test("anf validate - nested blocks", fn(assert) {
+  assertValid(assert, "{ let a = { let b = 1; b }; a }")
+})
+
+test("anf validate - block in expression", fn(assert) {
+  assertValid(assert, "do_something_to_some_var() + { let x = 2; x * that_some_var }")
+})
+
+test("anf validate - block with locals", fn(assert) {
+  assertValid(assert, "{ let x = 1; let y = 2; x + y }")
+})
+
+test("anf validate - mix and match", fn(assert) {
+  assertValid(assert, "let a = foo({ let x = 1; x }, bar())")
+})
+
+suite.run()

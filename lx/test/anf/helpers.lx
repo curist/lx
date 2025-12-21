@@ -1,0 +1,238 @@
+let parse = import "src/parser.lx"
+let lower = import "src/lower.lx"
+let anf = import "src/anf.lx"
+
+fn parseLowerAnf(src) {
+  let parseResult = parse(src, "test.lx")
+  if !parseResult.success {
+    return .{ success: false, parseResult: parseResult }
+  }
+  let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
+  if !lowerResult.success {
+    return .{ success: false, lowerResult: lowerResult }
+  }
+  let anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
+  .{
+    success: anfResult.success,
+    parseResult: parseResult,
+    lowerResult: lowerResult,
+    anfResult: anfResult,
+  }
+}
+
+fn indentStr(level) {
+  let s = ""
+  for let i = 0; i < level; i = i + 1 {
+    s = s + "  "
+  }
+  s
+}
+
+fn escapeString(s) {
+  if !s { return "" }
+  let out = ""
+  for let i = 0; i < len(s); i = i + 1 {
+    let c = s[i]
+    if c == "\n" {
+      out = out + "\\n"
+    } else if c == "\r" {
+      out = out + "\\r"
+    } else if c == "\t" {
+      out = out + "\\t"
+    } else if c == "\"" {
+      out = out + "\\\""
+    } else if c == "\\" {
+      out = out + "\\\\"
+    } else {
+      out = out + c
+    }
+  }
+  out
+}
+
+fn formatString(s) {
+  "\"" + escapeString(s) + "\""
+}
+
+fn nodeHeader(node) {
+  if !node { return "nil" }
+  if node.type == "Identifier" { return "Identifier name=" + node.name }
+  if node.type == "Number" { return "Number value=" + str(node.value) }
+  if node.type == "String" { return "String value=" + formatString(node.value) }
+  if node.type == "Bool" { return "Bool value=" + (node.value and "true" or "false") }
+  if node.type == "Nil" { return "Nil" }
+  if node.type == "Let" { return "Let name=" + node.name.name }
+  if node.type == "Function" {
+    return "Function name=" + (node.name and node.name.name or "<anonymous>")
+  }
+  if node.type == "Binary" or node.type == "Logical" or node.type == "Unary" {
+    return node.type + " op=" + (node.operator and node.operator.lexeme or "?")
+  }
+  node.type or "Unknown"
+}
+
+fn writeLine(lines, indent, text) {
+  push(lines, indentStr(indent) + text)
+}
+
+let serializeNode = nil
+
+fn serializeList(nodes, lines, indent) {
+  if !nodes or len(nodes) == 0 {
+    writeLine(lines, indent, "(empty)")
+    return
+  }
+  for let i = 0; i < len(nodes); i = i + 1 {
+    serializeNode(nodes[i], lines, indent)
+  }
+}
+
+fn serializePairs(pairs, lines, indent) {
+  if !pairs or len(pairs) == 0 {
+    writeLine(lines, indent, "(empty)")
+    return
+  }
+  for let i = 0; i < len(pairs); i = i + 1 {
+    let pair = pairs[i]
+    writeLine(lines, indent, "pair:")
+    writeLine(lines, indent + 1, "key:")
+    serializeNode(pair.key, lines, indent + 2)
+    writeLine(lines, indent + 1, "value:")
+    serializeNode(pair.value, lines, indent + 2)
+  }
+}
+
+serializeNode = fn(node, lines, indent) {
+  writeLine(lines, indent, nodeHeader(node))
+  if !node { return }
+
+  if node.type == "Block" {
+    writeLine(lines, indent + 1, "expressions:")
+    serializeList(node.expressions, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Let" {
+    writeLine(lines, indent + 1, "init:")
+    serializeNode(node.init, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Binary" or node.type == "Logical" {
+    writeLine(lines, indent + 1, "left:")
+    serializeNode(node.left, lines, indent + 2)
+    writeLine(lines, indent + 1, "right:")
+    serializeNode(node.right, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Unary" {
+    writeLine(lines, indent + 1, "operand:")
+    serializeNode(node.operand, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Grouping" {
+    writeLine(lines, indent + 1, "expression:")
+    serializeNode(node.expression, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Call" {
+    writeLine(lines, indent + 1, "callee:")
+    serializeNode(node.callee, lines, indent + 2)
+    writeLine(lines, indent + 1, "args:")
+    serializeList(node.args, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Function" {
+    writeLine(lines, indent + 1, "params:")
+    serializeList(node.params, lines, indent + 2)
+    writeLine(lines, indent + 1, "body:")
+    serializeNode(node.body, lines, indent + 2)
+    return
+  }
+
+  if node.type == "If" {
+    writeLine(lines, indent + 1, "condition:")
+    serializeNode(node.condition, lines, indent + 2)
+    writeLine(lines, indent + 1, "then:")
+    serializeNode(node.then, lines, indent + 2)
+    writeLine(lines, indent + 1, "else:")
+    serializeNode(node.else, lines, indent + 2)
+    return
+  }
+
+  if node.type == "For" {
+    writeLine(lines, indent + 1, "init:")
+    serializeNode(node.init, lines, indent + 2)
+    writeLine(lines, indent + 1, "condition:")
+    serializeNode(node.condition, lines, indent + 2)
+    writeLine(lines, indent + 1, "update:")
+    serializeNode(node.update, lines, indent + 2)
+    writeLine(lines, indent + 1, "body:")
+    serializeNode(node.body, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Return" or node.type == "Break" {
+    writeLine(lines, indent + 1, "value:")
+    serializeNode(node.value, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Continue" {
+    return
+  }
+
+  if node.type == "Array" {
+    writeLine(lines, indent + 1, "elements:")
+    serializeList(node.elements, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Hashmap" {
+    writeLine(lines, indent + 1, "pairs:")
+    serializePairs(node.pairs, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Index" {
+    writeLine(lines, indent + 1, "object:")
+    serializeNode(node.object, lines, indent + 2)
+    writeLine(lines, indent + 1, "index:")
+    serializeNode(node.index, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Dot" {
+    writeLine(lines, indent + 1, "object:")
+    serializeNode(node.object, lines, indent + 2)
+    writeLine(lines, indent + 1, "property:")
+    serializeNode(node.property, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Assignment" {
+    writeLine(lines, indent + 1, "target:")
+    serializeNode(node.target, lines, indent + 2)
+    writeLine(lines, indent + 1, "value:")
+    serializeNode(node.value, lines, indent + 2)
+    return
+  }
+
+  if node.type == "Import" {
+    writeLine(lines, indent + 1, "path:")
+    serializeNode(node.path, lines, indent + 2)
+    return
+  }
+}
+
+fn serializeAst(ast) {
+  let lines = []
+  serializeNode(ast, lines, 0)
+  join(lines, "\n") + "\n"
+}
+
+.{ parseLowerAnf: parseLowerAnf, serializeAst: serializeAst }

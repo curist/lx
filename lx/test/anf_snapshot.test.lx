@@ -1,0 +1,43 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+let helpers = import "test/anf/helpers.lx"
+
+fn buildSnapshot(cases) {
+  let out = "# anf ast snapshots\n"
+  for let i = 0; i < len(cases); i = i + 1 {
+    let c = cases[i]
+    let result = helpers.parseLowerAnf(c.source)
+    if !result.success {
+      return .{ success: false, message: "anf failed for " + c.name, result: result }
+    }
+    out = out + "\n## " + c.name + "\n"
+    out = out + "source: " + c.source + "\n"
+    out = out + "ast:\n"
+    out = out + helpers.serializeAst(result.anfResult.ast)
+  }
+  .{ success: true, text: out }
+}
+
+test("snapshot - anf ast", fn(assert) {
+  let cases = [
+    .{ name: "nested_blocks", source: "{ let a = { let b = 1; b }; a }" },
+    .{ name: "block_in_expr", source: "do_something_to_some_var() + { let x = 2; x * that_some_var }" },
+    .{ name: "block_with_locals", source: "{ let x = 1; let y = 2; x + y }" },
+    .{ name: "mix_and_match", source: "let a = foo({ let x = 1; x }, bar())" },
+  ]
+
+  let result = buildSnapshot(cases)
+  assert.truthy(result.success)
+
+  let snapshot = slurp("test/snapshots/anf.ast.txt")
+  if snapshot != result.text {
+    println("Snapshot mismatch for anf ast")
+    println("Expected:")
+    println(snapshot)
+    println("\nActual:")
+    println(result.text)
+  }
+  assert.equal(result.text, snapshot, "Snapshot should match (run with UPDATE_SNAPSHOTS=1 to update)")
+})
+
+suite.run()

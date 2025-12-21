@@ -8,6 +8,7 @@ Source
   → AST
   → lower.lx
   → Lowered AST
+  → anf.lx (optional)
   → resolve.lx
   → Resolved AST + Side Tables
   → typecheck.lx
@@ -42,6 +43,15 @@ Later phases consume earlier results but never mutate them.
 * Copies position spans for accurate diagnostics
 * Makes "everything is expression" semantics uniform for later phases
 * Future: other syntax sugar (spread, destructuring, for-loops, etc.)
+
+---
+
+### **anf.lx** — Evaluation-order normalization (optional)
+
+* Lowers expressions into A-normal form (ANF)
+* Introduces temp `let` bindings to preserve left-to-right evaluation
+* Makes block expression values explicit without changing semantics
+* Does **not** perform semantic analysis or name resolution
 
 ---
 

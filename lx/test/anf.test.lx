@@ -1,0 +1,83 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+let helpers = import "test/anf/helpers.lx"
+
+fn first(result) {
+  result.anfResult.ast.expressions[0]
+}
+
+test("anf - binary preserves left-to-right evaluation", fn(assert) {
+  let result = helpers.parseLowerAnf("doA() + doB()")
+  assert.truthy(result.success)
+
+  let expr = first(result)
+  assert.equal(expr.type, "Block")
+  assert.equal(len(expr.expressions), 3)
+
+  let leftLet = expr.expressions[0]
+  let rightLet = expr.expressions[1]
+  let bin = expr.expressions[2]
+
+  assert.equal(leftLet.type, "Let")
+  assert.equal(leftLet.init.type, "Call")
+  assert.equal(leftLet.init.callee.name, "doA")
+
+  assert.equal(rightLet.type, "Let")
+  assert.equal(rightLet.init.type, "Call")
+  assert.equal(rightLet.init.callee.name, "doB")
+
+  assert.equal(bin.type, "Binary")
+  assert.equal(bin.left.type, "Identifier")
+  assert.equal(bin.right.type, "Identifier")
+  assert.equal(bin.left.name, leftLet.name.name)
+  assert.equal(bin.right.name, rightLet.name.name)
+})
+
+test("anf - block expression is sequenced in binary", fn(assert) {
+  let result = helpers.parseLowerAnf("doA() + { let x = 2; x }")
+  assert.truthy(result.success)
+
+  let expr = first(result)
+  assert.equal(expr.type, "Block")
+  assert.equal(len(expr.expressions), 3)
+
+  let leftLet = expr.expressions[0]
+  let rightLet = expr.expressions[1]
+  let bin = expr.expressions[2]
+
+  assert.equal(leftLet.init.type, "Call")
+  assert.equal(leftLet.init.callee.name, "doA")
+
+  assert.equal(rightLet.init.type, "Block")
+  let innerBlock = rightLet.init
+  assert.equal(innerBlock.expressions[0].type, "Let")
+
+  assert.equal(bin.type, "Binary")
+  assert.equal(bin.left.name, leftLet.name.name)
+  assert.equal(bin.right.name, rightLet.name.name)
+})
+
+test("anf - call args evaluated left-to-right", fn(assert) {
+  let result = helpers.parseLowerAnf("f(g(), h())")
+  assert.truthy(result.success)
+
+  let expr = first(result)
+  assert.equal(expr.type, "Block")
+  assert.equal(len(expr.expressions), 3)
+
+  let arg1 = expr.expressions[0]
+  let arg2 = expr.expressions[1]
+  let call = expr.expressions[2]
+
+  assert.equal(arg1.type, "Let")
+  assert.equal(arg1.init.callee.name, "g")
+  assert.equal(arg2.type, "Let")
+  assert.equal(arg2.init.callee.name, "h")
+
+  assert.equal(call.type, "Call")
+  assert.equal(call.callee.name, "f")
+  assert.equal(call.args[0].name, arg1.name.name)
+  assert.equal(call.args[1].name, arg2.name.name)
+})
+
+suite.run()

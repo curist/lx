@@ -1,0 +1,504 @@
+// ANF Phase - Normalize expressions into sequenced, atomic subexpressions
+// Responsibility: Preserve evaluation order and make block results explicit
+//   - Introduce temp lets for non-atomic subexpressions
+//   - Keep control-flow semantics (short-circuit, return, break)
+//   - Do not perform name resolution or semantic validation
+//
+// IMPORTANT: ANF MUST NOT mutate input AST nodes.
+
+// ========================================
+// Error handling
+// ========================================
+
+fn addError(anf, nodeId, message) {
+  push(anf.errors, .{
+    nodeId: nodeId,
+    message: message,
+    severity: "error",
+  })
+}
+
+// ========================================
+// Node Creation Helpers
+// ========================================
+
+fn allocNodeId(anf) {
+  let id = anf.nextId
+  anf.nextId = anf.nextId + 1
+  id
+}
+
+fn copyNodeShallow(anf, node) {
+  let newNode = .{}
+  let node_keys = keys(node)
+  for let i = 0; i < len(node_keys); i = i + 1 {
+    let key = node_keys[i]
+    newNode[key] = node[key]
+  }
+  let newId = allocNodeId(anf)
+  anf.origin[newId] = node.id
+  newNode.id = newId
+  newNode
+}
+
+fn makeIdentifier(anf, templateNode, name) {
+  let node = .{
+    type: "Identifier",
+    filename: templateNode.filename,
+    id: allocNodeId(anf),
+    line: templateNode.line,
+    col: templateNode.col,
+    endLine: templateNode.endLine,
+    endCol: templateNode.endCol,
+    name: name,
+  }
+  anf.origin[node.id] = templateNode.id
+  node
+}
+
+fn makeLet(anf, templateNode, nameNode, initNode) {
+  let node = .{
+    type: "Let",
+    filename: templateNode.filename,
+    id: allocNodeId(anf),
+    line: templateNode.line,
+    col: templateNode.col,
+    endLine: templateNode.endLine,
+    endCol: templateNode.endCol,
+    name: nameNode,
+    init: initNode,
+  }
+  anf.origin[node.id] = templateNode.id
+  node
+}
+
+fn makeBlock(anf, templateNode, expressions) {
+  let node = .{
+    type: "Block",
+    filename: templateNode.filename,
+    id: allocNodeId(anf),
+    line: templateNode.line,
+    col: templateNode.col,
+    endLine: templateNode.endLine,
+    endCol: templateNode.endCol,
+    expressions: expressions,
+  }
+  anf.origin[node.id] = templateNode.id
+  node
+}
+
+// ========================================
+// Scope + Temp Handling
+// ========================================
+
+fn isNameTaken(anf, name) {
+  for let i = len(anf.scopeStack) - 1; i >= 0; i = i - 1 {
+    if anf.scopeStack[i][name] { return true }
+  }
+  false
+}
+
+fn addName(anf, name) {
+  if len(anf.scopeStack) == 0 { return }
+  anf.scopeStack[len(anf.scopeStack) - 1][name] = true
+}
+
+fn pushScope(anf, names) {
+  let scope = .{}
+  for let i = 0; i < len(names); i = i + 1 {
+    scope[names[i]] = true
+  }
+  push(anf.scopeStack, scope)
+}
+
+fn popScope(anf) {
+  pop(anf.scopeStack)
+}
+
+fn collectBlockNames(node) {
+  let names = []
+  let exprs = node.expressions or []
+  for let i = 0; i < len(exprs); i = i + 1 {
+    let expr = exprs[i]
+    if expr.type == "Let" and expr.name {
+      push(names, expr.name.name)
+    } else if expr.type == "Function" and expr.name {
+      push(names, expr.name.name)
+    }
+  }
+  names
+}
+
+fn collectFunctionNames(node) {
+  let names = []
+  if node.name { push(names, node.name.name) }
+  let params = node.params or []
+  for let i = 0; i < len(params); i = i + 1 {
+    push(names, params[i].name)
+  }
+  names
+}
+
+fn collectForNames(node) {
+  let names = []
+  if node.init and node.init.type == "Let" and node.init.name {
+    push(names, node.init.name.name)
+  }
+  names
+}
+
+fn freshTempName(anf) {
+  let name = "__anf_tmp" + str(anf.tempCounter)
+  for isNameTaken(anf, name) {
+    anf.tempCounter = anf.tempCounter + 1
+    name = "__anf_tmp" + str(anf.tempCounter)
+  }
+  anf.tempCounter = anf.tempCounter + 1
+  addName(anf, name)
+  name
+}
+
+// ========================================
+// ANF Helpers
+// ========================================
+
+fn isAtomic(node) {
+  node.type == "Number" or node.type == "String" or node.type == "Bool" or
+  node.type == "Nil" or node.type == "Identifier" or node.type == "Function"
+}
+
+fn wrapWithPrelude(anf, templateNode, pre, expr) {
+  if len(pre) == 0 { return expr }
+  makeBlock(anf, templateNode, concat(pre, [expr]))
+}
+
+// Forward declaration for mutual recursion
+let anfExpr = nil
+
+fn anfToAtomic(anf, node) {
+  let expr = anfExpr(anf, node)
+  if isAtomic(expr) {
+    return .{ pre: [], expr: expr }
+  }
+  let name = freshTempName(anf)
+  let nameNode = makeIdentifier(anf, node, name)
+  let letNode = makeLet(anf, node, nameNode, expr)
+  .{ pre: [letNode], expr: makeIdentifier(anf, node, name) }
+}
+
+// ========================================
+// Expression Lowering
+// ========================================
+
+fn anfBinary(anf, node) {
+  let left = anfToAtomic(anf, node.left)
+  let right = anfToAtomic(anf, node.right)
+  let newNode = copyNodeShallow(anf, node)
+  newNode.left = left.expr
+  newNode.right = right.expr
+  wrapWithPrelude(anf, node, concat(left.pre, right.pre), newNode)
+}
+
+fn anfUnary(anf, node) {
+  let operand = anfToAtomic(anf, node.operand)
+  let newNode = copyNodeShallow(anf, node)
+  newNode.operand = operand.expr
+  wrapWithPrelude(anf, node, operand.pre, newNode)
+}
+
+fn anfLogical(anf, node) {
+  let left = anfToAtomic(anf, node.left)
+  let right = anfExpr(anf, node.right)
+  let newNode = copyNodeShallow(anf, node)
+  newNode.left = left.expr
+  newNode.right = right
+  wrapWithPrelude(anf, node, left.pre, newNode)
+}
+
+fn anfGrouping(anf, node) {
+  let expr = anfExpr(anf, node.expression)
+  let newNode = copyNodeShallow(anf, node)
+  newNode.expression = expr
+  newNode
+}
+
+fn anfLet(anf, node) {
+  let newNode = copyNodeShallow(anf, node)
+  newNode.name = copyNodeShallow(anf, node.name)
+  if node.init {
+    newNode.init = anfExpr(anf, node.init)
+  }
+  addName(anf, newNode.name.name)
+  newNode
+}
+
+fn anfBlock(anf, node) {
+  let newNode = copyNodeShallow(anf, node)
+  pushScope(anf, collectBlockNames(node))
+  let newExprs = []
+  for let i = 0; i < len(node.expressions); i = i + 1 {
+    let expr = anfExpr(anf, node.expressions[i])
+    push(newExprs, expr)
+  }
+  popScope(anf)
+  newNode.expressions = newExprs
+  newNode
+}
+
+fn anfFunction(anf, node) {
+  let newNode = copyNodeShallow(anf, node)
+  if node.name {
+    newNode.name = copyNodeShallow(anf, node.name)
+  }
+  let newParams = []
+  for let i = 0; i < len(node.params); i = i + 1 {
+    push(newParams, copyNodeShallow(anf, node.params[i]))
+  }
+  newNode.params = newParams
+  pushScope(anf, collectFunctionNames(node))
+  newNode.body = anfExpr(anf, node.body)
+  popScope(anf)
+  newNode
+}
+
+fn anfCall(anf, node) {
+  let callee = anfToAtomic(anf, node.callee)
+  let pre = callee.pre
+  let args = []
+  for let i = 0; i < len(node.args); i = i + 1 {
+    let arg = anfToAtomic(anf, node.args[i])
+    pre = concat(pre, arg.pre)
+    push(args, arg.expr)
+  }
+  let newNode = copyNodeShallow(anf, node)
+  newNode.callee = callee.expr
+  newNode.args = args
+  wrapWithPrelude(anf, node, pre, newNode)
+}
+
+fn anfIf(anf, node) {
+  let cond = anfToAtomic(anf, node.condition)
+  let newNode = copyNodeShallow(anf, node)
+  newNode.condition = cond.expr
+  newNode.then = anfExpr(anf, node.then)
+  if node.else {
+    newNode.else = anfExpr(anf, node.else)
+  }
+  wrapWithPrelude(anf, node, cond.pre, newNode)
+}
+
+fn anfFor(anf, node) {
+  let newNode = copyNodeShallow(anf, node)
+  pushScope(anf, collectForNames(node))
+  if node.init {
+    newNode.init = anfExpr(anf, node.init)
+  }
+  if node.condition {
+    newNode.condition = anfExpr(anf, node.condition)
+  }
+  if node.update {
+    newNode.update = anfExpr(anf, node.update)
+  }
+  newNode.body = anfExpr(anf, node.body)
+  popScope(anf)
+  newNode
+}
+
+fn anfReturn(anf, node) {
+  let newNode = copyNodeShallow(anf, node)
+  if node.value {
+    newNode.value = anfExpr(anf, node.value)
+  }
+  newNode
+}
+
+fn anfBreak(anf, node) {
+  let newNode = copyNodeShallow(anf, node)
+  if node.value {
+    newNode.value = anfExpr(anf, node.value)
+  }
+  newNode
+}
+
+fn anfContinue(anf, node) {
+  copyNodeShallow(anf, node)
+}
+
+fn anfArray(anf, node) {
+  let pre = []
+  let elements = []
+  for let i = 0; i < len(node.elements); i = i + 1 {
+    let elem = anfToAtomic(anf, node.elements[i])
+    pre = concat(pre, elem.pre)
+    push(elements, elem.expr)
+  }
+  let newNode = copyNodeShallow(anf, node)
+  newNode.elements = elements
+  wrapWithPrelude(anf, node, pre, newNode)
+}
+
+fn anfHashmap(anf, node) {
+  let pre = []
+  let pairs = []
+  for let i = 0; i < len(node.pairs); i = i + 1 {
+    let pair = node.pairs[i]
+    let key = anfToAtomic(anf, pair.key)
+    pre = concat(pre, key.pre)
+    let value = anfToAtomic(anf, pair.value)
+    pre = concat(pre, value.pre)
+    push(pairs, .{ key: key.expr, value: value.expr })
+  }
+  let newNode = copyNodeShallow(anf, node)
+  newNode.pairs = pairs
+  wrapWithPrelude(anf, node, pre, newNode)
+}
+
+fn anfIndex(anf, node) {
+  let object = anfToAtomic(anf, node.object)
+  let index = anfToAtomic(anf, node.index)
+  let newNode = copyNodeShallow(anf, node)
+  newNode.object = object.expr
+  newNode.index = index.expr
+  wrapWithPrelude(anf, node, concat(object.pre, index.pre), newNode)
+}
+
+fn anfDot(anf, node) {
+  let object = anfToAtomic(anf, node.object)
+  let newNode = copyNodeShallow(anf, node)
+  newNode.object = object.expr
+  newNode.property = copyNodeShallow(anf, node.property)
+  wrapWithPrelude(anf, node, object.pre, newNode)
+}
+
+fn anfAssignment(anf, node) {
+  let targetPre = []
+  let targetNode = nil
+  if node.target.type == "Identifier" {
+    targetNode = copyNodeShallow(anf, node.target)
+  } else if node.target.type == "Index" {
+    let object = anfToAtomic(anf, node.target.object)
+    let index = anfToAtomic(anf, node.target.index)
+    targetPre = concat(object.pre, index.pre)
+    let newTarget = copyNodeShallow(anf, node.target)
+    newTarget.object = object.expr
+    newTarget.index = index.expr
+    targetNode = newTarget
+  } else if node.target.type == "Dot" {
+    let object = anfToAtomic(anf, node.target.object)
+    targetPre = object.pre
+    let newTarget = copyNodeShallow(anf, node.target)
+    newTarget.object = object.expr
+    newTarget.property = copyNodeShallow(anf, node.target.property)
+    targetNode = newTarget
+  } else {
+    targetNode = copyNodeShallow(anf, node.target)
+  }
+
+  let value = anfToAtomic(anf, node.value)
+  let newNode = copyNodeShallow(anf, node)
+  newNode.target = targetNode
+  newNode.value = value.expr
+  let resultExpr = value.expr
+  let pre = concat(targetPre, value.pre)
+  wrapWithPrelude(anf, node, concat(pre, [newNode]), resultExpr)
+}
+
+fn anfImport(anf, node) {
+  let newNode = copyNodeShallow(anf, node)
+  newNode.path = anfExpr(anf, node.path)
+  if node.importResult {
+    newNode.importResult = node.importResult
+  }
+  newNode
+}
+
+// ========================================
+// Main Expression Dispatcher
+// ========================================
+
+anfExpr = fn(anf, node) {
+  if !node { return nil }
+
+  if node.type == "If" {
+    return anfIf(anf, node)
+  } else if node.type == "Binary" {
+    return anfBinary(anf, node)
+  } else if node.type == "Unary" {
+    return anfUnary(anf, node)
+  } else if node.type == "Logical" {
+    return anfLogical(anf, node)
+  } else if node.type == "Grouping" {
+    return anfGrouping(anf, node)
+  } else if node.type == "Let" {
+    return anfLet(anf, node)
+  } else if node.type == "Block" {
+    return anfBlock(anf, node)
+  } else if node.type == "Function" {
+    return anfFunction(anf, node)
+  } else if node.type == "Call" {
+    return anfCall(anf, node)
+  } else if node.type == "For" {
+    return anfFor(anf, node)
+  } else if node.type == "Return" {
+    return anfReturn(anf, node)
+  } else if node.type == "Break" {
+    return anfBreak(anf, node)
+  } else if node.type == "Continue" {
+    return anfContinue(anf, node)
+  } else if node.type == "Array" {
+    return anfArray(anf, node)
+  } else if node.type == "Hashmap" {
+    return anfHashmap(anf, node)
+  } else if node.type == "Index" {
+    return anfIndex(anf, node)
+  } else if node.type == "Dot" {
+    return anfDot(anf, node)
+  } else if node.type == "Assignment" {
+    return anfAssignment(anf, node)
+  } else if node.type == "Import" {
+    return anfImport(anf, node)
+  } else if node.type == "Number" or node.type == "String" or
+            node.type == "Bool" or node.type == "Nil" or
+            node.type == "Identifier" {
+    return copyNodeShallow(anf, node)
+  } else {
+    addError(anf, node.id, "Unknown node type in ANF: " + node.type)
+    return node
+  }
+}
+
+// ========================================
+// Main API
+// ========================================
+// anf(ast, opts) → {
+//   success: bool,
+//   ast: BlockNode,             // ANF AST
+//   origin: { newId → oldId },  // Provenance map
+//   errors: [{ nodeId, message, severity }],
+//   nextNodeId: number,         // For next phase to continue
+// }
+//
+// opts: {
+//   startNodeId: number,  // Where to start fresh IDs
+// }
+fn anf(ast, opts) {
+  let anfer = .{
+    nextId: opts.startNodeId or 1,
+    origin: .{},
+    errors: [],
+    tempCounter: 0,
+    scopeStack: [],
+  }
+
+  let anfAst = anfExpr(anfer, ast)
+
+  .{
+    success: len(anfer.errors) == 0,
+    ast: anfAst,
+    origin: anfer.origin,
+    errors: anfer.errors,
+    nextNodeId: anfer.nextId,
+  }
+}
+
+anf

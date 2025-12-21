@@ -31,6 +31,14 @@ This document captures **MUST** and **MUST NOT** rules that ensure correctness.
 - ❌ MUST NOT emit bytecode
 - ❌ MUST NOT pre-materialize function objects
 
+### ANF
+
+- ✅ MUST preserve evaluation order
+- ✅ MUST copy position spans to any new nodes
+- ✅ MUST maintain `origin[newId] = oldId` map for tooling
+- ❌ MUST NOT perform semantic analysis
+- ❌ MUST NOT mutate input AST nodes
+
 ### Typecheck
 
 - ✅ MUST run after resolve and before codegen

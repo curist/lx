@@ -7,9 +7,10 @@
 // - Provide compilation artifacts for query service and codegen
 
 let parse = import "src/parser.lx"
-let lower = import "src/lower.lx"
-let resolve = import "src/resolve.lx"
-let typecheck = import "src/typecheck.lx"
+  let lower = import "src/lower.lx"
+  let anf = import "src/anf.lx"
+  let resolve = import "src/resolve.lx"
+  let typecheck = import "src/typecheck.lx"
 
 // ========================================
 // Driver Factory
@@ -21,6 +22,7 @@ fn make(opts) {
   driver.compiledModules = []  // Track compilation order
   driver.loadSource = opts and opts.loadSource or nil
   driver.withTypecheck = !(opts and opts.withTypecheck == false)  // Default: true
+  driver.withAnf = opts and opts.withAnf or false
 
   driver.compileModule = fn(path) {
     // Track compilation
@@ -86,32 +88,56 @@ fn make(opts) {
     }
 
     // ========================================
-    // PHASE 3: Resolve
+    // PHASE 3: ANF (optional)
+    // ========================================
+    let anfResult = nil
+    let anfAst = lowerResult.ast
+    let nextNodeId = lowerResult.nextNodeId
+    if driver.withAnf {
+      anfResult = anf(anfAst, .{ startNodeId: nextNodeId })
+      if !anfResult.success {
+        let result = .{
+          status: "failed",
+          path: path,
+          parseResult: parseResult,
+          lowerResult: lowerResult,
+          anfResult: anfResult,
+        }
+        driver.cache[path] = result
+        return result
+      }
+      anfAst = anfResult.ast
+      nextNodeId = anfResult.nextNodeId
+    }
+
+    // ========================================
+    // PHASE 4: Resolve
     // ========================================
     let resolveOpts = .{
       importCache: driver.cache,
       compileModule: driver.compileModule,
     }
-    let resolveResult = resolve(lowerResult.ast, resolveOpts)
+    let resolveResult = resolve(anfAst, resolveOpts)
 
     if !resolveResult.success {
       let result = .{
         status: "failed",
         path: path,
         parseResult: parseResult,
-        lowerResult: lowerResult,
-        resolveResult: resolveResult,
-      }
-      driver.cache[path] = result
-      return result
+      lowerResult: lowerResult,
+      anfResult: anfResult,
+      resolveResult: resolveResult,
+    }
+    driver.cache[path] = result
+    return result
     }
 
     // ========================================
-    // PHASE 4: Typecheck (optional)
+    // PHASE 5: Typecheck (optional)
     // ========================================
     let typecheckResult = nil
     if driver.withTypecheck {
-      typecheckResult = typecheck(lowerResult.ast, resolveResult, .{})
+      typecheckResult = typecheck(anfAst, resolveResult, .{})
     }
 
     // Store result in cache
@@ -120,6 +146,7 @@ fn make(opts) {
       path: path,
       parseResult: parseResult,
       lowerResult: lowerResult,
+      anfResult: anfResult,
       resolveResult: resolveResult,
       typecheckResult: typecheckResult,
     }

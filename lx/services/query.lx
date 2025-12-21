@@ -79,7 +79,7 @@ fn collectAllNodes(node, nodes) {
     nodes[node.id] = node
   }
 
-  // Traverse common node fields
+  // Traverse common node fields (as maps)
   if node.name { collectAllNodes(node.name, nodes) }
   if node.init { collectAllNodes(node.init, nodes) }
   if node.value { collectAllNodes(node.value, nodes) }
@@ -95,6 +95,10 @@ fn collectAllNodes(node, nodes) {
   if node.then { collectAllNodes(node.then, nodes) }
   if node.else { collectAllNodes(node.else, nodes) }
   if node.condition { collectAllNodes(node.condition, nodes) }
+  // body can be either a Block (map) or an array of statements
+  if node.body and type(node.body) == "map" {
+    collectAllNodes(node.body, nodes)
+  }
 
   // Traverse arrays
   if node.params and type(node.params) == "array" {
@@ -1260,9 +1264,15 @@ fn queryDiagnostics(result) {
   }
 
   if compileResult.typecheckResult and !compileResult.typecheckResult.success {
+    // Start with resolver nodes if available, otherwise use ctx.nodes or empty map
     let nodes = (compileResult.resolveResult and compileResult.resolveResult.nodes) or (ctx and ctx.nodes)
     if !nodes {
-      nodes = buildNodeIndexFromAst(compileResult.lowerResult and compileResult.lowerResult.ast)
+      nodes = .{}
+    }
+    // Always merge in nodes from lowered AST to ensure completeness
+    // (resolver.nodes may be incomplete, missing some AST nodes)
+    if compileResult.lowerResult and compileResult.lowerResult.ast {
+      collectAllNodes(compileResult.lowerResult.ast, nodes)
     }
     for let i = 0; i < len(compileResult.typecheckResult.errors); i = i + 1 {
       let err = compileResult.typecheckResult.errors[i]

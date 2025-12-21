@@ -13,6 +13,8 @@ else
 fi
 PY_BIN="${PYTHON:-python3}"
 LUA_BIN="${LUA:-lua}"
+LUAJIT_BIN="${LUAJIT:-luajit}"
+CHEZ_BIN="${CHEZ:-chez}"
 TIME_BIN="${TIME_BIN:-}"
 
 # pick a time command and format
@@ -43,8 +45,8 @@ REPEAT=${REPEAT:-1}
 have() { command -v "$1" >/dev/null 2>&1; }
 
 run_lang() {
-  local lang=$1 bin=$2
-  shift 2 || true
+  local lang=$1 bin=$2 script_dir=$3 ext=$4
+  shift 4 || true
   if ! have "$bin"; then
     echo "skipping $lang (missing $bin)"
     return
@@ -53,6 +55,9 @@ run_lang() {
   local cmd_prefix=("$bin")
   if [[ "$lang" == "lx" ]]; then
     cmd_prefix=("$bin" "run")
+  fi
+  if [[ "$lang" == "chez" ]]; then
+    cmd_prefix=("$bin" "--script")
   fi
 
   bench() {
@@ -69,13 +74,15 @@ run_lang() {
     done
   }
 
-  bench "$ROOT/$lang/sum_loop.$lang" "$N_SUM"
-  bench "$ROOT/$lang/fizzbuzz.$lang" "$N_FIZZ"
-  bench "$ROOT/$lang/fib_iter.$lang" "$N_FIB"
-  bench "$ROOT/$lang/array_fill.$lang" "$N_ARRAY"
-  bench "$ROOT/$lang/map_hit_miss.$lang" "$N_MAP"
+  bench "$ROOT/$script_dir/sum_loop.$ext" "$N_SUM"
+  bench "$ROOT/$script_dir/fizzbuzz.$ext" "$N_FIZZ"
+  bench "$ROOT/$script_dir/fib_iter.$ext" "$N_FIB"
+  bench "$ROOT/$script_dir/array_fill.$ext" "$N_ARRAY"
+  bench "$ROOT/$script_dir/map_hit_miss.$ext" "$N_MAP"
 }
 
-run_lang "lx" "$LX_BIN"
-run_lang "py" "$PY_BIN"
-run_lang "lua" "$LUA_BIN"
+run_lang "lx" "$LX_BIN" "lx" "lx"
+run_lang "py" "$PY_BIN" "py" "py"
+run_lang "lua" "$LUA_BIN" "lua" "lua"
+run_lang "luajit" "$LUAJIT_BIN" "lua" "lua"
+run_lang "chez" "$CHEZ_BIN" "chez" "ss"

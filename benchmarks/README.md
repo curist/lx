@@ -1,4 +1,4 @@
-Microbenchmarks for Lx vs Python vs Lua.
+Microbenchmarks for Lx vs Python vs Lua (LuaJIT) vs Chez Scheme.
 
 Each benchmark returns a checksum to avoid I/O noise. Keep implementations structurally similar so we measure dispatch/arith/table overheads, not library calls.
 

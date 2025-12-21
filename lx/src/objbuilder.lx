@@ -7,7 +7,7 @@ let object = import "src/object.lx"
 // let fold = globals.fold
 // let map = globals.map
 
-let VERSION = 0
+let VERSION = 1
 
 let ValueType = types.ValueType
 let ObjType = object.ObjType
@@ -24,11 +24,13 @@ let ChunkType = .{
 //     0000 0001 -> debug
 // OBJSIZE:   4 little endian
 // CHUNKS:    4 little endian
-// TBD:       32 - (2+1+1+4+4) = 20
+// MAIN_ID:   4 little endian
+// TBD:       32 - (2+1+1+4+4+4) = 16
 // # chunk layout
 // CHUNK_SIZE: 4 little endian
 //    CHUNK_TYPE: 1: 0 as REF, 1 as actual
-//       REF_CHUNK: 4, little endian, chunk index
+//    CHUNK_ID: 4 little endian
+//       REF_TARGET: 4, little endian, function id
 //    FUNCTION_ARITY: 1
 //     UPVALUE_COUNT: 1
 //   CHUNK_NAME_SIZE: 2 little endian
@@ -48,7 +50,7 @@ let ChunkType = .{
 //        NUMBER: 1 + 8 (double)
 //        OBJ:    1 + 1 (obj type) + obj type dependent layout(length)
 //          STRING:   4 little endian size + actual string
-//          FUNCTION: 0, we rely on the build order to stay the same
+//          FUNCTION: 4-byte function id
 // DEBUG_SECTION:
 //      SIZE: 4 little endian
 //      FILEPATH_LENGTH: 2 file path length
@@ -111,7 +113,7 @@ fn setFlags(options) {
   return lib.tohex(flags)
 }
 
-fn buildChunkObj(func, flags, builtModuleCache) {
+fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
   let chunk = func.chunk
   let funcName = func.name
   let filename = chunk.filename
@@ -119,15 +121,18 @@ fn buildChunkObj(func, flags, builtModuleCache) {
 
   let obj = []
   let debug = flags.debug
-  let functions = []
 
   // reserve chunk size
   obj = concat(obj, int32ToBytes(0))
 
   // chunk type
-  let moduleBuilt = isModule and builtModuleCache[filename]
+  let moduleBuilt = nil
+  if isModule and builtModuleCache[filename] != nil {
+    moduleBuilt = builtModuleCache[filename]
+  }
   if moduleBuilt {
     push(obj, lib.tohex(ChunkType.REF))
+    obj = concat(obj, int32ToBytes(funcId))
     obj = concat(obj, int32ToBytes(moduleBuilt))
 
     // update chunk total size
@@ -135,11 +140,11 @@ fn buildChunkObj(func, flags, builtModuleCache) {
 
     return .{
       obj: obj,
-      functions: [],
     }
   }
 
   push(obj, lib.tohex(ChunkType.ACTUAL))
+  obj = concat(obj, int32ToBytes(funcId))
 
   push(obj, lib.tohex(func.arity))
   push(obj, lib.tohex(func.upvalueCount))
@@ -168,7 +173,8 @@ fn buildChunkObj(func, flags, builtModuleCache) {
         constants = concat(constants, stringToBytes(value))
       },
       [ObjType.FUNCTION]: fn(value) {
-        push(functions, value)
+        let targetId = ensureFunctionId(value)
+        constants = concat(constants, int32ToBytes(targetId))
       },
     }
     let constTypeHandlers = .{
@@ -252,7 +258,6 @@ fn buildChunkObj(func, flags, builtModuleCache) {
 
   return .{
     obj: obj,
-    functions: functions,
   }
 }
 
@@ -267,27 +272,35 @@ fn hexToBytes(hex) {
 
 fn objbuilder(main, debug) {
   let flags = .{ debug: debug }
+  let functions = []
+  fn ensureFunctionId(func) {
+    for let i = 0; i < len(functions); i = i + 1 {
+      if functions[i] == func { return i }
+    }
+    push(functions, func)
+    len(functions) - 1
+  }
+
+  let mainId = ensureFunctionId(main)
 
   let obj = ["4c", "58", lib.tohex(VERSION), setFlags(flags)]
+  obj = concat(obj, int32ToBytes(0))  // size placeholder
+  obj = concat(obj, int32ToBytes(0))  // chunks placeholder
+  obj = concat(obj, int32ToBytes(mainId))
 
-  let sign = "@curist"
-  let fillRest = 32 - len(obj) - len(sign)
+  let fillRest = 32 - len(obj)
   each(range(fillRest), fn() { push(obj, "00") })
-
-  obj = concat(obj, stringToBytes(sign))
 
   let builtModuleCache = .{}
 
-  let functions = [main]
   for let i = 0; i < len(functions); i = i + 1 {
     let func = functions[i]
-    let chunkObj = buildChunkObj(func, flags, builtModuleCache)
-    functions = concat(functions, chunkObj.functions)
+    let chunkObj = buildChunkObj(func, i, flags, builtModuleCache, ensureFunctionId)
     obj = concat(obj, chunkObj.obj)
 
     let isModule = func.name == ""
 
-    if isModule and !builtModuleCache[func.chunk.filename] {
+    if isModule and builtModuleCache[func.chunk.filename] == nil {
       // just built a not cached module chunk
       builtModuleCache[func.chunk.filename] = i
     }

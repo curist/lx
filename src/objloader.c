@@ -16,39 +16,21 @@ ChunkIndexes chunkIndexes;
 //     0000 0001 -> debug
 // OBJSIZE:   4 little endian
 // CHUNKS:    4 little endian
-// TBD:       32 - (2+1+1+4+4) = 20
+// MAIN_ID:   4 little endian
+// TBD:       32 - (2+1+1+4+4+4) = 16
 // # chunk layout
 // CHUNK_SIZE: 4 little endian
 //    CHUNK_TYPE: 1: 0 as REF, 1 as actual
-//       REF_CHUNK: 4, little endian, chunk index
+//    CHUNK_ID: 4 little endian
+//       REF_TARGET: 4, little endian, function id
 //    FUNCTION_ARITY: 1
 //     UPVALUE_COUNT: 1
 //   CHUNK_NAME_SIZE: 2 little endian
 //        CHUNK_NAME: string, vary length, aka function name
-// CODE_SECTION: ?
-//      SIZE: 4 little endian
-//      CODE: various length
-//            CODE_SECTION guaranteed to be followed by 5 bytes of CONST_SECTION header
-// CONST_SECTION: follow right after a CODE_SECTION
-//      SIZE: 4  let's leave size here, so it's possible for us to jump to next chunk
-//      CONST_COUNT: 1
-//   every const is like
-//      TYPE:  1
-//      VALUE: 1 bit type + type dependent layout(length)
-//        BOOL:   1 + 1
-//        NIL:    1
-//        NUMBER: 1 + 8 (double)
-//        OBJ:    1 + 1 (obj type) + obj type dependent layout(length)
-//          STRING:   4 little endian size + actual string
-//          FUNCTION: 0, we rely on the build order to stay the same
-// DEBUG_SECTION:
-//      SIZE: 4 little endian
-//      FILEPATH_LENGTH: 2 file path length
-//      FILEPATH: vary length
-//      TOKEN_LINE_NUMBER: 1 + 2 byte, each
-//                first byte represent repeat times for line #
-//                next 2 bytes is the actual line number
-//                (which means we would only support line no. up to 65535)
+// CODE_SECTION: same as v0
+// CONST_SECTION: same as v0
+//   OBJ: FUNCTION payload is 4-byte function id
+// DEBUG_SECTION: same as v0
 
 double readDouble(const uint8_t* bytes) {
   double n = 0;
@@ -72,12 +54,32 @@ size_t getShortSize(const uint8_t* bytes) {
   return size;
 }
 
+static void writeValueArrayAt(ValueArray* array, int index, Value value) {
+  if (array->capacity < index + 1) {
+    int oldCapacity = array->capacity;
+    array->capacity = GROW_CAPACITY(index + 1);
+    array->values = GROW_ARRAY(Value, array->values, oldCapacity, array->capacity);
+  }
+  if (array->count <= index) {
+    for (int i = array->count; i <= index; i++) {
+      array->values[i] = NIL_VAL;
+    }
+    array->count = index + 1;
+  }
+  array->values[index] = value;
+}
+
 bool objIsValid(uint8_t* bytes) {
   // we verify all sections size in one go
   // total bytes size should equals objSize read in bytes,
   // which should be checked upfront
   if (!(bytes[0] == 'L' && bytes[1] == 'X')) {
     fprintf(stderr, "Invalid lxobj: malformed header.\n");
+    return false;
+  }
+  uint8_t version = bytes[2];
+  if (version != 1) {
+    fprintf(stderr, "Invalid lxobj: unsupported version %u.\n", version);
     return false;
   }
   uint8_t flags = bytes[3];
@@ -111,6 +113,9 @@ bool objIsValid(uint8_t* bytes) {
     uint8_t chunkType = ptr[0];
     ptr += 1;
     chunk_size_sofar += 1;
+
+    ptr += 4;
+    chunk_size_sofar += 4;
 
     if (chunkType == CHUNK_TYPE_REF) {
       // set chunk_start to next chunk
@@ -199,13 +204,6 @@ void freeChunkIndexes(ChunkIndexes* array) {
   initChunkIndexes(array);
 }
 
-int getModuleIndex(uint8_t* bytes) {
-  uint8_t* ptr = &bytes[4];
-  ChunkType chunkType = ptr[0];
-  if (chunkType != CHUNK_TYPE_REF) return -1;
-  return getSize(&ptr[1]);
-}
-
 ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   bool debug = (flags & 0b00000001) > 0;
 
@@ -213,16 +211,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   push(OBJ_VAL(func));
   Chunk* chunk = &func->chunk;
 
-  uint8_t* code_start = &bytes[4];
-
-  // check chunk type
-  ChunkType chunkType = code_start[0];
-  code_start += 1;
-
-  if (chunkType == CHUNK_TYPE_REF) {
-    fprintf(stderr, "Unexpected reference chunk\n");
-    return NULL;
-  }
+  uint8_t* code_start = bytes;
 
   func->arity = code_start[0];
   func->upvalueCount = code_start[1];
@@ -312,14 +301,15 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
         ObjType objType = constSection[1];
         switch (objType) {
           case OBJ_FUNCTION: {
+            int functionId = (int)getSize(&constSection[2]);
             // add nil constant, & save the value pointer to an array
             // after all chunks(functions) are loaded and saved to global functions var,
             // we will iterate through value pointer,
             // and do valuePointer[i] = OBJ_VAL(functions[i])
             int index = addConstant(chunk, NIL_VAL);
-            writeChunkIndexes(&chunkIndexes, (ChunkValueIndex){chunk, index});
-            // value type + obj type
-            constSection += (1 + 1);
+            writeChunkIndexes(&chunkIndexes, (ChunkValueIndex){chunk, index, functionId});
+            // value type + obj type + function id
+            constSection += (1 + 1 + 4);
             break;
           }
           case OBJ_STRING: {
@@ -354,46 +344,49 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
   initChunkIndexes(&chunkIndexes);
 
   uint8_t flags = bytes[3];
+  int mainId = (int)getSize(&bytes[12]);
 
-  size_t chunks_count = getShortSize(&bytes[8]);
+  size_t chunks_count = getSize(&bytes[8]);
   uint8_t* chunk_start = &bytes[32];
 
   uint8_t shared_module_count = 0;
 
   for (size_t i = 0; i < chunks_count; i++) {
     size_t chunk_size = getSize(chunk_start);
-    int moduleIndex = getModuleIndex(chunk_start);
-    if (moduleIndex >= 0) {
-      writeValueArray(&functions, NUMBER_VAL(moduleIndex));
+    uint8_t* ptr = &chunk_start[4];
+    ChunkType chunkType = ptr[0];
+    ptr += 1;
+
+    int chunkId = (int)getSize(ptr);
+    ptr += 4;
+
+    if (chunkType == CHUNK_TYPE_REF) {
+      int targetId = (int)getSize(ptr);
+      writeValueArrayAt(&functions, chunkId, NUMBER_VAL(targetId));
       shared_module_count++;
     } else {
-      ObjFunction* func = loadFunction(chunk_start, flags);
+      ObjFunction* func = loadFunction(ptr, flags);
       if (func == NULL) return NULL;
-      if (i == 0) main = func;
-      writeValueArray(&functions, OBJ_VAL(func));
+      if (chunkId == mainId) main = func;
+      writeValueArrayAt(&functions, chunkId, OBJ_VAL(func));
     }
     chunk_start += 4 + chunk_size;
   }
 
-  if (chunkIndexes.count != chunks_count - 1) {
-    // minus one, cuz first chunk is main
-    fprintf(stderr, "Invalid lxobj: functions(%d)/chunks(%zu) count mismatch.\n",
-        chunkIndexes.count, chunks_count);
-    return NULL;
-  }
-
   for (size_t i = 0; i < chunkIndexes.count; i++) {
-    // functions[0] is main, thus i + 1
-
-    ObjFunction* func;
-    if (IS_NUMBER(functions.values[i + 1])) {
-      int index = AS_NUMBER(functions.values[i + 1]);
-      func = AS_FUNCTION(functions.values[index]);
-    } else {
-      func = AS_FUNCTION(functions.values[i + 1]);
-    }
     ChunkValueIndex chunkIndex = chunkIndexes.values[i];
-    chunkIndex.chunk->constants.values[chunkIndex.index] = OBJ_VAL(func);
+    int functionId = chunkIndex.functionId;
+    if (functionId >= functions.count) {
+      fprintf(stderr, "Invalid lxobj: function index out of bounds.\n");
+      return NULL;
+    }
+
+    Value funcValue = functions.values[functionId];
+    if (IS_NUMBER(funcValue)) {
+      int index = AS_NUMBER(funcValue);
+      funcValue = functions.values[index];
+    }
+    chunkIndex.chunk->constants.values[chunkIndex.index] = funcValue;
   }
 
   for (size_t i = 0; i < chunks_count - shared_module_count; i++) pop();

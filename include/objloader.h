@@ -7,6 +7,7 @@
 typedef struct {
   Chunk* chunk;
   int index;
+  int functionId;
 } ChunkValueIndex;
 
 typedef struct {

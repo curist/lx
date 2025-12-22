@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #ifndef WASM
@@ -877,6 +878,30 @@ static void defineLxNatives() {
     writeValueArray(&AS_ARRAY(vm.stack[3]), vm.stack[4]);
     pop();
   }
+  pop();
+  pop();
+
+  push(CSTRING_VAL("env"));
+  push(OBJ_VAL(newHashmap()));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
+#ifndef WASM
+  extern char** environ;
+  if (environ != NULL) {
+    for (int i = 0; environ[i] != NULL; i++) {
+      char* entry = environ[i];
+      char* eq = strchr(entry, '=');
+      if (eq == NULL || eq == entry) continue;
+      size_t keyLen = (size_t)(eq - entry);
+      ObjString* key = copyString(entry, (int)keyLen);
+      ObjString* value = copyString(eq + 1, (int)strlen(eq + 1));
+      push(OBJ_VAL(key));
+      push(OBJ_VAL(value));
+      tableSet(&AS_HASHMAP(vm.stack[3]), vm.stack[4], vm.stack[5]);
+      pop();
+      pop();
+    }
+  }
+#endif
   pop();
   pop();
 

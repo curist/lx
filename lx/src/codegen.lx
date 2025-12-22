@@ -1,0 +1,828 @@
+// Codegen Phase - Emit bytecode from resolved ANF AST
+// Responsibility: Mechanical bytecode emission, no semantic decisions.
+
+let lib = import "src/lib.lx"
+let types = import "src/types.lx"
+let object = import "src/object.lx"
+
+let OP = types.OP
+let ValueType = types.ValueType
+let ObjType = object.ObjType
+
+let UINT16_MAX = 256 * 256
+
+fn Value(kind, value) {.{
+  kind: kind,
+  value: value,
+}}
+
+fn Chunk(filename) {.{
+  filename: filename,
+  bytecode: [],
+  constants: [],
+  lines: [],
+  constantsCache: .{},
+  importConstCache: .{},
+}}
+
+fn Function(name, arity, chunk) {.{
+  name: name,
+  arity: arity,
+  chunk: chunk,
+  upvalueCount: 0,
+}}
+
+fn NUMBER_VAL(value) { Value(ValueType.NUMBER, value) }
+fn OBJ_VAL(value) { Value(ValueType.OBJ, value) }
+
+fn ObjectFunction(func) { OBJ_VAL(object.ObjectFunction(func)) }
+fn ObjectString(string) { OBJ_VAL(object.ObjectString(string)) }
+
+fn addError(gen, node, message) {
+  push(gen.errors, .{
+    nodeId: node and node.id or 0,
+    message: message,
+    severity: "error",
+  })
+}
+
+fn emitByte(gen, byte, line) {
+  let node = gen.currentNode
+  let nodeInfo = node and (node.type + " L" + str(node.line or gen.currentLine or 0)) or "unknown"
+  if type(byte) != "number" {
+    addError(gen, gen.currentNode, "Invalid bytecode (non-number): " + str(byte) + " at " + nodeInfo)
+    byte = 0
+  } else {
+    byte = int(byte)
+    if byte < 0 or byte > 255 {
+      addError(gen, gen.currentNode, "Invalid bytecode (out of range): " + str(byte) + " at " + nodeInfo)
+      byte = 0
+    }
+  }
+  let chunk = gen.currentFunction.chunk
+  push(chunk.bytecode, lib.tohex(byte))
+  push(chunk.lines, line or gen.currentLine or 1)
+}
+
+fn emitBytes(gen, byte1, byte2, line) {
+  emitByte(gen, byte1, line)
+  emitByte(gen, byte2, line)
+}
+
+fn emitLoop(gen, loopStart, line) {
+  emitByte(gen, OP.LOOP, line)
+  let offset = len(gen.currentFunction.chunk.bytecode) - loopStart + 2
+  emitByte(gen, int(offset / 256), line)
+  emitByte(gen, offset % 256, line)
+}
+
+fn emitJump(gen, instruction, line) {
+  emitByte(gen, instruction, line)
+  emitBytes(gen, 255, 255, line)
+  return len(gen.currentFunction.chunk.bytecode) - 2
+}
+
+fn patchJump(gen, offset) {
+  let jump = len(gen.currentFunction.chunk.bytecode) - offset - 2
+  if jump > UINT16_MAX {
+    addError(gen, gen.currentNode, "Too much code to jump over.")
+  }
+  gen.currentFunction.chunk.bytecode[offset] = lib.tohex(int(jump / 256))
+  gen.currentFunction.chunk.bytecode[offset + 1] = lib.tohex(jump % 256)
+}
+
+fn calcValueKey(value) {
+  let k = str(value.kind) + ":"
+  if value.kind == ValueType.NUMBER {
+    k = k + str(value.value)
+  } else if value.kind == ValueType.OBJ {
+    let obj = value.value
+    k = k + str(obj.kind) + ":"
+    if obj.kind == ObjType.STRING {
+      k = k + obj.value
+    } else {
+      return "nocache"
+    }
+  } else {
+    return "nocache"
+  }
+  k
+}
+
+fn addConstant(chunk, value) {
+  let k = calcValueKey(value)
+  if k == "nocache" {
+    push(chunk.constants, value)
+    return len(chunk.constants) - 1
+  }
+  let index = chunk.constantsCache[k]
+  if index { return index }
+  push(chunk.constants, value)
+  index = len(chunk.constants) - 1
+  chunk.constantsCache[k] = index
+  index
+}
+
+fn makeConstant(gen, value) {
+  let constant = addConstant(gen.currentFunction.chunk, value)
+  if constant > 256 {
+    addError(gen, gen.currentNode, "Too many constants in one chunk.")
+    return 0
+  }
+  constant
+}
+
+fn emitConstant(gen, value, line) {
+  emitBytes(gen, OP.CONSTANT, makeConstant(gen, value), line)
+}
+
+fn identifierConstant(gen, name) {
+  makeConstant(gen, ObjectString(name))
+}
+
+fn buildDeclMap(scopeInfo) {
+  let map = .{}
+  let scopeIds = keys(scopeInfo or .{})
+  for let i = 0; i < len(scopeIds); i = i + 1 {
+    let id = scopeIds[i]
+    let scope = scopeInfo[id]
+    let locals = scope and scope.locals or []
+    for let j = 0; j < len(locals); j = j + 1 {
+      let local = locals[j]
+      if local.nodeId {
+        map[local.nodeId] = local
+      }
+    }
+  }
+  map
+}
+
+fn localSlot(slot) {
+  slot + 1
+}
+
+fn computeAbsoluteSlot(gen, binding) {
+  // Look up the absolute slot that was recorded when this local was emitted
+  let absoluteSlot = gen.emittedLocals[binding.declaredAt]
+  if absoluteSlot or absoluteSlot == 0 {
+    return absoluteSlot
+  }
+
+  // If not found, this is an error - the local should have been emitted
+  addError(gen, gen.currentNode, "Internal error: local not emitted for binding")
+  0
+}
+
+fn computeAbsoluteSlotForUpvalue(gen, scopeRelativeSlot) {
+  // Compute absolute position for an upvalue that captures from parent scope
+  // The scopeRelativeSlot is relative to the immediate parent scope (top of scopeStack)
+  // We need to compute its absolute position by summing locals from all ancestor scopes
+
+  let absoluteSlot = 0
+  let stackLen = len(gen.scopeStack)
+
+  // Sum up locals from all scopes except the last one
+  for let i = 0; i < stackLen - 1; i = i + 1 {
+    let scope = gen.scopeStack[i]
+    let locals = scope.locals or []
+    absoluteSlot = absoluteSlot + len(locals)
+  }
+
+  // Add the scope-relative slot from the parent scope (last scope in stack)
+  absoluteSlot = absoluteSlot + scopeRelativeSlot
+
+  absoluteSlot
+}
+
+fn pushScope(gen, node) {
+  let info = gen.scopeInfo[node.id]
+  if info {
+    push(gen.scopeStack, info)
+  }
+}
+
+fn popScope(gen) {
+  if len(gen.scopeStack) > 0 {
+    pop(gen.scopeStack)
+  }
+}
+
+fn endScope(gen, node) {
+  let scope = gen.scopeInfo[node.id]
+  if !scope { return }
+  let locals = scope.locals or []
+  for let i = len(locals) - 1; i >= 0; i = i - 1 {
+    let local = locals[i]
+    if local.isCaptured {
+      emitByte(gen, OP.CLOSE_UPVALUE, gen.currentLine)
+    } else {
+      emitByte(gen, OP.POP_LOCAL, gen.currentLine)
+    }
+    // Decrement the local slot counter as we pop locals
+    gen.nextLocalSlot = gen.nextLocalSlot - 1
+  }
+}
+
+fn resetScopeVariables(gen, targetDepth) {
+  let stack = gen.scopeStack
+  for let i = len(stack) - 1; i >= 0; i = i - 1 {
+    let scope = stack[i]
+    if scope.depth <= targetDepth { break }
+    let locals = scope.locals or []
+    for let j = len(locals) - 1; j >= 0; j = j - 1 {
+      emitByte(gen, OP.POP_LOCAL, gen.currentLine)
+    }
+  }
+}
+
+fn patchBreaks(gen) {
+  let breaker = gen.breakOffsets[len(gen.breakOffsets) - 1]
+  let currentAddr = len(gen.currentFunction.chunk.bytecode)
+  for let i = 0; i < len(breaker); i = i + 1 {
+    let addr = breaker[i]
+    let jump = currentAddr - addr - 2
+    if jump > UINT16_MAX {
+      addError(gen, gen.currentNode, "Too much code to jump over.")
+    }
+    gen.currentFunction.chunk.bytecode[addr] = lib.tohex(int(jump / 256))
+    gen.currentFunction.chunk.bytecode[addr + 1] = lib.tohex(jump % 256)
+  }
+}
+
+fn patchContinues(gen) {
+  let continues = gen.continueOffsets[len(gen.continueOffsets) - 1]
+  let currentAddr = len(gen.currentFunction.chunk.bytecode)
+  for let i = 0; i < len(continues); i = i + 1 {
+    let addr = continues[i]
+    let jump = currentAddr - addr - 2
+    if jump > UINT16_MAX {
+      addError(gen, gen.currentNode, "Loop body too large.")
+    }
+    gen.currentFunction.chunk.bytecode[addr] = lib.tohex(int(jump / 256))
+    gen.currentFunction.chunk.bytecode[addr + 1] = lib.tohex(jump % 256)
+  }
+}
+
+let compileExpr = nil
+
+fn compileLiteral(gen, node) {
+  if node.type == "Nil" {
+    emitByte(gen, OP.NIL, node.line)
+  } else if node.type == "Bool" {
+    emitByte(gen, node.value and OP.TRUE or OP.FALSE, node.line)
+  } else if node.type == "Number" {
+    let value = node.value
+    if value >= 0 and value < 256 and int(value) == value {
+      emitBytes(gen, OP.CONST_BYTE, value, node.line)
+    } else {
+      emitConstant(gen, NUMBER_VAL(value), node.line)
+    }
+  } else if node.type == "String" {
+    emitConstant(gen, ObjectString(node.value), node.line)
+  }
+}
+
+fn compileIdentifier(gen, node) {
+  let binding = gen.resolvedNames[node.id]
+  if !binding {
+    addError(gen, node, "Unresolved identifier: " + node.name)
+    return
+  }
+  if binding.kind == "local" {
+    let absoluteSlot = computeAbsoluteSlot(gen, binding)
+    emitBytes(gen, binding.getOp, localSlot(absoluteSlot), node.line)
+  } else if binding.kind == "upvalue" {
+    emitBytes(gen, binding.getOp, binding.upvalueIndex, node.line)
+  } else {
+    let idx = identifierConstant(gen, binding.name)
+    emitBytes(gen, binding.getOp, idx, node.line)
+  }
+}
+
+fn compileLet(gen, node) {
+  if node.init {
+    compileExpr(gen, node.init)
+  } else {
+    emitByte(gen, OP.NIL, node.line)
+  }
+  emitByte(gen, OP.DUP, node.line)
+
+  let local = gen.localsByDecl[node.name.id]
+  if local {
+    // Record the absolute slot for this local
+    gen.emittedLocals[local.nodeId] = gen.nextLocalSlot
+    gen.nextLocalSlot = gen.nextLocalSlot + 1
+    emitByte(gen, OP.NEW_LOCAL, node.line)
+  } else {
+    let idx = identifierConstant(gen, node.name.name)
+    emitBytes(gen, OP.DEFINE_GLOBAL, idx, node.line)
+  }
+}
+
+fn compileBlock(gen, node) {
+  pushScope(gen, node)
+  let exprs = node.expressions or []
+  if len(exprs) == 0 {
+    emitByte(gen, OP.NIL, node.line)
+  } else {
+    for let i = 0; i < len(exprs); i = i + 1 {
+      let expr = exprs[i]
+      compileExpr(gen, expr)
+      if i < len(exprs) - 1 {
+        emitByte(gen, OP.POP, expr.line)
+      }
+    }
+  }
+  endScope(gen, node)
+  popScope(gen)
+}
+
+fn compileUnary(gen, node) {
+  compileExpr(gen, node.operand)
+  let op = node.operator and node.operator.lexeme or ""
+  if op == "!" {
+    emitByte(gen, OP.NOT, node.line)
+  } else if op == "-" {
+    emitByte(gen, OP.NEGATE, node.line)
+  } else {
+    addError(gen, node, "Unsupported unary op: " + op)
+  }
+}
+
+fn compileBinary(gen, node) {
+  compileExpr(gen, node.left)
+  compileExpr(gen, node.right)
+  let op = node.operator and node.operator.lexeme or ""
+  let opCodes = .{
+    ["+"]: OP.ADD,
+    ["-"]: OP.SUBTRACT,
+    ["*"]: OP.MULTIPLY,
+    ["/"]: OP.DIVIDE,
+    ["%"]: OP.MOD,
+    ["=="]: OP.EQUAL,
+    ["!="]: [OP.EQUAL, OP.NOT],
+    [">"]: OP.GREATER,
+    [">="]: [OP.LESS, OP.NOT],
+    ["<"]: OP.LESS,
+    ["<="]: [OP.GREATER, OP.NOT],
+    ["|"]: OP.BIT_OR,
+    ["^"]: OP.BIT_XOR,
+    ["&"]: OP.BIT_AND,
+    ["<<"]: OP.BIT_LSHIFT,
+    [">>"]: OP.BIT_RSHIFT,
+  }
+  let code = opCodes[op]
+  if !code {
+    addError(gen, node, "Unsupported binary op: " + op)
+    return
+  }
+  if type(code) == "array" {
+    emitBytes(gen, code[0], code[1], node.line)
+  } else {
+    emitByte(gen, code, node.line)
+  }
+}
+
+fn compileLogical(gen, node) {
+  compileExpr(gen, node.left)
+  let op = node.operator and node.operator.lexeme or ""
+  if op == "and" {
+    emitByte(gen, OP.DUP, node.line)
+    let endJump = emitJump(gen, OP.JUMP_IF_FALSE, node.line)
+    emitByte(gen, OP.POP, node.line)
+    compileExpr(gen, node.right)
+    patchJump(gen, endJump)
+  } else if op == "or" {
+    emitByte(gen, OP.DUP, node.line)
+    let endJump = emitJump(gen, OP.JUMP_IF_TRUE, node.line)
+    emitByte(gen, OP.POP, node.line)
+    compileExpr(gen, node.right)
+    patchJump(gen, endJump)
+  } else {
+    addError(gen, node, "Unsupported logical op: " + op)
+  }
+}
+
+fn compileIf(gen, node) {
+  compileExpr(gen, node.condition)
+  let thenJump = emitJump(gen, OP.JUMP_IF_FALSE, node.line)
+  compileExpr(gen, node.then)
+  let elseJump = emitJump(gen, OP.JUMP, node.line)
+  patchJump(gen, thenJump)
+  if node.else {
+    compileExpr(gen, node.else)
+  } else {
+    emitByte(gen, OP.NIL, node.line)
+  }
+  patchJump(gen, elseJump)
+}
+
+fn compileCall(gen, node) {
+  compileExpr(gen, node.callee)
+  let args = node.args or []
+  for let i = 0; i < len(args); i = i + 1 {
+    compileExpr(gen, args[i])
+  }
+  emitBytes(gen, OP.CALL, len(args), node.line)
+}
+
+fn compileFunctionExpr(gen, node) {
+  let name = node.name and node.name.name or "fn"
+  let func = Function(name, len(node.params or []), Chunk(node.filename))
+
+  let enclosing = gen.currentFunction
+  gen.currentFunction = func
+
+  // Save the local counter (we're entering a new function scope)
+  let enclosingLocalSlot = gen.nextLocalSlot
+  let enclosingEmittedLocals = gen.emittedLocals
+  gen.nextLocalSlot = 0
+  gen.emittedLocals = .{}  // Fresh map for this function
+
+  // Record function name and parameters
+  // Function name is at slot -1 (VM slot 0 via localSlot(-1) = 0, the closure)
+  // Parameters are at slots 0, 1, 2, ... (which map to VM slots 1, 2, 3, ... with localSlot)
+  let fnScope = gen.scopeInfo[node.id]
+  if fnScope {
+    let locals = fnScope.locals or []
+    let slot = 0
+    for let i = 0; i < len(locals); i = i + 1 {
+      let local = locals[i]
+      if local.kind == "fn" {
+        // Function name: record at slot -1 so localSlot(-1) = 0 (the closure)
+        gen.emittedLocals[local.nodeId] = -1
+      } else {
+        // Parameters: record at slots 0, 1, 2, ...
+        gen.emittedLocals[local.nodeId] = slot
+        slot = slot + 1
+      }
+    }
+    gen.nextLocalSlot = slot
+  }
+
+  pushScope(gen, node)
+  compileBlock(gen, node.body)
+  popScope(gen)
+
+  emitByte(gen, OP.RETURN, node.line)
+
+  // Restore the local counter and emittedLocals map
+  gen.currentFunction = enclosing
+  gen.nextLocalSlot = enclosingLocalSlot
+  gen.emittedLocals = enclosingEmittedLocals
+
+  let scope = fnScope
+  if scope {
+    func.upvalueCount = len(scope.upvalues or [])
+  }
+
+  let constIndex = makeConstant(gen, ObjectFunction(func))
+  emitBytes(gen, OP.CLOSURE, constIndex, node.line)
+
+  let upvalues = scope and scope.upvalues or []
+  for let i = 0; i < len(upvalues); i = i + 1 {
+    let uv = upvalues[i]
+
+    // Resolve through intermediate scopes to find the actual capture
+    let actualIsLocal = uv.isLocal
+    let actualSlot = uv.slot
+
+    // If this upvalue captures from a parent upvalue, follow the chain
+    // to see if it ultimately comes from a local in an ancestor function
+    if !actualIsLocal and len(gen.scopeStack) > 0 {
+      let parentIdx = len(gen.scopeStack) - 1
+      let parentScope = gen.scopeStack[parentIdx]
+      let parentUpvalues = parentScope.upvalues or []
+
+      if uv.slot < len(parentUpvalues) {
+        let parentUv = parentUpvalues[uv.slot]
+
+        // If parent's upvalue is a local, we should capture it as local too
+        if parentUv.isLocal {
+          // parentUv.slot is a resolver slot in the parent's enclosing scope
+          // The enclosing scope is at parentIdx - 1 in the scopeStack
+          if parentIdx > 0 {
+            let enclosingScope = gen.scopeStack[parentIdx - 1]
+            let enclosingLocals = enclosingScope.locals or []
+
+            if parentUv.slot < len(enclosingLocals) {
+              let localInfo = enclosingLocals[parentUv.slot]
+              let absoluteSlot = gen.emittedLocals[localInfo.nodeId]
+
+              if absoluteSlot or absoluteSlot == 0 {
+                actualIsLocal = true
+                actualSlot = absoluteSlot
+              }
+            }
+          }
+        }
+      }
+    }
+
+    emitByte(gen, actualIsLocal and 1 or 0, node.line)
+    if actualIsLocal {
+      emitByte(gen, localSlot(actualSlot), node.line)
+    } else {
+      // Upvalue captures another upvalue - slot is already an upvalue index
+      emitByte(gen, actualSlot, node.line)
+    }
+  }
+
+  let local = gen.localsByDecl[node.id]
+  if local {
+    emitByte(gen, OP.DUP, node.line)
+    // Record the absolute slot for this function local
+    gen.emittedLocals[node.id] = gen.nextLocalSlot
+    gen.nextLocalSlot = gen.nextLocalSlot + 1
+    emitByte(gen, OP.NEW_LOCAL, node.line)
+  }
+}
+
+fn compileAssignment(gen, node) {
+  if node.target.type == "Identifier" {
+    compileExpr(gen, node.value)
+    let info = gen.assignmentInfo[node.id]
+    if !info {
+      addError(gen, node, "Missing assignment info.")
+      return
+    }
+    if info.kind == "local" {
+      // Get the binding to compute absolute slot
+      let targetBinding = gen.resolvedNames[node.target.id]
+      let absoluteSlot = computeAbsoluteSlot(gen, targetBinding)
+      emitBytes(gen, OP.SET_LOCAL, localSlot(absoluteSlot), node.line)
+    } else if info.kind == "upvalue" {
+      emitBytes(gen, OP.SET_UPVALUE, info.upvalueIndex, node.line)
+    } else {
+      addError(gen, node, "Invalid assignment target.")
+    }
+    return
+  }
+
+  if node.target.type == "Index" {
+    compileExpr(gen, node.target.object)
+    compileExpr(gen, node.target.index)
+    compileExpr(gen, node.value)
+    emitByte(gen, OP.SET_BY_INDEX, node.line)
+    return
+  }
+
+  if node.target.type == "Dot" {
+    compileExpr(gen, node.target.object)
+    emitConstant(gen, ObjectString(node.target.property.value), node.line)
+    compileExpr(gen, node.value)
+    emitByte(gen, OP.SET_BY_INDEX, node.line)
+    return
+  }
+
+  addError(gen, node, "Unsupported assignment target: " + node.target.type)
+}
+
+fn compileIndex(gen, node) {
+  compileExpr(gen, node.object)
+  compileExpr(gen, node.index)
+  emitByte(gen, OP.GET_BY_INDEX, node.line)
+}
+
+fn compileDot(gen, node) {
+  compileExpr(gen, node.object)
+  emitConstant(gen, ObjectString(node.property.value), node.line)
+  emitByte(gen, OP.GET_BY_INDEX, node.line)
+}
+
+fn compileArray(gen, node) {
+  emitByte(gen, OP.ARRAY, node.line)
+  let elems = node.elements or []
+  for let i = 0; i < len(elems); i = i + 1 {
+    compileExpr(gen, elems[i])
+    emitByte(gen, OP.APPEND, node.line)
+  }
+}
+
+fn compileHashmap(gen, node) {
+  emitByte(gen, OP.HASHMAP, node.line)
+  let pairs = node.pairs or []
+  for let i = 0; i < len(pairs); i = i + 1 {
+    let pair = pairs[i]
+    compileExpr(gen, pair.key)
+    compileExpr(gen, pair.value)
+    emitByte(gen, OP.ASSOC, node.line)
+  }
+}
+
+fn compileReturn(gen, node) {
+  if node.value {
+    compileExpr(gen, node.value)
+  } else {
+    emitByte(gen, OP.NIL, node.line)
+  }
+  emitByte(gen, OP.RETURN, node.line)
+}
+
+fn compileBreak(gen, node) {
+  if len(gen.breakOffsets) == 0 {
+    addError(gen, node, "Break used outside loop.")
+    return
+  }
+  if node.value {
+    compileExpr(gen, node.value)
+    let loopResultSlot = gen.loopResultSlots[len(gen.loopResultSlots) - 1]
+    emitBytes(gen, OP.SET_LOCAL, localSlot(loopResultSlot), node.line)
+    emitByte(gen, OP.POP, node.line)
+  }
+  resetScopeVariables(gen, gen.loopScopeDepth - 1)
+  let jump = emitJump(gen, OP.JUMP, node.line)
+  push(gen.breakOffsets[len(gen.breakOffsets) - 1], jump)
+}
+
+fn compileContinue(gen, node) {
+  if len(gen.continueOffsets) == 0 {
+    addError(gen, node, "Continue used outside loop.")
+    return
+  }
+  resetScopeVariables(gen, gen.loopScopeDepth)
+  let jump = emitJump(gen, OP.JUMP, node.line)
+  push(gen.continueOffsets[len(gen.continueOffsets) - 1], jump)
+}
+
+fn compileFor(gen, node) {
+  // Reserve loop result slot in the enclosing scope.
+  let loopResultSlot = gen.nextLocalSlot
+  emitByte(gen, OP.NIL, node.line)
+  emitByte(gen, OP.NEW_LOCAL, node.line)
+  gen.nextLocalSlot = gen.nextLocalSlot + 1
+  push(gen.loopResultSlots, loopResultSlot)
+
+  pushScope(gen, node)
+  let prevScopeDepth = gen.loopScopeDepth
+  gen.loopScopeDepth = gen.scopeInfo[node.id] and gen.scopeInfo[node.id].depth or 0
+
+  push(gen.breakOffsets, [])
+  push(gen.continueOffsets, [])
+
+  if node.init {
+    compileExpr(gen, node.init)
+    emitByte(gen, OP.POP, node.init.line)
+  }
+
+  let loopStart = len(gen.currentFunction.chunk.bytecode)
+  let loopStartLine = node.line
+  let exitJump = -1
+
+  if node.condition {
+    compileExpr(gen, node.condition)
+    exitJump = emitJump(gen, OP.JUMP_IF_FALSE, node.line)
+  }
+
+  if node.update {
+    let bodyJump = emitJump(gen, OP.JUMP, node.line)
+    let incrementStart = len(gen.currentFunction.chunk.bytecode)
+    compileExpr(gen, node.update)
+    emitByte(gen, OP.POP, node.update.line)
+    emitLoop(gen, loopStart, node.line)
+    loopStart = incrementStart
+    patchJump(gen, bodyJump)
+  }
+
+  compileExpr(gen, node.body)
+  // Persist last body value as loop result.
+  emitBytes(gen, OP.SET_LOCAL, localSlot(loopResultSlot), node.body.line)
+  emitByte(gen, OP.POP, node.body.line)
+
+  patchContinues(gen)
+  emitLoop(gen, loopStart, loopStartLine)
+
+  if exitJump != -1 {
+    patchJump(gen, exitJump)
+  }
+
+  endScope(gen, node)
+  patchBreaks(gen)
+
+  gen.loopScopeDepth = prevScopeDepth
+  pop(gen.breakOffsets)
+  pop(gen.continueOffsets)
+
+  popScope(gen)
+
+  // Expose loop expression value and drop the temp local.
+  emitBytes(gen, OP.GET_LOCAL, localSlot(loopResultSlot), node.line)
+  emitByte(gen, OP.POP_LOCAL, node.line)
+  // NOTE: We do NOT decrement nextLocalSlot here because the loop result temp slot
+  // should not be reused. Decrementing would allow the next variable to reuse this slot,
+  // which can cause the old loop result value to corrupt the new variable.
+  // gen.nextLocalSlot = gen.nextLocalSlot - 1
+  pop(gen.loopResultSlots)
+}
+
+fn compileImport(gen, node) {
+  if !gen.codegenModule {
+    addError(gen, node, "Import requires codegenModule callback.")
+    return
+  }
+  let path = node.path and node.path.value
+  if !path {
+    addError(gen, node, "Import path must be a string literal.")
+    return
+  }
+  let const = gen.currentFunction.chunk.importConstCache[path]
+  if !const {
+    let func = gen.codegenModule(path)
+    if !func {
+      addError(gen, node, "Import failed: " + path)
+      return
+    }
+    const = makeConstant(gen, ObjectFunction(func))
+    gen.currentFunction.chunk.importConstCache[path] = const
+  }
+  emitBytes(gen, OP.CLOSURE, const, node.line)
+  emitBytes(gen, OP.CALL, 0, node.line)
+}
+
+compileExpr = fn(gen, node) {
+  if !node { return }
+  gen.currentNode = node
+  gen.currentLine = node.line
+
+  if node.type == "Block" {
+    compileBlock(gen, node)
+  } else if node.type == "Let" {
+    compileLet(gen, node)
+  } else if node.type == "Function" {
+    compileFunctionExpr(gen, node)
+  } else if node.type == "Call" {
+    compileCall(gen, node)
+  } else if node.type == "If" {
+    compileIf(gen, node)
+  } else if node.type == "For" {
+    compileFor(gen, node)
+  } else if node.type == "Return" {
+    compileReturn(gen, node)
+  } else if node.type == "Break" {
+    compileBreak(gen, node)
+  } else if node.type == "Continue" {
+    compileContinue(gen, node)
+  } else if node.type == "Binary" {
+    compileBinary(gen, node)
+  } else if node.type == "Logical" {
+    compileLogical(gen, node)
+  } else if node.type == "Unary" {
+    compileUnary(gen, node)
+  } else if node.type == "Grouping" {
+    compileExpr(gen, node.expression)
+  } else if node.type == "Identifier" {
+    compileIdentifier(gen, node)
+  } else if node.type == "Number" or node.type == "String" or
+            node.type == "Bool" or node.type == "Nil" {
+    compileLiteral(gen, node)
+  } else if node.type == "Array" {
+    compileArray(gen, node)
+  } else if node.type == "Hashmap" {
+    compileHashmap(gen, node)
+  } else if node.type == "Index" {
+    compileIndex(gen, node)
+  } else if node.type == "Dot" {
+    compileDot(gen, node)
+  } else if node.type == "Assignment" {
+    compileAssignment(gen, node)
+  } else if node.type == "Import" {
+    compileImport(gen, node)
+  } else {
+    addError(gen, node, "Codegen not implemented for: " + node.type)
+  }
+}
+
+fn codegen(ast, resolveResult, opts) {
+  let gen = .{
+    currentFunction: Function("", 0, Chunk(ast.filename)),
+    resolvedNames: resolveResult.resolvedNames or .{},
+    assignmentInfo: resolveResult.assignmentInfo or .{},
+    scopeInfo: resolveResult.scopeInfo or .{},
+    nodes: resolveResult.nodes or .{},
+    localsByDecl: buildDeclMap(resolveResult.scopeInfo),
+    errors: [],
+    currentLine: 1,
+    currentNode: nil,
+    scopeStack: [],
+    breakOffsets: [],
+    continueOffsets: [],
+    loopResultSlots: [],
+    loopScopeDepth: 0,
+    codegenModule: opts and opts.codegenModule or nil,
+
+    // Track actual emitted local positions (nodeId -> absolute slot)
+    emittedLocals: .{},
+    nextLocalSlot: 0,  // Counter for absolute local positions
+  }
+
+  compileBlock(gen, ast)
+  emitByte(gen, OP.RETURN, gen.currentLine)
+
+  .{
+    success: len(gen.errors) == 0,
+    function: gen.currentFunction,
+    errors: gen.errors,
+  }
+}
+
+codegen

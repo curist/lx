@@ -137,6 +137,22 @@ fn declareLocal(resolver, name, kind, nodeId) {
     return nil  // Global scope - no local
   }
 
+  // Special case: '_' is a discard variable - allow multiple declarations
+  if name == "_" {
+    // Allocate a new slot each time
+    let slot = scope.nextSlot
+    scope.nextSlot = scope.nextSlot + 1
+
+    // Create local (uninitialized: depth = -1)
+    let local = Local(name, -1, kind, slot, nodeId)
+
+    // Don't add to localsByName (so next '_' won't conflict)
+    // But add to localsArray for scope cleanup
+    push(scope.localsArray, local)
+
+    return local
+  }
+
   // Check for duplicate in current scope
   if scope.localsByName[name] {
     addError(resolver, nodeId, "Variable '" + name + "' already declared in this scope")
@@ -190,35 +206,34 @@ fn markCaptured(local) {
 }
 
 fn resolveUpvalue(resolver, scope, name, nodeId) {
-  if !scope.enclosing { return }  // At root scope
+  if !scope or !scope.enclosing { return }  // At root scope
 
-  // Look in enclosing scope
-  let enclosing = scope.enclosing
-  let local = enclosing.localsByName[name]
-
-  if local {
-    // Check read-before-init (same as resolveName)
-    if local.depth == -1 {
-      addError(resolver, nodeId, "Can't read local variable '" + name + "' in its own initializer")
-      return nil
+  // Walk scopes iteratively to avoid deep recursion.
+  let chain = []
+  let current = scope
+  for current and current.enclosing {
+    push(chain, current)
+    let enclosing = current.enclosing
+    let local = enclosing.localsByName[name]
+    if local {
+      if local.depth == -1 {
+        addError(resolver, nodeId, "Can't read local variable '" + name + "' in its own initializer")
+        return nil
+      }
+      markCaptured(local)
+      let index = addUpvalue(resolver, current, true, local.slot)
+      for let i = len(chain) - 2; i >= 0; i = i - 1 {
+        // Only add upvalues to function scopes, skip block scopes
+        if chain[i].type == "function" {
+          index = addUpvalue(resolver, chain[i], false, index)
+        }
+      }
+      return .{
+        index: index,
+        isLocal: len(chain) == 1,
+      }
     }
-
-    // Found in immediate parent - capture as local upvalue
-    markCaptured(local)
-    return .{
-      index: addUpvalue(resolver, scope, true, local.slot),
-      isLocal: true,
-    }
-  }
-
-  // Not in immediate parent - recurse
-  let upvalue = resolveUpvalue(resolver, enclosing, name, nodeId)
-  if upvalue {
-    // Captured from further up - capture as non-local upvalue
-    return .{
-      index: addUpvalue(resolver, scope, false, upvalue.index),
-      isLocal: false,
-    }
+    current = enclosing
   }
 
   nil
@@ -229,6 +244,12 @@ fn resolveUpvalue(resolver, scope, name, nodeId) {
 // ========================================
 
 fn resolveName(resolver, name, nodeId) {
+  // Special case: '_' is write-only, can't be read
+  if name == "_" {
+    addError(resolver, nodeId, "Cannot read from discard variable '_'")
+    return
+  }
+
   let scope = resolver.currentScope
 
   // Walk up scope chain
@@ -256,14 +277,38 @@ fn resolveName(resolver, name, nodeId) {
           // Note: isCaptured is NOT stored here - codegen should read it from scopeInfo.locals
         }
       } else {
-        // Different scope - need upvalue
-        let upvalue = resolveUpvalue(resolver, scope, name, nodeId)
-        if upvalue {
+        // Different scope - check if we cross a function boundary
+        // Only create upvalues if crossing function boundary
+        let crossesFunctionBoundary = false
+        let s = scope
+        for s and s != current {
+          if s.type == "function" {
+            crossesFunctionBoundary = true
+            break
+          }
+          s = s.enclosing
+        }
+
+        if crossesFunctionBoundary {
+          // Need upvalue
+          let upvalue = resolveUpvalue(resolver, scope, name, nodeId)
+          if upvalue {
+            resolver.resolvedNames[nodeId] = .{
+              kind: "upvalue",
+              getOp: OP.GET_UPVALUE,
+              setOp: OP.SET_UPVALUE,
+              upvalueIndex: upvalue.index,
+              declaredAt: local.nodeId,
+              depth: current.depth,
+            }
+          }
+        } else {
+          // Same function, different block - still direct local access
           resolver.resolvedNames[nodeId] = .{
-            kind: "upvalue",
-            getOp: OP.GET_UPVALUE,
-            setOp: OP.SET_UPVALUE,
-            upvalueIndex: upvalue.index,
+            kind: "local",
+            getOp: OP.GET_LOCAL,
+            setOp: OP.SET_LOCAL,
+            slot: local.slot,
             declaredAt: local.nodeId,
             depth: current.depth,
           }

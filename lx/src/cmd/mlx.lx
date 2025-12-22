@@ -1,0 +1,182 @@
+// Multi-phase compiler entrypoint (mlx)
+let __lx_result__
+
+fn() {
+  let driver = import "src/driver.lx"
+  let codegen = import "src/codegen.lx"
+  let objbuilder = import "src/objbuilder.lx"
+  let tohex = (import "src/lib.lx").tohex
+  let OP = (import "src/types.lx").OP
+
+  fn resolvePath(path) {
+    if path and path[0] == "@" {
+      let s = "~/lx/"
+      let length = len(path)
+      for let i = 1; i < length; i = i + 1 {
+        s = s + path[i]
+      }
+      return s
+    }
+    path
+  }
+
+  fn loadSource(path, sourceOverride, overridePath) {
+    if sourceOverride and path == overridePath {
+      return sourceOverride
+    }
+    let realPath = resolvePath(path)
+    slurp(realPath)
+  }
+
+  fn printErrors(errors) {
+    if !errors or len(errors) == 0 { return }
+    for let i = 0; i < len(errors); i = i + 1 {
+      let err = errors[i]
+      if err.pos {
+        let file = err.pos.filename or err.filename
+        let prefix = file and join([file, ":", err.pos.line, ":", err.pos.col or 0], "") or
+          join([err.pos.line, ":", err.pos.col or 0], "")
+        groanln(join(["[", prefix, "] ", err.message], ""))
+      } else if err.line {
+        groanln(join(["[L", err.line, "] ", err.message], ""))
+      } else {
+        groanln(err.message)
+      }
+    }
+  }
+
+  fn collectErrors(result) {
+    let errors = []
+    if result.parseErrors { errors = concat(errors, result.parseErrors) }
+    if result.lowerErrors { errors = concat(errors, result.lowerErrors) }
+    if result.parseResult and result.parseResult.errors {
+      errors = concat(errors, result.parseResult.errors)
+    }
+    if result.lowerResult and result.lowerResult.errors {
+      errors = concat(errors, result.lowerResult.errors)
+    }
+    if result.resolveResult and result.resolveResult.errors {
+      errors = concat(errors, result.resolveResult.errors)
+    }
+    if result.codegenResult and result.codegenResult.errors {
+      errors = concat(errors, result.codegenResult.errors)
+    }
+    errors
+  }
+
+  fn makeDriverWithSource(source, path) {
+    driver.make(.{
+      withAnf: true,
+      withTypecheck: false,
+      loadSource: fn(p) { loadSource(p, source, path) },
+    })
+  }
+
+  fn compileWithDriver(driverInstance, path) {
+    let moduleCache = .{}
+
+    fn codegenModule(modulePath) {
+      let cached = moduleCache[modulePath]
+      if cached { return cached }
+
+      let result = driverInstance.compileModule(modulePath)
+      if !result or result.status != "done" {
+        printErrors(collectErrors(result or .{}))
+        return nil
+      }
+
+      let ast = result.anfResult and result.anfResult.ast or result.lowerResult.ast
+      let cg = codegen(ast, result.resolveResult, .{
+        codegenModule: codegenModule,
+      })
+      result.codegenResult = cg
+      if !cg.success {
+        printErrors(cg.errors)
+        return nil
+      }
+      moduleCache[modulePath] = cg.function
+      cg.function
+    }
+
+    codegenModule(path)
+  }
+
+  fn handleBuildFunction(cb) {
+    let argsLength = len(Lx.args)
+    let DEBUG_BUILD = true
+    let usageMessage = join(["Usage:", Lx.args[0], "compile <path>"], " ")
+    if argsLength < 3 {
+      groanln(usageMessage)
+      Lx.exit(28)
+    }
+    let path = Lx.args[2]
+    let source = loadSource(path, nil, nil)
+    if !source {
+      groanln("Failed to open", path)
+      Lx.exit(2)
+    }
+
+    let driverInstance = makeDriverWithSource(nil, nil)
+    let func = compileWithDriver(driverInstance, path)
+    if !func {
+      Lx.exit(65)
+    }
+    cb(func, DEBUG_BUILD)
+  }
+
+  let handlers = .{
+    compile: fn() {
+      handleBuildFunction(fn(func, DEBUG_BUILD) {
+        objbuilder(func, DEBUG_BUILD).dump()
+      })
+    },
+    run: fn() {
+      handleBuildFunction(fn(func, DEBUG_BUILD) {
+        __lx_result__ = objbuilder(func, DEBUG_BUILD).bytes()
+      })
+    },
+    eval: fn() {
+      if !__lx_input__ {
+        __lx_result__ = "Empty input."
+        return
+      }
+      let path = "[LX EVAL]"
+      let driverInstance = makeDriverWithSource(__lx_input__, path)
+      let func = compileWithDriver(driverInstance, path)
+      if !func {
+        __lx_result__ = "Compile failed."
+        return
+      }
+      __lx_result__ = objbuilder(func, false).bytes()
+    },
+    repl: fn() {
+      if !__lx_input__ {
+        __lx_result__ = "Empty input."
+        return
+      }
+      let path = "[LX REPL]"
+      let driverInstance = makeDriverWithSource(__lx_input__, path)
+      let func = compileWithDriver(driverInstance, path)
+      if !func {
+        __lx_result__ = "Compile failed."
+        return
+      }
+      if func.chunk.bytecode->len() == 1 {
+        func.chunk.bytecode = [OP.NIL, OP.RETURN]->map(tohex)
+      }
+      __lx_result__ = objbuilder(func, false).bytes()
+    },
+  }
+  handlers.c = handlers.compile
+  handlers.r = handlers.run
+
+  fn handleUnknownCommand() {
+    if Lx.args[1] {
+      groanln(Lx.args[0] + " " + Lx.args[1] + ": unknown command")
+    }
+    groanln("Run '" + Lx.args[0] + " help' for usage.")
+    Lx.exit(28)
+  }
+
+  {Lx.args[1] and handlers[Lx.args[1]] or handleUnknownCommand}()
+}()

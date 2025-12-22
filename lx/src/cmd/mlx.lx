@@ -1,8 +1,11 @@
 // Multi-phase compiler entrypoint (mlx)
 let __lx_result__
 
-fn() {
+  fn() {
   let driver = import "src/driver.lx"
+  let parse = import "src/parser.lx"
+  let lower = import "src/lower.lx"
+  let anf = import "src/anf.lx"
   let codegen = import "src/codegen.lx"
   let objbuilder = import "src/objbuilder.lx"
   let tohex = (import "src/lib.lx").tohex
@@ -64,6 +67,148 @@ fn() {
     errors
   }
 
+  fn pad(n) {
+    let s = ""
+    for let i = 0; i < n; i = i + 1 { s = s + " " }
+    s
+  }
+
+  fn dumpScalar(value, indent) {
+    let t = type(value)
+    if t == "string" {
+      println(pad(indent) + "\"" + value + "\"")
+    } else {
+      println(pad(indent) + str(value))
+    }
+  }
+
+  fn dumpNode(node, indent) {
+    if node == nil {
+      println(pad(indent) + "nil")
+      return
+    }
+
+    let t = type(node)
+    if t == "array" {
+      println(pad(indent) + "[")
+      for let i = 0; i < len(node); i = i + 1 {
+        dumpNode(node[i], indent + 2)
+      }
+      println(pad(indent) + "]")
+      return
+    }
+    if t != "map" {
+      dumpScalar(node, indent)
+      return
+    }
+
+    if !node.type {
+      println(pad(indent) + "<map>")
+      return
+    }
+
+    let header = pad(indent) + node.type
+    if node.id != nil { header = header + " #" + str(node.id) }
+    if node.line != nil { header = header + " (L" + str(node.line) + ")" }
+    if node.anfSynthetic { header = header + " [synthetic]" }
+    println(header)
+
+    if node.type == "Identifier" {
+      println(pad(indent + 2) + "name: " + node.name)
+      return
+    }
+
+    if node.value != nil {
+      println(pad(indent + 2) + "value:")
+      dumpNode(node.value, indent + 4)
+    }
+
+    if node.name {
+      println(pad(indent + 2) + "name:")
+      dumpNode(node.name, indent + 4)
+    }
+    if node.params {
+      println(pad(indent + 2) + "params:")
+      dumpNode(node.params, indent + 4)
+    }
+    if node.body {
+      println(pad(indent + 2) + "body:")
+      dumpNode(node.body, indent + 4)
+    }
+    if node.expressions {
+      println(pad(indent + 2) + "expressions:")
+      dumpNode(node.expressions, indent + 4)
+    }
+    if node.left {
+      println(pad(indent + 2) + "left:")
+      dumpNode(node.left, indent + 4)
+    }
+    if node.right {
+      println(pad(indent + 2) + "right:")
+      dumpNode(node.right, indent + 4)
+    }
+    if node.operand {
+      println(pad(indent + 2) + "operand:")
+      dumpNode(node.operand, indent + 4)
+    }
+    if node.condition {
+      println(pad(indent + 2) + "condition:")
+      dumpNode(node.condition, indent + 4)
+    }
+    if node.then {
+      println(pad(indent + 2) + "then:")
+      dumpNode(node.then, indent + 4)
+    }
+    if node.else {
+      println(pad(indent + 2) + "else:")
+      dumpNode(node.else, indent + 4)
+    }
+    if node.init {
+      println(pad(indent + 2) + "init:")
+      dumpNode(node.init, indent + 4)
+    }
+    if node.update {
+      println(pad(indent + 2) + "update:")
+      dumpNode(node.update, indent + 4)
+    }
+    if node.callee {
+      println(pad(indent + 2) + "callee:")
+      dumpNode(node.callee, indent + 4)
+    }
+    if node.args {
+      println(pad(indent + 2) + "args:")
+      dumpNode(node.args, indent + 4)
+    }
+    if node.object {
+      println(pad(indent + 2) + "object:")
+      dumpNode(node.object, indent + 4)
+    }
+    if node.index {
+      println(pad(indent + 2) + "index:")
+      dumpNode(node.index, indent + 4)
+    }
+    if node.property {
+      println(pad(indent + 2) + "property:")
+      dumpNode(node.property, indent + 4)
+    }
+    if node.target {
+      println(pad(indent + 2) + "target:")
+      dumpNode(node.target, indent + 4)
+    }
+    if node.elements {
+      println(pad(indent + 2) + "elements:")
+      dumpNode(node.elements, indent + 4)
+    }
+    if node.pairs {
+      println(pad(indent + 2) + "pairs:")
+      dumpNode(node.pairs, indent + 4)
+    }
+    if node.path {
+      println(pad(indent + 2) + "path:")
+      dumpNode(node.path, indent + 4)
+    }
+  }
+
   fn makeDriverWithSource(source, path) {
     driver.make(.{
       withAnf: true,
@@ -104,12 +249,34 @@ fn() {
   fn handleBuildFunction(cb) {
     let argsLength = len(Lx.args)
     let DEBUG_BUILD = true
-    let usageMessage = join(["Usage:", Lx.args[0], "compile <path>"], " ")
+    let usageMessage = join(["Usage:", Lx.args[0], "compile <path> [-o|--output <output>]"], " ")
     if argsLength < 3 {
       groanln(usageMessage)
       Lx.exit(28)
     }
-    let path = Lx.args[2]
+    let path = nil
+    let outputPath = nil
+    let i = 2
+    for i < argsLength {
+      let arg = Lx.args[i]
+      if arg == "-o" or arg == "--output" {
+        if i + 1 >= argsLength {
+          groanln(usageMessage)
+          Lx.exit(28)
+        }
+        outputPath = Lx.args[i + 1]
+        i = i + 2
+        continue
+      }
+      if !path {
+        path = arg
+      }
+      i = i + 1
+    }
+    if !path {
+      groanln(usageMessage)
+      Lx.exit(28)
+    }
     let source = loadSource(path, nil, nil)
     if !source {
       groanln("Failed to open", path)
@@ -121,13 +288,22 @@ fn() {
     if !func {
       Lx.exit(65)
     }
-    cb(func, DEBUG_BUILD)
+    cb(func, DEBUG_BUILD, outputPath)
   }
 
   let handlers = .{
     compile: fn() {
-      handleBuildFunction(fn(func, DEBUG_BUILD) {
-        objbuilder(func, DEBUG_BUILD).dump()
+      handleBuildFunction(fn(func, DEBUG_BUILD, outputPath) {
+        if outputPath {
+          let bytes = objbuilder(func, DEBUG_BUILD).bytes()
+          let ok = spit(outputPath, bytes)
+          if ok != true {
+            groanln(ok or "Failed to write output.")
+            Lx.exit(74)
+          }
+        } else {
+          objbuilder(func, DEBUG_BUILD).dump()
+        }
       })
     },
     run: fn() {
@@ -165,6 +341,41 @@ fn() {
         func.chunk.bytecode = [OP.NIL, OP.RETURN]->map(tohex)
       }
       __lx_result__ = objbuilder(func, false).bytes()
+    },
+    anf: fn() {
+      let argsLength = len(Lx.args)
+      let usageMessage = join(["Usage:", Lx.args[0], "anf <path>"], " ")
+      if argsLength < 3 {
+        groanln(usageMessage)
+        Lx.exit(28)
+      }
+      let path = Lx.args[2]
+      let source = loadSource(path, nil, nil)
+      if !source {
+        groanln("Failed to open", path)
+        Lx.exit(2)
+      }
+      let parseResult = parse(source, path)
+      if !parseResult.success {
+        printErrors(parseResult.errors)
+        Lx.exit(65)
+      }
+      let lowerResult = lower(parseResult.ast, .{
+        startNodeId: parseResult.nextNodeId,
+      })
+      if !lowerResult.success {
+        printErrors(lowerResult.errors)
+        Lx.exit(65)
+      }
+      let anfResult = anf(lowerResult.ast, .{
+        startNodeId: lowerResult.nextNodeId,
+      })
+      if !anfResult.success {
+        printErrors(anfResult.errors)
+        Lx.exit(65)
+      }
+      let ast = anfResult.ast
+      dumpNode(ast, 0)
     },
   }
   handlers.c = handlers.compile

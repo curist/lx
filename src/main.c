@@ -125,6 +125,10 @@ static void runFile(const char* path) {
 }
 
 static void handleCompile(int argc, const char* argv[]) {
+  if (argc < 3) {
+    fprintf(stderr, "Usage: %s compile <lxfile> [-o|--output <output>]\n", argv[0]);
+    return;
+  }
   InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
 
   if (result == INTERPRET_LOADOBJ_ERROR) exit(65);
@@ -266,11 +270,69 @@ static void handleRepl(int argc, const char* argv[]) {
 
 static void handleDisasm(int argc, const char* argv[]) {
   if (argc <= 2) {
-    fprintf(stderr, "Usage: %s disasm <lxobj>\n", argv[0]);
+    fprintf(stderr, "Usage: %s disasm <lxobj|lxfile>\n", argv[0]);
     return;
   }
 
-  uint8_t* obj = readFile(argv[2]);
+  const char* path = argv[2];
+  if (checkIsLxObj(path)) {
+    uint8_t* obj = readFile(path);
+    loadObj(obj, true);
+    free(obj);
+    return;
+  }
+
+  Value lxValue;
+  if (!tableGet(&vm.globals, CSTRING_VAL("Lx"), &lxValue) ||
+      !IS_HASHMAP(lxValue)) {
+    fprintf(stderr, "failed to access Lx globals\n");
+    return exit(65);
+  }
+  Table* lx = &AS_HASHMAP(lxValue);
+
+  Value oldArgs;
+  bool hasOldArgs = tableGet(lx, CSTRING_VAL("args"), &oldArgs);
+
+  ObjArray* argsArray = newArray();
+  push(OBJ_VAL(argsArray));
+  push(CSTRING_VAL(argv[0]));
+  writeValueArray(&argsArray->array, vm.stackTop[-1]);
+  pop();
+  push(CSTRING_VAL("run"));
+  writeValueArray(&argsArray->array, vm.stackTop[-1]);
+  pop();
+  push(CSTRING_VAL(path));
+  writeValueArray(&argsArray->array, vm.stackTop[-1]);
+  pop();
+
+  push(CSTRING_VAL("args"));
+  push(OBJ_VAL(argsArray));
+  tableSet(lx, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  interpret((uint8_t*)lxlx_bytecode);
+
+  if (hasOldArgs) {
+    push(CSTRING_VAL("args"));
+    push(oldArgs);
+    tableSet(lx, vm.stackTop[-2], vm.stackTop[-1]);
+    pop();
+    pop();
+  }
+
+  Value value;
+  if (!tableGet(&vm.globals, CSTRING_VAL("__lx_result__"), &value) ||
+      !IS_ARRAY(value)) {
+    fprintf(stderr, "failed to compile lxobj\n");
+    return exit(65);
+  }
+  ValueArray* code = &AS_ARRAY(value);
+  uint8_t* obj = (uint8_t*)malloc(code->count);
+  for (int i = 0; i < code->count; ++i) {
+    uint8_t byte = AS_NUMBER(code->values[i]);
+    obj[i] = byte;
+  }
   loadObj(obj, true);
   free(obj);
 }
@@ -283,8 +345,8 @@ Option options[] = {
   {"run",      "r",  "Run source or lxobj",       handleRun},
   {"eval",     NULL, "Evaluate expression",       handleEval},
   {"repl",     NULL, "Start REPL",                handleRepl},
-  {"compile",  "c",  "Compile source to lxobj",   handleCompile},
-  {"disasm",   "d",  "Disassemble lxobj",         handleDisasm},
+  {"compile",  "c",  "Compile source to lxobj (-o/--output <output>)",   handleCompile},
+  {"disasm",   "d",  "Disassemble lxobj or lx source", handleDisasm},
   {"version",  NULL, "Print version",             handleVersion},
   {"help",     NULL, "Print this helpful page",   handleHelp},
 };

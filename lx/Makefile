@@ -23,3 +23,6 @@ runall: $(LX)
 test: $(LX)
 	@ls test/*.test.lx | xargs -I{} $(LX) run {}
 
+mlx-smoke: $(LX)
+	$(LX) compile src/main.lx > /dev/null
+	$(LX) run test/stub/ch17.lx

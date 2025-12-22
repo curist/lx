@@ -737,6 +737,43 @@ static bool slurpNative(int argCount, Value *args) {
 
   return true;
 }
+
+static bool spitNative(int argCount, Value *args) {
+  if (argCount < 2 || !IS_STRING(args[0]) || !IS_STRING(args[1])) {
+    args[-1] = CSTRING_VAL("Error: spit takes a path and string content.");
+    return false;
+  }
+
+#ifndef WASM
+  char path[PATH_MAX + 1] = "";
+  wordexp_t exp_result;
+  wordexp(AS_STRING(args[0])->chars, &exp_result, 0);
+  strncpy(path, exp_result.we_wordv[0], sizeof(path));
+  wordfree(&exp_result);
+#else
+  char *path = AS_STRING(args[0])->chars;
+#endif
+
+  FILE *file = fopen(path, "wb");
+  if (file == NULL) {
+    fprintf(stderr, "Could not open file \"%s\".\n", path);
+    args[-1] = CSTRING_VAL("Error: failed to open file.");
+    return false;
+  }
+
+  ObjString *content = AS_STRING(args[1]);
+  size_t written = fwrite(content->chars, sizeof(char), content->length, file);
+  if (written < (size_t)content->length) {
+    fprintf(stderr, "Could not write file \"%s\".\n", path);
+    args[-1] = CSTRING_VAL("Error: failed to write file.");
+    fclose(file);
+    return false;
+  }
+
+  fclose(file);
+  args[-1] = BOOL_VAL(true);
+  return true;
+}
 #endif
 
 static bool tolowerNative(int argCount, Value *args) {
@@ -910,6 +947,7 @@ void defineBuiltinNatives() {
 #endif
 #ifndef __EMSCRIPTEN__
   defineNative("slurp", slurpNative);
+  defineNative("spit", spitNative);
 #endif
 }
 #endif

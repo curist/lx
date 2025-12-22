@@ -82,6 +82,7 @@ fn makeBlock(anf, templateNode, expressions) {
     endLine: templateNode.endLine,
     endCol: templateNode.endCol,
     expressions: expressions,
+    anfSynthetic: true,
   }
   anf.origin[node.id] = templateNode.id
   node
@@ -169,6 +170,9 @@ fn isAtomic(node) {
 
 fn wrapWithPrelude(anf, templateNode, pre, expr) {
   if len(pre) == 0 { return expr }
+  if expr and expr.type == "Block" and expr.expressions {
+    return makeBlock(anf, templateNode, concat(pre, expr.expressions))
+  }
   makeBlock(anf, templateNode, concat(pre, [expr]))
 }
 
@@ -238,7 +242,11 @@ fn anfBlock(anf, node) {
   let newExprs = []
   for let i = 0; i < len(node.expressions); i = i + 1 {
     let expr = anfExpr(anf, node.expressions[i])
-    push(newExprs, expr)
+    if expr and expr.type == "Block" and expr.anfSynthetic and expr.expressions {
+      newExprs = concat(newExprs, expr.expressions)
+    } else {
+      push(newExprs, expr)
+    }
   }
   popScope(anf)
   newNode.expressions = newExprs

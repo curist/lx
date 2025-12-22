@@ -1,0 +1,216 @@
+// Debug-only ANF dumper (parse -> lower -> anf)
+let parse = import "src/parser.lx"
+let lower = import "src/lower.lx"
+let anf = import "src/anf.lx"
+
+fn pad(n) {
+  let s = ""
+  for let i = 0; i < n; i = i + 1 { s = s + " " }
+  s
+}
+
+fn dumpScalar(value, indent) {
+  let t = type(value)
+  if t == "string" {
+    println(pad(indent) + "\"" + value + "\"")
+  } else {
+    println(pad(indent) + str(value))
+  }
+}
+
+fn dumpNode(node, indent) {
+  if node == nil {
+    println(pad(indent) + "nil")
+    return
+  }
+
+  let t = type(node)
+  if t == "array" {
+    println(pad(indent) + "[")
+    for let i = 0; i < len(node); i = i + 1 {
+      dumpNode(node[i], indent + 2)
+    }
+    println(pad(indent) + "]")
+    return
+  }
+  if t != "map" {
+    dumpScalar(node, indent)
+    return
+  }
+
+  if !node.type {
+    println(pad(indent) + "<map>")
+    return
+  }
+
+  let header = pad(indent) + node.type
+  if node.id != nil { header = header + " #" + str(node.id) }
+  if node.line != nil { header = header + " (L" + str(node.line) + ")" }
+  if node.anfSynthetic { header = header + " [synthetic]" }
+  println(header)
+
+  if node.type == "Identifier" {
+    println(pad(indent + 2) + "name: " + node.name)
+    return
+  }
+
+  if node.value != nil {
+    println(pad(indent + 2) + "value:")
+    dumpNode(node.value, indent + 4)
+  }
+
+  if node.name {
+    println(pad(indent + 2) + "name:")
+    dumpNode(node.name, indent + 4)
+  }
+  if node.params {
+    println(pad(indent + 2) + "params:")
+    dumpNode(node.params, indent + 4)
+  }
+  if node.body {
+    println(pad(indent + 2) + "body:")
+    dumpNode(node.body, indent + 4)
+  }
+  if node.expressions {
+    println(pad(indent + 2) + "expressions:")
+    dumpNode(node.expressions, indent + 4)
+  }
+  if node.left {
+    println(pad(indent + 2) + "left:")
+    dumpNode(node.left, indent + 4)
+  }
+  if node.right {
+    println(pad(indent + 2) + "right:")
+    dumpNode(node.right, indent + 4)
+  }
+  if node.operand {
+    println(pad(indent + 2) + "operand:")
+    dumpNode(node.operand, indent + 4)
+  }
+  if node.expression {
+    println(pad(indent + 2) + "expression:")
+    dumpNode(node.expression, indent + 4)
+  }
+  if node.condition {
+    println(pad(indent + 2) + "condition:")
+    dumpNode(node.condition, indent + 4)
+  }
+  if node.then {
+    println(pad(indent + 2) + "then:")
+    dumpNode(node.then, indent + 4)
+  }
+  if node.else {
+    println(pad(indent + 2) + "else:")
+    dumpNode(node.else, indent + 4)
+  }
+  if node.init {
+    println(pad(indent + 2) + "init:")
+    dumpNode(node.init, indent + 4)
+  }
+  if node.update {
+    println(pad(indent + 2) + "update:")
+    dumpNode(node.update, indent + 4)
+  }
+  if node.callee {
+    println(pad(indent + 2) + "callee:")
+    dumpNode(node.callee, indent + 4)
+  }
+  if node.args {
+    println(pad(indent + 2) + "args:")
+    dumpNode(node.args, indent + 4)
+  }
+  if node.object {
+    println(pad(indent + 2) + "object:")
+    dumpNode(node.object, indent + 4)
+  }
+  if node.index {
+    println(pad(indent + 2) + "index:")
+    dumpNode(node.index, indent + 4)
+  }
+  if node.property {
+    println(pad(indent + 2) + "property:")
+    dumpNode(node.property, indent + 4)
+  }
+  if node.target {
+    println(pad(indent + 2) + "target:")
+    dumpNode(node.target, indent + 4)
+  }
+  if node.elements {
+    println(pad(indent + 2) + "elements:")
+    dumpNode(node.elements, indent + 4)
+  }
+  if node.pairs {
+    println(pad(indent + 2) + "pairs:")
+    dumpNode(node.pairs, indent + 4)
+  }
+  if node.path {
+    println(pad(indent + 2) + "path:")
+    dumpNode(node.path, indent + 4)
+  }
+}
+
+fn loadSource(path) { slurp(path) }
+
+fn printErrors(errors) {
+  if !errors or len(errors) == 0 { return }
+  for let i = 0; i < len(errors); i = i + 1 {
+    let err = errors[i]
+    if err.pos {
+      let file = err.pos.filename or err.filename
+      let prefix = file and join([file, ":", err.pos.line, ":", err.pos.col or 0], "") or
+        join([err.pos.line, ":", err.pos.col or 0], "")
+      groanln(join(["[", prefix, "] ", err.message], ""))
+    } else if err.line {
+      groanln(join(["[L", err.line, "] ", err.message], ""))
+    } else {
+      groanln(err.message)
+    }
+  }
+}
+
+fn() {
+  let argsLength = len(Lx.args)
+  let usageMessage = join(["Usage:", Lx.args[0], "<path>"], " ")
+  if argsLength < 2 {
+    groanln(usageMessage)
+    Lx.exit(28)
+  }
+  let path = nil
+  if argsLength >= 4 and Lx.args[2] == "anf" {
+    path = Lx.args[3]
+  } else if argsLength >= 3 and Lx.args[1] == "anf" {
+    path = Lx.args[2]
+  } else {
+    path = Lx.args[argsLength - 1]
+  }
+  if !path or path == "" {
+    groanln(usageMessage)
+    Lx.exit(28)
+  }
+  let source = loadSource(path)
+  if !source {
+    groanln("Failed to open", path)
+    Lx.exit(2)
+  }
+
+  let parseResult = parse(source, path)
+  if !parseResult.success {
+    printErrors(parseResult.errors)
+    Lx.exit(65)
+  }
+  let lowerResult = lower(parseResult.ast, .{
+    startNodeId: parseResult.nextNodeId,
+  })
+  if !lowerResult.success {
+    printErrors(lowerResult.errors)
+    Lx.exit(65)
+  }
+  let anfResult = anf(lowerResult.ast, .{
+    startNodeId: lowerResult.nextNodeId,
+  })
+  if !anfResult.success {
+    printErrors(anfResult.errors)
+    Lx.exit(65)
+  }
+  dumpNode(anfResult.ast, 0)
+}()

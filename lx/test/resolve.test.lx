@@ -829,4 +829,67 @@ test("resolve - import with non-string path is rejected by parser", fn(assert) {
   assert.truthy(len(result.errors) > 0, "Should have parse errors")
 })
 
+// ========================================
+// Closure Upvalue Resolution
+// ========================================
+
+test("resolve - multiple upvalues in closure with block scopes", fn(assert) {
+  let result = parseAndResolve("fn makeGetter(x, y) {
+    fn get(key) {
+      if key == \"x\" { return x }
+      if key == \"y\" { return y }
+    }
+    return get
+  }")
+  assert.truthy(result.success, "Should resolve multiple upvalues across block scopes")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("resolve - closure capturing multiple parameters", fn(assert) {
+  let result = parseAndResolve("{
+    fn outer(x, y, z) {
+      fn inner() {
+        return x + y + z
+      }
+      return inner
+    }
+  }")
+  assert.truthy(result.success, "Should resolve closure capturing multiple parameters")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("resolve - nested closures with intermediate block scopes", fn(assert) {
+  let result = parseAndResolve("fn vector(x, y) {
+    fn object(message) {
+      fn add(other) {
+        return vector(x + other(\"x\"), y + other(\"y\"))
+      }
+      if message == \"x\" { return x }
+      if message == \"y\" { return y }
+      if message == \"add\" { return add }
+    }
+    return object
+  }")
+  assert.truthy(result.success, "Should resolve nested closures with block scopes")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+test("resolve - upvalues only added to function scopes not blocks", fn(assert) {
+  // This tests that upvalues are correctly accumulated in function scopes
+  // even when references occur in different block scopes (if statements)
+  let result = parseAndResolve("{
+    fn makeCounter(a, b, c) {
+      fn get(which) {
+        if which == 1 { return a }
+        if which == 2 { return b }
+        if which == 3 { return c }
+        return 0
+      }
+      return get
+    }
+  }")
+  assert.truthy(result.success, "Should resolve upvalues correctly across blocks")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
 suite.run()

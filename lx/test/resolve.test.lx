@@ -7,6 +7,7 @@ let test = suite.defineTest
 let parse = import "src/parser.lx"
 let lower = import "src/lower.lx"
 let resolve = import "src/resolve.lx"
+let makeResolveHelpers = import "test/resolveTestHelpers.lx"
 
 // Helper to parse from fixture file
 fn parseFixture(path) {
@@ -21,6 +22,23 @@ fn parseAndResolve(source) {
     return .{ success: false, parseErrors: parseResult.errors }
   }
   resolve(parseResult.ast, .{})
+}
+
+// Helper to parse, resolve, and create test helpers
+fn parseResolveWithHelpers(source) {
+  let parseResult = parse(source, "test.lx")
+  if !parseResult.success {
+    return .{ success: false, parseErrors: parseResult.errors }
+  }
+  let resolveResult = resolve(parseResult.ast, .{})
+  let helpers = makeResolveHelpers(parseResult, resolveResult)
+  .{
+    success: resolveResult.success,
+    errors: resolveResult.errors,
+    helpers: helpers,
+    parseResult: parseResult,
+    resolveResult: resolveResult,
+  }
 }
 
 // ========================================
@@ -890,6 +908,291 @@ test("resolve - upvalues only added to function scopes not blocks", fn(assert) {
   }")
   assert.truthy(result.success, "Should resolve upvalues correctly across blocks")
   assert.equal(len(result.errors), 0, "Should have no errors")
+})
+
+// ========================================
+// Detailed Upvalue Resolution Tests
+// ========================================
+
+test("resolve - local variable slot assignment", fn(assert) {
+  let result = parseResolveWithHelpers("{ let x = 1\nx }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Find the x reference (there's only one Identifier node - the reference)
+  let xRef = result.helpers.findNthIdentifier("x", 0)
+  assert.truthy(xRef, "Should find x reference")
+
+  let binding = result.helpers.getBinding(xRef)
+  assert.equal(binding.kind, "local", "x should be resolved as local")
+  assert.equal(binding.slot, 0, "x should be in slot 0")
+})
+
+test("resolve - simple closure with direct upvalue", fn(assert) {
+  let result = parseResolveWithHelpers("{
+    let x = 1
+    fn f() { x }
+  }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Find x reference inside function (first occurrence is the reference)
+  let xRef = result.helpers.findNthIdentifier("x", 0)
+  assert.truthy(xRef, "Should find x reference")
+
+  let binding = result.helpers.getBinding(xRef)
+  assert.equal(binding.kind, "upvalue", "x should be resolved as upvalue")
+  assert.equal(binding.upvalueIndex, 0, "x should be upvalue index 0")
+
+  // Find the function node and check its upvalues
+  // The function is the second expression in the inner block
+  let innerBlock = result.parseResult.ast.expressions[0]
+  let functionNode = innerBlock.expressions[1]
+  assert.equal(functionNode.type, "Function", "Should be a function node")
+
+  let upvalues = result.helpers.getUpvalues(functionNode)
+  assert.truthy(upvalues, "Function should have upvalues")
+  assert.equal(len(upvalues), 1, "Function should have 1 upvalue")
+
+  let uv0 = upvalues[0]
+  assert.equal(uv0.isLocal, true, "Upvalue should be local (direct capture)")
+  // Note: Named function 'f' is hoisted and takes slot 0, so 'x' gets slot 1
+  assert.equal(uv0.slot, 1, "Upvalue should point to slot 1 (x, after hoisted fn name)")
+})
+
+test("resolve - closure with intermediate block scope", fn(assert) {
+  let result = parseResolveWithHelpers("{
+    let x = 1
+    {
+      fn f() { x }
+    }
+  }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Find x reference inside function
+  let xRef = result.helpers.findNthIdentifier("x", 0)
+  assert.truthy(xRef, "Should find x reference")
+
+  let binding = result.helpers.getBinding(xRef)
+  assert.equal(binding.kind, "upvalue", "x should be resolved as upvalue")
+
+  // Navigate: ast -> outer block -> inner block -> fn
+  let outerBlock = result.parseResult.ast.expressions[0]
+  let innerBlock = outerBlock.expressions[1]
+  assert.equal(innerBlock.type, "Block", "Should be a block")
+
+  let functionNode = innerBlock.expressions[0]
+  assert.equal(functionNode.type, "Function", "Should be a function node")
+
+  let upvalues = result.helpers.getUpvalues(functionNode)
+  assert.truthy(upvalues, "Function should have upvalues")
+  assert.equal(len(upvalues), 1, "Function should have 1 upvalue")
+
+  let uv0 = upvalues[0]
+  assert.equal(uv0.isLocal, true, "Upvalue should be local despite intermediate block")
+  assert.equal(uv0.slot, 0, "Upvalue should point to slot 0 (x)")
+})
+
+test("resolve - closure with intermediate loop scope", fn(assert) {
+  let result = parseResolveWithHelpers("{
+    let x = 1
+    for true {
+      fn f() { x }
+      break
+    }
+  }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Find x reference inside function
+  let xRef = result.helpers.findNthIdentifier("x", 0)
+  assert.truthy(xRef, "Should find x reference")
+
+  let binding = result.helpers.getBinding(xRef)
+  assert.equal(binding.kind, "upvalue", "x should be resolved as upvalue")
+
+  // Navigate: ast -> outer block -> for loop -> fn
+  let outerBlock = result.parseResult.ast.expressions[0]
+  let loopNode = outerBlock.expressions[1]
+  assert.equal(loopNode.type, "For", "Should be a for loop")
+
+  let functionNode = loopNode.body.expressions[0]
+  assert.equal(functionNode.type, "Function", "Should be a function node")
+
+  let upvalues = result.helpers.getUpvalues(functionNode)
+  assert.truthy(upvalues, "Function should have upvalues")
+  assert.equal(len(upvalues), 1, "Function should have 1 upvalue")
+
+  let uv0 = upvalues[0]
+  assert.equal(uv0.isLocal, true, "Upvalue should be local despite intermediate loop")
+  assert.equal(uv0.slot, 0, "Upvalue should point to slot 0 (x)")
+})
+
+test("resolve - closure with multiple intermediate block scopes", fn(assert) {
+  let result = parseResolveWithHelpers("{
+    let x = 1
+    {
+      {
+        fn f() { x }
+      }
+    }
+  }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Navigate: ast -> outer block -> block1 -> block2 -> fn
+  let outerBlock = result.parseResult.ast.expressions[0]
+  let block1 = outerBlock.expressions[1]
+  let block2 = block1.expressions[0]
+  let functionNode = block2.expressions[0]
+
+  let upvalues = result.helpers.getUpvalues(functionNode)
+  assert.equal(len(upvalues), 1, "Function should have 1 upvalue")
+
+  let uv0 = upvalues[0]
+  assert.equal(uv0.isLocal, true, "Upvalue should be local despite multiple intermediate blocks")
+  assert.equal(uv0.slot, 0, "Upvalue should point to slot 0 (x)")
+})
+
+test("resolve - closure with block and loop intermediate scopes", fn(assert) {
+  let result = parseResolveWithHelpers("{
+    let x = 1
+    {
+      for true {
+        {
+          fn f() { x }
+          break
+        }
+      }
+    }
+  }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Navigate: ast -> outer block -> block1 -> loop -> block2 -> fn
+  let outerBlock = result.parseResult.ast.expressions[0]
+  let block1 = outerBlock.expressions[1]
+  let loopNode = block1.expressions[0]
+  let block2 = loopNode.body.expressions[0]
+  let functionNode = block2.expressions[0]
+
+  let upvalues = result.helpers.getUpvalues(functionNode)
+  assert.equal(len(upvalues), 1, "Function should have 1 upvalue")
+
+  let uv0 = upvalues[0]
+  assert.equal(uv0.isLocal, true, "Upvalue should be local despite mixed intermediate scopes")
+  assert.equal(uv0.slot, 0, "Upvalue should point to slot 0 (x)")
+})
+
+test("resolve - nested closure (indirect upvalue)", fn(assert) {
+  let result = parseResolveWithHelpers("{
+    let x = 1
+    fn outer() {
+      fn inner() { x }
+    }
+  }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Navigate: ast -> outer block -> outer fn -> inner fn
+  let outerBlock = result.parseResult.ast.expressions[0]
+  let outerFn = outerBlock.expressions[1]
+  let innerFn = outerFn.body.expressions[0]
+
+  // Check outer function's upvalue
+  let outerUpvalues = result.helpers.getUpvalues(outerFn)
+  assert.equal(len(outerUpvalues), 1, "Outer should have 1 upvalue")
+  assert.equal(outerUpvalues[0].isLocal, true, "Outer's upvalue should be local")
+  // Note: Named function 'outer' is hoisted and takes slot 0, so 'x' gets slot 1
+  assert.equal(outerUpvalues[0].slot, 1, "Outer's upvalue should point to slot 1 (x)")
+
+  // Check inner function's upvalue
+  let innerUpvalues = result.helpers.getUpvalues(innerFn)
+  assert.equal(len(innerUpvalues), 1, "Inner should have 1 upvalue")
+  assert.equal(innerUpvalues[0].isLocal, false, "Inner's upvalue should be indirect")
+  assert.equal(innerUpvalues[0].slot, 0, "Inner's upvalue should point to outer's upvalue 0")
+})
+
+test("resolve - nested closure with intermediate blocks", fn(assert) {
+  let result = parseResolveWithHelpers("{
+    let x = 1
+    {
+      fn outer() {
+        {
+          fn inner() { x }
+        }
+      }
+    }
+  }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Navigate: ast -> outer block -> block1 -> outer fn -> block2 -> inner fn
+  let outerBlock = result.parseResult.ast.expressions[0]
+  let block1 = outerBlock.expressions[1]
+  let outerFn = block1.expressions[0]
+  let block2 = outerFn.body.expressions[0]
+  let innerFn = block2.expressions[0]
+
+  // Check outer function's upvalue
+  let outerUpvalues = result.helpers.getUpvalues(outerFn)
+  assert.equal(len(outerUpvalues), 1, "Outer should have 1 upvalue")
+  assert.equal(outerUpvalues[0].isLocal, true, "Outer's upvalue should be local despite block")
+  assert.equal(outerUpvalues[0].slot, 0, "Outer's upvalue should point to slot 0")
+
+  // Check inner function's upvalue
+  let innerUpvalues = result.helpers.getUpvalues(innerFn)
+  assert.equal(len(innerUpvalues), 1, "Inner should have 1 upvalue")
+  assert.equal(innerUpvalues[0].isLocal, false, "Inner's upvalue should be indirect")
+  assert.equal(innerUpvalues[0].slot, 0, "Inner's upvalue should point to outer's upvalue 0")
+})
+
+test("resolve - multiple upvalues in one function", fn(assert) {
+  let result = parseResolveWithHelpers("{
+    let a = 1
+    let b = 2
+    fn f() {
+      a
+      b
+    }
+  }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Navigate: ast -> outer block -> fn (3rd expression)
+  let outerBlock = result.parseResult.ast.expressions[0]
+  let functionNode = outerBlock.expressions[2]
+  let upvalues = result.helpers.getUpvalues(functionNode)
+
+  assert.equal(len(upvalues), 2, "Function should have 2 upvalues")
+
+  // Note: Named function 'f' is hoisted and takes slot 0
+  // So 'a' gets slot 1, 'b' gets slot 2
+  assert.equal(upvalues[0].isLocal, true, "First upvalue should be local")
+  assert.equal(upvalues[0].slot, 1, "First upvalue should point to slot 1 (a)")
+
+  assert.equal(upvalues[1].isLocal, true, "Second upvalue should be local")
+  assert.equal(upvalues[1].slot, 2, "Second upvalue should point to slot 2 (b)")
+})
+
+test("resolve - capturing function parameters", fn(assert) {
+  let result = parseResolveWithHelpers("{
+    fn outer(x, y) {
+      fn inner() {
+        x
+        y
+      }
+    }
+  }")
+  assert.truthy(result.success, "Should resolve successfully")
+
+  // Navigate: ast -> outer block -> outer fn -> inner fn
+  let outerBlock = result.parseResult.ast.expressions[0]
+  let outerFn = outerBlock.expressions[0]
+  let innerFn = outerFn.body.expressions[0]
+
+  let innerUpvalues = result.helpers.getUpvalues(innerFn)
+  assert.equal(len(innerUpvalues), 2, "Inner should have 2 upvalues")
+
+  // Note: Named function 'outer' binds its own name in slot 0 for recursion
+  // So parameters x and y are at slots 1 and 2
+  assert.equal(innerUpvalues[0].isLocal, true, "First upvalue should be local (param)")
+  assert.equal(innerUpvalues[0].slot, 1, "First upvalue should point to param x at slot 1")
+
+  assert.equal(innerUpvalues[1].isLocal, true, "Second upvalue should be local (param)")
+  assert.equal(innerUpvalues[1].slot, 2, "Second upvalue should point to param y at slot 2")
 })
 
 suite.run()

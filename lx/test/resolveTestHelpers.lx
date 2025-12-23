@@ -1,0 +1,141 @@
+// Helper functions for resolve tests
+// Provides utilities to inspect parse and resolve results
+
+fn makeResolveHelpers(parseResult, resolveResult) {
+  let ast = parseResult.ast
+  let resolvedNames = resolveResult.resolvedNames or .{}
+  let scopeInfo = resolveResult.scopeInfo or .{}
+  let nodes = resolveResult.nodes or .{}
+
+  // Find all nodes of a specific type
+  fn findAllNodes(nodeType) {
+    let results = []
+    fn visit(node) {
+      if !node { return }
+      if node.type == nodeType {
+        push(results, node)
+      }
+      // Visit children based on node type
+      if node.type == "Block" {
+        let exprs = node.expressions or []
+        for let i = 0; i < len(exprs); i = i + 1 {
+          visit(exprs[i])
+        }
+      } else if node.type == "Let" {
+        visit(node.name)
+        visit(node.init)
+      } else if node.type == "Function" {
+        visit(node.name)
+        let params = node.params or []
+        for let i = 0; i < len(params); i = i + 1 {
+          visit(params[i])
+        }
+        visit(node.body)
+      } else if node.type == "Binary" or node.type == "Logical" {
+        visit(node.left)
+        visit(node.right)
+      } else if node.type == "Unary" {
+        visit(node.operand)
+      } else if node.type == "Call" {
+        visit(node.callee)
+        let args = node.args or []
+        for let i = 0; i < len(args); i = i + 1 {
+          visit(args[i])
+        }
+      } else if node.type == "If" {
+        visit(node.condition)
+        visit(node.then)
+        visit(node.else)
+      } else if node.type == "For" {
+        visit(node.init)
+        visit(node.condition)
+        visit(node.update)
+        visit(node.body)
+      } else if node.type == "Assignment" {
+        visit(node.target)
+        visit(node.value)
+      } else if node.type == "Return" or node.type == "Break" {
+        visit(node.value)
+      } else if node.type == "Array" {
+        let elems = node.elements or []
+        for let i = 0; i < len(elems); i = i + 1 {
+          visit(elems[i])
+        }
+      } else if node.type == "Hashmap" {
+        let pairs = node.pairs or []
+        for let i = 0; i < len(pairs); i = i + 1 {
+          visit(pairs[i].key)
+          visit(pairs[i].value)
+        }
+      } else if node.type == "Index" {
+        visit(node.object)
+        visit(node.index)
+      } else if node.type == "Dot" {
+        visit(node.object)
+      } else if node.type == "Grouping" {
+        visit(node.expression)
+      }
+    }
+    visit(ast)
+    results
+  }
+
+  // Find all identifiers with a specific name
+  fn findIdentifiersByName(name) {
+    let allIds = findAllNodes("Identifier")
+    let matches = []
+    for let i = 0; i < len(allIds); i = i + 1 {
+      if allIds[i].name == name {
+        push(matches, allIds[i])
+      }
+    }
+    matches
+  }
+
+  // Find the nth identifier with a specific name (0-indexed)
+  fn findNthIdentifier(name, n) {
+    let matches = findIdentifiersByName(name)
+    if n < len(matches) {
+      return matches[n]
+    }
+    nil
+  }
+
+  // Get binding information for a node
+  fn getBinding(node) {
+    if !node { return nil }
+    resolvedNames[node.id]
+  }
+
+  // Get upvalues for a function node
+  fn getUpvalues(functionNode) {
+    if !functionNode { return nil }
+    let scope = scopeInfo[functionNode.id]
+    if !scope { return nil }
+    scope.upvalues or []
+  }
+
+  // Get scope info for a node
+  fn getScopeInfo(node) {
+    if !node { return nil }
+    scopeInfo[node.id]
+  }
+
+  // Get all function nodes
+  fn findAllFunctions() {
+    findAllNodes("Function")
+  }
+
+  // Return helper object
+  .{
+    findAllNodes: findAllNodes,
+    findIdentifiersByName: findIdentifiersByName,
+    findNthIdentifier: findNthIdentifier,
+    getBinding: getBinding,
+    getUpvalues: getUpvalues,
+    getScopeInfo: getScopeInfo,
+    findAllFunctions: findAllFunctions,
+  }
+}
+
+makeResolveHelpers

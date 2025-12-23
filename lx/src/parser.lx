@@ -16,10 +16,10 @@ let PREC = {
     BIT_AND:    iota(),  // &
     EQUALITY:   iota(),  // == !=
     COMPARISON: iota(),  // < > <= >=
-    PIPELINE:   iota(),  // ->
     BIT_SHIFT:  iota(),  // << >>
     TERM:       iota(),  // + -
     FACTOR:     iota(),  // * /
+    PIPELINE:   iota(),  // ->
     UNARY:      iota(),  // ! -
     CALL:       iota(),  // . () []
     PRIMARY:    iota(),

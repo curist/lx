@@ -17,6 +17,13 @@ let OP = types.OP
 
 // Scope - represents a lexical scope
 fn Scope(enclosing, type) {
+  // Blocks and loops should continue the function's slot counter, not start from 0
+  // Only functions start fresh at slot 0
+  let initialSlot = 0
+  if (type == "block" or type == "loop") and enclosing {
+    initialSlot = enclosing.nextSlot
+  }
+
   .{
     enclosing: enclosing,
     type: type,  // "function" | "block" | "loop"
@@ -27,7 +34,8 @@ fn Scope(enclosing, type) {
     hoistedFns: .{},         // name → HoistedFunction
     lastHoistedFunctionIndex: -1,
     upvalues: [],            // [Upvalue]
-    nextSlot: 0,             // Monotonic slot counter
+    baseSlot: initialSlot,   // NEW: restore point for block/loop scopes
+    nextSlot: initialSlot,   // Start from function's current slot for blocks/loops
   }
 }
 
@@ -44,11 +52,13 @@ fn Local(name, depth, kind, slot, nodeId) {
 }
 
 // Upvalue - represents a captured variable
-fn Upvalue(index, isLocal, slot) {
+// For isLocal=true: captured is the nodeId of the captured local declaration
+// For isLocal=false: captured is the upvalue index being captured from parent
+fn Upvalue(index, isLocal, captured) {
   .{
     index: index,
     isLocal: isLocal,
-    slot: slot,
+    captured: captured,  // nodeId for local captures, upvalue index for indirect captures
   }
 }
 
@@ -123,6 +133,14 @@ fn endScope(resolver, nodeId) {
     nextSlot: scope.nextSlot,
   }
 
+  // CRITICAL FIX: Restore parent's nextSlot for block/loop scopes
+  // This makes slots reusable (stack-based model), matching codegen's POP_LOCAL behavior
+  // Previously we propagated nextSlot upward (monotonic model), but that doesn't match
+  // the VM's locals stack which shrinks when scopes end
+  if (scope.type == "block" or scope.type == "loop") and scope.enclosing {
+    scope.enclosing.nextSlot = scope.baseSlot
+  }
+
   // Pop to enclosing scope
   resolver.currentScope = scope.enclosing
 }
@@ -163,6 +181,7 @@ fn declareLocal(resolver, name, kind, nodeId) {
   let slot = scope.nextSlot
   scope.nextSlot = scope.nextSlot + 1
 
+
   // Create local (uninitialized: depth = -1)
   let local = Local(name, -1, kind, slot, nodeId)
 
@@ -184,18 +203,19 @@ fn markInitialized(resolver, local) {
 // Upvalue Handling
 // ========================================
 
-fn addUpvalue(resolver, scope, isLocal, slot) {
+fn addUpvalue(resolver, scope, isLocal, captured) {
   // Check if upvalue already exists
+  // For isLocal captures: captured is nodeId, for indirect: captured is upvalue index
   for let i = 0; i < len(scope.upvalues); i = i + 1 {
     let uv = scope.upvalues[i]
-    if uv.isLocal == isLocal and uv.slot == slot {
+    if uv.isLocal == isLocal and uv.captured == captured {
       return i  // Already have this upvalue
     }
   }
 
   // Add new upvalue
   let index = len(scope.upvalues)
-  push(scope.upvalues, Upvalue(index, isLocal, slot))
+  push(scope.upvalues, Upvalue(index, isLocal, captured))
   index
 }
 
@@ -214,6 +234,7 @@ fn resolveUpvalue(resolver, scope, name, nodeId) {
   for current and current.enclosing {
     push(chain, current)
     let enclosing = current.enclosing
+
     let local = enclosing.localsByName[name]
     if local {
       if local.depth == -1 {
@@ -221,16 +242,47 @@ fn resolveUpvalue(resolver, scope, name, nodeId) {
         return nil
       }
       markCaptured(local)
-      let index = addUpvalue(resolver, current, true, local.slot)
-      for let i = len(chain) - 2; i >= 0; i = i - 1 {
-        // Only add upvalues to function scopes, skip block scopes
+
+      // FIX: Find the first FUNCTION scope in the chain
+      // Block/loop scopes don't have upvalues at runtime
+      let firstFunctionIdx = -1
+      for let i = len(chain) - 1; i >= 0; i = i - 1 {
         if chain[i].type == "function" {
-          index = addUpvalue(resolver, chain[i], false, index)
+          firstFunctionIdx = i
+          break
         }
       }
+
+      // If no function scope in chain, this is a local reference (shouldn't happen in upvalue resolution)
+      if firstFunctionIdx == -1 {
+        return nil
+      }
+
+      // Add upvalue to the first function scope with isLocal=true
+      // CRITICAL FIX: Pass nodeId instead of slot for robust slot mapping in codegen
+      let firstFunctionScope = chain[firstFunctionIdx]
+      let index = addUpvalue(resolver, firstFunctionScope, true, local.nodeId)
+
+      // Walk backwards from firstFunctionIdx-1 to 0, adding indirect upvalues to function scopes
+      for let i = firstFunctionIdx - 1; i >= 0; i = i - 1 {
+        let scopeInChain = chain[i]
+
+        if scopeInChain.type == "function" {
+          index = addUpvalue(resolver, scopeInChain, false, index)
+        }
+      }
+
+      // FIX: Count function scopes in the chain to determine isLocal
+      let functionCount = 0
+      for let i = 0; i < len(chain); i = i + 1 {
+        if chain[i].type == "function" {
+          functionCount = functionCount + 1
+        }
+      }
+
       return .{
         index: index,
-        isLocal: len(chain) == 1,
+        isLocal: functionCount == 1,
       }
     }
     current = enclosing

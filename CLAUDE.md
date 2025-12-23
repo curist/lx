@@ -21,6 +21,24 @@ This document contains important information for AI assistants working with the 
 - In documentation and commit messages, focus on **what/why/how**, not quantitative details
 - Example: Instead of "Added 7 tests with 16 assertions", write "Added tests covering nested scopes, closures, and variable shadowing"
 
+## Lx command line args
+
+```sh
+❯ ./out/lx
+Usage:
+
+  ./out/lx <command> [arguments]
+
+The commands are:
+  run          Run source or lxobj
+  eval         Evaluate expression
+  repl         Start REPL
+  compile      Compile source to lxobj (-o/--output <output>)
+  disasm       Disassemble lxobj or lx source
+  version      Print version
+  help         Print this helpful page
+```
+
 ## Type System
 
 ### The `type()` Function
@@ -39,7 +57,8 @@ type(fn() {})      // "function"
 
 **Debugging tip:**
 ```lx
-println("Type of node:", type(node))  // Always check actual type string first
+groanln("Type of node:", type(node))  // Always check actual type string first
+// groanln print to stderr
 ```
 
 ### Hashmap Literals
@@ -99,6 +118,13 @@ for let i = 0; i < 10; i = i + 1 {
 }
 ```
 
+**While**
+```lx
+for true {
+  println("endless")
+}
+```
+
 ### Operators
 
 **Arrow operator `->`** for method chaining:
@@ -123,6 +149,7 @@ let msg = "Hello " + name
 
 Common globals (from `globals.lx`):
 - `println(...)`, `print(...)`
+- `groanln(...)`, `groan(...)`
 - `len(arr)` - array/string/hashmap length
 - `type(val)` - returns type string
 - `str(val)` - convert to string
@@ -179,3 +206,39 @@ suite.run()
 - `assert.truthy(value)` - Check if value is truthy
 - No `assert.falsy()` - use `assert.truthy(!value)` instead
 
+### Running Tests with Makefile
+
+The `lx/lx` directory contains a Makefile for running tests. The default compiler is `../out/lx`, but you can override it using the `LX` variable:
+
+```bash
+# Run with default compiler (../out/lx)
+make test
+
+# Run with specific compiler version
+LX=../out/lx-v1 make test
+
+# Other useful targets
+LX=../out/lx-v1 make runall      # Run all stub tests
+LX=../out/lx-v1 make mlx-smoke   # Run smoke test
+```
+
+**Common workflow:**
+```bash
+# Build a specific compiler version and run tests
+cd /path/to/lx/lx
+# ... make changes to compiler ...
+make  # builds ../out/lx
+
+cd lx
+LX=../out/lx make test  # Run tests with the newly built compiler
+```
+
+we have `lx-v1` now as the stable build, and current compiler pipeline (new mlx.lx),
+is having issue, so to build a new version of compiler, we should do
+
+```sh
+# do at project root, /Users/curist/playground/lx/lx
+# notice the `../` part, it's confusing, but mandatory,
+# it's because of how current lx module path resolution works
+LX=../out/lx-v1 make build
+```

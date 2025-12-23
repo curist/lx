@@ -54,11 +54,12 @@ fn Local(name, depth, kind, slot, nodeId) {
 // Upvalue - represents a captured variable
 // For isLocal=true: captured is the nodeId of the captured local declaration
 // For isLocal=false: captured is the upvalue index being captured from parent
-fn Upvalue(index, isLocal, captured) {
+fn Upvalue(index, isLocal, captured, slot) {
   .{
     index: index,
     isLocal: isLocal,
     captured: captured,  // nodeId for local captures, upvalue index for indirect captures
+    slot: slot,  // Actual slot number for local captures, nil for indirect captures
   }
 }
 
@@ -203,7 +204,7 @@ fn markInitialized(resolver, local) {
 // Upvalue Handling
 // ========================================
 
-fn addUpvalue(resolver, scope, isLocal, captured) {
+fn addUpvalue(resolver, scope, isLocal, captured, slot) {
   // Check if upvalue already exists
   // For isLocal captures: captured is nodeId, for indirect: captured is upvalue index
   for let i = 0; i < len(scope.upvalues); i = i + 1 {
@@ -215,7 +216,7 @@ fn addUpvalue(resolver, scope, isLocal, captured) {
 
   // Add new upvalue
   let index = len(scope.upvalues)
-  push(scope.upvalues, Upvalue(index, isLocal, captured))
+  push(scope.upvalues, Upvalue(index, isLocal, captured, slot))
   index
 }
 
@@ -261,14 +262,15 @@ fn resolveUpvalue(resolver, scope, name, nodeId) {
       // Add upvalue to the first function scope with isLocal=true
       // CRITICAL FIX: Pass nodeId instead of slot for robust slot mapping in codegen
       let firstFunctionScope = chain[firstFunctionIdx]
-      let index = addUpvalue(resolver, firstFunctionScope, true, local.nodeId)
+      let index = addUpvalue(resolver, firstFunctionScope, true, local.nodeId, local.slot)
 
       // Walk backwards from firstFunctionIdx-1 to 0, adding indirect upvalues to function scopes
       for let i = firstFunctionIdx - 1; i >= 0; i = i - 1 {
         let scopeInChain = chain[i]
 
         if scopeInChain.type == "function" {
-          index = addUpvalue(resolver, scopeInChain, false, index)
+          // For indirect captures, slot is the upvalue index from parent
+          index = addUpvalue(resolver, scopeInChain, false, index, index)
         }
       }
 

@@ -22,14 +22,11 @@ fn makeResolveHelpers(parseResult, resolveResult) {
           visit(exprs[i])
         }
       } else if node.type == "Let" {
-        visit(node.name)
+        // Don't visit node.name - it's a declaration, not a reference
         visit(node.init)
       } else if node.type == "Function" {
-        visit(node.name)
-        let params = node.params or []
-        for let i = 0; i < len(params); i = i + 1 {
-          visit(params[i])
-        }
+        // Don't visit node.name - it's a declaration, not a reference
+        // Don't visit params - they're declarations, not references
         visit(node.body)
       } else if node.type == "Binary" or node.type == "Logical" {
         visit(node.left)

@@ -1,6 +1,6 @@
 .PHONY: test
 
-LX = ../out/lx
+LX ?= ../out/lx
 
 $(LX):
 	@cd .. && make

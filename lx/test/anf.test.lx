@@ -3,7 +3,7 @@ let test = suite.defineTest
 let helpers = import "test/anf/helpers.lx"
 
 fn first(result) {
-  result.anfResult.ast.expressions[0]
+  result.anfResult.ast
 }
 
 test("anf - binary preserves left-to-right evaluation", fn(assert) {

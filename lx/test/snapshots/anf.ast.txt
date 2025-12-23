@@ -22,32 +22,30 @@ source: do_something_to_some_var() + { let x = 2; x * that_some_var }
 ast:
 Block
   expressions:
-    Block
-      expressions:
-        Let name=__anf_tmp0
-          init:
-            Call
-              callee:
-                Identifier name=do_something_to_some_var
-              args:
-                (empty)
-        Let name=__anf_tmp1
-          init:
-            Block
-              expressions:
-                Let name=x
-                  init:
-                    Number value=2
-                Binary op=*
-                  left:
-                    Identifier name=x
-                  right:
-                    Identifier name=that_some_var
-        Binary op=+
-          left:
-            Identifier name=__anf_tmp0
-          right:
-            Identifier name=__anf_tmp1
+    Let name=__anf_tmp0
+      init:
+        Call
+          callee:
+            Identifier name=do_something_to_some_var
+          args:
+            (empty)
+    Let name=__anf_tmp1
+      init:
+        Block
+          expressions:
+            Let name=x
+              init:
+                Number value=2
+            Binary op=*
+              left:
+                Identifier name=x
+              right:
+                Identifier name=that_some_var
+    Binary op=+
+      left:
+        Identifier name=__anf_tmp0
+      right:
+        Identifier name=__anf_tmp1
 
 ## block_with_locals
 source: { let x = 1; let y = 2; x + y }

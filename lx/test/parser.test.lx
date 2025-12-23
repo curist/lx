@@ -746,22 +746,22 @@ test("parser - or associativity should be left-to-right", fn(assert) {
 })
 
 test("parser - arrow precedence vs addition", fn(assert) {
-  // For a pipeline operator, we'd expect: a + b -> foo() to parse as (a + b) -> foo()
+  // Pipeline has high precedence (after FACTOR), so a + b->foo() parses as a + (b->foo())
   // This test verifies the correct parse tree structure
   let result = parse("a + b->foo()", "test.lx")
   assert.truthy(result.success)
 
   let node = first(result)
 
-  // Expected for pipeline (lower precedence than +):
-  // Arrow { left: Binary(a + b), right: Call(foo) }
-  assert.equal(node.type, "Arrow")
-  assert.equal(node.left.type, "Binary")
-  assert.equal(node.left.operator.type, TOKEN.PLUS)
-  assert.equal(node.left.left.name, "a")
-  assert.equal(node.left.right.name, "b")
-  assert.equal(node.right.type, "Call")
-  assert.equal(node.right.callee.name, "foo")
+  // Expected for pipeline (higher precedence than +):
+  // Binary { left: Identifier(a), operator: +, right: Arrow(b, foo()) }
+  assert.equal(node.type, "Binary")
+  assert.equal(node.operator.type, TOKEN.PLUS)
+  assert.equal(node.left.name, "a")
+  assert.equal(node.right.type, "Arrow")
+  assert.equal(node.right.left.name, "b")
+  assert.equal(node.right.right.type, "Call")
+  assert.equal(node.right.right.callee.name, "foo")
 })
 
 test("parser - arrow associativity", fn(assert) {

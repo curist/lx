@@ -223,15 +223,16 @@ fn endScope(gen, node) {
   }
 }
 
-fn resetScopeVariables(gen, targetDepth) {
-  let stack = gen.scopeStack
-  for let i = len(stack) - 1; i >= 0; i = i - 1 {
-    let scope = stack[i]
-    if scope.depth <= targetDepth { break }
-    let locals = scope.locals or []
-    for let j = len(locals) - 1; j >= 0; j = j - 1 {
-      emitByte(gen, OP.POP_LOCAL, gen.currentLine)
-    }
+fn unwindToSlot(gen, targetSlot) {
+  // Emit runtime cleanup code to unwind locals from current slot down to targetSlot  // NOTE: We do NOT decrement gen.nextLocalSlot here because:
+  // 1. This emits code for the break/continue path (which jumps away)
+  // 2. endScope will handle nextLocalSlot bookkeeping for the normal path
+  // 3. After emitting the jump, we never emit more code on this path, so out-of-sync nextLocalSlot is fine
+  let slotsToUnwind = gen.nextLocalSlot - targetSlot
+  for let i = 0; i < slotsToUnwind; i = i + 1 {
+    // TODO: Check if this slot is captured and emit CLOSE_UPVALUE if so
+    // For now, use POP_LOCAL for all (may break closures but simpler)
+    emitByte(gen, OP.POP_LOCAL, gen.currentLine)
   }
 }
 
@@ -321,6 +322,49 @@ fn compileLet(gen, node) {
 
 fn compileBlock(gen, node) {
   pushScope(gen, node)
+
+  // CRITICAL FIX: Pre-emit hoisted function locals to match resolver's slot allocation
+  // Resolver allocates slots for hoisted functions during prescan (before expressions)
+  // Codegen must do the same to keep slot numbering consistent
+  let scope = gen.scopeInfo[node.id]
+  if scope and scope.hoistedFns {
+    let hoistedNames = keys(scope.hoistedFns)
+
+    // Collect hoisted functions with their declaration indices
+    let hoistedList = []
+    for let i = 0; i < len(hoistedNames); i = i + 1 {
+      let name = hoistedNames[i]
+      let hoisted = scope.hoistedFns[name]
+      push(hoistedList, hoisted)
+    }
+
+    // Sort by declIndex to match resolver's prescan order
+    // Simple bubble sort (sufficient for small lists)
+    for let i = 0; i < len(hoistedList); i = i + 1 {
+      for let j = i + 1; j < len(hoistedList); j = j + 1 {
+        if hoistedList[j].declIndex < hoistedList[i].declIndex {
+          let temp = hoistedList[i]
+          hoistedList[i] = hoistedList[j]
+          hoistedList[j] = temp
+        }
+      }
+    }
+
+    // Pre-allocate locals for hoisted functions
+    for let i = 0; i < len(hoistedList); i = i + 1 {
+      let hoisted = hoistedList[i]
+      // Emit NIL placeholder and DUP for expression value semantics (like compileLet)
+      emitByte(gen, OP.NIL, node.line)
+      emitByte(gen, OP.DUP, node.line)
+      // Record the slot BEFORE emitting NEW_LOCAL
+      gen.emittedLocals[hoisted.declNodeId] = gen.nextLocalSlot
+      gen.nextLocalSlot = gen.nextLocalSlot + 1
+      // NEW_LOCAL pops one copy, we POP the other to keep stack balanced
+      emitByte(gen, OP.NEW_LOCAL, node.line)
+      emitByte(gen, OP.POP, node.line)
+    }
+  }
+
   let exprs = node.expressions or []
   if len(exprs) == 0 {
     emitByte(gen, OP.NIL, node.line)
@@ -483,58 +527,43 @@ fn compileFunctionExpr(gen, node) {
   for let i = 0; i < len(upvalues); i = i + 1 {
     let uv = upvalues[i]
 
-    // Resolve through intermediate scopes to find the actual capture
-    let actualIsLocal = uv.isLocal
-    let actualSlot = uv.slot
-
-    // If this upvalue captures from a parent upvalue, follow the chain
-    // to see if it ultimately comes from a local in an ancestor function
-    if !actualIsLocal and len(gen.scopeStack) > 0 {
-      let parentIdx = len(gen.scopeStack) - 1
-      let parentScope = gen.scopeStack[parentIdx]
-      let parentUpvalues = parentScope.upvalues or []
-
-      if uv.slot < len(parentUpvalues) {
-        let parentUv = parentUpvalues[uv.slot]
-
-        // If parent's upvalue is a local, we should capture it as local too
-        if parentUv.isLocal {
-          // parentUv.slot is a resolver slot in the parent's enclosing scope
-          // The enclosing scope is at parentIdx - 1 in the scopeStack
-          if parentIdx > 0 {
-            let enclosingScope = gen.scopeStack[parentIdx - 1]
-            let enclosingLocals = enclosingScope.locals or []
-
-            if parentUv.slot < len(enclosingLocals) {
-              let localInfo = enclosingLocals[parentUv.slot]
-              let absoluteSlot = gen.emittedLocals[localInfo.nodeId]
-
-              if absoluteSlot or absoluteSlot == 0 {
-                actualIsLocal = true
-                actualSlot = absoluteSlot
-              }
-            }
-          }
-        }
+    // CRITICAL FIX: Translate upvalue captures correctly
+    // For isLocal=true: uv.captured is nodeId, need to look up runtime slot
+    // For isLocal=false: uv.captured is upvalue index, use directly
+    emitByte(gen, uv.isLocal and 1 or 0, node.line)
+    if uv.isLocal {
+      // Look up the enclosing function's runtime slot for this captured local
+      // uv.captured is the nodeId of the declaration in the enclosing function
+      let capturedSlot = enclosingEmittedLocals[uv.captured]
+      if capturedSlot or capturedSlot == 0 {
+        emitByte(gen, localSlot(capturedSlot), node.line)
+      } else {
+        addError(gen, node, "Internal error: captured local not found in enclosing emittedLocals")
+        emitByte(gen, 0, node.line)
       }
-    }
-
-    emitByte(gen, actualIsLocal and 1 or 0, node.line)
-    if actualIsLocal {
-      emitByte(gen, localSlot(actualSlot), node.line)
     } else {
-      // Upvalue captures another upvalue - slot is already an upvalue index
-      emitByte(gen, actualSlot, node.line)
+      // Indirect capture: uv.captured is already an upvalue index
+      emitByte(gen, uv.captured, node.line)
     }
   }
 
   let local = gen.localsByDecl[node.id]
   if local {
-    emitByte(gen, OP.DUP, node.line)
-    // Record the absolute slot for this function local
-    gen.emittedLocals[node.id] = gen.nextLocalSlot
-    gen.nextLocalSlot = gen.nextLocalSlot + 1
-    emitByte(gen, OP.NEW_LOCAL, node.line)
+    // Check if this function was already pre-allocated (hoisted)
+    let preallocatedSlot = gen.emittedLocals[node.id]
+    if preallocatedSlot or preallocatedSlot == 0 {
+      // Function was hoisted: assign into existing slot instead of creating new local
+      emitByte(gen, OP.DUP, node.line)
+      emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
+      emitByte(gen, OP.POP, node.line)  // Consume the DUP
+    } else {
+      // Not preallocated: create new local (normal case for non-hoisted functions)
+      emitByte(gen, OP.DUP, node.line)
+      // Record the absolute slot for this function local
+      gen.emittedLocals[node.id] = gen.nextLocalSlot
+      gen.nextLocalSlot = gen.nextLocalSlot + 1
+      emitByte(gen, OP.NEW_LOCAL, node.line)
+    }
   }
 }
 
@@ -630,7 +659,9 @@ fn compileBreak(gen, node) {
     emitBytes(gen, OP.SET_LOCAL, localSlot(loopResultSlot), node.line)
     emitByte(gen, OP.POP, node.line)
   }
-  resetScopeVariables(gen, gen.loopScopeDepth - 1)
+  // Unwind to loop base slot (the slot height after loop result slot)
+  let loopBaseSlot = gen.loopBaseSlots[len(gen.loopBaseSlots) - 1]
+  unwindToSlot(gen, loopBaseSlot)
   let jump = emitJump(gen, OP.JUMP, node.line)
   push(gen.breakOffsets[len(gen.breakOffsets) - 1], jump)
 }
@@ -640,7 +671,9 @@ fn compileContinue(gen, node) {
     addError(gen, node, "Continue used outside loop.")
     return
   }
-  resetScopeVariables(gen, gen.loopScopeDepth)
+  // Unwind to loop continue slot (keeps loop var, pops body locals)
+  let loopContinueSlot = gen.loopContinueSlots[len(gen.loopContinueSlots) - 1]
+  unwindToSlot(gen, loopContinueSlot)
   let jump = emitJump(gen, OP.JUMP, node.line)
   push(gen.continueOffsets[len(gen.continueOffsets) - 1], jump)
 }
@@ -653,6 +686,10 @@ fn compileFor(gen, node) {
   gen.nextLocalSlot = gen.nextLocalSlot + 1
   push(gen.loopResultSlots, loopResultSlot)
 
+  // Record the loop base slot for break - the slot height after loop result (before init)
+  let loopBreakSlot = gen.nextLocalSlot
+  push(gen.loopBaseSlots, loopBreakSlot)
+
   pushScope(gen, node)
   let prevScopeDepth = gen.loopScopeDepth
   gen.loopScopeDepth = gen.scopeInfo[node.id] and gen.scopeInfo[node.id].depth or 0
@@ -664,6 +701,10 @@ fn compileFor(gen, node) {
     compileExpr(gen, node.init)
     emitByte(gen, OP.POP, node.init.line)
   }
+
+  // Record the loop continue slot - the slot height after init (keeps loop var, pops body locals)
+  let loopContinueSlot = gen.nextLocalSlot
+  push(gen.loopContinueSlots, loopContinueSlot)
 
   let loopStart = len(gen.currentFunction.chunk.bytecode)
   let loopStartLine = node.line
@@ -702,16 +743,16 @@ fn compileFor(gen, node) {
   gen.loopScopeDepth = prevScopeDepth
   pop(gen.breakOffsets)
   pop(gen.continueOffsets)
+  pop(gen.loopBaseSlots)
+  pop(gen.loopContinueSlots)
 
   popScope(gen)
 
   // Expose loop expression value and drop the temp local.
   emitBytes(gen, OP.GET_LOCAL, localSlot(loopResultSlot), node.line)
   emitByte(gen, OP.POP_LOCAL, node.line)
-  // NOTE: We do NOT decrement nextLocalSlot here because the loop result temp slot
-  // should not be reused. Decrementing would allow the next variable to reuse this slot,
-  // which can cause the old loop result value to corrupt the new variable.
-  // gen.nextLocalSlot = gen.nextLocalSlot - 1
+  // CRITICAL: Must decrement nextLocalSlot to keep it in sync with runtime stack
+  gen.nextLocalSlot = gen.nextLocalSlot - 1
   pop(gen.loopResultSlots)
 }
 
@@ -807,6 +848,8 @@ fn codegen(ast, resolveResult, opts) {
     breakOffsets: [],
     continueOffsets: [],
     loopResultSlots: [],
+    loopBaseSlots: [],  // Track loop base slots for break (pops everything)
+    loopContinueSlots: [],  // Track loop continue slots (keeps loop var)
     loopScopeDepth: 0,
     codegenModule: opts and opts.codegenModule or nil,
 

@@ -192,7 +192,59 @@ fn wrapWithPrelude(anf, templateNode, pre, expr) {
 }
 
 
+fn anfToValue(anf, node) {
+  // Normalize an expression for value position, ensuring no Let appears as subexpression
+  // This enforces Invariant S: Let nodes only appear in Block.expressions (statement position)
+  if !node { return nil }
+
+  let expr = anfExpr(anf, node)
+
+  // If anfExpr returned a Let, wrap it in a block to move it to statement position
+  // Transform: let x = init  =>  { let x = init; x }
+  if expr.type == "Let" {
+    return makeBlock(anf, node, [expr, makeIdentifier(anf, expr, expr.name.name)])
+  }
+
+  return expr
+}
+
 fn anfToAtomic(anf, node) {
+  // Special case: Let in expression position
+  // Enforces Invariant S by extracting Let to statement position
+  // Transform: anfToAtomic(let x = init)
+  //         => pre: [let x = <atomic-init>], expr: x
+  if node.type == "Let" {
+    let letNode = copyNodeShallow(anf, node)
+    let letName = copyNodeShallow(anf, node.name)
+    letNode.name = letName
+
+    let pre = []
+
+    if node.init {
+      let initAtomic = anfToAtomic(anf, node.init)
+      pre = initAtomic.pre
+      letNode.init = initAtomic.expr
+    } else {
+      // Make default explicit
+      letNode.init = .{
+        type: "Nil",
+        filename: node.filename,
+        id: allocNodeId(anf),
+        line: node.line, col: node.col,
+        endLine: node.endLine, endCol: node.endCol,
+      }
+      anf.origin[letNode.init.id] = node.id
+    }
+
+    addName(anf, letName.name)
+
+    return .{
+      pre: concat(pre, [letNode]),
+      expr: makeIdentifier(anf, node, letName.name),
+    }
+  }
+
+  // Normal case: complex expressions
   let expr = anfExpr(anf, node)
   if isAtomic(expr) {
     return .{ pre: [], expr: expr }
@@ -225,7 +277,7 @@ fn anfUnary(anf, node) {
 
 fn anfLogical(anf, node) {
   let left = anfToAtomic(anf, node.left)
-  let right = anfExpr(anf, node.right)
+  let right = anfToValue(anf, node.right)
   let newNode = copyNodeShallow(anf, node)
   newNode.left = left.expr
   newNode.right = right
@@ -233,20 +285,33 @@ fn anfLogical(anf, node) {
 }
 
 fn anfGrouping(anf, node) {
-  let expr = anfExpr(anf, node.expression)
+  let expr = anfToValue(anf, node.expression)
   let newNode = copyNodeShallow(anf, node)
   newNode.expression = expr
   newNode
 }
 
-fn anfLet(anf, node) {
+fn anfLetNoWrap(anf, node) {
+  // ANF-normalize a Let without wrapping it in a block
+  // Returns { pre: [...], letNode: <Let> }
+  // Used for For.init to preserve Let node kind
   let newNode = copyNodeShallow(anf, node)
   newNode.name = copyNodeShallow(anf, node.name)
+
+  let pre = []
   if node.init {
-    newNode.init = anfExpr(anf, node.init)
+    let initAtomic = anfToAtomic(anf, node.init)
+    pre = initAtomic.pre
+    newNode.init = initAtomic.expr
   }
+
   addName(anf, newNode.name.name)
-  newNode
+  .{ pre: pre, letNode: newNode }
+}
+
+fn anfLet(anf, node) {
+  let lowered = anfLetNoWrap(anf, node)
+  wrapWithPrelude(anf, node, lowered.pre, lowered.letNode)
 }
 
 fn anfBlock(anf, node) {
@@ -277,7 +342,7 @@ fn anfFunction(anf, node) {
   }
   newNode.params = newParams
   pushScope(anf, collectFunctionNames(node))
-  newNode.body = anfExpr(anf, node.body)
+  newNode.body = anfToValue(anf, node.body)
   popScope(anf)
   newNode
 }
@@ -301,9 +366,9 @@ fn anfIf(anf, node) {
   let cond = anfToAtomic(anf, node.condition)
   let newNode = copyNodeShallow(anf, node)
   newNode.condition = cond.expr
-  newNode.then = anfExpr(anf, node.then)
+  newNode.then = anfToValue(anf, node.then)
   if node.else {
-    newNode.else = anfExpr(anf, node.else)
+    newNode.else = anfToValue(anf, node.else)
   }
   wrapWithPrelude(anf, node, cond.pre, newNode)
 }
@@ -311,24 +376,37 @@ fn anfIf(anf, node) {
 fn anfFor(anf, node) {
   let newNode = copyNodeShallow(anf, node)
   pushScope(anf, collectForNames(node))
-  if node.init {
-    newNode.init = anfExpr(anf, node.init)
+
+  let pre = []
+
+  if node.init and node.init.type == "Let" {
+    // Special case: preserve Let node kind for resolver
+    // If init produces preludes, hoist them before the for
+    let lowered = anfLetNoWrap(anf, node.init)
+    pre = concat(pre, lowered.pre)
+    newNode.init = lowered.letNode
+  } else if node.init {
+    newNode.init = anfToValue(anf, node.init)
   }
+
   if node.condition {
-    newNode.condition = anfExpr(anf, node.condition)
+    newNode.condition = anfToValue(anf, node.condition)
   }
   if node.update {
-    newNode.update = anfExpr(anf, node.update)
+    newNode.update = anfToValue(anf, node.update)
   }
-  newNode.body = anfExpr(anf, node.body)
+  newNode.body = anfToValue(anf, node.body)
+
   popScope(anf)
-  newNode
+
+  // If init produced preludes, hoist them before the for
+  wrapWithPrelude(anf, node, pre, newNode)
 }
 
 fn anfReturn(anf, node) {
   let newNode = copyNodeShallow(anf, node)
   if node.value {
-    newNode.value = anfExpr(anf, node.value)
+    newNode.value = anfToValue(anf, node.value)
   }
   newNode
 }
@@ -336,7 +414,7 @@ fn anfReturn(anf, node) {
 fn anfBreak(anf, node) {
   let newNode = copyNodeShallow(anf, node)
   if node.value {
-    newNode.value = anfExpr(anf, node.value)
+    newNode.value = anfToValue(anf, node.value)
   }
   newNode
 }

@@ -13,7 +13,8 @@ let c = {
 }
 
 
-let x = (let y = 10)
+let y
+let x = y = 10
 x * y - 58
 
 let foo = {

@@ -7,7 +7,7 @@ Block
   expressions:
     Block
       expressions:
-        Let name=a
+        Let name=__anf_tmp0
           init:
             Block
               expressions:
@@ -15,6 +15,9 @@ Block
                   init:
                     Number value=1
                 Identifier name=b
+        Let name=a
+          init:
+            Identifier name=__anf_tmp0
         Identifier name=a
 
 ## block_in_expr
@@ -71,7 +74,7 @@ source: let a = foo({ let x = 1; x }, bar())
 ast:
 Block
   expressions:
-    Let name=a
+    Let name=__anf_tmp2
       init:
         Block
           expressions:
@@ -96,3 +99,6 @@ Block
               args:
                 Identifier name=__anf_tmp0
                 Identifier name=__anf_tmp1
+    Let name=a
+      init:
+        Identifier name=__anf_tmp2

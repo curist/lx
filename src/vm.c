@@ -153,9 +153,10 @@ static Value peek_local(int distance) {
 }
 
 static bool call(ObjClosure* closure, int argCount) {
-  if (argCount < closure->function->arity) {
-    runtimeError("Expected %d arguments but got %d.",
-        closure->function->arity, argCount);
+  int arity = closure->function->arity;
+
+  if (argCount < arity) {
+    runtimeError("Expected %d arguments but got %d.", arity, argCount);
     return false;
   }
 
@@ -164,13 +165,15 @@ static bool call(ObjClosure* closure, int argCount) {
     return false;
   }
 
+  // Discard extra args from locals
+  for (int i = 0; i < argCount - arity; i++) {
+    pop_local();
+  }
+
   CallFrame* frame = &vm.frames[vm.frameCount++];
   frame->closure = closure;
   frame->ip = closure->function->chunk.code;
-  for (int i = 0; i < argCount - closure->function->arity; i++) {
-    pop_local();
-  }
-  frame->slots = vm.localsTop - closure->function->arity - 1;
+  frame->slots = vm.localsTop - arity - 1;  // Points into vm.locals
   return true;
 }
 
@@ -710,8 +713,8 @@ DO_OP_LOOP:
 DO_OP_CALL:
     {
       int argCount = READ_BYTE();
-      // pushing function & its args to locals stack
-      // + 1 to include the function it self
+      // Push function & its args to locals stack
+      // + 1 to include the function itself
       for (int i = argCount; i >= 0; i--) push_local(peek(i));
       for (int i = 0; i < argCount + 1; i++) pop();
 

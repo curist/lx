@@ -411,9 +411,6 @@ fn parse(src, filename) {
     errors: [],
   }
 
-  let parseRules
-  let getRule
-
   fn errorAt(token, message) {
     if parser.panicMode {
       return
@@ -538,10 +535,6 @@ fn parse(src, filename) {
       advance()
     }
   }
-
-  // Forward declarations for mutual recursion
-  let expression = nil
-  let expressionStatement = nil
 
   fn parsePrecedence(precedence) {
     advance()
@@ -939,25 +932,23 @@ fn parse(src, filename) {
     ImportNode(filename, startToken, pathNode)
   }
 
-  expression = fn() {
+  fn expression() {
     if match(TOKEN.IMPORT) {
       return importStatement()
     }
     parsePrecedence(PREC.ASSIGNMENT)
   }
 
-  expressionStatement = fn() {
+  fn expressionStatement() {
     let expr = expression()
-
     if parser.panicMode {
       synchronize()
     }
-
     return expr
   }
 
   // Parse rules table
-  parseRules = .{
+  let parseRules = .{
     [TOKEN.IMPORT]:          [nil,        nil,    PREC.NONE],
     [TOKEN.LEFT_PAREN]:      [grouping,   call,   PREC.CALL],
     [TOKEN.RIGHT_PAREN]:     [nil,        nil,    PREC.NONE],
@@ -1008,7 +999,7 @@ fn parse(src, filename) {
     [TOKEN.EOF]:             [nil,        nil,    PREC.NONE],
   }
 
-  getRule = fn(type) {
+  fn getRule(type) {
     let rule = parseRules[type]
     return .{
       prefix: rule[0],

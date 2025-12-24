@@ -353,15 +353,13 @@ fn compileBlock(gen, node) {
     // Pre-allocate locals for hoisted functions
     for let i = 0; i < len(hoistedList); i = i + 1 {
       let hoisted = hoistedList[i]
-      // Emit NIL placeholder and DUP for expression value semantics (like compileLet)
+      // Emit NIL placeholder for slot reservation
+      // No DUP/POP needed since we're just pre-allocating, not creating an expression value
       emitByte(gen, OP.NIL, node.line)
-      emitByte(gen, OP.DUP, node.line)
       // Record the slot BEFORE emitting NEW_LOCAL
       gen.emittedLocals[hoisted.declNodeId] = gen.nextLocalSlot
       gen.nextLocalSlot = gen.nextLocalSlot + 1
-      // NEW_LOCAL pops one copy, we POP the other to keep stack balanced
       emitByte(gen, OP.NEW_LOCAL, node.line)
-      emitByte(gen, OP.POP, node.line)
     }
   }
 

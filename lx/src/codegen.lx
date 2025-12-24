@@ -266,8 +266,6 @@ fn patchContinues(gen) {
 
 let MODE = .{ VALUE: 1, STMT: 2 }
 
-let compileValueExpr = nil
-let compileExpr = nil
 
 fn compileValue(gen, node) { compileExpr(gen, node, MODE.VALUE) }
 fn compileStmt(gen, node) { compileExpr(gen, node, MODE.STMT) }
@@ -815,7 +813,7 @@ fn compileImport(gen, node) {
   emitBytes(gen, OP.CALL, 0, node.line)
 }
 
-compileValueExpr = fn(gen, node) {
+fn compileValueExpr(gen, node) {
   if !node { return }
   gen.currentNode = node
   gen.currentLine = node.line
@@ -856,7 +854,7 @@ compileValueExpr = fn(gen, node) {
   }
 }
 
-compileExpr = fn(gen, node, mode) {
+fn compileExpr(gen, node, mode) {
   if !node { return }
   gen.currentNode = node
   gen.currentLine = node.line

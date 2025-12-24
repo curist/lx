@@ -191,8 +191,6 @@ fn wrapWithPrelude(anf, templateNode, pre, expr) {
   makeBlock(anf, templateNode, concat(pre, [expr]))
 }
 
-// Forward declaration for mutual recursion
-let anfExpr = nil
 
 fn anfToAtomic(anf, node) {
   let expr = anfExpr(anf, node)
@@ -438,7 +436,7 @@ fn anfImport(anf, node) {
 // Main Expression Dispatcher
 // ========================================
 
-anfExpr = fn(anf, node) {
+fn anfExpr(anf, node) {
   if !node { return nil }
 
   if node.type == "If" {

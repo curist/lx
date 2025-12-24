@@ -501,12 +501,8 @@ fn isInFunction(scope) {
 // Function and Block Resolution
 // ========================================
 
-// Forward declarations for mutual recursion
-let resolveExpr = nil
-let resolveFunction = nil
-let resolveBlockWithHoisting = nil
 
-resolveFunction = fn(resolver, node, context) {
+fn resolveFunction(resolver, node, context) {
   // Create function scope
   beginScope(resolver, "function")
 
@@ -535,7 +531,7 @@ resolveFunction = fn(resolver, node, context) {
   endScope(resolver, node.id)
 }
 
-resolveBlockWithHoisting = fn(resolver, node, context) {
+fn resolveBlockWithHoisting(resolver, node, context) {
   // Two-phase block resolution for hoisting
   let scope = resolver.currentScope
   let isRootBlock = context and context.atTopLevel and !context.parentBlock
@@ -587,7 +583,7 @@ resolveBlockWithHoisting = fn(resolver, node, context) {
 // Expression Resolution
 // ========================================
 
-resolveExpr = fn(resolver, node, context) {
+fn resolveExpr(resolver, node, context) {
   if !node { return }
 
   // Build node map as we traverse

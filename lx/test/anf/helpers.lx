@@ -75,7 +75,6 @@ fn writeLine(lines, indent, text) {
   push(lines, indentStr(indent) + text)
 }
 
-let serializeNode = nil
 
 fn serializeList(nodes, lines, indent) {
   if !nodes or len(nodes) == 0 {
@@ -102,7 +101,7 @@ fn serializePairs(pairs, lines, indent) {
   }
 }
 
-serializeNode = fn(node, lines, indent) {
+fn serializeNode(node, lines, indent) {
   writeLine(lines, indent, nodeHeader(node))
   if !node { return }
 

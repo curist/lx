@@ -53,8 +53,6 @@ fn copyNodeShallow(lowerer, node) {
 // Node Type Lowering Functions
 // ========================================
 
-// Forward declaration for mutual recursion
-let lowerExpr = nil
 
 // Leaf nodes - just copy with new ID
 fn lowerLeaf(lowerer, node) {
@@ -303,7 +301,7 @@ fn lowerImport(lowerer, node) {
 // Main Expression Dispatcher
 // ========================================
 
-lowerExpr = fn(lowerer, node) {
+fn lowerExpr(lowerer, node) {
   if !node { return nil }
 
   if node.type == "Arrow" {

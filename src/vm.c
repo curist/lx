@@ -56,6 +56,39 @@ static void runtimeError(const char* format, ...) {
   resetStack();
 }
 
+static inline bool tableCtrlIsFull(uint8_t c) {
+  return c != CTRL_EMPTY && c != CTRL_TOMB;
+}
+
+static bool installExportsIntoGlobals(Value exportsVal) {
+  if (!IS_HASHMAP(exportsVal)) {
+    runtimeError("globals.lx must return a hashmap of exports.");
+    return false;
+  }
+
+  Table* t = &AS_HASHMAP(exportsVal);
+
+  // If exports is empty, nothing to do.
+  if (t->count == 0) return true;
+
+  // Iterate actual slot array. (Your other code uses `capacity` as slot count.)
+  for (int i = 0; i < t->capacity; i++) {
+    if (!tableCtrlIsFull(t->control[i])) continue;
+
+    Entry* e = &t->entries[i];
+
+    // enforce string-keyed exports for globals.
+    if (!IS_STRING(e->key)) {
+      runtimeError("globals.lx export keys must be strings.");
+      return false;
+    }
+
+    tableSet(&vm.globals, e->key, e->value);
+  }
+
+  return true;
+}
+
 void initVM() {
   resetStack();
   vm.objects = NULL;
@@ -66,13 +99,23 @@ void initVM() {
   vm.grayCapacity = 0;
   vm.grayStack = NULL;
 
+  vm.lastResult = NIL_VAL;
+
   initTable(&vm.globals);
   initTable(&vm.strings);
 
   defineBuiltinNatives();
 
   // include global fns
-  interpret((uint8_t*)lxglobals_bytecode);
+  InterpretResult r = interpret((uint8_t*)lxglobals_bytecode);
+  if (r != INTERPRET_OK) {
+    fprintf(stderr, "failed to load lx globals\n");
+    return exit(31);
+  }
+  if (!installExportsIntoGlobals(vm.lastResult)) {
+    fprintf(stderr, "failed to load lx globals\n");
+    return exit(31);
+  }
 }
 
 void freeVM() {
@@ -705,7 +748,13 @@ DO_OP_RETURN:
       closeUpvalues(frame->slots);
       vm.frameCount--;
       if (vm.frameCount == 0) {
-        pop();
+        vm.lastResult = pop();
+
+        // Ensure next interpret() starts from a clean slate.
+        vm.stackTop = vm.stack;
+        vm.localsTop = vm.locals;
+        vm.openUpvalues = NULL;
+
         return INTERPRET_OK;
       }
       vm.localsTop = frame->slots;

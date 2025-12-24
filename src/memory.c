@@ -175,6 +175,7 @@ static void markRoots() {
   }
 
   markTable(&vm.globals);
+  markValue(vm.lastResult);
 }
 
 static void traceReferences() {

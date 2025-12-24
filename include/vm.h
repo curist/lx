@@ -23,6 +23,8 @@ typedef struct {
   Value locals[STACK_MAX];
   Value* localsTop;
 
+  Value lastResult;
+
   Table globals;
   Table strings;
   ObjUpvalue* openUpvalues;

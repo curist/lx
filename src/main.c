@@ -137,9 +137,8 @@ static void handleCompile(int argc, const char* argv[]) {
 
 static void handleCompileAndRun(int argc, const char* argv[]) {
   InterpretResult result = interpret((uint8_t*)lxlx_bytecode);
-  Value value;
-  if (!tableGet(&vm.globals, CSTRING_VAL("__lx_result__"), &value) ||
-      !IS_ARRAY(value)) {
+  Value value = vm.lastResult;
+  if (!IS_ARRAY(value)) {
     fprintf(stderr, "failed to compile lxobj\n");
     freeVM();
     return exit(65);
@@ -174,37 +173,74 @@ static void handleRun(int argc, const char* argv[]) {
 static void handleEval(int argc, const char* argv[]) {
   if (argc <= 2) {
     fprintf(stderr, "Usage: %s eval <expression>\n", argv[0]);
-    return;
+    exit(64);
   }
+
+  // 1) Set __lx_input__ in vm.globals (host -> compiler-driver script).
   ObjString* key = COPY_CSTRING("__lx_input__");
-  Value value;
   ObjString* source = COPY_CSTRING(argv[2]);
 
+  // Root 'source' while inserting into globals in case table grows / GC runs.
   push(OBJ_VAL(source));
   tableSet(&vm.globals, OBJ_VAL(key), OBJ_VAL(source));
   pop();
 
-  interpret((uint8_t*)lxlx_bytecode);
+  // 2) Run lxlx_bytecode (compiler-driver). It returns either:
+  //    - string error message, or
+  //    - array of bytes (stored as doubles) representing an lxobj.
+  InterpretResult r = interpret((uint8_t*)lxlx_bytecode);
+  if (r != INTERPRET_OK) {
+    fprintf(stderr, "failed to run eval compiler\n");
+    exit(65);
+  }
 
-  if (!tableGet(&vm.globals, CSTRING_VAL("__lx_result__"), &value)) {
-    fprintf(stderr, "failed to compile lxobj\n");
-    return exit(65);
-  } else if (IS_STRING(value)) {
-    // got some errors
-    fprintf(stderr, "%s\n", AS_STRING(value)->chars);
-    return exit(65);
-  } else if (!IS_ARRAY(value)) {
-    fprintf(stderr, "unexpected lx compiled result\n");
-    return exit(65);
+  Value compiled = vm.lastResult;
+
+  if (IS_STRING(compiled)) {
+    fprintf(stderr, "%s\n", AS_STRING(compiled)->chars);
+    exit(65);
   }
-  ValueArray* code = &AS_ARRAY(value);
-  uint8_t* obj = (uint8_t*)malloc(code->count);
+  if (!IS_ARRAY(compiled)) {
+    fprintf(stderr, "unexpected eval compiler result (expected string or array)\n");
+    exit(65);
+  }
+
+  // 3) Convert the returned "bytes array" -> uint8_t buffer.
+  ValueArray* code = &AS_ARRAY(compiled);
+  uint8_t* obj = (uint8_t*)malloc((size_t)code->count);
+  if (obj == NULL) {
+    fprintf(stderr, "out of memory\n");
+    exit(70);
+  }
+
   for (int i = 0; i < code->count; ++i) {
-    uint8_t byte = AS_NUMBER(code->values[i]);
-    obj[i] = byte;
+    // Defensive: ensure elements are numbers.
+    if (!IS_NUMBER(code->values[i])) {
+      fprintf(stderr, "unexpected bytecode element type\n");
+      free(obj);
+      exit(65);
+    }
+    double n = AS_NUMBER(code->values[i]);
+    // Optional: range check
+    if (n < 0 || n > 255 || (uint8_t)n != n) {
+      fprintf(stderr, "invalid byte value in compiled output\n");
+      free(obj);
+      exit(65);
+    }
+    obj[i] = (uint8_t)n;
   }
-  interpret(obj);
-  printValue(stdout, *vm.stackTop);
+
+  // 4) Run the compiled object. Decide what to print.
+  r = interpret(obj);
+  free(obj);
+
+  if (r != INTERPRET_OK) {
+    exit(r == INTERPRET_RUNTIME_ERROR ? 70 : 65);
+  }
+
+  // If your top-level OP_RETURN stashes lastResult for all scripts,
+  // the evaluated expression result should be vm.lastResult here.
+  printValue(stdout, vm.lastResult);
   printf("\n");
 }
 
@@ -213,55 +249,102 @@ static void handleRepl(int argc, const char* argv[]) {
   char line[1024];
 #endif
 
-  // intern the key
-  push(CSTRING_VAL("__lx_input__"));
-  pop();
-
+  // Create the key once. It will remain reachable because it's used in vm.globals.
   ObjString* key = COPY_CSTRING("__lx_input__");
-  Value value;
 
   for (;;) {
 #ifdef __EMSCRIPTEN__
     char* read = js_prompt();
+    if (read == NULL) break;
 #else
     printf("> ");
-
-    char* read = NULL;
-    if (!(read = fgets(line, sizeof(line), stdin))) {
+    char* read = fgets(line, sizeof(line), stdin);
+    if (read == NULL) {
       fprintf(stderr, "\n");
       break;
     }
 #endif
+
+    // Store input into vm.globals["__lx_input__"] (root source during tableSet).
     ObjString* source = COPY_CSTRING(read);
     push(OBJ_VAL(source));
     tableSet(&vm.globals, OBJ_VAL(key), OBJ_VAL(source));
     pop();
 
-    interpret((uint8_t*)lxlx_bytecode);
-
-    if (!tableGet(&vm.globals, CSTRING_VAL("__lx_result__"), &value)) {
-      fprintf(stderr, "failed to compile lxobj\n");
-      return exit(65);
-    } else if (IS_STRING(value)) {
-      // got some errors
-      fprintf(stderr, "%s\n", AS_STRING(value)->chars);
-      continue;
-    } else if (!IS_ARRAY(value)) {
-      fprintf(stderr, "unexpected lx compiled result\n");
+    // 1) Compile snippet via lxlx_bytecode (returns string error or bytes array).
+    InterpretResult r = interpret((uint8_t*)lxlx_bytecode);
+    if (r != INTERPRET_OK) {
+      // Keep REPL alive; print a generic error.
+      fprintf(stderr, "compile driver failed\n");
+#ifdef __EMSCRIPTEN__
+      free(read);
+#endif
       continue;
     }
 
-    ValueArray* code = &AS_ARRAY(value);
-    uint8_t* obj = (uint8_t*)malloc(code->count);
+    Value compiled = vm.lastResult;
+
+    if (IS_STRING(compiled)) {
+      fprintf(stderr, "%s\n", AS_STRING(compiled)->chars);
+#ifdef __EMSCRIPTEN__
+      free(read);
+#endif
+      continue;
+    }
+
+    if (!IS_ARRAY(compiled)) {
+      fprintf(stderr, "unexpected compiler result (expected string or array)\n");
+#ifdef __EMSCRIPTEN__
+      free(read);
+#endif
+      continue;
+    }
+
+    // 2) Convert bytes array -> obj buffer.
+    ValueArray* code = &AS_ARRAY(compiled);
+    uint8_t* obj = (uint8_t*)malloc((size_t)code->count);
+    if (obj == NULL) {
+      fprintf(stderr, "out of memory\n");
+#ifdef __EMSCRIPTEN__
+      free(read);
+#endif
+      continue;
+    }
+
+    bool ok = true;
     for (int i = 0; i < code->count; ++i) {
-      uint8_t byte = AS_NUMBER(code->values[i]);
-      obj[i] = byte;
+      if (!IS_NUMBER(code->values[i])) { ok = false; break; }
+      double n = AS_NUMBER(code->values[i]);
+      if (n < 0 || n > 255 || (uint8_t)n != n) { ok = false; break; }
+      obj[i] = (uint8_t)n;
     }
-    interpret(obj);
-    printf("=> ");
-    printValue(stdout, *vm.stackTop);
-    printf("\n");
+
+    if (!ok) {
+      fprintf(stderr, "invalid compiled bytecode\n");
+      free(obj);
+#ifdef __EMSCRIPTEN__
+      free(read);
+#endif
+      continue;
+    }
+
+    // 3) Run the compiled object. It should set vm.lastResult to the snippet value.
+    r = interpret(obj);
     free(obj);
+
+    if (r != INTERPRET_OK) {
+      // Runtime errors should already print via runtimeError().
+      // Keep REPL alive.
+#ifdef __EMSCRIPTEN__
+      free(read);
+#endif
+      continue;
+    }
+
+    printf("=> ");
+    printValue(stdout, vm.lastResult);
+    printf("\n");
+
 #ifdef __EMSCRIPTEN__
     free(read);
 #endif
@@ -321,9 +404,8 @@ static void handleDisasm(int argc, const char* argv[]) {
     pop();
   }
 
-  Value value;
-  if (!tableGet(&vm.globals, CSTRING_VAL("__lx_result__"), &value) ||
-      !IS_ARRAY(value)) {
+  Value value = vm.lastResult;
+  if (!IS_ARRAY(value)) {
     fprintf(stderr, "failed to compile lxobj\n");
     return exit(65);
   }

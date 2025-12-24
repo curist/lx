@@ -215,11 +215,10 @@ The `lx/lx` directory contains a Makefile for running tests. The default compile
 make test
 
 # Run with specific compiler version
-LX=../out/lx-v1 make test
+LX=../out/lx make test
 
 # Other useful targets
-LX=../out/lx-v1 make runall      # Run all stub tests
-LX=../out/lx-v1 make mlx-smoke   # Run smoke test
+LX=../out/lx make runall      # Run all stub tests
 ```
 
 **Common workflow:**
@@ -231,14 +230,4 @@ make  # builds ../out/lx
 
 cd lx
 LX=../out/lx make test  # Run tests with the newly built compiler
-```
-
-we have `lx-v1` now as the stable build, and current compiler pipeline (new mlx.lx),
-is having issue, so to build a new version of compiler, we should do
-
-```sh
-# do at project root, /Users/curist/playground/lx/lx
-# notice the `../` part, it's confusing, but mandatory,
-# it's because of how current lx module path resolution works
-LX=../out/lx-v1 make build
 ```

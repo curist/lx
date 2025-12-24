@@ -264,7 +264,13 @@ fn patchContinues(gen) {
   }
 }
 
+let MODE = .{ VALUE: 1, STMT: 2 }
+
+let compileValueExpr = nil
 let compileExpr = nil
+
+fn compileValue(gen, node) { compileExpr(gen, node, MODE.VALUE) }
+fn compileStmt(gen, node) { compileExpr(gen, node, MODE.STMT) }
 
 fn compileLiteral(gen, node) {
   if node.type == "Nil" {
@@ -300,23 +306,33 @@ fn compileIdentifier(gen, node) {
   }
 }
 
-fn compileLet(gen, node) {
+fn compileLet(gen, node, mode) {
   if node.init {
-    compileExpr(gen, node.init)
+    compileValue(gen, node.init)
   } else {
     emitByte(gen, OP.NIL, node.line)
   }
-  emitByte(gen, OP.DUP, node.line)
 
   let local = gen.localsByDecl[node.name.id]
   if local {
     // Record the absolute slot for this local
     gen.emittedLocals[local.nodeId] = gen.nextLocalSlot
     gen.nextLocalSlot = gen.nextLocalSlot + 1
-    emitByte(gen, OP.NEW_LOCAL, node.line)
+
+    if mode == MODE.VALUE {
+      emitByte(gen, OP.DUP, node.line)
+      emitByte(gen, OP.NEW_LOCAL, node.line)
+    } else {
+      emitByte(gen, OP.NEW_LOCAL, node.line)
+    }
   } else {
     let idx = identifierConstant(gen, node.name.name)
-    emitBytes(gen, OP.DEFINE_GLOBAL, idx, node.line)
+    if mode == MODE.VALUE {
+      emitByte(gen, OP.DUP, node.line)
+      emitBytes(gen, OP.DEFINE_GLOBAL, idx, node.line)
+    } else {
+      emitBytes(gen, OP.DEFINE_GLOBAL, idx, node.line)
+    }
   }
 }
 
@@ -369,9 +385,10 @@ fn compileBlock(gen, node) {
   } else {
     for let i = 0; i < len(exprs); i = i + 1 {
       let expr = exprs[i]
-      compileExpr(gen, expr)
       if i < len(exprs) - 1 {
-        emitByte(gen, OP.POP, expr.line)
+        compileStmt(gen, expr)
+      } else {
+        compileValue(gen, expr)
       }
     }
   }
@@ -380,7 +397,7 @@ fn compileBlock(gen, node) {
 }
 
 fn compileUnary(gen, node) {
-  compileExpr(gen, node.operand)
+  compileValue(gen, node.operand)
   let op = node.operator and node.operator.lexeme or ""
   if op == "!" {
     emitByte(gen, OP.NOT, node.line)
@@ -392,8 +409,8 @@ fn compileUnary(gen, node) {
 }
 
 fn compileBinary(gen, node) {
-  compileExpr(gen, node.left)
-  compileExpr(gen, node.right)
+  compileValue(gen, node.left)
+  compileValue(gen, node.right)
   let op = node.operator and node.operator.lexeme or ""
   let opCodes = .{
     ["+"]: OP.ADD,
@@ -426,19 +443,19 @@ fn compileBinary(gen, node) {
 }
 
 fn compileLogical(gen, node) {
-  compileExpr(gen, node.left)
+  compileValue(gen, node.left)
   let op = node.operator and node.operator.lexeme or ""
   if op == "and" {
     emitByte(gen, OP.DUP, node.line)
     let endJump = emitJump(gen, OP.JUMP_IF_FALSE, node.line)
     emitByte(gen, OP.POP, node.line)
-    compileExpr(gen, node.right)
+    compileValue(gen, node.right)
     patchJump(gen, endJump)
   } else if op == "or" {
     emitByte(gen, OP.DUP, node.line)
     let endJump = emitJump(gen, OP.JUMP_IF_TRUE, node.line)
     emitByte(gen, OP.POP, node.line)
-    compileExpr(gen, node.right)
+    compileValue(gen, node.right)
     patchJump(gen, endJump)
   } else {
     addError(gen, node, "Unsupported logical op: " + op)
@@ -446,13 +463,13 @@ fn compileLogical(gen, node) {
 }
 
 fn compileIf(gen, node) {
-  compileExpr(gen, node.condition)
+  compileValue(gen, node.condition)
   let thenJump = emitJump(gen, OP.JUMP_IF_FALSE, node.line)
-  compileExpr(gen, node.then)
+  compileValue(gen, node.then)
   let elseJump = emitJump(gen, OP.JUMP, node.line)
   patchJump(gen, thenJump)
   if node.else {
-    compileExpr(gen, node.else)
+    compileValue(gen, node.else)
   } else {
     emitByte(gen, OP.NIL, node.line)
   }
@@ -460,15 +477,15 @@ fn compileIf(gen, node) {
 }
 
 fn compileCall(gen, node) {
-  compileExpr(gen, node.callee)
+  compileValue(gen, node.callee)
   let args = node.args or []
   for let i = 0; i < len(args); i = i + 1 {
-    compileExpr(gen, args[i])
+    compileValue(gen, args[i])
   }
   emitBytes(gen, OP.CALL, len(args), node.line)
 }
 
-fn compileFunctionExpr(gen, node) {
+fn compileFunctionExpr(gen, node, mode) {
   let name = node.name and node.name.name or "fn"
   let func = Function(name, len(node.params or []), Chunk(node.filename))
 
@@ -550,24 +567,36 @@ fn compileFunctionExpr(gen, node) {
     // Check if this function was already pre-allocated (hoisted)
     let preallocatedSlot = gen.emittedLocals[node.id]
     if preallocatedSlot or preallocatedSlot == 0 {
-      // Function was hoisted: assign into existing slot instead of creating new local
-      emitByte(gen, OP.DUP, node.line)
-      emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
-      emitByte(gen, OP.POP, node.line)  // Consume the DUP
+      // Function was hoisted: assign into existing slot
+      // SET_LOCAL leaves value on stack, so for STMT mode we need to POP it
+      if mode == MODE.VALUE {
+        emitByte(gen, OP.DUP, node.line)
+        emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
+        emitByte(gen, OP.POP, node.line)
+      } else {
+        emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
+        emitByte(gen, OP.POP, node.line)
+      }
     } else {
       // Not preallocated: create new local (normal case for non-hoisted functions)
-      emitByte(gen, OP.DUP, node.line)
-      // Record the absolute slot for this function local
-      gen.emittedLocals[node.id] = gen.nextLocalSlot
-      gen.nextLocalSlot = gen.nextLocalSlot + 1
-      emitByte(gen, OP.NEW_LOCAL, node.line)
+      // NEW_LOCAL consumes value, so DUP in VALUE mode to keep a copy
+      if mode == MODE.VALUE {
+        emitByte(gen, OP.DUP, node.line)
+        gen.emittedLocals[node.id] = gen.nextLocalSlot
+        gen.nextLocalSlot = gen.nextLocalSlot + 1
+        emitByte(gen, OP.NEW_LOCAL, node.line)
+      } else {
+        gen.emittedLocals[node.id] = gen.nextLocalSlot
+        gen.nextLocalSlot = gen.nextLocalSlot + 1
+        emitByte(gen, OP.NEW_LOCAL, node.line)
+      }
     }
   }
 }
 
-fn compileAssignment(gen, node) {
+fn compileAssignment(gen, node, mode) {
   if node.target.type == "Identifier" {
-    compileExpr(gen, node.value)
+    compileValue(gen, node.value)
     let info = gen.assignmentInfo[node.id]
     if !info {
       addError(gen, node, "Missing assignment info.")
@@ -582,23 +611,33 @@ fn compileAssignment(gen, node) {
       emitBytes(gen, OP.SET_UPVALUE, info.upvalueIndex, node.line)
     } else {
       addError(gen, node, "Invalid assignment target.")
+      return
+    }
+    if mode == MODE.STMT {
+      emitByte(gen, OP.POP, node.line)
     }
     return
   }
 
   if node.target.type == "Index" {
-    compileExpr(gen, node.target.object)
-    compileExpr(gen, node.target.index)
-    compileExpr(gen, node.value)
+    compileValue(gen, node.target.object)
+    compileValue(gen, node.target.index)
+    compileValue(gen, node.value)
     emitByte(gen, OP.SET_BY_INDEX, node.line)
+    if mode == MODE.STMT {
+      emitByte(gen, OP.POP, node.line)
+    }
     return
   }
 
   if node.target.type == "Dot" {
-    compileExpr(gen, node.target.object)
+    compileValue(gen, node.target.object)
     emitConstant(gen, ObjectString(node.target.property.value), node.line)
-    compileExpr(gen, node.value)
+    compileValue(gen, node.value)
     emitByte(gen, OP.SET_BY_INDEX, node.line)
+    if mode == MODE.STMT {
+      emitByte(gen, OP.POP, node.line)
+    }
     return
   }
 
@@ -606,13 +645,13 @@ fn compileAssignment(gen, node) {
 }
 
 fn compileIndex(gen, node) {
-  compileExpr(gen, node.object)
-  compileExpr(gen, node.index)
+  compileValue(gen, node.object)
+  compileValue(gen, node.index)
   emitByte(gen, OP.GET_BY_INDEX, node.line)
 }
 
 fn compileDot(gen, node) {
-  compileExpr(gen, node.object)
+  compileValue(gen, node.object)
   emitConstant(gen, ObjectString(node.property.value), node.line)
   emitByte(gen, OP.GET_BY_INDEX, node.line)
 }
@@ -621,7 +660,7 @@ fn compileArray(gen, node) {
   emitByte(gen, OP.ARRAY, node.line)
   let elems = node.elements or []
   for let i = 0; i < len(elems); i = i + 1 {
-    compileExpr(gen, elems[i])
+    compileValue(gen, elems[i])
     emitByte(gen, OP.APPEND, node.line)
   }
 }
@@ -631,15 +670,15 @@ fn compileHashmap(gen, node) {
   let pairs = node.pairs or []
   for let i = 0; i < len(pairs); i = i + 1 {
     let pair = pairs[i]
-    compileExpr(gen, pair.key)
-    compileExpr(gen, pair.value)
+    compileValue(gen, pair.key)
+    compileValue(gen, pair.value)
     emitByte(gen, OP.ASSOC, node.line)
   }
 }
 
 fn compileReturn(gen, node) {
   if node.value {
-    compileExpr(gen, node.value)
+    compileValue(gen, node.value)
   } else {
     emitByte(gen, OP.NIL, node.line)
   }
@@ -652,7 +691,7 @@ fn compileBreak(gen, node) {
     return
   }
   if node.value {
-    compileExpr(gen, node.value)
+    compileValue(gen, node.value)
     let loopResultSlot = gen.loopResultSlots[len(gen.loopResultSlots) - 1]
     emitBytes(gen, OP.SET_LOCAL, localSlot(loopResultSlot), node.line)
     emitByte(gen, OP.POP, node.line)
@@ -696,8 +735,7 @@ fn compileFor(gen, node) {
   push(gen.continueOffsets, [])
 
   if node.init {
-    compileExpr(gen, node.init)
-    emitByte(gen, OP.POP, node.init.line)
+    compileStmt(gen, node.init)
   }
 
   // Record the loop continue slot - the slot height after init (keeps loop var, pops body locals)
@@ -709,21 +747,20 @@ fn compileFor(gen, node) {
   let exitJump = -1
 
   if node.condition {
-    compileExpr(gen, node.condition)
+    compileValue(gen, node.condition)
     exitJump = emitJump(gen, OP.JUMP_IF_FALSE, node.line)
   }
 
   if node.update {
     let bodyJump = emitJump(gen, OP.JUMP, node.line)
     let incrementStart = len(gen.currentFunction.chunk.bytecode)
-    compileExpr(gen, node.update)
-    emitByte(gen, OP.POP, node.update.line)
+    compileStmt(gen, node.update)
     emitLoop(gen, loopStart, node.line)
     loopStart = incrementStart
     patchJump(gen, bodyJump)
   }
 
-  compileExpr(gen, node.body)
+  compileValue(gen, node.body)
   // Persist last body value as loop result.
   emitBytes(gen, OP.SET_LOCAL, localSlot(loopResultSlot), node.body.line)
   emitByte(gen, OP.POP, node.body.line)
@@ -778,29 +815,19 @@ fn compileImport(gen, node) {
   emitBytes(gen, OP.CALL, 0, node.line)
 }
 
-compileExpr = fn(gen, node) {
+compileValueExpr = fn(gen, node) {
   if !node { return }
   gen.currentNode = node
   gen.currentLine = node.line
 
   if node.type == "Block" {
     compileBlock(gen, node)
-  } else if node.type == "Let" {
-    compileLet(gen, node)
-  } else if node.type == "Function" {
-    compileFunctionExpr(gen, node)
   } else if node.type == "Call" {
     compileCall(gen, node)
   } else if node.type == "If" {
     compileIf(gen, node)
   } else if node.type == "For" {
     compileFor(gen, node)
-  } else if node.type == "Return" {
-    compileReturn(gen, node)
-  } else if node.type == "Break" {
-    compileBreak(gen, node)
-  } else if node.type == "Continue" {
-    compileContinue(gen, node)
   } else if node.type == "Binary" {
     compileBinary(gen, node)
   } else if node.type == "Logical" {
@@ -808,7 +835,7 @@ compileExpr = fn(gen, node) {
   } else if node.type == "Unary" {
     compileUnary(gen, node)
   } else if node.type == "Grouping" {
-    compileExpr(gen, node.expression)
+    compileValue(gen, node.expression)
   } else if node.type == "Identifier" {
     compileIdentifier(gen, node)
   } else if node.type == "Number" or node.type == "String" or
@@ -822,12 +849,50 @@ compileExpr = fn(gen, node) {
     compileIndex(gen, node)
   } else if node.type == "Dot" {
     compileDot(gen, node)
-  } else if node.type == "Assignment" {
-    compileAssignment(gen, node)
   } else if node.type == "Import" {
     compileImport(gen, node)
   } else {
     addError(gen, node, "Codegen not implemented for: " + node.type)
+  }
+}
+
+compileExpr = fn(gen, node, mode) {
+  if !node { return }
+  gen.currentNode = node
+  gen.currentLine = node.line
+
+  // Control-flow nodes that don't produce values
+  if node.type == "Return" {
+    compileReturn(gen, node)
+    return
+  }
+  if node.type == "Break" {
+    compileBreak(gen, node)
+    return
+  }
+  if node.type == "Continue" {
+    compileContinue(gen, node)
+    return
+  }
+
+  // Nodes that handle mode internally
+  if node.type == "Let" {
+    compileLet(gen, node, mode)
+    return
+  }
+  if node.type == "Assignment" {
+    compileAssignment(gen, node, mode)
+    return
+  }
+  if node.type == "Function" {
+    compileFunctionExpr(gen, node, mode)
+    return
+  }
+
+  // All other nodes: compile as value expression, then discard if STMT
+  compileValueExpr(gen, node)
+  if mode == MODE.STMT {
+    emitByte(gen, OP.POP, node.line)
   }
 }
 

@@ -164,8 +164,23 @@ fn freshTempName(anf) {
 // ========================================
 
 fn isAtomic(node) {
-  node.type == "Number" or node.type == "String" or node.type == "Bool" or
-  node.type == "Nil" or node.type == "Identifier" or node.type == "Function"
+  if node.type == "Number" or node.type == "String" or node.type == "Bool" or
+     node.type == "Nil" or node.type == "Identifier" or node.type == "Function" {
+    return true
+  }
+
+  // Treat simple property/index reads as atomic if their inputs are atomic.
+  // This is safe because our stack machine evaluates these in order without
+  // needing intermediate locals.
+  if node.type == "Dot" {
+    return isAtomic(node.object) and (node.property and node.property.type == "String")
+  }
+
+  if node.type == "Index" {
+    return isAtomic(node.object) and isAtomic(node.index)
+  }
+
+  false
 }
 
 fn wrapWithPrelude(anf, templateNode, pre, expr) {
@@ -406,9 +421,8 @@ fn anfAssignment(anf, node) {
   let newNode = copyNodeShallow(anf, node)
   newNode.target = targetNode
   newNode.value = value.expr
-  let resultExpr = value.expr
   let pre = concat(targetPre, value.pre)
-  wrapWithPrelude(anf, node, concat(pre, [newNode]), resultExpr)
+  wrapWithPrelude(anf, node, pre, newNode)
 }
 
 fn anfImport(anf, node) {

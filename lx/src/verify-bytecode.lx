@@ -1,0 +1,519 @@
+// Bytecode Stack-Height Verifier
+//
+// Validates bytecode for stack discipline:
+// - No underflow (both delta-based and minimum-height checking)
+// - Control-flow joins have consistent stack heights
+// - OP_RETURN has expected height relative to frame baseline
+//
+// This runs as a dataflow analysis over instruction addresses.
+//
+// Contract Model: Single-stack baseline with hybrid NEW_LOCAL
+// - initialHeight = 1 + arity (closure + args on stack at entry)
+// - Most opcodes follow single-stack semantics
+// - NEW_LOCAL currently has effect -1 (dual-stack transitional)
+// - When migrating to pure single-stack, update NEW_LOCAL to effect 0
+
+let types = import "src/types.lx"
+let OP = types.OP
+
+// ========================================
+// Stack Effect Tables
+// ========================================
+
+// Minimum required stack height before executing each opcode
+// This catches underflow bugs that delta-only checking misses
+// Example: binary op with inHeight=1 has effect=-1, outHeight=0 (not negative!)
+//          but it needs 2 inputs, so it should fail
+let STACK_MIN = .{
+  // Need 0 inputs (push/create operations)
+  [OP.NIL]:           0,
+  [OP.TRUE]:          0,
+  [OP.FALSE]:         0,
+  [OP.CONSTANT]:      0,
+  [OP.CONST_BYTE]:    0,
+  [OP.GET_LOCAL]:     0,
+  [OP.GET_GLOBAL]:    0,
+  [OP.GET_UPVALUE]:   0,
+  [OP.HASHMAP]:       0,
+  [OP.ARRAY]:         0,
+  [OP.CLOSURE]:       0,
+  [OP.JUMP]:          0,
+  [OP.LOOP]:          0,
+  [OP.NOP]:           0,
+
+  // Need 1 input
+  [OP.POP]:           1,
+  [OP.POP_LOCAL]:     1,
+  [OP.CLOSE_UPVALUE]: 1,
+  [OP.NEW_LOCAL]:     1,
+  [OP.NOT]:           1,
+  [OP.NEGATE]:        1,
+  [OP.LENGTH]:        1,
+  [OP.SET_LOCAL]:     1,
+  [OP.SET_GLOBAL]:    1,
+  [OP.SET_UPVALUE]:   1,
+  [OP.DEFINE_GLOBAL]: 1,
+  [OP.DUP]:           1,
+  [OP.JUMP_IF_TRUE]:  1,
+  [OP.JUMP_IF_FALSE]: 1,
+  [OP.RETURN]:        1,
+
+  // Need 2 inputs
+  [OP.EQUAL]:         2,
+  [OP.GREATER]:       2,
+  [OP.LESS]:          2,
+  [OP.ADD]:           2,
+  [OP.SUBTRACT]:      2,
+  [OP.MULTIPLY]:      2,
+  [OP.DIVIDE]:        2,
+  [OP.MOD]:           2,
+  [OP.BIT_AND]:       2,
+  [OP.BIT_OR]:        2,
+  [OP.BIT_XOR]:       2,
+  [OP.BIT_LSHIFT]:    2,
+  [OP.BIT_RSHIFT]:    2,
+  [OP.GET_BY_INDEX]:  2,
+  [OP.APPEND]:        2,
+  [OP.SWAP]:          2,
+
+  // Need 3 inputs
+  [OP.SET_BY_INDEX]:  3,
+  [OP.ASSOC]:         3,
+
+  // CALL is dynamic: needs argCount + 1 (callee + args)
+  // Handled specially in processInstruction
+}
+
+// Static table of stack effects for each opcode
+// Special cases (CALL, RETURN) handled in stackEffect()
+let STACK_EFFECTS = .{
+  // Push 1 value (+1)
+  [OP.CONSTANT]:      1,
+  [OP.CONST_BYTE]:    1,
+  [OP.NIL]:           1,
+  [OP.TRUE]:          1,
+  [OP.FALSE]:         1,
+  [OP.GET_LOCAL]:     1,
+  [OP.GET_GLOBAL]:    1,
+  [OP.GET_UPVALUE]:   1,
+  [OP.HASHMAP]:       1,
+  [OP.ARRAY]:         1,
+  [OP.DUP]:           1,
+  [OP.CLOSURE]:       1,
+
+  // Pop 1 value (-1)
+  [OP.POP]:           -1,
+  [OP.POP_LOCAL]:     -1,  // For single-stack migration
+  [OP.CLOSE_UPVALUE]: -1,
+
+  // NEW_LOCAL: Hybrid/transitional contract
+  // Effect: -1 (treats as consuming one value from stack)
+  // Rationale: Current dual-stack model moves value from value stack to locals stack
+  // Migration note: When transitioning to single-stack, this will become 0 (no-op/commit)
+  //                 Codegen emission patterns must be updated accordingly
+  // This verifier validates the CURRENT agreed contract (dual-stack consumption)
+  [OP.NEW_LOCAL]:     -1,
+
+  // Neutral (0): pop 1, push 1 or store operations
+  [OP.NOT]:           0,   // pop 1, push 1 (bool)
+  [OP.NEGATE]:        0,   // pop 1, push 1 (number)
+  [OP.LENGTH]:        0,
+  [OP.SET_LOCAL]:     0,
+  [OP.SET_GLOBAL]:    0,
+  [OP.SET_UPVALUE]:   0,
+  [OP.DEFINE_GLOBAL]: 0,
+  [OP.SWAP]:          0,
+  [OP.NOP]:           0,
+
+  // Binary operations (-1): pop 2, push 1
+  [OP.EQUAL]:         -1,
+  [OP.GREATER]:       -1,
+  [OP.LESS]:          -1,
+  [OP.ADD]:           -1,
+  [OP.SUBTRACT]:      -1,
+  [OP.MULTIPLY]:      -1,
+  [OP.DIVIDE]:        -1,
+  [OP.MOD]:           -1,
+  [OP.BIT_AND]:       -1,
+  [OP.BIT_OR]:        -1,
+  [OP.BIT_XOR]:       -1,
+  [OP.BIT_LSHIFT]:    -1,
+  [OP.BIT_RSHIFT]:    -1,
+  [OP.GET_BY_INDEX]:  -1,  // pop 2, push 1
+  [OP.APPEND]:        -1,  // consumes value, keeps array
+
+  // Pop 3, push 1 (-2)
+  [OP.SET_BY_INDEX]:  -2,
+  [OP.ASSOC]:         -2,
+
+  // Control flow (0)
+  [OP.JUMP]:          0,
+  [OP.LOOP]:          0,
+
+  // Conditional jumps (-1): consume condition
+  [OP.JUMP_IF_TRUE]:  -1,
+  [OP.JUMP_IF_FALSE]: -1,
+
+  // RETURN (0): special handling in stackEffect()
+  [OP.RETURN]:        0,
+}
+
+fn stackEffect(opcode, operand) {
+  // Returns: stack delta for this instruction
+  // operand: used for CALL (argCount)
+  // Returns: nil if opcode is unknown (caller must handle error)
+
+  // Special case: CALL has dynamic effect based on argCount
+  // pop (argCount + 1), push 1 → net effect: -argCount
+  if opcode == OP.CALL {
+    return 0 - operand
+  }
+
+  // Lookup in table
+  return STACK_EFFECTS[opcode]
+}
+
+// ========================================
+// Operand Decoding
+// ========================================
+
+fn hexToByte(hex) {
+  // Convert hex string like "ff" to number 255
+  let mapping = .{
+    ["0"]: 0, ["1"]: 1, ["2"]: 2, ["3"]: 3, ["4"]: 4,
+    ["5"]: 5, ["6"]: 6, ["7"]: 7, ["8"]: 8, ["9"]: 9,
+    a: 10, b: 11, c: 12, d: 13, e: 14, f: 15,
+  }
+  return mapping[hex[0]] * 16 + mapping[hex[1]]
+}
+
+fn readByte(code, ip) {
+  // Assumes bounds already checked by caller
+  hexToByte(code[ip])
+}
+
+fn readShort(code, ip) {
+  // Assumes bounds already checked by caller
+  let high = readByte(code, ip)
+  let low = readByte(code, ip + 1)
+  (high * 256) + low
+}
+
+fn safeReadByte(code, ip, verifier, errorIp) {
+  // Returns: byte value or nil if out of bounds
+  if ip < 0 or ip >= len(code) {
+    addError(verifier, errorIp, "Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
+    return nil
+  }
+  readByte(code, ip)
+}
+
+fn safeReadShort(code, ip, verifier, errorIp) {
+  // Returns: short value or nil if out of bounds
+  if ip + 1 < 0 or ip + 1 >= len(code) {
+    addError(verifier, errorIp, "Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
+    return nil
+  }
+  readShort(code, ip)
+}
+
+// Static table of instruction lengths
+// Special case: CLOSURE handled in instructionLength()
+let INSTRUCTION_LENGTHS = .{
+  // 1-byte operand (length = 2)
+  [OP.CONSTANT]:      2,
+  [OP.CONST_BYTE]:    2,
+  [OP.GET_LOCAL]:     2,
+  [OP.SET_LOCAL]:     2,
+  [OP.GET_GLOBAL]:    2,
+  [OP.DEFINE_GLOBAL]: 2,
+  [OP.SET_GLOBAL]:    2,
+  [OP.GET_UPVALUE]:   2,
+  [OP.SET_UPVALUE]:   2,
+  [OP.CALL]:          2,
+
+  // 2-byte operand (length = 3)
+  [OP.JUMP]:          3,
+  [OP.JUMP_IF_TRUE]:  3,
+  [OP.JUMP_IF_FALSE]: 3,
+  [OP.LOOP]:          3,
+
+  // No operand (length = 1)
+  [OP.NOP]:           1,
+  [OP.NIL]:           1,
+  [OP.TRUE]:          1,
+  [OP.FALSE]:         1,
+  [OP.EQUAL]:         1,
+  [OP.POP]:           1,
+  [OP.DUP]:           1,
+  [OP.SWAP]:          1,
+  [OP.NEW_LOCAL]:     1,
+  [OP.POP_LOCAL]:     1,
+  [OP.GET_BY_INDEX]:  1,
+  [OP.SET_BY_INDEX]:  1,
+  [OP.GREATER]:       1,
+  [OP.LESS]:          1,
+  [OP.ADD]:           1,
+  [OP.SUBTRACT]:      1,
+  [OP.MULTIPLY]:      1,
+  [OP.DIVIDE]:        1,
+  [OP.NOT]:           1,
+  [OP.MOD]:           1,
+  [OP.NEGATE]:        1,
+  [OP.BIT_AND]:       1,
+  [OP.BIT_OR]:        1,
+  [OP.BIT_XOR]:       1,
+  [OP.BIT_LSHIFT]:    1,
+  [OP.BIT_RSHIFT]:    1,
+  [OP.ASSOC]:         1,
+  [OP.APPEND]:        1,
+  [OP.HASHMAP]:       1,
+  [OP.ARRAY]:         1,
+  [OP.LENGTH]:        1,
+  [OP.CLOSE_UPVALUE]: 1,
+  [OP.RETURN]:        1,
+}
+
+fn instructionLength(chunk, ip) {
+  // Returns: number of bytes this instruction occupies
+  // Returns: nil if opcode is unknown, CLOSURE decode fails, or out of bounds
+  let code = chunk.bytecode
+  let opcode = code[ip]
+
+  // Special case: CLOSURE has variable length
+  // Format: OP_CLOSURE + constant_idx + (upvalueCount * 2 bytes)
+  if opcode == OP.CLOSURE {
+    // Bounds check before reading operand
+    if ip + 1 >= len(code) {
+      return nil  // Out of bounds
+    }
+    let constantIdx = readByte(code, ip + 1)
+    let constant = chunk.constants[constantIdx]
+    if !constant or !constant.value or !constant.value.value {
+      return nil  // Failed to unwrap constant Value -> Object -> Function
+    }
+    // Unwrap: Value.value -> Object, Object.value -> Function
+    let upvalueCount = constant.value.value.upvalueCount or 0
+    let totalLen = 2 + (upvalueCount * 2)
+    // Verify the full instruction fits in bytecode
+    if ip + totalLen > len(code) {
+      return nil  // Instruction extends past end of code
+    }
+    return totalLen
+  }
+
+  // Lookup in table
+  return INSTRUCTION_LENGTHS[opcode]
+}
+
+// ========================================
+// Verifier State
+// ========================================
+
+fn makeVerifier(fnObj) {
+  .{
+    fnObj: fnObj,
+    chunk: fnObj.chunk,
+    arity: fnObj.arity,
+
+    // heightAt[ip] = stack height upon entry to instruction at ip
+    heightAt: .{},
+
+    // Worklist of IPs to process
+    worklist: [],
+
+    // Errors
+    errors: [],
+    hadError: false,
+
+    // Initial height: single-stack model baseline
+    // Frame starts with closure + args already on stack
+    initialHeight: 1 + fnObj.arity,
+  }
+}
+
+fn addError(verifier, ip, message) {
+  push(verifier.errors, .{
+    ip: ip,
+    message: message,
+  })
+  verifier.hadError = true
+}
+
+// ========================================
+// Dataflow Propagation
+// ========================================
+
+fn propagateHeight(verifier, ip, height) {
+  // Propagate height to instruction at ip
+  // Returns: true if this is new information
+
+  // Bounds check
+  let codeLen = len(verifier.chunk.bytecode)
+  if ip < 0 or ip >= codeLen {
+    addError(verifier, ip, "Jump target out of bounds: " + str(ip) + " (code length: " + str(codeLen) + ")")
+    return false
+  }
+
+  let existing = verifier.heightAt[str(ip)]
+
+  if existing or existing == 0 {
+    // Already visited this IP
+    if existing != height {
+      addError(verifier, ip,
+        "Inconsistent stack height at join: expected " + str(existing) +
+        " but reached with " + str(height))
+      return false
+    }
+    return false  // No new information
+  }
+
+  // New IP - record height and add to worklist
+  verifier.heightAt[str(ip)] = height
+  push(verifier.worklist, ip)
+  return true
+}
+
+fn processInstruction(verifier, ip) {
+  let code = verifier.chunk.bytecode
+  let inHeight = verifier.heightAt[str(ip)]
+  let opcode = code[ip]
+
+  // Get operand for dynamic opcodes (with bounds checking)
+  let operand = 0
+  if opcode == OP.CALL {
+    operand = safeReadByte(code, ip + 1, verifier, ip)
+    if !operand {
+      return nil  // Out of bounds (safeReadByte returns nil on error)
+    }
+  }
+
+  // Check minimum required stack height BEFORE execution
+  // This catches underflow bugs that delta-only checking misses
+  let minRequired = STACK_MIN[opcode]
+  if opcode == OP.CALL {
+    minRequired = operand + 1  // callee + args
+  }
+  if !minRequired {
+    // minRequired is nil or false (unknown opcode)
+    // Note: 0 is truthy in lx, so this doesn't trigger for opcodes that need 0 inputs
+    addError(verifier, ip, "Unknown opcode: " + str(opcode))
+    return nil  // Fatal
+  }
+  if inHeight < minRequired {
+    addError(verifier, ip,
+      "Insufficient stack for opcode " + str(opcode) + ": " +
+      "height=" + str(inHeight) + ", required=" + str(minRequired))
+    return nil
+  }
+
+  // Get stack effect - fatal error if unknown
+  let effect = stackEffect(opcode, operand)
+  if !effect {
+    // effect is nil or false (unknown opcode)
+    // Note: 0 is truthy in lx, so this doesn't trigger for neutral opcodes
+    addError(verifier, ip, "Unknown opcode: " + str(opcode))
+    return nil  // Fatal - stop processing this path
+  }
+
+  let outHeight = inHeight + effect
+
+  // Note: outHeight < 0 check is now redundant (minRequired + effect >= 0 by design)
+  // but keep it as a sanity check
+  if outHeight < 0 {
+    addError(verifier, ip, "Stack underflow: height would be " + str(outHeight))
+    return nil
+  }
+
+  // Special handling for RETURN
+  if opcode == OP.RETURN {
+    // Weak rule: must have at least base + 1 (frame + return value)
+    let base = verifier.initialHeight
+    if inHeight < base + 1 {
+      addError(verifier, ip,
+        "OP_RETURN with insufficient stack: " + str(inHeight) +
+        " (expected >= " + str(base + 1) + ")")
+    }
+    return nil  // Terminal instruction
+  }
+
+  // Propagate to successors
+  let instrLen = instructionLength(verifier.chunk, ip)
+  if !instrLen {
+    addError(verifier, ip, "Failed to decode instruction length for opcode " + str(opcode))
+    return nil  // Fatal
+  }
+  let nextIp = ip + instrLen
+
+  // Jump targets (handle explicitly to avoid redundant propagation)
+  if opcode == OP.JUMP {
+    let offset = safeReadShort(code, ip + 1, verifier, ip)
+    if !offset {
+      return nil  // Out of bounds (safeReadShort returns nil on error)
+    }
+    let target = nextIp + offset
+    propagateHeight(verifier, target, outHeight)
+  } else if opcode == OP.JUMP_IF_TRUE or opcode == OP.JUMP_IF_FALSE {
+    let offset = safeReadShort(code, ip + 1, verifier, ip)
+    if !offset {
+      return nil  // Out of bounds
+    }
+    let target = nextIp + offset
+    // Both branches get the same height (after consuming condition)
+    propagateHeight(verifier, target, outHeight)
+    propagateHeight(verifier, nextIp, outHeight)
+  } else if opcode == OP.LOOP {
+    let offset = safeReadShort(code, ip + 1, verifier, ip)
+    if !offset {
+      return nil  // Out of bounds
+    }
+    let target = nextIp - offset
+    propagateHeight(verifier, target, outHeight)
+    // LOOP falls through to next instruction
+    propagateHeight(verifier, nextIp, outHeight)
+  } else if opcode != OP.RETURN {
+    // Fallthrough for all other non-terminal instructions
+    propagateHeight(verifier, nextIp, outHeight)
+  }
+}
+
+// ========================================
+// Main Verification
+// ========================================
+
+fn verifyFunction(fnObj) {
+  let verifier = makeVerifier(fnObj)
+
+  // Initialize entry point
+  propagateHeight(verifier, 0, verifier.initialHeight)
+
+  // Worklist algorithm (simple queue)
+  let worklistHead = 0
+  for worklistHead < len(verifier.worklist) {
+    let ip = verifier.worklist[worklistHead]
+    worklistHead = worklistHead + 1
+
+    processInstruction(verifier, ip)
+  }
+
+  // Report errors
+  if verifier.hadError {
+    groanln("Bytecode verification failed:")
+    for let i = 0; i < len(verifier.errors); i = i + 1 {
+      let err = verifier.errors[i]
+      groanln("  [" + str(err.ip) + "] " + err.message)
+    }
+    return false
+  }
+
+  return true
+}
+
+// ========================================
+// Export
+// ========================================
+
+.{
+  verifyFunction: verifyFunction,
+  stackEffect: stackEffect,  // For testing
+}

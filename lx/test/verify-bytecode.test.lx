@@ -1,0 +1,50 @@
+// Test for bytecode stack-height verifier
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+let verify = import "src/verify-bytecode.lx"
+let types = import "src/types.lx"
+let OP = types.OP
+
+test("stackEffect - push operations", fn(assert) {
+  assert.equal(verify.stackEffect(OP.NIL, 0), 1, "NIL pushes 1")
+  assert.equal(verify.stackEffect(OP.TRUE, 0), 1, "TRUE pushes 1")
+  assert.equal(verify.stackEffect(OP.CONST_BYTE, 0), 1, "CONST_BYTE pushes 1")
+  assert.equal(verify.stackEffect(OP.GET_LOCAL, 0), 1, "GET_LOCAL pushes 1")
+})
+
+test("stackEffect - pop operations", fn(assert) {
+  assert.equal(verify.stackEffect(OP.POP, 0), -1, "POP pops 1")
+  assert.equal(verify.stackEffect(OP.POP_LOCAL, 0), -1, "POP_LOCAL pops 1")
+  assert.equal(verify.stackEffect(OP.CLOSE_UPVALUE, 0), -1, "CLOSE_UPVALUE pops 1")
+})
+
+test("stackEffect - neutral operations", fn(assert) {
+  assert.equal(verify.stackEffect(OP.NOT, 0), 0, "NOT is neutral (pop 1, push 1)")
+  assert.equal(verify.stackEffect(OP.NEGATE, 0), 0, "NEGATE is neutral (pop 1, push 1)")
+  assert.equal(verify.stackEffect(OP.LENGTH, 0), 0, "LENGTH is neutral (pop 1, push 1)")
+})
+
+test("stackEffect - binary operations", fn(assert) {
+  assert.equal(verify.stackEffect(OP.ADD, 0), -1, "ADD pops 2, pushes 1")
+  assert.equal(verify.stackEffect(OP.MULTIPLY, 0), -1, "MULTIPLY pops 2, pushes 1")
+  assert.equal(verify.stackEffect(OP.EQUAL, 0), -1, "EQUAL pops 2, pushes 1")
+})
+
+test("stackEffect - call operation", fn(assert) {
+  assert.equal(verify.stackEffect(OP.CALL, 0), 0, "CALL(0) pops 1, pushes 1")
+  assert.equal(verify.stackEffect(OP.CALL, 2), -2, "CALL(2) pops 3, pushes 1")
+  assert.equal(verify.stackEffect(OP.CALL, 5), -5, "CALL(5) pops 6, pushes 1")
+})
+
+test("stackEffect - control flow", fn(assert) {
+  assert.equal(verify.stackEffect(OP.JUMP, 0), 0, "JUMP is neutral")
+  assert.equal(verify.stackEffect(OP.JUMP_IF_TRUE, 0), -1, "JUMP_IF_TRUE pops condition")
+  assert.equal(verify.stackEffect(OP.LOOP, 0), 0, "LOOP is neutral")
+})
+
+// Note: Full chunk verification tests would require constructing
+// actual bytecode chunks, which is complex. The driver integration
+// will provide real-world testing.
+
+suite.run()

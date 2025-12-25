@@ -288,6 +288,28 @@ fn ForInNode(filename, startToken, valueBinder, indexBinder, iterable, body, end
   node
 }
 
+fn CollectNode(filename, startToken, init, condition, update, body, endToken) {
+  let node = Node("Collect", filename, startToken)
+  node.init = init
+  node.condition = condition
+  node.update = update
+  node.body = body
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
+fn CollectInNode(filename, startToken, valueBinder, indexBinder, iterable, body, endToken) {
+  let node = Node("CollectIn", filename, startToken)
+  node.valueBinder = valueBinder
+  node.indexBinder = indexBinder
+  node.iterable = iterable
+  node.body = body
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
 fn ReturnNode(filename, startToken, value) {
   let node = Node("Return", filename, startToken)
   node.value = value
@@ -501,6 +523,7 @@ fn parse(src, filename) {
     tokenType == TOKEN.CONTINUE or
     tokenType == TOKEN.IMPORT or
     tokenType == TOKEN.IN or
+    tokenType == TOKEN.COLLECT or
     tokenType == TOKEN.AND or
     tokenType == TOKEN.OR or
     tokenType == TOKEN.TRUE or
@@ -948,6 +971,73 @@ fn parse(src, filename) {
     ForNode(filename, startToken, init, condition, update, body, parser.previous)
   }
 
+  fn collectExpr() {
+    let startToken = parser.previous
+
+    // Check for collect-in syntax: collect x in arr { } or collect x, i in arr { }
+    let isCollectIn = false
+    if check(TOKEN.IDENTIFIER) {
+      let nextToken = scanner.peek(0)
+      if nextToken.type == TOKEN.IN or nextToken.type == TOKEN.COMMA {
+        isCollectIn = true
+      }
+    }
+
+    if isCollectIn {
+      // Parse collect-in loop
+      consume(TOKEN.IDENTIFIER, "Expect identifier in collect-in loop.")
+      let valueBinder = parser.previous.lexeme
+
+      let indexBinder = nil
+      if match(TOKEN.COMMA) {
+        consume(TOKEN.IDENTIFIER, "Expect identifier after comma in collect-in loop.")
+        indexBinder = parser.previous.lexeme
+      }
+
+      consume(TOKEN.IN, "Expect 'in' in collect-in loop.")
+      let iterable = expression()
+
+      consume(TOKEN.LEFT_BRACE, "Expect '{' for block.")
+      let body = block()
+
+      return CollectInNode(filename, startToken, valueBinder, indexBinder, iterable, body, parser.previous)
+    }
+
+    // Parse collect loop (C-style or while-style)
+    let init = nil
+    let condition = nil
+    let update = nil
+    let isCStyle = false
+
+    if match(TOKEN.SEMICOLON) {
+      isCStyle = true
+    } else {
+      let expr = expression()
+      if match(TOKEN.SEMICOLON) {
+        init = expr
+        isCStyle = true
+      } else {
+        condition = expr
+      }
+    }
+
+    if isCStyle and !check(TOKEN.LEFT_BRACE) {
+      if !match(TOKEN.SEMICOLON) {
+        condition = expression()
+        consume(TOKEN.SEMICOLON, "Expect ';' after loop condition.")
+      }
+    }
+
+    if isCStyle and !check(TOKEN.LEFT_BRACE) {
+      update = expression()
+    }
+
+    consume(TOKEN.LEFT_BRACE, "Expect '{' for block.")
+    let body = block()
+
+    CollectNode(filename, startToken, init, condition, update, body, parser.previous)
+  }
+
   fn returnStatement() {
     let startToken = parser.previous
 
@@ -1045,6 +1135,7 @@ fn parse(src, filename) {
     [TOKEN.CONTINUE]:        [continueExpr, nil,  PREC.NONE],
     [TOKEN.TRUE]:            [literal,    nil,    PREC.NONE],
     [TOKEN.IN]:              [nil,        nil,    PREC.NONE],
+    [TOKEN.COLLECT]:         [collectExpr, nil,   PREC.NONE],
     [TOKEN.ERROR]:           [nil,        nil,    PREC.NONE],
     [TOKEN.EOF]:             [nil,        nil,    PREC.NONE],
   }

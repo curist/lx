@@ -1,0 +1,49 @@
+let suite = (import "test/makeTestSuite.lx")()
+fn test(name, cb) { suite.defineTest("collect - " + name, cb) }
+
+test("C-style", fn(assert) {
+  let squares = collect let i = 0; i < 5; i = i + 1 {
+    i * i
+  }
+  assert.equal(len(squares), 5)
+  assert.equal(squares[0], 0)
+  assert.equal(squares[1], 1)
+  assert.equal(squares[2], 4)
+  assert.equal(squares[3], 9)
+  assert.equal(squares[4], 16)
+})
+
+test("for-in", fn(assert) {
+  let doubled = collect x in [1, 2, 3, 4] {
+    x * 2
+  }
+  assert.equal(len(doubled), 4)
+  assert.equal(doubled[0], 2)
+  assert.equal(doubled[1], 4)
+  assert.equal(doubled[2], 6)
+  assert.equal(doubled[3], 8)
+})
+
+test("for-in - 2", fn(assert) {
+  let collected = collect _ in range(3) {
+    10
+  }
+  assert.equal(len(collected), 3)
+  assert.equal(collected[0], 10)
+  assert.equal(collected[1], 10)
+  assert.equal(collected[2], 10)
+})
+
+test("while-style", fn(assert) {
+  let counter = 0
+  let values = collect counter < 3 {
+    counter = counter + 1
+    counter * 10
+  }
+  assert.equal(len(values), 3)
+  assert.equal(values[0], 10)
+  assert.equal(values[1], 20)
+  assert.equal(values[2], 30)
+})
+
+suite.run()

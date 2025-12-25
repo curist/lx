@@ -158,9 +158,12 @@ let handlers = .{
     handleBuildFunction(fn(func, DEBUG_BUILD, outputPath) {
       if outputPath {
         let bytes = objbuilder(func, DEBUG_BUILD).bytes()
-        // XXX: i think bytes is current ["aa", "bb", "00", ...]
-        // so it's not really string we could spit to file
-        let ok = spit(outputPath, bytes)
+        // Convert byte numbers to string
+        let byteString = ""
+        for let i = 0; i < len(bytes); i = i + 1 {
+          byteString = byteString + chr(bytes[i])
+        }
+        let ok = spit(outputPath, byteString)
         if ok != true {
           groanln(ok or "Failed to write output.")
           Lx.exit(74)

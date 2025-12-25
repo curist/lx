@@ -149,10 +149,10 @@ fn collectForNames(node) {
 }
 
 fn freshTempName(anf) {
-  let name = "__anf_tmp" + str(anf.tempCounter)
+  let name = "$anf." + str(anf.tempCounter)
   for isNameTaken(anf, name) {
     anf.tempCounter = anf.tempCounter + 1
-    name = "__anf_tmp" + str(anf.tempCounter)
+    name = "$anf." + str(anf.tempCounter)
   }
   anf.tempCounter = anf.tempCounter + 1
   addName(anf, name)

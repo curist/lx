@@ -7,7 +7,7 @@ Block
   expressions:
     Block
       expressions:
-        Let name=__anf_tmp0
+        Let name=$anf.0
           init:
             Block
               expressions:
@@ -17,7 +17,7 @@ Block
                 Identifier name=b
         Let name=a
           init:
-            Identifier name=__anf_tmp0
+            Identifier name=$anf.0
         Identifier name=a
 
 ## block_in_expr
@@ -25,14 +25,14 @@ source: do_something_to_some_var() + { let x = 2; x * that_some_var }
 ast:
 Block
   expressions:
-    Let name=__anf_tmp0
+    Let name=$anf.0
       init:
         Call
           callee:
             Identifier name=do_something_to_some_var
           args:
             (empty)
-    Let name=__anf_tmp1
+    Let name=$anf.1
       init:
         Block
           expressions:
@@ -46,9 +46,9 @@ Block
                 Identifier name=that_some_var
     Binary op=+
       left:
-        Identifier name=__anf_tmp0
+        Identifier name=$anf.0
       right:
-        Identifier name=__anf_tmp1
+        Identifier name=$anf.1
 
 ## block_with_locals
 source: { let x = 1; let y = 2; x + y }
@@ -74,11 +74,11 @@ source: let a = foo({ let x = 1; x }, bar())
 ast:
 Block
   expressions:
-    Let name=__anf_tmp2
+    Let name=$anf.2
       init:
         Block
           expressions:
-            Let name=__anf_tmp0
+            Let name=$anf.0
               init:
                 Block
                   expressions:
@@ -86,7 +86,7 @@ Block
                       init:
                         Number value=1
                     Identifier name=x
-            Let name=__anf_tmp1
+            Let name=$anf.1
               init:
                 Call
                   callee:
@@ -97,8 +97,8 @@ Block
               callee:
                 Identifier name=foo
               args:
-                Identifier name=__anf_tmp0
-                Identifier name=__anf_tmp1
+                Identifier name=$anf.0
+                Identifier name=$anf.1
     Let name=a
       init:
-        Identifier name=__anf_tmp2
+        Identifier name=$anf.2

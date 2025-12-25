@@ -7,17 +7,11 @@
 //
 // This runs as a dataflow analysis over instruction addresses.
 //
-// Contract Model: VALUE STACK HEIGHT (single-stack verifier for dual-stack VM)
-// - Tracks ONLY value stack height (locals stack is implementation detail)
+// Contract Model: SINGLE-STACK (unified value stack)
+// - All values (locals, temporaries, args) live on the value stack
 // - Module entry: height=0
 // - Function entry: height=1+arity (closure+args on value stack)
-//
-// TRANSITIONAL OPCODES (dual-stack effects, will change when migrating to single-stack):
-// - POP_LOCAL: effect=0 (pops from locals stack, value stack unaffected)
-//              → Future: effect=-1 (pops from unified stack)
-// - NEW_LOCAL: effect=-1 (moves value → locals stack)
-//              → Future: effect=0 (no-op, value already in position)
-// - GET_LOCAL: effect=+1 (pushes from locals to value stack)
+// - GET_LOCAL: effect=+1 (pushes copy of slot value to stack top)
 //              → Future: varies (DUP or stack-relative access)
 // - SET_LOCAL: effect=-1 (consumes value, updates local)
 //              → Future: effect=0 (updates stack slot in-place)
@@ -53,7 +47,6 @@ let STACK_MIN = .{
 
   // Need 1 input
   [OP.POP]:           1,
-  [OP.NEW_LOCAL]:     1,  // Needs value to move to locals stack
   [OP.NOT]:           1,
   [OP.NEGATE]:        1,
   [OP.LENGTH]:        1,
@@ -66,9 +59,8 @@ let STACK_MIN = .{
   [OP.JUMP_IF_FALSE]: 1,
   [OP.RETURN]:        1,
 
-  // Need 0 inputs (locals stack operations, value stack unaffected)
-  [OP.POP_LOCAL]:     0,  // Pops from locals stack, not value stack
-  [OP.CLOSE_UPVALUE]: 0,  // Closes upvalue + pops from locals stack
+  // Need 0 inputs
+  [OP.CLOSE_UPVALUE]: 0,  // Closes upvalue + pops from value stack
 
   // Need 2 inputs
   [OP.EQUAL]:         2,
@@ -118,8 +110,6 @@ let STACK_EFFECTS = .{
 
   // Pop 1 value (-1)
   [OP.POP]:           -1,
-  [OP.NEW_LOCAL]:     -1,  // Current: pop from value stack, push to locals stack
-                            // Future single-stack: will be 0 (no-op)
 
   // Neutral (0): peek value, perform operation, leave on stack
   [OP.NOT]:           0,   // pop 1, push 1 (bool)
@@ -132,12 +122,7 @@ let STACK_EFFECTS = .{
   [OP.DEFINE_GLOBAL]: 0,   // Peek value, define global, leave on stack
   [OP.SWAP]:          0,
   [OP.NOP]:           0,
-
-  // Locals stack operations (value stack unaffected)
-  [OP.POP_LOCAL]:     0,   // Pops from locals stack only (vm.c:404)
-                            // Future single-stack: will be -1 (pops from unified stack)
-  [OP.CLOSE_UPVALUE]: 0,   // Closes upvalue + pop_local() (vm.c:746-747)
-                            // Value stack unaffected
+  [OP.CLOSE_UPVALUE]: 0,   // Closes upvalue + pops from value stack
 
   // Binary operations (-1): pop 2, push 1
   [OP.EQUAL]:         -1,
@@ -271,8 +256,6 @@ let INSTRUCTION_LENGTHS = .{
   [OP.POP]:           1,
   [OP.DUP]:           1,
   [OP.SWAP]:          1,
-  [OP.NEW_LOCAL]:     1,
-  [OP.POP_LOCAL]:     1,
   [OP.GET_BY_INDEX]:  1,
   [OP.SET_BY_INDEX]:  1,
   [OP.GREATER]:       1,

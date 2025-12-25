@@ -302,8 +302,6 @@ static InterpretResult run() {
     dispatch_table[OP_POP]           = &&DO_OP_POP;
     dispatch_table[OP_DUP]           = &&DO_OP_DUP;
     dispatch_table[OP_SWAP]          = &&DO_OP_SWAP;
-    dispatch_table[OP_NEW_LOCAL]     = &&DO_OP_NEW_LOCAL;
-    dispatch_table[OP_POP_LOCAL]     = &&DO_OP_POP_LOCAL;
     dispatch_table[OP_GET_LOCAL]     = &&DO_OP_GET_LOCAL;
     dispatch_table[OP_SET_LOCAL]     = &&DO_OP_SET_LOCAL;
     dispatch_table[OP_GET_GLOBAL]    = &&DO_OP_GET_GLOBAL;
@@ -436,15 +434,6 @@ DO_OP_SWAP:
       push(b);
       DISPATCH();
     }
-DO_OP_NEW_LOCAL:
-    // PR3: TEMPORARY BOOTSTRAP COMPATIBILITY: Allow old bytecode during transition
-    // In single-stack mode, NEW_LOCAL is a no-op (value already on stack)
-    DISPATCH();
-DO_OP_POP_LOCAL:
-    // PR3: TEMPORARY BOOTSTRAP COMPATIBILITY: Allow old bytecode during transition
-    // In single-stack mode, POP_LOCAL becomes POP from value stack
-    pop();
-    DISPATCH();
 DO_OP_GET_LOCAL:
     push(slots[READ_BYTE()]);
     DISPATCH();

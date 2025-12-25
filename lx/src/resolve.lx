@@ -135,9 +135,9 @@ fn endScope(resolver, nodeId) {
   }
 
   // CRITICAL FIX: Restore parent's nextSlot for block/loop scopes
-  // This makes slots reusable (stack-based model), matching codegen's POP_LOCAL behavior
+  // This makes slots reusable (stack-based model), matching codegen's POP behavior
   // Previously we propagated nextSlot upward (monotonic model), but that doesn't match
-  // the VM's locals stack which shrinks when scopes end
+  // the value stack which shrinks when scopes end
   if (scope.type == "block" or scope.type == "loop") and scope.enclosing {
     scope.enclosing.nextSlot = scope.baseSlot
   }

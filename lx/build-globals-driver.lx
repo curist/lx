@@ -1,0 +1,90 @@
+// Driver to compile globals.lx with NEW PR3 codegen
+let driver = import "src/driver.lx"
+let codegen = import "src/codegen.lx"
+let verify = import "src/verify-bytecode.lx"
+
+println("=== Building lxglobals.h with NEW codegen (PR3) ===")
+println("")
+
+// Create driver with NEW codegen (PR3)
+let d = driver.make(.{
+  withAnf: true,
+  withTypecheck: false,
+  loadSource: fn(path) { slurp(path) }
+})
+
+// Codegen with recursive module compilation
+println("=== Compiling globals.lx and all dependencies ===")
+
+let moduleCache = .{}
+
+fn codegenModule(modulePath) {
+  let cached = moduleCache[modulePath]
+  if cached { return cached }
+
+  let modResult = d.compileModule(modulePath)
+  if !modResult or modResult.status != "done" {
+    println("Failed to compile module: " + modulePath)
+    return nil
+  }
+
+  let ast = modResult.anfResult and modResult.anfResult.ast or modResult.lowerResult.ast
+  let cg = codegen(ast, modResult.resolveResult, .{
+    codegenModule: codegenModule,
+  })
+
+  if !cg.success or len(cg.errors) > 0 {
+    println("Codegen errors in " + modulePath + ":")
+    for let i = 0; i < len(cg.errors); i = i + 1 {
+      println("  " + cg.errors[i].message)
+    }
+    return nil
+  }
+
+  // Verify
+  if !verify.verifyFunction(cg.function) {
+    println("Verification failed for " + modulePath)
+    return nil
+  }
+
+  moduleCache[modulePath] = cg.function
+  cg.function
+}
+
+let mainFunction = codegenModule("globals.lx")
+if !mainFunction {
+  println("Codegen failed")
+  Lx.exit(1)
+}
+
+println("Codegen successful")
+println("")
+println("=== Verification ===")
+println("Bytecode verification PASSED")
+println("")
+
+// Build object
+println("=== Building Object ===")
+let objbuilder = import "src/objbuilder.lx"
+let hexBytes = objbuilder(mainFunction, false).bytes()
+println("Object size: " + str(len(hexBytes)) + " bytes")
+
+// Convert byte numbers to string
+let byteString = ""
+for let i = 0; i < len(hexBytes); i = i + 1 {
+  byteString = byteString + chr(hexBytes[i])
+}
+
+// Save to /tmp
+let outputPath = "/tmp/lxglobals-new.lxobj"
+let ok = spit(outputPath, byteString)
+if ok != true {
+  groanln(ok or "Failed to write output.")
+  Lx.exit(1)
+}
+
+println("Saved to " + outputPath)
+println("")
+println("SUCCESS: lxglobals bytecode built with NEW codegen")
+
+nil

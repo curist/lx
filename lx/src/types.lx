@@ -110,8 +110,6 @@ types.OP = {
     POP: iota(),
     DUP: iota(),
     SWAP: iota(),
-    NEW_LOCAL: iota(),
-    POP_LOCAL: iota(),
     GET_LOCAL: iota(),
     SET_LOCAL: iota(),
     GET_GLOBAL: iota(),

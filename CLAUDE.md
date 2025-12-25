@@ -118,11 +118,58 @@ for let i = 0; i < 10; i = i + 1 {
 }
 ```
 
-**While**
+**While-style:**
 ```lx
 for true {
   println("endless")
 }
+```
+
+**For-in iteration:**
+```lx
+// Iterate over array elements
+for item in [1, 2, 3] {
+  println(item)
+}
+
+// With index
+for item, i in ["a", "b", "c"] {
+  println(i, item)  // 0 a, 1 b, 2 c
+}
+```
+
+### Collect Expressions
+
+Collect expressions build arrays by evaluating a body expression for each iteration:
+
+**C-style collect:**
+```lx
+let squares = collect let i = 0; i < 5; i = i + 1 {
+  i * i
+}
+// Result: [0, 1, 4, 9, 16]
+```
+
+**Collect-in (for-in style):**
+```lx
+let doubled = collect x in [1, 2, 3] {
+  x * 2
+}
+// Result: [2, 4, 6]
+
+// With index
+let indexed = collect val, i in ["a", "b"] {
+  .{ index: i, value: val }
+}
+// Result: [{index: 0, value: "a"}, {index: 1, value: "b"}]
+```
+
+**Type inference:**
+- Collect expressions infer `Array[T]` where `T` is unified across all iterations
+- All iterations must produce compatible types
+```lx
+collect i in range(3) { str(i) }  // Array[String]
+collect i in range(3) { i * 2 }    // Array[Number]
 ```
 
 ### Operators

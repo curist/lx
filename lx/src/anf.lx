@@ -362,6 +362,20 @@ fn anfCall(anf, node) {
   wrapWithPrelude(anf, node, pre, newNode)
 }
 
+fn anfIntrinsicCall(anf, node) {
+  // IntrinsicCall doesn't have a callee, just args
+  let pre = []
+  let args = []
+  for let i = 0; i < len(node.args or []); i = i + 1 {
+    let arg = anfToAtomic(anf, node.args[i])
+    pre = concat(pre, arg.pre)
+    push(args, arg.expr)
+  }
+  let newNode = copyNodeShallow(anf, node)
+  newNode.args = args
+  wrapWithPrelude(anf, node, pre, newNode)
+}
+
 fn anfIf(anf, node) {
   let cond = anfToAtomic(anf, node.condition)
   let newNode = copyNodeShallow(anf, node)
@@ -555,6 +569,8 @@ fn anfExpr(anf, node) {
     return anfAssignment(anf, node)
   } else if node.type == "Import" {
     return anfImport(anf, node)
+  } else if node.type == "IntrinsicCall" {
+    return anfIntrinsicCall(anf, node)
   } else if node.type == "Number" or node.type == "String" or
             node.type == "Bool" or node.type == "Nil" or
             node.type == "Identifier" {

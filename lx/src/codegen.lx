@@ -501,6 +501,39 @@ fn compileCall(gen, node) {
   emitBytes(gen, OP.CALL, len(args), node.line)
 }
 
+fn compileIntrinsicCall(gen, node) {
+  // Compile intrinsic operations that map directly to opcodes
+  // IMPORTANT: This is called from expression position, so must leave
+  // exactly one value on stack on ALL paths (including errors).
+  let args = node.args or []
+
+  if node.intrinsic == "array_new" {
+    // array_new expects 0 args
+    if len(args) != 0 {
+      addError(gen, node, "Internal error: array_new expects 0 args, got " + str(len(args)))
+      emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+      return
+    }
+    // Create empty array
+    emitByte(gen, OP.ARRAY, node.line)
+  } else if node.intrinsic == "array_append" {
+    // array_append expects 2 args: array, value
+    if len(args) != 2 {
+      addError(gen, node, "Internal error: array_append expects 2 args, got " + str(len(args)))
+      emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+      return
+    }
+    // Compile args: array, value
+    for let i = 0; i < len(args); i = i + 1 {
+      compileValue(gen, args[i])
+    }
+    emitByte(gen, OP.APPEND, node.line)
+  } else {
+    addError(gen, node, "Unknown intrinsic: " + node.intrinsic)
+    emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+  }
+}
+
 fn compileFunctionExpr(gen, node, mode) {
   let name = node.name and node.name.name or "fn"
   let func = Function(name, len(node.params or []), Chunk(node.filename))
@@ -865,6 +898,8 @@ fn compileValueExpr(gen, node) {
     compileDot(gen, node)
   } else if node.type == "Import" {
     compileImport(gen, node)
+  } else if node.type == "IntrinsicCall" {
+    compileIntrinsicCall(gen, node)
   } else {
     addError(gen, node, "Codegen not implemented for: " + node.type)
   }

@@ -533,7 +533,20 @@ fn lowerCollect(lowerer, node) {
     }
   }
 
-  // Create: let $result = []
+  // Create: let $result = [] (using array_new intrinsic)
+  let arrayNewNode = .{
+    type: "IntrinsicCall",
+    intrinsic: "array_new",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.line,
+    endCol: node.col,
+    args: [],
+  }
+  lowerer.origin[arrayNewNode.id] = node.id
+
   let resultLetNode = .{
     type: "Let",
     filename: node.filename,
@@ -543,23 +556,23 @@ fn lowerCollect(lowerer, node) {
     endLine: node.endLine,
     endCol: node.endCol,
     name: makeIdent(resultName),
-    init: makeEmptyArray(),
+    init: arrayNewNode,
   }
   lowerer.origin[resultLetNode.id] = node.id
 
-  // Create: push($result, body)
-  let pushCallNode = .{
-    type: "Call",
+  // Create: array_append($result, body) intrinsic
+  let arrayAppendNode = .{
+    type: "IntrinsicCall",
+    intrinsic: "array_append",
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
     col: node.col,
     endLine: node.endLine,
     endCol: node.endCol,
-    callee: makeIdent("push"),
     args: [makeIdent(resultName), loweredBody],
   }
-  lowerer.origin[pushCallNode.id] = node.id
+  lowerer.origin[arrayAppendNode.id] = node.id
 
   // Create: nil (to ensure loop body doesn't return $result)
   let nilNode = .{
@@ -574,7 +587,7 @@ fn lowerCollect(lowerer, node) {
   }
   lowerer.origin[nilNode.id] = node.id
 
-  // Create the for loop body as a block containing the push call followed by nil
+  // Create the for loop body as a block containing the array_append call followed by nil
   // This ensures the loop returns nil on normal exit, not $result
   let forBodyNode = .{
     type: "Block",
@@ -584,7 +597,7 @@ fn lowerCollect(lowerer, node) {
     col: node.col,
     endLine: node.endLine,
     endCol: node.endCol,
-    expressions: [pushCallNode, nilNode],
+    expressions: [arrayAppendNode, nilNode],
   }
   lowerer.origin[forBodyNode.id] = node.id
 
@@ -643,21 +656,21 @@ fn lowerCollect(lowerer, node) {
   }
   lowerer.origin[breakValueCheckNode.id] = node.id
 
-  // Create: push($result, $break_value)
-  let pushBreakValueNode = .{
-    type: "Call",
+  // Create: array_append($result, $break_value) intrinsic
+  let arrayAppendBreakNode = .{
+    type: "IntrinsicCall",
+    intrinsic: "array_append",
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
     col: node.col,
     endLine: node.line,
     endCol: node.col,
-    callee: makeIdent("push"),
     args: [makeIdent(resultName), makeIdent(breakValueName)],
   }
-  lowerer.origin[pushBreakValueNode.id] = node.id
+  lowerer.origin[arrayAppendBreakNode.id] = node.id
 
-  // Create: if $break_value != nil { push($result, $break_value) }
+  // Create: if $break_value != nil { array_append($result, $break_value) }
   let ifNode = .{
     type: "If",
     filename: node.filename,
@@ -667,7 +680,7 @@ fn lowerCollect(lowerer, node) {
     endLine: node.line,
     endCol: node.col,
     condition: breakValueCheckNode,
-    then: pushBreakValueNode,
+    then: arrayAppendBreakNode,
     else: nil,
   }
   lowerer.origin[ifNode.id] = node.id
@@ -755,7 +768,20 @@ fn lowerCollectIn(lowerer, node) {
     }
   }
 
-  // Create: let $result = []
+  // Create: let $result = [] (using array_new intrinsic)
+  let arrayNewNode = .{
+    type: "IntrinsicCall",
+    intrinsic: "array_new",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.line,
+    endCol: node.col,
+    args: [],
+  }
+  lowerer.origin[arrayNewNode.id] = node.id
+
   let resultLetNode = .{
     type: "Let",
     filename: node.filename,
@@ -765,7 +791,7 @@ fn lowerCollectIn(lowerer, node) {
     endLine: node.line,
     endCol: node.col,
     name: makeIdent(resultName),
-    init: makeEmptyArray(),
+    init: arrayNewNode,
   }
   lowerer.origin[resultLetNode.id] = node.id
 
@@ -861,20 +887,20 @@ fn lowerCollectIn(lowerer, node) {
     push(innerBodyExprs, indexLetNode)
   }
 
-  // Create: push($result, body)
-  let pushCallNode = .{
-    type: "Call",
+  // Create: array_append($result, body) intrinsic
+  let arrayAppendNode = .{
+    type: "IntrinsicCall",
+    intrinsic: "array_append",
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
     col: node.col,
     endLine: node.line,
     endCol: node.col,
-    callee: makeIdent("push"),
     args: [makeIdent(resultName), loweredBody],
   }
-  lowerer.origin[pushCallNode.id] = node.id
-  push(innerBodyExprs, pushCallNode)
+  lowerer.origin[arrayAppendNode.id] = node.id
+  push(innerBodyExprs, arrayAppendNode)
 
   // Create: nil (to ensure loop body doesn't return $result)
   let nilNode = makeNil()
@@ -1011,21 +1037,21 @@ fn lowerCollectIn(lowerer, node) {
   }
   lowerer.origin[breakValueCheckNode.id] = node.id
 
-  // Create: push($result, $break_value)
-  let pushBreakValueNode = .{
-    type: "Call",
+  // Create: array_append($result, $break_value) intrinsic
+  let arrayAppendBreakNode = .{
+    type: "IntrinsicCall",
+    intrinsic: "array_append",
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
     col: node.col,
     endLine: node.line,
     endCol: node.col,
-    callee: makeIdent("push"),
     args: [makeIdent(resultName), makeIdent(breakValueName)],
   }
-  lowerer.origin[pushBreakValueNode.id] = node.id
+  lowerer.origin[arrayAppendBreakNode.id] = node.id
 
-  // Create: if $break_value != nil { push($result, $break_value) }
+  // Create: if $break_value != nil { array_append($result, $break_value) }
   let ifNode = .{
     type: "If",
     filename: node.filename,
@@ -1035,7 +1061,7 @@ fn lowerCollectIn(lowerer, node) {
     endLine: node.line,
     endCol: node.col,
     condition: breakValueCheckNode,
-    then: pushBreakValueNode,
+    then: arrayAppendBreakNode,
     else: nil,
   }
   lowerer.origin[ifNode.id] = node.id

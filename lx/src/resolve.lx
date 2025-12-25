@@ -632,6 +632,11 @@ fn resolveExpr(resolver, node, context) {
     for let i = 0; i < len(node.args); i = i + 1 {
       resolveExpr(resolver, node.args[i], context)
     }
+  } else if node.type == "IntrinsicCall" {
+    // IntrinsicCall: resolve arguments only (no callee)
+    for let i = 0; i < len(node.args or []); i = i + 1 {
+      resolveExpr(resolver, node.args[i], context)
+    }
   } else if node.type == "If" {
     // If: resolve condition, then, and else branches
     resolveExpr(resolver, node.condition, context)

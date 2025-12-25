@@ -1893,6 +1893,53 @@ fn checkCall(checker, node) {
   out
 }
 
+fn checkIntrinsicCall(checker, node) {
+  // Type check intrinsic calls (array_new, array_append)
+  let argTypes = []
+  for let i = 0; i < len(node.args or []); i = i + 1 {
+    push(argTypes, synthExpr(checker, node.args[i]))
+  }
+
+  // Return type based on intrinsic
+  let t = typeAny()
+  if node.intrinsic == "array_new" {
+    // array_new expects 0 args
+    if len(argTypes) != 0 {
+      addError(checker, node.id, "Internal error: array_new expects 0 args, got " + str(len(argTypes)))
+      // Fall through with Any
+    } else {
+      // array_new returns an array
+      t = typeArray(freshTypeVar(checker))
+    }
+  } else if node.intrinsic == "array_append" {
+    // array_append expects 2 args: array, value
+    if len(argTypes) != 2 {
+      addError(checker, node.id, "Internal error: array_append expects 2 args, got " + str(len(argTypes)))
+      // Fall through with Any
+    } else {
+      // array_append(arr, value) returns arr, and constrains arr's element type
+      let arrType = argTypes[0]
+      let elemType = argTypes[1]
+
+      // Ensure arrType is Array[T]
+      let elemTypeVar = freshTypeVar(checker)
+      let expectedArrType = typeArray(elemTypeVar)
+      unify(checker, node, arrType, expectedArrType)
+
+      // Constrain the element being appended matches the array element type
+      unify(checker, node, elemTypeVar, elemType)
+
+      // Return the unified/deref'd array type for better downstream inference
+      t = deref(checker, arrType)
+    }
+  } else {
+    addError(checker, node.id, "Internal error: unknown intrinsic: " + node.intrinsic)
+  }
+
+  checker.types[node.id] = t
+  t
+}
+
 fn checkFunction(checker, node) {
   // If this function is named (hoisted), ensure its declaration binding exists.
   let fnBinding = nil
@@ -2415,6 +2462,7 @@ synthExpr = fn(checker, node) {
 
   // Calls / access
   if node.type == "Call"  { return checkCall(checker, node) }
+  if node.type == "IntrinsicCall" { return checkIntrinsicCall(checker, node) }
   if node.type == "Dot"   { return checkDot(checker, node) }
   if node.type == "Index" { return checkIndex(checker, node) }
 

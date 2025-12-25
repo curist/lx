@@ -199,7 +199,6 @@ fn pushScope(gen, node) {
   if info {
     push(gen.scopeStack, info)
   }
-  // PR3: Track baseline slot for this scope
   push(gen.scopeBaseSlots, gen.nextLocalSlot)
 }
 
@@ -207,7 +206,6 @@ fn popScope(gen) {
   if len(gen.scopeStack) > 0 {
     pop(gen.scopeStack)
   }
-  // PR3: Pop baseline slot
   if len(gen.scopeBaseSlots) > 0 {
     pop(gen.scopeBaseSlots)
   }
@@ -222,7 +220,7 @@ fn endScope(gen, node) {
     if local.isCaptured {
       emitByte(gen, OP.CLOSE_UPVALUE, gen.currentLine)
     } else {
-      emitByte(gen, OP.POP, gen.currentLine)  // PR3: Use POP instead of POP_LOCAL
+      emitByte(gen, OP.POP, gen.currentLine)
     }
     // Decrement the local slot counter as we pop locals
     gen.nextLocalSlot = gen.nextLocalSlot - 1
@@ -230,7 +228,7 @@ fn endScope(gen, node) {
 }
 
 fn unwindToSlot(gen, targetSlot) {
-  // PR3: Emit OP_UNWIND for non-local exits (break/continue)
+  // Emit OP_UNWIND for non-local exits (break/continue)
   // NOTE: We do NOT decrement gen.nextLocalSlot here because:
   // 1. This emits code for the break/continue path (which jumps away)
   // 2. endScope will handle nextLocalSlot bookkeeping for the normal path
@@ -322,7 +320,6 @@ fn compileLet(gen, node, mode) {
 
   let local = gen.localsByDecl[node.name.id]
   if local {
-    // PR3: Single-stack - initializer value IS the local slot (it stays on stack)
     // Record the absolute slot for this local
     gen.emittedLocals[local.nodeId] = gen.nextLocalSlot
     let slot = gen.nextLocalSlot
@@ -377,7 +374,6 @@ fn compileBlock(gen, node) {
     // Pre-allocate locals for hoisted functions
     for let i = 0; i < len(hoistedList); i = i + 1 {
       let hoisted = hoistedList[i]
-      // PR3: Single-stack - push NIL to reserve slot, KEEP it on stack
       gen.emittedLocals[hoisted.declNodeId] = gen.nextLocalSlot
       gen.nextLocalSlot = gen.nextLocalSlot + 1
 
@@ -400,7 +396,7 @@ fn compileBlock(gen, node) {
     }
   }
 
-  // PR3: Single-stack block exit - UNWIND pops locals under result
+  // block exit - UNWIND pops locals under result
   // At this point: value stack has [... locals... result]
   // UNWIND <toPop> 1 pops/closes locals while preserving result
   let baseSlot = gen.scopeBaseSlots[len(gen.scopeBaseSlots) - 1]
@@ -587,7 +583,7 @@ fn compileFunctionExpr(gen, node, mode) {
     // Check if this function was already pre-allocated (hoisted)
     let preallocatedSlot = gen.emittedLocals[node.id]
     if preallocatedSlot or preallocatedSlot == 0 {
-      // PR3: Function was hoisted - assign closure into existing slot
+      // Function was hoisted - assign closure into existing slot
       // SET_LOCAL leaves value on stack, so we POP it after assignment
       emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
       emitByte(gen, OP.POP, node.line)
@@ -597,7 +593,7 @@ fn compileFunctionExpr(gen, node, mode) {
         emitBytes(gen, OP.GET_LOCAL, localSlot(preallocatedSlot), node.line)
       }
     } else {
-      // PR3: Not preallocated - closure value IS the local slot (stays on stack)
+      // Not preallocated - closure value IS the local slot (stays on stack)
       let slot = gen.nextLocalSlot
       gen.emittedLocals[node.id] = slot
       gen.nextLocalSlot = gen.nextLocalSlot + 1
@@ -733,7 +729,7 @@ fn compileContinue(gen, node) {
 }
 
 fn compileFor(gen, node) {
-  // PR3: Reserve loop result slot in the enclosing scope
+  // Reserve loop result slot in the enclosing scope
   let loopResultSlot = gen.nextLocalSlot
   gen.nextLocalSlot = gen.nextLocalSlot + 1
   push(gen.loopResultSlots, loopResultSlot)
@@ -802,7 +798,7 @@ fn compileFor(gen, node) {
 
   popScope(gen)
 
-  // PR3: Single-stack - the loopResultSlot IS the result value, leave it on stack
+  // Single-stack - the loopResultSlot IS the result value, leave it on stack
   // Decrement nextLocalSlot because we're "returning" it as a temporary value
   // (The caller's compileExpr will POP it if in STMT mode)
   gen.nextLocalSlot = gen.nextLocalSlot - 1
@@ -926,7 +922,7 @@ fn codegen(ast, resolveResult, opts) {
     currentLine: 1,
     currentNode: nil,
     scopeStack: [],
-    scopeBaseSlots: [],  // PR3: Track baseline nextLocalSlot when entering each scope
+    scopeBaseSlots: [],  // Track baseline nextLocalSlot when entering each scope
     breakOffsets: [],
     continueOffsets: [],
     loopResultSlots: [],

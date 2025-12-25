@@ -1918,19 +1918,19 @@ fn checkIntrinsicCall(checker, node) {
       // Fall through with Any
     } else {
       // array_append(arr, value) returns arr, and constrains arr's element type
-      let arrType = argTypes[0]
+      let arrType = deref(checker, argTypes[0])
       let elemType = argTypes[1]
 
       // Ensure arrType is Array[T]
       let elemTypeVar = freshTypeVar(checker)
       let expectedArrType = typeArray(elemTypeVar)
-      unify(checker, node, arrType, expectedArrType)
+      unify(checker, arrType, expectedArrType)
 
       // Constrain the element being appended matches the array element type
-      unify(checker, node, elemTypeVar, elemType)
+      unify(checker, elemTypeVar, elemType)
 
-      // Return the unified/deref'd array type for better downstream inference
-      t = deref(checker, arrType)
+      // Return the array type
+      t = arrType
     }
   } else {
     addError(checker, node.id, "Internal error: unknown intrinsic: " + node.intrinsic)

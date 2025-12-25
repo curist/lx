@@ -176,6 +176,32 @@ fn register(test) {
     assert.equal(xsT.kind, "Map")
     assert.equal(deref(result, xsT.key).kind, "String")
   })
+
+  test("typecheck - collect infers Array[Number] from numeric body", fn(assert) {
+    let result = parseAndTypecheck("collect let i = 0; i < 3; i = i + 1 { i * 2 }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 0))
+    assert.equal(t.kind, "Array")
+    assert.equal(deref(result, t.elem).kind, "Number")
+  })
+
+  test("typecheck - collect infers Array[String] from string body", fn(assert) {
+    let result = parseAndTypecheck("collect i in range(3) { str(i) }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 0))
+    assert.equal(t.kind, "Array")
+    assert.equal(deref(result, t.elem).kind, "String")
+  })
+
+  test("typecheck - collect rejects mixed element types", fn(assert) {
+    let result = parseAndTypecheck("collect let i = 0; i < 3; i = i + 1 { if i == 0 { \"hello\" } else { 42 } }")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Branch mismatch"))
+  })
 }
 
 .{ register: register }

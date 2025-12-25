@@ -46,6 +46,13 @@ static int constByteInstruction(const char* name, Chunk* chunk, int offset) {
   return offset + 2;
 }
 
+static int unwindInstruction(const char* name, Chunk* chunk, int offset) {
+  uint8_t count = chunk->code[offset + 1];
+  uint8_t keep = chunk->code[offset + 2];
+  printf("%-16s %4d %4d\n", name, count, keep);
+  return offset + 3;
+}
+
 int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
   printf("%04d ", offset);
 
@@ -162,6 +169,8 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
     }
     case OP_CLOSE_UPVALUE:
       return simpleInstruction("OP_CLOSE_UPVALUE", offset);
+    case OP_UNWIND:
+      return unwindInstruction("OP_UNWIND", chunk, offset);
     case OP_RETURN:
       return simpleInstruction("OP_RETURN", offset);
     default:

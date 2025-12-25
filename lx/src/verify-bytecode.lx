@@ -94,6 +94,9 @@ let STACK_MIN = .{
 
   // CALL is dynamic: needs argCount + 1 (callee + args)
   // Handled specially in processInstruction
+
+  // UNWIND is dynamic: needs count values
+  // Handled specially in processInstruction
 }
 
 // Static table of stack effects for each opcode
@@ -167,16 +170,26 @@ let STACK_EFFECTS = .{
 
   // RETURN (0): special handling in stackEffect()
   [OP.RETURN]:        0,
+
+  // UNWIND: special handling in stackEffect()
 }
 
-fn stackEffect(opcode, operand) {
+fn stackEffect(opcode, operand, operand2) {
   // Returns: stack delta for this instruction
-  // operand: used for CALL (argCount)
+  // operand: used for CALL (argCount) and UNWIND (count)
+  // operand2: used for UNWIND (keep)
   // Returns: nil if opcode is unknown (caller must handle error)
 
   // Special case: CALL has dynamic effect based on argCount
   // pop (argCount + 1), push 1 → net effect: -argCount
   if opcode == OP.CALL {
+    return 0 - operand
+  }
+
+  // Special case: UNWIND has dynamic effect based on count and keep
+  // keep=0: pop count → Δ = -count
+  // keep=1: preserve top, pop count under it → Δ = -count
+  if opcode == OP.UNWIND {
     return 0 - operand
   }
 
@@ -282,6 +295,7 @@ let INSTRUCTION_LENGTHS = .{
   [OP.ARRAY]:         1,
   [OP.LENGTH]:        1,
   [OP.CLOSE_UPVALUE]: 1,
+  [OP.UNWIND]:        3,  // opcode + count + keep
   [OP.RETURN]:        1,
 }
 
@@ -397,10 +411,21 @@ fn processInstruction(verifier, ip) {
 
   // Get operand for dynamic opcodes (with bounds checking)
   let operand = 0
+  let operand2 = 0
   if opcode == OP.CALL {
     operand = safeReadByte(code, ip + 1, verifier, ip)
-    if !operand {
+    if !operand and operand != 0 {
       return nil  // Out of bounds (safeReadByte returns nil on error)
+    }
+  }
+  if opcode == OP.UNWIND {
+    operand = safeReadByte(code, ip + 1, verifier, ip)  // count
+    if !operand and operand != 0 {
+      return nil  // Out of bounds
+    }
+    operand2 = safeReadByte(code, ip + 2, verifier, ip)  // keep
+    if !operand2 and operand2 != 0 {
+      return nil  // Out of bounds
     }
   }
 
@@ -409,6 +434,15 @@ fn processInstruction(verifier, ip) {
   let minRequired = STACK_MIN[opcode]
   if opcode == OP.CALL {
     minRequired = operand + 1  // callee + args
+  }
+  if opcode == OP.UNWIND {
+    // keep=0: needs count values
+    // keep=1: needs count+1 values (kept value + count to discard)
+    if operand2 == 0 {
+      minRequired = operand
+    } else {
+      minRequired = operand + 1
+    }
   }
   let opName = OP_NAME[opcode] or ("UNKNOWN(" + str(opcode) + ")")
 
@@ -426,10 +460,10 @@ fn processInstruction(verifier, ip) {
   }
 
   // Get stack effect - fatal error if unknown
-  let effect = stackEffect(opcode, operand)
-  if !effect {
+  let effect = stackEffect(opcode, operand, operand2)
+  if !effect and effect != 0 {
     // effect is nil or false (unknown opcode)
-    // Note: 0 is truthy in lx, so this doesn't trigger for neutral opcodes
+    // Note: 0 is truthy in lx, so we need to check != 0 for neutral opcodes
     addError(verifier, ip, "Unknown opcode: " + opName)
     return nil  // Fatal - stop processing this path
   }

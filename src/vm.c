@@ -321,6 +321,7 @@ static InterpretResult run() {
     dispatch_table[OP_CALL]          = &&DO_OP_CALL;
     dispatch_table[OP_CLOSURE]       = &&DO_OP_CLOSURE;
     dispatch_table[OP_CLOSE_UPVALUE] = &&DO_OP_CLOSE_UPVALUE;
+    dispatch_table[OP_UNWIND]        = &&DO_OP_UNWIND;
     dispatch_table[OP_RETURN]        = &&DO_OP_RETURN; // OP_RETURN may be 255
 
     dispatch_table_inited = true;
@@ -761,6 +762,29 @@ DO_OP_CLOSE_UPVALUE:
     closeUpvalues(vm.localsTop - 1);
     pop_local();
     DISPATCH();
+DO_OP_UNWIND:
+    {
+      uint8_t count = READ_BYTE();
+      uint8_t keep = READ_BYTE();
+      if (keep > 1) {
+        runtimeError("Invalid UNWIND keep flag: %d (must be 0 or 1)", keep);
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      if (keep == 0) {
+        // Pop count values
+        for (int i = 0; i < count; i++) {
+          pop();
+        }
+      } else {
+        // keep == 1: preserve top value, discard count values under it
+        Value top = pop();
+        for (int i = 0; i < count; i++) {
+          pop();
+        }
+        push(top);
+      }
+      DISPATCH();
+    }
 DO_OP_RETURN:
     {
       closeUpvalues(frame->slots);

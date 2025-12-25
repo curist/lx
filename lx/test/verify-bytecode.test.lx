@@ -7,40 +7,49 @@ let types = import "src/types.lx"
 let OP = types.OP
 
 test("stackEffect - push operations", fn(assert) {
-  assert.equal(verify.stackEffect(OP.NIL, 0), 1, "NIL pushes 1")
-  assert.equal(verify.stackEffect(OP.TRUE, 0), 1, "TRUE pushes 1")
-  assert.equal(verify.stackEffect(OP.CONST_BYTE, 0), 1, "CONST_BYTE pushes 1")
-  assert.equal(verify.stackEffect(OP.GET_LOCAL, 0), 1, "GET_LOCAL pushes 1")
+  assert.equal(verify.stackEffect(OP.NIL, 0, 0), 1, "NIL pushes 1")
+  assert.equal(verify.stackEffect(OP.TRUE, 0, 0), 1, "TRUE pushes 1")
+  assert.equal(verify.stackEffect(OP.CONST_BYTE, 0, 0), 1, "CONST_BYTE pushes 1")
+  assert.equal(verify.stackEffect(OP.GET_LOCAL, 0, 0), 1, "GET_LOCAL pushes 1")
 })
 
 test("stackEffect - pop operations", fn(assert) {
-  assert.equal(verify.stackEffect(OP.POP, 0), -1, "POP pops 1 from value stack")
-  assert.equal(verify.stackEffect(OP.POP_LOCAL, 0), 0, "POP_LOCAL pops from locals stack (value stack unaffected)")
-  assert.equal(verify.stackEffect(OP.CLOSE_UPVALUE, 0), 0, "CLOSE_UPVALUE pops from locals stack (value stack unaffected)")
+  assert.equal(verify.stackEffect(OP.POP, 0, 0), -1, "POP pops 1 from value stack")
+  assert.equal(verify.stackEffect(OP.POP_LOCAL, 0, 0), 0, "POP_LOCAL pops from locals stack (value stack unaffected)")
+  assert.equal(verify.stackEffect(OP.CLOSE_UPVALUE, 0, 0), 0, "CLOSE_UPVALUE pops from locals stack (value stack unaffected)")
 })
 
 test("stackEffect - neutral operations", fn(assert) {
-  assert.equal(verify.stackEffect(OP.NOT, 0), 0, "NOT is neutral (pop 1, push 1)")
-  assert.equal(verify.stackEffect(OP.NEGATE, 0), 0, "NEGATE is neutral (pop 1, push 1)")
-  assert.equal(verify.stackEffect(OP.LENGTH, 0), 0, "LENGTH is neutral (pop 1, push 1)")
+  assert.equal(verify.stackEffect(OP.NOT, 0, 0), 0, "NOT is neutral (pop 1, push 1)")
+  assert.equal(verify.stackEffect(OP.NEGATE, 0, 0), 0, "NEGATE is neutral (pop 1, push 1)")
+  assert.equal(verify.stackEffect(OP.LENGTH, 0, 0), 0, "LENGTH is neutral (pop 1, push 1)")
 })
 
 test("stackEffect - binary operations", fn(assert) {
-  assert.equal(verify.stackEffect(OP.ADD, 0), -1, "ADD pops 2, pushes 1")
-  assert.equal(verify.stackEffect(OP.MULTIPLY, 0), -1, "MULTIPLY pops 2, pushes 1")
-  assert.equal(verify.stackEffect(OP.EQUAL, 0), -1, "EQUAL pops 2, pushes 1")
+  assert.equal(verify.stackEffect(OP.ADD, 0, 0), -1, "ADD pops 2, pushes 1")
+  assert.equal(verify.stackEffect(OP.MULTIPLY, 0, 0), -1, "MULTIPLY pops 2, pushes 1")
+  assert.equal(verify.stackEffect(OP.EQUAL, 0, 0), -1, "EQUAL pops 2, pushes 1")
 })
 
 test("stackEffect - call operation", fn(assert) {
-  assert.equal(verify.stackEffect(OP.CALL, 0), 0, "CALL(0) pops 1, pushes 1")
-  assert.equal(verify.stackEffect(OP.CALL, 2), -2, "CALL(2) pops 3, pushes 1")
-  assert.equal(verify.stackEffect(OP.CALL, 5), -5, "CALL(5) pops 6, pushes 1")
+  assert.equal(verify.stackEffect(OP.CALL, 0, 0), 0, "CALL(0) pops 1, pushes 1")
+  assert.equal(verify.stackEffect(OP.CALL, 2, 0), -2, "CALL(2) pops 3, pushes 1")
+  assert.equal(verify.stackEffect(OP.CALL, 5, 0), -5, "CALL(5) pops 6, pushes 1")
+})
+
+test("stackEffect - unwind operation", fn(assert) {
+  assert.equal(verify.stackEffect(OP.UNWIND, 3, 0), -3, "UNWIND(3, 0) pops 3")
+  assert.equal(verify.stackEffect(OP.UNWIND, 3, 1), -3, "UNWIND(3, 1) preserves top, pops 3 under it")
+  assert.equal(verify.stackEffect(OP.UNWIND, 5, 0), -5, "UNWIND(5, 0) pops 5")
+  assert.equal(verify.stackEffect(OP.UNWIND, 5, 1), -5, "UNWIND(5, 1) preserves top, pops 5 under it")
+  assert.equal(verify.stackEffect(OP.UNWIND, 0, 0), 0, "UNWIND(0, 0) is no-op")
+  assert.equal(verify.stackEffect(OP.UNWIND, 0, 1), 0, "UNWIND(0, 1) preserves top (no-op)")
 })
 
 test("stackEffect - control flow", fn(assert) {
-  assert.equal(verify.stackEffect(OP.JUMP, 0), 0, "JUMP is neutral")
-  assert.equal(verify.stackEffect(OP.JUMP_IF_TRUE, 0), -1, "JUMP_IF_TRUE pops condition")
-  assert.equal(verify.stackEffect(OP.LOOP, 0), 0, "LOOP is neutral")
+  assert.equal(verify.stackEffect(OP.JUMP, 0, 0), 0, "JUMP is neutral")
+  assert.equal(verify.stackEffect(OP.JUMP_IF_TRUE, 0, 0), -1, "JUMP_IF_TRUE pops condition")
+  assert.equal(verify.stackEffect(OP.LOOP, 0, 0), 0, "LOOP is neutral")
 })
 
 // Note: Full chunk verification tests would require constructing

@@ -139,6 +139,8 @@ static Value peek(int distance) {
   return vm.stackTop[-1 - distance];
 }
 
+// PR3: Dual-stack helpers no longer used in single-stack mode
+// Kept for backward compatibility with old bytecode that might still reference locals stack
 static void push_local(Value value) {
   *vm.localsTop = value;
   vm.localsTop++;
@@ -149,9 +151,7 @@ static Value pop_local() {
   return *vm.localsTop;
 }
 
-static Value peek_local(int distance) {
-  return vm.localsTop[-1 - distance];
-}
+// Removed peek_local - no longer used
 
 static bool call(ObjClosure* closure, int argCount) {
   int arity = closure->function->arity;
@@ -166,15 +166,16 @@ static bool call(ObjClosure* closure, int argCount) {
     return false;
   }
 
-  // Discard extra args from locals
+  // PR3: Discard extra args from value stack (not locals)
   for (int i = 0; i < argCount - arity; i++) {
-    pop_local();
+    pop();
   }
 
   CallFrame* frame = &vm.frames[vm.frameCount++];
   frame->closure = closure;
   frame->ip = closure->function->chunk.code;
-  frame->slots = vm.localsTop - arity - 1;  // Points into vm.locals
+  // PR3: After dropping extras, stack is [... callee arg0..arg(arity-1)]
+  frame->slots = vm.stackTop - arity - 1;  // Points at callee (slot 0)
   return true;
 }
 
@@ -185,12 +186,29 @@ static bool callValue(Value callee, int argCount) {
         return call(AS_CLOSURE(callee), argCount);
       case OBJ_NATIVE: {
         NativeFn native = AS_NATIVE(callee)->function;
-        if (native(argCount, vm.localsTop - argCount)) {
-          vm.localsTop -= argCount;
-          push(pop_local());
+        // PR3: Native functions receive args from value stack
+        // Stack layout: [... callee arg0 arg1 ... argN]
+        // args points to first argument (stackTop - argCount)
+        // Native function writes result to args[-1] (the callee position)
+        Value* stackBase = vm.stackTop - argCount - 1; // points to callee slot
+#ifdef DEBUG_TRACE_EXECUTION
+        Value* stackTopBefore = vm.stackTop;
+#endif
+        bool success = native(argCount, vm.stackTop - argCount);
+#ifdef DEBUG_TRACE_EXECUTION
+        if (vm.stackTop != stackTopBefore) {
+          runtimeError("Native function must not mutate vm.stackTop (push/pop forbidden)");
+          return false;
+        }
+#endif
+        if (success) {
+          // Result is now at stackBase (callee slot)
+          // Set stackTop to callee+1 (pop callee+args, leave 1 result)
+          vm.stackTop = stackBase + 1;
           return true;
         } else {
-          runtimeError(AS_STRING(vm.localsTop[-argCount - 1])->chars);
+          // Error message is in callee slot (stackBase)
+          runtimeError(AS_STRING(*stackBase)->chars);
           return false;
         }
       }
@@ -419,10 +437,13 @@ DO_OP_SWAP:
       DISPATCH();
     }
 DO_OP_NEW_LOCAL:
-    push_local(pop());
+    // PR3: TEMPORARY BOOTSTRAP COMPATIBILITY: Allow old bytecode during transition
+    // In single-stack mode, NEW_LOCAL is a no-op (value already on stack)
     DISPATCH();
 DO_OP_POP_LOCAL:
-    pop_local();
+    // PR3: TEMPORARY BOOTSTRAP COMPATIBILITY: Allow old bytecode during transition
+    // In single-stack mode, POP_LOCAL becomes POP from value stack
+    pop();
     DISPATCH();
 DO_OP_GET_LOCAL:
     push(slots[READ_BYTE()]);
@@ -729,12 +750,10 @@ DO_OP_LOOP:
 DO_OP_CALL:
     {
       int argCount = READ_BYTE();
-      // Push function & its args to locals stack
-      // + 1 to include the function itself
-      for (int i = argCount; i >= 0; i--) push_local(peek(i));
-      for (int i = 0; i < argCount + 1; i++) pop();
 
-      if (!callValue(peek_local(argCount), argCount)) {
+      // PR3: Stack layout: [... | callee | arg0 | ... | argN]
+      // callee is argCount deep from the top
+      if (!callValue(peek(argCount), argCount)) {
         return INTERPRET_RUNTIME_ERROR;
       }
       frame = &vm.frames[vm.frameCount - 1];
@@ -771,14 +790,16 @@ DO_OP_UNWIND:
         return INTERPRET_RUNTIME_ERROR;
       }
       if (keep == 0) {
-        // Pop count values
+        // PR3: Pop count values, closing any upvalues
         for (int i = 0; i < count; i++) {
+          closeUpvalues(vm.stackTop - 1);
           pop();
         }
       } else {
-        // keep == 1: preserve top value, discard count values under it
+        // PR3: keep == 1: preserve top value, discard count values under it
         Value top = pop();
         for (int i = 0; i < count; i++) {
+          closeUpvalues(vm.stackTop - 1);
           pop();
         }
         push(top);
@@ -787,10 +808,12 @@ DO_OP_UNWIND:
     }
 DO_OP_RETURN:
     {
+      // PR3: Return value is on top of stack
+      Value result = pop();
       closeUpvalues(frame->slots);
       vm.frameCount--;
       if (vm.frameCount == 0) {
-        vm.lastResult = pop();
+        vm.lastResult = result;
 
         // Ensure next interpret() starts from a clean slate.
         vm.stackTop = vm.stack;
@@ -799,7 +822,9 @@ DO_OP_RETURN:
 
         return INTERPRET_OK;
       }
-      vm.localsTop = frame->slots;
+      // PR3: Reset stack to callee position and push return value
+      vm.stackTop = frame->slots;
+      push(result);
       frame = &vm.frames[vm.frameCount - 1];
       closure = frame->closure;
       slots = frame->slots;

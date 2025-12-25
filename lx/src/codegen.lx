@@ -199,11 +199,17 @@ fn pushScope(gen, node) {
   if info {
     push(gen.scopeStack, info)
   }
+  // PR3: Track baseline slot for this scope
+  push(gen.scopeBaseSlots, gen.nextLocalSlot)
 }
 
 fn popScope(gen) {
   if len(gen.scopeStack) > 0 {
     pop(gen.scopeStack)
+  }
+  // PR3: Pop baseline slot
+  if len(gen.scopeBaseSlots) > 0 {
+    pop(gen.scopeBaseSlots)
   }
 }
 
@@ -224,20 +230,19 @@ fn endScope(gen, node) {
 }
 
 fn unwindToSlot(gen, targetSlot) {
-  // Emit runtime cleanup code to unwind locals from current slot down to targetSlot  // NOTE: We do NOT decrement gen.nextLocalSlot here because:
+  // PR3: Emit OP_UNWIND for non-local exits (break/continue)
+  // NOTE: We do NOT decrement gen.nextLocalSlot here because:
   // 1. This emits code for the break/continue path (which jumps away)
   // 2. endScope will handle nextLocalSlot bookkeeping for the normal path
   // 3. After emitting the jump, we never emit more code on this path, so out-of-sync nextLocalSlot is fine
 
-  // PR3-TODO: In single-stack mode, this will also need to emit OP_UNWIND for value-stack cleanup
-  // before (or instead of) POP_LOCAL, because locals will be on the value stack.
+  let toPop = gen.nextLocalSlot - targetSlot
+  if toPop <= 0 { return }
 
-  let slotsToUnwind = gen.nextLocalSlot - targetSlot
-  for let i = 0; i < slotsToUnwind; i = i + 1 {
-    // TODO: Check if this slot is captured and emit CLOSE_UPVALUE if so
-    // For now, use POP_LOCAL for all (may break closures but simpler)
-    emitByte(gen, OP.POP_LOCAL, gen.currentLine)
-  }
+  // Emit UNWIND with keep=0 (break/continue don't preserve a value)
+  emitByte(gen, OP.UNWIND, gen.currentLine)
+  emitByte(gen, toPop, gen.currentLine)  // count
+  emitByte(gen, 0, gen.currentLine)      // keep=0
 }
 
 fn patchBreaks(gen) {
@@ -317,16 +322,17 @@ fn compileLet(gen, node, mode) {
 
   let local = gen.localsByDecl[node.name.id]
   if local {
+    // PR3: Single-stack - initializer value IS the local slot (it stays on stack)
     // Record the absolute slot for this local
     gen.emittedLocals[local.nodeId] = gen.nextLocalSlot
+    let slot = gen.nextLocalSlot
     gen.nextLocalSlot = gen.nextLocalSlot + 1
 
     if mode == MODE.VALUE {
-      emitByte(gen, OP.DUP, node.line)
-      emitByte(gen, OP.NEW_LOCAL, node.line)
-    } else {
-      emitByte(gen, OP.NEW_LOCAL, node.line)
+      // GET_LOCAL to read the local as expression result (not DUP)
+      emitBytes(gen, OP.GET_LOCAL, localSlot(slot), node.line)
     }
+    // STMT mode: local stays on stack, no extra value needed
   } else {
     let idx = identifierConstant(gen, node.name.name)
     if mode == MODE.VALUE {
@@ -371,13 +377,12 @@ fn compileBlock(gen, node) {
     // Pre-allocate locals for hoisted functions
     for let i = 0; i < len(hoistedList); i = i + 1 {
       let hoisted = hoistedList[i]
-      // Emit NIL placeholder for slot reservation
-      // No DUP/POP needed since we're just pre-allocating, not creating an expression value
-      emitByte(gen, OP.NIL, node.line)
-      // Record the slot BEFORE emitting NEW_LOCAL
+      // PR3: Single-stack - push NIL to reserve slot, KEEP it on stack
       gen.emittedLocals[hoisted.declNodeId] = gen.nextLocalSlot
       gen.nextLocalSlot = gen.nextLocalSlot + 1
-      emitByte(gen, OP.NEW_LOCAL, node.line)
+
+      emitByte(gen, OP.NIL, node.line)
+      // NIL stays on stack until endScope - this IS the reserved slot
     }
   }
 
@@ -395,18 +400,19 @@ fn compileBlock(gen, node) {
     }
   }
 
-  // PR2: Explicit block-result boundary marker
-  // At this point: value stack has exactly 1 value (NIL or last expr result)
-  // Emit UNWIND 0 1 to mark "this block returns exactly one value"
-  //   - count=0: no temps to discard (value stack is clean after ANF/compilation)
-  //   - keep=1: preserve the block result on top
-  //   - Today: no-op in dual-stack VM
-  //   - PR3: becomes UNWIND <locals+temps> 1 in single-stack VM
+  // PR3: Single-stack block exit - UNWIND pops locals under result
+  // At this point: value stack has [... locals... result]
+  // UNWIND <toPop> 1 pops/closes locals while preserving result
+  let baseSlot = gen.scopeBaseSlots[len(gen.scopeBaseSlots) - 1]
+  let toPop = gen.nextLocalSlot - baseSlot
   emitByte(gen, OP.UNWIND, node.line)
-  emitByte(gen, 0, node.line)  // count=0
-  emitByte(gen, 1, node.line)  // keep=1
+  emitByte(gen, toPop, node.line)  // count = actual stack slots to pop
+  emitByte(gen, 1, node.line)  // keep=1: preserve block result
 
-  endScope(gen, node)
+  // Update slot counter - locals are now popped
+  gen.nextLocalSlot = baseSlot
+
+  // No endScope() - UNWIND handled closing/popping locals
   popScope(gen)
 }
 
@@ -581,29 +587,26 @@ fn compileFunctionExpr(gen, node, mode) {
     // Check if this function was already pre-allocated (hoisted)
     let preallocatedSlot = gen.emittedLocals[node.id]
     if preallocatedSlot or preallocatedSlot == 0 {
-      // Function was hoisted: assign into existing slot
-      // SET_LOCAL leaves value on stack, so for STMT mode we need to POP it
+      // PR3: Function was hoisted - assign closure into existing slot
+      // SET_LOCAL leaves value on stack, so we POP it after assignment
+      emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
+      emitByte(gen, OP.POP, node.line)
+
       if mode == MODE.VALUE {
-        emitByte(gen, OP.DUP, node.line)
-        emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
-        emitByte(gen, OP.POP, node.line)
-      } else {
-        emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
-        emitByte(gen, OP.POP, node.line)
+        // Read the slot back as expression result
+        emitBytes(gen, OP.GET_LOCAL, localSlot(preallocatedSlot), node.line)
       }
     } else {
-      // Not preallocated: create new local (normal case for non-hoisted functions)
-      // NEW_LOCAL consumes value, so DUP in VALUE mode to keep a copy
+      // PR3: Not preallocated - closure value IS the local slot (stays on stack)
+      let slot = gen.nextLocalSlot
+      gen.emittedLocals[node.id] = slot
+      gen.nextLocalSlot = gen.nextLocalSlot + 1
+
       if mode == MODE.VALUE {
-        emitByte(gen, OP.DUP, node.line)
-        gen.emittedLocals[node.id] = gen.nextLocalSlot
-        gen.nextLocalSlot = gen.nextLocalSlot + 1
-        emitByte(gen, OP.NEW_LOCAL, node.line)
-      } else {
-        gen.emittedLocals[node.id] = gen.nextLocalSlot
-        gen.nextLocalSlot = gen.nextLocalSlot + 1
-        emitByte(gen, OP.NEW_LOCAL, node.line)
+        // GET_LOCAL to read the local as expression result (not DUP)
+        emitBytes(gen, OP.GET_LOCAL, localSlot(slot), node.line)
       }
+      // STMT mode: closure stays on stack as local, no extra value needed
     }
   }
 }
@@ -730,12 +733,14 @@ fn compileContinue(gen, node) {
 }
 
 fn compileFor(gen, node) {
-  // Reserve loop result slot in the enclosing scope.
+  // PR3: Reserve loop result slot in the enclosing scope
   let loopResultSlot = gen.nextLocalSlot
-  emitByte(gen, OP.NIL, node.line)
-  emitByte(gen, OP.NEW_LOCAL, node.line)
   gen.nextLocalSlot = gen.nextLocalSlot + 1
   push(gen.loopResultSlots, loopResultSlot)
+
+  // Push NIL to reserve slot, KEEP it on stack
+  emitByte(gen, OP.NIL, node.line)
+  // NIL stays on stack - this IS the loop result slot
 
   // Record the loop base slot for break - the slot height after loop result (before init)
   let loopBreakSlot = gen.nextLocalSlot
@@ -922,6 +927,7 @@ fn codegen(ast, resolveResult, opts) {
     currentLine: 1,
     currentNode: nil,
     scopeStack: [],
+    scopeBaseSlots: [],  // PR3: Track baseline nextLocalSlot when entering each scope
     breakOffsets: [],
     continueOffsets: [],
     loopResultSlots: [],

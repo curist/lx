@@ -228,6 +228,10 @@ fn unwindToSlot(gen, targetSlot) {
   // 1. This emits code for the break/continue path (which jumps away)
   // 2. endScope will handle nextLocalSlot bookkeeping for the normal path
   // 3. After emitting the jump, we never emit more code on this path, so out-of-sync nextLocalSlot is fine
+
+  // PR3-TODO: In single-stack mode, this will also need to emit OP_UNWIND for value-stack cleanup
+  // before (or instead of) POP_LOCAL, because locals will be on the value stack.
+
   let slotsToUnwind = gen.nextLocalSlot - targetSlot
   for let i = 0; i < slotsToUnwind; i = i + 1 {
     // TODO: Check if this slot is captured and emit CLOSE_UPVALUE if so
@@ -390,6 +394,18 @@ fn compileBlock(gen, node) {
       }
     }
   }
+
+  // PR2: Explicit block-result boundary marker
+  // At this point: value stack has exactly 1 value (NIL or last expr result)
+  // Emit UNWIND 0 1 to mark "this block returns exactly one value"
+  //   - count=0: no temps to discard (value stack is clean after ANF/compilation)
+  //   - keep=1: preserve the block result on top
+  //   - Today: no-op in dual-stack VM
+  //   - PR3: becomes UNWIND <locals+temps> 1 in single-stack VM
+  emitByte(gen, OP.UNWIND, node.line)
+  emitByte(gen, 0, node.line)  // count=0
+  emitByte(gen, 1, node.line)  // keep=1
+
   endScope(gen, node)
   popScope(gen)
 }

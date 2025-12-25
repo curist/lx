@@ -802,6 +802,10 @@ fn parse(src, filename) {
     let init = nil
     if match(TOKEN.EQUAL) {
       init = expression()
+      // Disallow "let in let" pattern: let x = let y = ...
+      if init and init.type == "Let" {
+        error("'let' cannot be used directly as an initializer (use a block: { let y = ...; y })")
+      }
     }
 
     LetNode(filename, startToken, nameToken, init)

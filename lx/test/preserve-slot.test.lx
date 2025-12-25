@@ -1,0 +1,107 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+test("block expression result survives scope cleanup", fn(assert) {
+  fn foo(n) {
+    let x = {
+      let y = n + 1
+      let z = 3
+      y * z
+    }
+    x + 10
+  }
+  assert.equal(foo(10), 43, "Block result should survive local cleanup")
+})
+
+test("implicit return with locals in scope", fn(assert) {
+  fn foo() {
+    let a = 1
+    let b = 2
+    a + b
+  }
+  assert.equal(foo(), 3, "Implicit return should work with locals")
+})
+
+test("nested block expressions", fn(assert) {
+  fn foo() {
+    {
+      let a = 1
+      {
+        let b = 2
+        a + b
+      }
+    }
+  }
+  assert.equal(foo(), 3, "Nested blocks should preserve result")
+})
+
+test("last expression calculation", fn(assert) {
+  fn foo() {
+    let a = 1
+    let b = 2
+    let c = a + b
+    c * 10
+  }
+  assert.equal(foo(), 30, "Final calculation should be preserved")
+})
+
+test("closure capture across scope end", fn(assert) {
+  fn foo() {
+    let f
+    {
+      let x = 123
+      f = fn() { x }
+    }
+    f()
+  }
+  assert.equal(foo(), 123, "Captured variables should work correctly")
+})
+
+test("multiple locals with block expression", fn(assert) {
+  fn foo() {
+    let result = {
+      let a = 1
+      let b = 2
+      let c = 3
+      let d = 4
+      a + b + c + d
+    }
+    result * 2
+  }
+  assert.equal(foo(), 20, "Multiple locals should be cleaned up correctly")
+})
+
+test("deeply nested blocks with locals", fn(assert) {
+  fn foo() {
+    let x = {
+      let a = 1
+      {
+        let b = 2
+        {
+          let c = 3
+          {
+            let d = 4
+            a + b + c + d
+          }
+        }
+      }
+    }
+    x
+  }
+  assert.equal(foo(), 10, "Deeply nested blocks should work")
+})
+
+test("block expression with function call", fn(assert) {
+  fn add(x, y) { x + y }
+  fn foo() {
+    let result = {
+      let a = 5
+      let b = 10
+      add(a, b)
+    }
+    result + 1
+  }
+  assert.equal(foo(), 16, "Block with function call should work")
+})
+
+suite.run()

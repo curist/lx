@@ -14,9 +14,9 @@ test("stackEffect - push operations", fn(assert) {
 })
 
 test("stackEffect - pop operations", fn(assert) {
-  assert.equal(verify.stackEffect(OP.POP, 0), -1, "POP pops 1")
-  assert.equal(verify.stackEffect(OP.POP_LOCAL, 0), -1, "POP_LOCAL pops 1")
-  assert.equal(verify.stackEffect(OP.CLOSE_UPVALUE, 0), -1, "CLOSE_UPVALUE pops 1")
+  assert.equal(verify.stackEffect(OP.POP, 0), -1, "POP pops 1 from value stack")
+  assert.equal(verify.stackEffect(OP.POP_LOCAL, 0), 0, "POP_LOCAL pops from locals stack (value stack unaffected)")
+  assert.equal(verify.stackEffect(OP.CLOSE_UPVALUE, 0), 0, "CLOSE_UPVALUE pops from locals stack (value stack unaffected)")
 })
 
 test("stackEffect - neutral operations", fn(assert) {

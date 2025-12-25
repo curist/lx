@@ -3,6 +3,7 @@ let parse = import "src/parser.lx"
 let lower = import "src/lower.lx"
 let anf = import "src/anf.lx"
 let codegen = import "src/codegen.lx"
+let verify = import "src/verify-bytecode.lx"
 let objbuilder = import "src/objbuilder.lx"
 let tohex = (import "src/lib.lx").tohex
 let OP = (import "src/types.lx").OP
@@ -93,6 +94,13 @@ fn compileWithDriver(driverInstance, path) {
       printErrors(cg.errors)
       return nil
     }
+
+    // Verify bytecode stack discipline (mandatory phase)
+    if !verify.verifyFunction(cg.function) {
+      // Verification failed - errors already printed to stderr
+      return nil
+    }
+
     moduleCache[modulePath] = cg.function
     cg.function
   }

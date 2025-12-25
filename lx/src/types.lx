@@ -150,6 +150,7 @@ types.OP = {
     RETURN: iota(),
   }
 }
+types.OP_NAME = enumNameMapper(types.OP)
 
 types.ValueType = {
   let iota = lib.iota(0)

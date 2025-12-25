@@ -1,20 +1,30 @@
 // Bytecode Stack-Height Verifier
 //
-// Validates bytecode for stack discipline:
+// Validates bytecode for VALUE STACK discipline:
 // - No underflow (both delta-based and minimum-height checking)
 // - Control-flow joins have consistent stack heights
 // - OP_RETURN has expected height relative to frame baseline
 //
 // This runs as a dataflow analysis over instruction addresses.
 //
-// Contract Model: Single-stack baseline with hybrid NEW_LOCAL
-// - initialHeight = 1 + arity (closure + args on stack at entry)
-// - Most opcodes follow single-stack semantics
-// - NEW_LOCAL currently has effect -1 (dual-stack transitional)
-// - When migrating to pure single-stack, update NEW_LOCAL to effect 0
+// Contract Model: VALUE STACK HEIGHT (single-stack verifier for dual-stack VM)
+// - Tracks ONLY value stack height (locals stack is implementation detail)
+// - Module entry: height=0
+// - Function entry: height=1+arity (closure+args on value stack)
+//
+// TRANSITIONAL OPCODES (dual-stack effects, will change when migrating to single-stack):
+// - POP_LOCAL: effect=0 (pops from locals stack, value stack unaffected)
+//              → Future: effect=-1 (pops from unified stack)
+// - NEW_LOCAL: effect=-1 (moves value → locals stack)
+//              → Future: effect=0 (no-op, value already in position)
+// - GET_LOCAL: effect=+1 (pushes from locals to value stack)
+//              → Future: varies (DUP or stack-relative access)
+// - SET_LOCAL: effect=-1 (consumes value, updates local)
+//              → Future: effect=0 (updates stack slot in-place)
 
 let types = import "src/types.lx"
 let OP = types.OP
+let OP_NAME = types.OP_NAME
 
 // ========================================
 // Stack Effect Tables
@@ -43,13 +53,11 @@ let STACK_MIN = .{
 
   // Need 1 input
   [OP.POP]:           1,
-  [OP.POP_LOCAL]:     1,
-  [OP.CLOSE_UPVALUE]: 1,
-  [OP.NEW_LOCAL]:     1,
+  [OP.NEW_LOCAL]:     1,  // Needs value to move to locals stack
   [OP.NOT]:           1,
   [OP.NEGATE]:        1,
   [OP.LENGTH]:        1,
-  [OP.SET_LOCAL]:     1,
+  [OP.SET_LOCAL]:     1,  // Needs value to store
   [OP.SET_GLOBAL]:    1,
   [OP.SET_UPVALUE]:   1,
   [OP.DEFINE_GLOBAL]: 1,
@@ -57,6 +65,10 @@ let STACK_MIN = .{
   [OP.JUMP_IF_TRUE]:  1,
   [OP.JUMP_IF_FALSE]: 1,
   [OP.RETURN]:        1,
+
+  // Need 0 inputs (locals stack operations, value stack unaffected)
+  [OP.POP_LOCAL]:     0,  // Pops from locals stack, not value stack
+  [OP.CLOSE_UPVALUE]: 0,  // Closes upvalue + pops from locals stack
 
   // Need 2 inputs
   [OP.EQUAL]:         2,
@@ -103,27 +115,26 @@ let STACK_EFFECTS = .{
 
   // Pop 1 value (-1)
   [OP.POP]:           -1,
-  [OP.POP_LOCAL]:     -1,  // For single-stack migration
-  [OP.CLOSE_UPVALUE]: -1,
+  [OP.NEW_LOCAL]:     -1,  // Current: pop from value stack, push to locals stack
+                            // Future single-stack: will be 0 (no-op)
 
-  // NEW_LOCAL: Hybrid/transitional contract
-  // Effect: -1 (treats as consuming one value from stack)
-  // Rationale: Current dual-stack model moves value from value stack to locals stack
-  // Migration note: When transitioning to single-stack, this will become 0 (no-op/commit)
-  //                 Codegen emission patterns must be updated accordingly
-  // This verifier validates the CURRENT agreed contract (dual-stack consumption)
-  [OP.NEW_LOCAL]:     -1,
-
-  // Neutral (0): pop 1, push 1 or store operations
+  // Neutral (0): peek value, perform operation, leave on stack
   [OP.NOT]:           0,   // pop 1, push 1 (bool)
   [OP.NEGATE]:        0,   // pop 1, push 1 (number)
   [OP.LENGTH]:        0,
-  [OP.SET_LOCAL]:     0,
-  [OP.SET_GLOBAL]:    0,
-  [OP.SET_UPVALUE]:   0,
-  [OP.DEFINE_GLOBAL]: 0,
+  [OP.SET_LOCAL]:     0,   // Current: peek value, update local, leave on stack (followed by POP)
+                            // Future single-stack: will be 0 (updates in-place)
+  [OP.SET_GLOBAL]:    0,   // Peek value, set global, leave on stack
+  [OP.SET_UPVALUE]:   0,   // Peek value, set upvalue, leave on stack
+  [OP.DEFINE_GLOBAL]: 0,   // Peek value, define global, leave on stack
   [OP.SWAP]:          0,
   [OP.NOP]:           0,
+
+  // Locals stack operations (value stack unaffected)
+  [OP.POP_LOCAL]:     0,   // Pops from locals stack only (vm.c:404)
+                            // Future single-stack: will be -1 (pops from unified stack)
+  [OP.CLOSE_UPVALUE]: 0,   // Closes upvalue + pop_local() (vm.c:746-747)
+                            // Value stack unaffected
 
   // Binary operations (-1): pop 2, push 1
   [OP.EQUAL]:         -1,
@@ -189,14 +200,14 @@ fn hexToByte(hex) {
 
 fn readByte(code, ip) {
   // Assumes bounds already checked by caller
-  hexToByte(code[ip])
+  return hexToByte(code[ip])
 }
 
 fn readShort(code, ip) {
   // Assumes bounds already checked by caller
   let high = readByte(code, ip)
   let low = readByte(code, ip + 1)
-  (high * 256) + low
+  return (high * 256) + low
 }
 
 fn safeReadByte(code, ip, verifier, errorIp) {
@@ -205,7 +216,7 @@ fn safeReadByte(code, ip, verifier, errorIp) {
     addError(verifier, errorIp, "Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
     return nil
   }
-  readByte(code, ip)
+  return readByte(code, ip)
 }
 
 fn safeReadShort(code, ip, verifier, errorIp) {
@@ -214,7 +225,7 @@ fn safeReadShort(code, ip, verifier, errorIp) {
     addError(verifier, errorIp, "Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
     return nil
   }
-  readShort(code, ip)
+  return readShort(code, ip)
 }
 
 // Static table of instruction lengths
@@ -278,7 +289,7 @@ fn instructionLength(chunk, ip) {
   // Returns: number of bytes this instruction occupies
   // Returns: nil if opcode is unknown, CLOSURE decode fails, or out of bounds
   let code = chunk.bytecode
-  let opcode = code[ip]
+  let opcode = readByte(code, ip)  // Convert hex string to number
 
   // Special case: CLOSURE has variable length
   // Format: OP_CLOSURE + constant_idx + (upvalueCount * 2 bytes)
@@ -311,6 +322,12 @@ fn instructionLength(chunk, ip) {
 // ========================================
 
 fn makeVerifier(fnObj) {
+  // Determine initial stack height based on function type
+  // Module (name == ""): starts at 0 (no closure on stack)
+  // Regular function: starts at 1 + arity (closure + args on stack)
+  let isModule = fnObj.name == ""
+  let initialHeight = isModule and 0 or (1 + fnObj.arity)
+
   .{
     fnObj: fnObj,
     chunk: fnObj.chunk,
@@ -327,8 +344,7 @@ fn makeVerifier(fnObj) {
     hadError: false,
 
     // Initial height: single-stack model baseline
-    // Frame starts with closure + args already on stack
-    initialHeight: 1 + fnObj.arity,
+    initialHeight: initialHeight,
   }
 }
 
@@ -377,7 +393,7 @@ fn propagateHeight(verifier, ip, height) {
 fn processInstruction(verifier, ip) {
   let code = verifier.chunk.bytecode
   let inHeight = verifier.heightAt[str(ip)]
-  let opcode = code[ip]
+  let opcode = readByte(code, ip)  // Convert hex string to number
 
   // Get operand for dynamic opcodes (with bounds checking)
   let operand = 0
@@ -394,15 +410,17 @@ fn processInstruction(verifier, ip) {
   if opcode == OP.CALL {
     minRequired = operand + 1  // callee + args
   }
+  let opName = OP_NAME[opcode] or ("UNKNOWN(" + str(opcode) + ")")
+
   if !minRequired {
     // minRequired is nil or false (unknown opcode)
     // Note: 0 is truthy in lx, so this doesn't trigger for opcodes that need 0 inputs
-    addError(verifier, ip, "Unknown opcode: " + str(opcode))
+    addError(verifier, ip, "Unknown opcode: " + opName)
     return nil  // Fatal
   }
   if inHeight < minRequired {
     addError(verifier, ip,
-      "Insufficient stack for opcode " + str(opcode) + ": " +
+      "Insufficient stack for " + opName + ": " +
       "height=" + str(inHeight) + ", required=" + str(minRequired))
     return nil
   }
@@ -412,7 +430,7 @@ fn processInstruction(verifier, ip) {
   if !effect {
     // effect is nil or false (unknown opcode)
     // Note: 0 is truthy in lx, so this doesn't trigger for neutral opcodes
-    addError(verifier, ip, "Unknown opcode: " + str(opcode))
+    addError(verifier, ip, "Unknown opcode: " + opName)
     return nil  // Fatal - stop processing this path
   }
 
@@ -427,12 +445,13 @@ fn processInstruction(verifier, ip) {
 
   // Special handling for RETURN
   if opcode == OP.RETURN {
-    // Weak rule: must have at least base + 1 (frame + return value)
+    // Current dual-stack: expect height >= base (value stack may be empty)
+    // Future single-stack: will require height >= base + 1 (must have return value)
     let base = verifier.initialHeight
-    if inHeight < base + 1 {
+    if inHeight < base {
       addError(verifier, ip,
         "OP_RETURN with insufficient stack: " + str(inHeight) +
-        " (expected >= " + str(base + 1) + ")")
+        " (expected >= " + str(base) + ")")
     }
     return nil  // Terminal instruction
   }
@@ -440,7 +459,7 @@ fn processInstruction(verifier, ip) {
   // Propagate to successors
   let instrLen = instructionLength(verifier.chunk, ip)
   if !instrLen {
-    addError(verifier, ip, "Failed to decode instruction length for opcode " + str(opcode))
+    addError(verifier, ip, "Failed to decode instruction length for " + opName)
     return nil  // Fatal
   }
   let nextIp = ip + instrLen

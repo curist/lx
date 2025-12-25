@@ -277,6 +277,17 @@ fn ForNode(filename, startToken, init, condition, update, body, endToken) {
   node
 }
 
+fn ForInNode(filename, startToken, valueBinder, indexBinder, iterable, body, endToken) {
+  let node = Node("ForIn", filename, startToken)
+  node.valueBinder = valueBinder
+  node.indexBinder = indexBinder
+  node.iterable = iterable
+  node.body = body
+  node.endLine = endToken.line
+  node.endCol = endToken.col
+  node
+}
+
 fn ReturnNode(filename, startToken, value) {
   let node = Node("Return", filename, startToken)
   node.value = value
@@ -489,6 +500,7 @@ fn parse(src, filename) {
     tokenType == TOKEN.BREAK or
     tokenType == TOKEN.CONTINUE or
     tokenType == TOKEN.IMPORT or
+    tokenType == TOKEN.IN or
     tokenType == TOKEN.AND or
     tokenType == TOKEN.OR or
     tokenType == TOKEN.TRUE or
@@ -864,6 +876,39 @@ fn parse(src, filename) {
   fn forExpr() {
     let startToken = parser.previous
 
+    // Check for for-in syntax: for x in arr { } or for x, i in arr { }
+    // We need to lookahead to detect this pattern
+    let isForIn = false
+    if check(TOKEN.IDENTIFIER) {
+      // Peek ahead to see if this is for-in
+      // peek(0) gives the next token to be consumed (after current)
+      let nextToken = scanner.peek(0)
+      if nextToken.type == TOKEN.IN or nextToken.type == TOKEN.COMMA {
+        isForIn = true
+      }
+    }
+
+    if isForIn {
+      // Parse for-in loop
+      consume(TOKEN.IDENTIFIER, "Expect identifier in for-in loop.")
+      let valueBinder = parser.previous.lexeme
+
+      let indexBinder = nil
+      if match(TOKEN.COMMA) {
+        consume(TOKEN.IDENTIFIER, "Expect identifier after comma in for-in loop.")
+        indexBinder = parser.previous.lexeme
+      }
+
+      consume(TOKEN.IN, "Expect 'in' in for-in loop.")
+      let iterable = expression()
+
+      consume(TOKEN.LEFT_BRACE, "Expect '{' for block.")
+      let body = block()
+
+      return ForInNode(filename, startToken, valueBinder, indexBinder, iterable, body, parser.previous)
+    }
+
+    // Original for loop logic
     let init = nil
     let condition = nil
     let update = nil
@@ -999,6 +1044,7 @@ fn parse(src, filename) {
     [TOKEN.BREAK]:           [breakExpr,  nil,    PREC.NONE],
     [TOKEN.CONTINUE]:        [continueExpr, nil,  PREC.NONE],
     [TOKEN.TRUE]:            [literal,    nil,    PREC.NONE],
+    [TOKEN.IN]:              [nil,        nil,    PREC.NONE],
     [TOKEN.ERROR]:           [nil,        nil,    PREC.NONE],
     [TOKEN.EOF]:             [nil,        nil,    PREC.NONE],
   }

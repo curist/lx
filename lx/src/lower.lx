@@ -214,6 +214,267 @@ fn lowerFor(lowerer, node) {
   newNode
 }
 
+fn lowerForIn(lowerer, node) {
+  // Desugar: for x, i in arrExpr { body }
+  // Into: {
+  //   let $arr = arrExpr
+  //   let $len = len($arr)
+  //   for let $i = 0; $i < $len; $i = $i + 1 {
+  //     let x = $arr[$i]
+  //     let i = $i
+  //     body
+  //   }
+  // }
+
+  // First, lower the iterable expression
+  let loweredIterable = lowerExpr(lowerer, node.iterable)
+  let loweredBody = lowerExpr(lowerer, node.body)
+
+  // Generate hygienic names with $ prefix to avoid user conflicts
+  let arrName = "$arr_" + str(node.id)
+  let lenName = "$len_" + str(node.id)
+  let idxName = "$i_" + str(node.id)
+
+  // Helper to create an Identifier node
+  fn makeIdent(name) {
+    .{
+      type: "Identifier",
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: node.line,
+      endCol: node.col,
+      name: name,
+      lexeme: name,
+    }
+  }
+
+  // Helper to create a Number node
+  fn makeNumber(value) {
+    .{
+      type: "Number",
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: node.line,
+      endCol: node.col,
+      value: value,
+      lexeme: str(value),
+    }
+  }
+
+  // Create: let __arr = arrExpr
+  let arrLetNode = .{
+    type: "Let",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+    name: makeIdent(arrName),
+    init: loweredIterable,
+  }
+  lowerer.origin[arrLetNode.id] = node.id
+
+  // Create: len(__arr)
+  let lenCallNode = .{
+    type: "Call",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.line,
+    endCol: node.col,
+    callee: makeIdent("len"),
+    args: [makeIdent(arrName)],
+  }
+  lowerer.origin[lenCallNode.id] = node.id
+
+  // Create: let __len = len(__arr)
+  let lenLetNode = .{
+    type: "Let",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+    name: makeIdent(lenName),
+    init: lenCallNode,
+  }
+  lowerer.origin[lenLetNode.id] = node.id
+
+  // Create: let __i = 0
+  let initNode = .{
+    type: "Let",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.line,
+    endCol: node.col,
+    name: makeIdent(idxName),
+    init: makeNumber(0),
+  }
+  lowerer.origin[initNode.id] = node.id
+
+  // Create: __i < __len
+  let conditionNode = .{
+    type: "Binary",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.line,
+    endCol: node.col,
+    left: makeIdent(idxName),
+    operator: .{
+      type: TOKEN.LESS,
+      lexeme: "<",
+      line: node.line,
+      col: node.col,
+    },
+    right: makeIdent(lenName),
+  }
+  lowerer.origin[conditionNode.id] = node.id
+
+  // Create: __i = __i + 1
+  let updateNode = .{
+    type: "Assignment",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.line,
+    endCol: node.col,
+    target: makeIdent(idxName),
+    value: .{
+      type: "Binary",
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: node.line,
+      endCol: node.col,
+      left: makeIdent(idxName),
+      operator: .{
+        type: TOKEN.PLUS,
+        lexeme: "+",
+        line: node.line,
+        col: node.col,
+      },
+      right: makeNumber(1),
+    },
+  }
+  lowerer.origin[updateNode.id] = node.id
+
+  // Build the inner loop body statements
+  let innerBodyExprs = []
+
+  // Add: let x = __arr[__i] (if valueBinder is not "_")
+  if node.valueBinder != "_" {
+    let indexExpr = .{
+      type: "Index",
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: node.line,
+      endCol: node.col,
+      object: makeIdent(arrName),
+      index: makeIdent(idxName),
+    }
+    lowerer.origin[indexExpr.id] = node.id
+
+    let valueLetNode = .{
+      type: "Let",
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: node.line,
+      endCol: node.col,
+      name: makeIdent(node.valueBinder),
+      init: indexExpr,
+    }
+    lowerer.origin[valueLetNode.id] = node.id
+    push(innerBodyExprs, valueLetNode)
+  }
+
+  // Add: let i = __i (if indexBinder is present and not "_")
+  if node.indexBinder and node.indexBinder != "_" {
+    let indexLetNode = .{
+      type: "Let",
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: node.line,
+      endCol: node.col,
+      name: makeIdent(node.indexBinder),
+      init: makeIdent(idxName),
+    }
+    lowerer.origin[indexLetNode.id] = node.id
+    push(innerBodyExprs, indexLetNode)
+  }
+
+  // Add original body expressions to inner body
+  if loweredBody.type == "Block" {
+    for let i = 0; i < len(loweredBody.expressions); i = i + 1 {
+      push(innerBodyExprs, loweredBody.expressions[i])
+    }
+  } else {
+    push(innerBodyExprs, loweredBody)
+  }
+
+  // Create the inner block for the for loop body
+  let innerBlockNode = .{
+    type: "Block",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+    expressions: innerBodyExprs,
+  }
+  lowerer.origin[innerBlockNode.id] = node.id
+
+  // Create the for loop
+  let forNode = .{
+    type: "For",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+    init: initNode,
+    condition: conditionNode,
+    update: updateNode,
+    body: innerBlockNode,
+  }
+  lowerer.origin[forNode.id] = node.id
+
+  // Wrap everything in a block
+  let outerBlockNode = .{
+    type: "Block",
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+    expressions: [arrLetNode, lenLetNode, forNode],
+  }
+  lowerer.origin[outerBlockNode.id] = node.id
+
+  outerBlockNode
+}
+
 fn lowerReturn(lowerer, node) {
   let newNode = copyNodeShallow(lowerer, node)
   if node.value {
@@ -326,6 +587,8 @@ fn lowerExpr(lowerer, node) {
     return lowerCall(lowerer, node)
   } else if node.type == "For" {
     return lowerFor(lowerer, node)
+  } else if node.type == "ForIn" {
+    return lowerForIn(lowerer, node)
   } else if node.type == "Return" {
     return lowerReturn(lowerer, node)
   } else if node.type == "Break" {

@@ -34,12 +34,91 @@ skip.test("closure", fn(assert) {
   assert.equal(fns[1](), 1)
 })
 
-test("for in", fn(assert) {
-  let counter = 0
-  // for i in range(10) {
-  //   counter = counter + 1
-  // }
-  // assert.equal(counter, 10)
+test("for in - value only", fn(assert) {
+  let sum = 0
+  for x in [1, 2, 3, 4, 5] {
+    sum = sum + x
+  }
+  assert.equal(sum, 15)
+})
+
+test("for in - value and index", fn(assert) {
+  let values = [10, 20, 30]
+  let result = []
+  for x, i in values {
+    push(result, .{ value: x, index: i })
+  }
+  assert.equal(len(result), 3)
+  assert.equal(result[0].value, 10)
+  assert.equal(result[0].index, 0)
+  assert.equal(result[1].value, 20)
+  assert.equal(result[1].index, 1)
+  assert.equal(result[2].value, 30)
+  assert.equal(result[2].index, 2)
+})
+
+test("for in - ignore value with _", fn(assert) {
+  let count = 0
+  for _ in [1, 2, 3] {
+    count = count + 1
+  }
+  assert.equal(count, 3)
+})
+
+test("for in - ignore index with _", fn(assert) {
+  let sum = 0
+  for x, _ in [10, 20, 30] {
+    sum = sum + x
+  }
+  assert.equal(sum, 60)
+})
+
+test("for in - empty array", fn(assert) {
+  let count = 0
+  for x in [] {
+    count = count + 1
+  }
+  assert.equal(count, 0)
+})
+
+test("for in - with break", fn(assert) {
+  let sum = 0
+  for x in [1, 2, 3, 4, 5] {
+    if x == 4 { break }
+    sum = sum + x
+  }
+  assert.equal(sum, 6)
+})
+
+test("for in - with continue", fn(assert) {
+  let sum = 0
+  for x in [1, 2, 3, 4, 5] {
+    if x == 3 { continue }
+    sum = sum + x
+  }
+  assert.equal(sum, 12)
+})
+
+test("for in - with range", fn(assert) {
+  let sum = 0
+  for x in range(5) {
+    sum = sum + x
+  }
+  assert.equal(sum, 10)
+})
+
+test("for in - nested loops", fn(assert) {
+  let result = []
+  for x in [1, 2] {
+    for y in [10, 20] {
+      push(result, x + y)
+    }
+  }
+  assert.equal(len(result), 4)
+  assert.equal(result[0], 11)
+  assert.equal(result[1], 21)
+  assert.equal(result[2], 12)
+  assert.equal(result[3], 22)
 })
 
 suite.run()

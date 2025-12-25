@@ -80,6 +80,7 @@ types.TOKEN = {
     BREAK: iota(),
     CONTINUE: iota(),
     IMPORT: iota(),
+    IN: iota(),
 
     // Termination
     ERROR: 990,

@@ -32,7 +32,10 @@ fn printErrors(errors) {
   if !errors or len(errors) == 0 { return }
   for let i = 0; i < len(errors); i = i + 1 {
     let err = errors[i]
-    if err.pos {
+    // Handle string errors (from parser)
+    if type(err) == "string" {
+      groanln(err)
+    } else if err.pos {
       let file = err.pos.filename or err.filename
       let prefix = file and join([file, ":", err.pos.line, ":", err.pos.col or 0], "") or
         join([err.pos.line, ":", err.pos.col or 0], "")
@@ -40,7 +43,7 @@ fn printErrors(errors) {
     } else if err.line {
       groanln(join(["[L", err.line, "] ", err.message], ""))
     } else {
-      groanln(err.message)
+      groanln(err.message or str(err))
     }
   }
 }

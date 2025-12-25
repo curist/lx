@@ -147,7 +147,7 @@ types.OP = {
     CALL: iota(),
     CLOSURE: iota(),
     CLOSE_UPVALUE: iota(),
-    RETURN: iota(),
+    RETURN: 255, // 0xff - fixed to allow adding opcodes without breaking RETURN
   }
 }
 types.OP_NAME = enumNameMapper(types.OP)

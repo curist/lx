@@ -1,4 +1,5 @@
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -260,61 +261,75 @@ static InterpretResult run() {
   ObjClosure* closure = frame->closure;
   Value* slots = frame->slots;
 
-  static void* dispatch_table[] = {
-    &&DO_OP_NOP,
-    &&DO_OP_CONSTANT,
-    &&DO_OP_CONST_BYTE,
-    &&DO_OP_NIL,
-    &&DO_OP_TRUE,
-    &&DO_OP_FALSE,
-    &&DO_OP_EQUAL,
-    &&DO_OP_POP,
-    &&DO_OP_DUP,
-    &&DO_OP_SWAP,
-    &&DO_OP_NEW_LOCAL,
-    &&DO_OP_POP_LOCAL,
-    &&DO_OP_GET_LOCAL,
-    &&DO_OP_SET_LOCAL,
-    &&DO_OP_GET_GLOBAL,
-    &&DO_OP_DEFINE_GLOBAL,
-    &&DO_OP_SET_GLOBAL,
-    &&DO_OP_GET_UPVALUE,
-    &&DO_OP_SET_UPVALUE,
-    &&DO_OP_GET_BY_INDEX,
-    &&DO_OP_SET_BY_INDEX,
-    &&DO_OP_GREATER,
-    &&DO_OP_LESS,
-    &&DO_OP_ADD,
-    &&DO_OP_SUBTRACT,
-    &&DO_OP_MULTIPLY,
-    &&DO_OP_DIVIDE,
-    &&DO_OP_NOT,
-    &&DO_OP_MOD,
-    &&DO_OP_NEGATE,
-    &&DO_OP_BIT_AND,
-    &&DO_OP_BIT_OR,
-    &&DO_OP_BIT_XOR,
-    &&DO_OP_BIT_LSHIFT,
-    &&DO_OP_BIT_RSHIFT,
-    &&DO_OP_JUMP,
-    &&DO_OP_JUMP_IF_TRUE,
-    &&DO_OP_JUMP_IF_FALSE,
-    &&DO_OP_LOOP,
-    &&DO_OP_ASSOC,
-    &&DO_OP_APPEND,
-    &&DO_OP_HASHMAP,
-    &&DO_OP_ARRAY,
-    &&DO_OP_LENGTH,
-    &&DO_OP_CALL,
-    &&DO_OP_CLOSURE,
-    &&DO_OP_CLOSE_UPVALUE,
-    &&DO_OP_RETURN,
-  };
+  // Full 0..255 dispatch table to support sparse encodings (e.g. OP_RETURN = 255).
+  // Clang + -Werror does not like designated "range init then override", so init once.
+  static void* dispatch_table[256];
+  static bool dispatch_table_inited = false;
+
+  // Track the most recently fetched opcode so DO_OP_INVALID can report it.
+  uint8_t op = 0;
+
+  if (!dispatch_table_inited) {
+    for (int i = 0; i < 256; i++) {
+      dispatch_table[i] = &&DO_OP_INVALID;
+    }
+
+    dispatch_table[OP_NOP]           = &&DO_OP_NOP;
+    dispatch_table[OP_CONSTANT]      = &&DO_OP_CONSTANT;
+    dispatch_table[OP_CONST_BYTE]    = &&DO_OP_CONST_BYTE;
+    dispatch_table[OP_NIL]           = &&DO_OP_NIL;
+    dispatch_table[OP_TRUE]          = &&DO_OP_TRUE;
+    dispatch_table[OP_FALSE]         = &&DO_OP_FALSE;
+    dispatch_table[OP_EQUAL]         = &&DO_OP_EQUAL;
+    dispatch_table[OP_POP]           = &&DO_OP_POP;
+    dispatch_table[OP_DUP]           = &&DO_OP_DUP;
+    dispatch_table[OP_SWAP]          = &&DO_OP_SWAP;
+    dispatch_table[OP_NEW_LOCAL]     = &&DO_OP_NEW_LOCAL;
+    dispatch_table[OP_POP_LOCAL]     = &&DO_OP_POP_LOCAL;
+    dispatch_table[OP_GET_LOCAL]     = &&DO_OP_GET_LOCAL;
+    dispatch_table[OP_SET_LOCAL]     = &&DO_OP_SET_LOCAL;
+    dispatch_table[OP_GET_GLOBAL]    = &&DO_OP_GET_GLOBAL;
+    dispatch_table[OP_DEFINE_GLOBAL] = &&DO_OP_DEFINE_GLOBAL;
+    dispatch_table[OP_SET_GLOBAL]    = &&DO_OP_SET_GLOBAL;
+    dispatch_table[OP_GET_UPVALUE]   = &&DO_OP_GET_UPVALUE;
+    dispatch_table[OP_SET_UPVALUE]   = &&DO_OP_SET_UPVALUE;
+    dispatch_table[OP_GET_BY_INDEX]  = &&DO_OP_GET_BY_INDEX;
+    dispatch_table[OP_SET_BY_INDEX]  = &&DO_OP_SET_BY_INDEX;
+    dispatch_table[OP_GREATER]       = &&DO_OP_GREATER;
+    dispatch_table[OP_LESS]          = &&DO_OP_LESS;
+    dispatch_table[OP_ADD]           = &&DO_OP_ADD;
+    dispatch_table[OP_SUBTRACT]      = &&DO_OP_SUBTRACT;
+    dispatch_table[OP_MULTIPLY]      = &&DO_OP_MULTIPLY;
+    dispatch_table[OP_DIVIDE]        = &&DO_OP_DIVIDE;
+    dispatch_table[OP_NOT]           = &&DO_OP_NOT;
+    dispatch_table[OP_MOD]           = &&DO_OP_MOD;
+    dispatch_table[OP_NEGATE]        = &&DO_OP_NEGATE;
+    dispatch_table[OP_BIT_AND]       = &&DO_OP_BIT_AND;
+    dispatch_table[OP_BIT_OR]        = &&DO_OP_BIT_OR;
+    dispatch_table[OP_BIT_XOR]       = &&DO_OP_BIT_XOR;
+    dispatch_table[OP_BIT_LSHIFT]    = &&DO_OP_BIT_LSHIFT;
+    dispatch_table[OP_BIT_RSHIFT]    = &&DO_OP_BIT_RSHIFT;
+    dispatch_table[OP_JUMP]          = &&DO_OP_JUMP;
+    dispatch_table[OP_JUMP_IF_TRUE]  = &&DO_OP_JUMP_IF_TRUE;
+    dispatch_table[OP_JUMP_IF_FALSE] = &&DO_OP_JUMP_IF_FALSE;
+    dispatch_table[OP_LOOP]          = &&DO_OP_LOOP;
+    dispatch_table[OP_ASSOC]         = &&DO_OP_ASSOC;
+    dispatch_table[OP_APPEND]        = &&DO_OP_APPEND;
+    dispatch_table[OP_HASHMAP]       = &&DO_OP_HASHMAP;
+    dispatch_table[OP_ARRAY]         = &&DO_OP_ARRAY;
+    dispatch_table[OP_LENGTH]        = &&DO_OP_LENGTH;
+    dispatch_table[OP_CALL]          = &&DO_OP_CALL;
+    dispatch_table[OP_CLOSURE]       = &&DO_OP_CLOSURE;
+    dispatch_table[OP_CLOSE_UPVALUE] = &&DO_OP_CLOSE_UPVALUE;
+    dispatch_table[OP_RETURN]        = &&DO_OP_RETURN; // OP_RETURN may be 255
+
+    dispatch_table_inited = true;
+  }
 
 #ifdef DEBUG_TRACE_EXECUTION
 #define DISPATCH() goto DO_DEBUG_PRINT
 #else
-#define DISPATCH() goto *dispatch_table[(*frame->ip++)]
+#define DISPATCH() do { op = READ_BYTE(); goto *dispatch_table[op]; } while (false)
 #endif
 #define READ_BYTE() (*frame->ip++)
 #define READ_SHORT() \
@@ -325,7 +340,7 @@ static InterpretResult run() {
     (frame->closure->function->chunk.constants.values[READ_BYTE()])
 
 #define READ_STRING() AS_STRING(READ_CONSTANT())
-#define BINARY_OP(valueType, op) \
+#define BINARY_OP(valueType, op_) \
     do { \
       if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) { \
         runtimeError("Operands must be numbers."); \
@@ -333,9 +348,9 @@ static InterpretResult run() {
       } \
       double b = AS_NUMBER(pop()); \
       double a = AS_NUMBER(pop()); \
-      push(valueType(a op b)); \
+      push(valueType(a op_ b)); \
     } while (false)
-#define BIT_BINARY_OP(op) \
+#define BIT_BINARY_OP(op_) \
     do { \
       if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) { \
         runtimeError("Operands must be numbers."); \
@@ -343,7 +358,7 @@ static InterpretResult run() {
       } \
       int b = AS_NUMBER(pop()); \
       int a = AS_NUMBER(pop()); \
-      push(NUMBER_VAL(a op b)); \
+      push(NUMBER_VAL(a op_ b)); \
     } while (false)
 
   DISPATCH();
@@ -366,6 +381,11 @@ DO_DEBUG_PRINT:
         (int)(ip - frame->closure->function->chunk.code), false);
     goto *dispatch_table[(*ip++)];
 #endif
+
+DO_OP_INVALID:
+    runtimeError("Invalid opcode %d.", (int)op);
+    return INTERPRET_RUNTIME_ERROR;
+
 DO_OP_NOP:
     DISPATCH();
 DO_OP_CONSTANT:
@@ -463,10 +483,8 @@ DO_OP_GET_BY_INDEX:
         }
         int index = AS_NUMBER(key);
         if (index != AS_NUMBER(key)) {
-          // check if the number is an int
           runtimeError("Can only use integer index to access array.");
           return INTERPRET_RUNTIME_ERROR;
-
         }
 
         ValueArray* array = &AS_ARRAY(peek(1));
@@ -478,7 +496,7 @@ DO_OP_GET_BY_INDEX:
         pop();
         push(value);
 
-      } else if (IS_HASHMAP(peek(1))){
+      } else if (IS_HASHMAP(peek(1))) {
         if (!IS_NUMBER(key) && !IS_STRING(key)) {
           runtimeError("Hashmap key type must be number or string.");
           return INTERPRET_RUNTIME_ERROR;
@@ -528,10 +546,8 @@ DO_OP_SET_BY_INDEX:
         }
         int index = AS_NUMBER(key);
         if (index != AS_NUMBER(key)) {
-          // check if the number is an int
           runtimeError("Can only use integer index to access array.");
           return INTERPRET_RUNTIME_ERROR;
-
         }
 
         ValueArray* array = &AS_ARRAY(peek(2));
@@ -602,7 +618,6 @@ DO_OP_MOD:
         runtimeError("Operands must be numbers.");
         return INTERPRET_RUNTIME_ERROR;
       }
-      // % only applies to int :(
       int b = AS_NUMBER(pop());
       int a = AS_NUMBER(pop());
       push(NUMBER_VAL(a % b));

@@ -222,7 +222,7 @@ fn endScope(gen, node) {
     if local.isCaptured {
       emitByte(gen, OP.CLOSE_UPVALUE, gen.currentLine)
     } else {
-      emitByte(gen, OP.POP_LOCAL, gen.currentLine)
+      emitByte(gen, OP.POP, gen.currentLine)  // PR3: Use POP instead of POP_LOCAL
     }
     // Decrement the local slot counter as we pop locals
     gen.nextLocalSlot = gen.nextLocalSlot - 1
@@ -802,10 +802,9 @@ fn compileFor(gen, node) {
 
   popScope(gen)
 
-  // Expose loop expression value and drop the temp local.
-  emitBytes(gen, OP.GET_LOCAL, localSlot(loopResultSlot), node.line)
-  emitByte(gen, OP.POP_LOCAL, node.line)
-  // CRITICAL: Must decrement nextLocalSlot to keep it in sync with runtime stack
+  // PR3: Single-stack - the loopResultSlot IS the result value, leave it on stack
+  // Decrement nextLocalSlot because we're "returning" it as a temporary value
+  // (The caller's compileExpr will POP it if in STMT mode)
   gen.nextLocalSlot = gen.nextLocalSlot - 1
   pop(gen.loopResultSlots)
 }

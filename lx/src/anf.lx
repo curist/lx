@@ -255,6 +255,48 @@ fn anfToAtomic(anf, node) {
   .{ pre: [letNode], expr: makeIdentifier(anf, node, name) }
 }
 
+fn anfAssignmentValue(anf, node) {
+  // Special handling for assignment RHS to avoid unnecessary temps
+  // Returns: { pre: [...], expr: ... }
+  //
+  // Don't create temps for "simple" expressions that can be directly
+  // consumed by the assignment operation.
+
+  if isAtomic(node) {
+    return .{ pre: [], expr: copyNodeShallow(anf, node) }
+  }
+
+  // Simple binary: both operands atomic
+  if node.type == "Binary" {
+    let left = anfToAtomic(anf, node.left)
+    let right = anfToAtomic(anf, node.right)
+
+    // Only skip temp if BOTH operands are atomic (no prelude needed)
+    if len(left.pre) == 0 and len(right.pre) == 0 {
+      let newNode = copyNodeShallow(anf, node)
+      newNode.left = left.expr
+      newNode.right = right.expr
+      newNode.operator = copyNodeShallow(anf, node.operator)
+      return .{ pre: [], expr: newNode }
+    }
+  }
+
+  // Simple unary: operand atomic
+  if node.type == "Unary" {
+    let operand = anfToAtomic(anf, node.operand)
+
+    if len(operand.pre) == 0 {
+      let newNode = copyNodeShallow(anf, node)
+      newNode.operand = operand.expr
+      newNode.operator = copyNodeShallow(anf, node.operator)
+      return .{ pre: [], expr: newNode }
+    }
+  }
+
+  // Fall back to normal anfToAtomic for complex cases
+  anfToAtomic(anf, node)
+}
+
 // ========================================
 // Expression Lowering
 // ========================================
@@ -503,11 +545,17 @@ fn anfAssignment(anf, node) {
     targetNode = copyNodeShallow(anf, node.target)
   }
 
-  let value = anfToAtomic(anf, node.value)
+  // Use special assignment value handling to avoid unnecessary temps
+  let value = anfAssignmentValue(anf, node.value)
   let newNode = copyNodeShallow(anf, node)
   newNode.target = targetNode
   newNode.value = value.expr
   let pre = concat(targetPre, value.pre)
+
+  // Only wrap in block if there's actually prelude
+  if len(pre) == 0 {
+    return newNode
+  }
   wrapWithPrelude(anf, node, pre, newNode)
 }
 

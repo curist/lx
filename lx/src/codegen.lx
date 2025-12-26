@@ -432,9 +432,13 @@ fn compileBlock(gen, node) {
   // UNWIND <toPop> 1 pops/closes locals while preserving result
   let baseSlot = gen.scopeBaseSlots[len(gen.scopeBaseSlots) - 1]
   let toPop = gen.nextLocalSlot - baseSlot
-  emitByte(gen, OP.UNWIND, node.line)
-  emitByte(gen, toPop, node.line)  // count = actual stack slots to pop
-  emitByte(gen, 1, node.line)  // keep=1: preserve block result
+
+  // Optimize: skip UNWIND 0 K (no locals to pop = noop)
+  if toPop > 0 {
+    emitByte(gen, OP.UNWIND, node.line)
+    emitByte(gen, toPop, node.line)  // count = actual stack slots to pop
+    emitByte(gen, 1, node.line)  // keep=1: preserve block result
+  }
 
   // Update slot counter - locals are now popped
   gen.nextLocalSlot = baseSlot

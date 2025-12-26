@@ -743,6 +743,12 @@ static InterpretResult run(void) {
           runtimeError("Invalid UNWIND keep flag: %d (must be 0 or 1)", keep);
           return INTERPRET_RUNTIME_ERROR;
         }
+        // Optimize UNWIND 0 K as noop: count=0 means no locals to pop,
+        // so no upvalues to close. For keep=1, pop+push cancels out.
+        // For keep=0, stackTop unchanged and closeUpvalues finds nothing.
+        if (count == 0) {
+          break;
+        }
         if (keep == 0) {
           Value* newTop = vm.stackTop - count;
           closeUpvalues(newTop);

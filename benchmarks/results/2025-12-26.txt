@@ -1,7 +1,7 @@
 Benchmark Results - 2025-12-26
 ================================
 
-Commit: 2286bed (Rename STORE_IDX_LOCAL to STORE_BY_IDX for consistency)
+## Round 1: Superinstructions (commit 2286bed)
 Hardware: Darwin 24.6.0
 Test configuration: REPEAT=10
 Statistics: min / median / avg / max
@@ -75,3 +75,74 @@ Chez Scheme (compiled):
 - map_hit_miss had one outlier at 1.00s (likely GC or background process)
 - sum_loop and fizzbuzz are most consistent (±2-3% variance)
 - Using median for comparison is more conservative than best-of-N
+
+================================================================================
+
+## Round 2: UNWIND Elimination (commit 70b8607)
+Test configuration: REPEAT=10
+Statistics: min / median / avg / max
+
+Additional optimizations:
+- Eliminate UNWIND 0 K at codegen (don't emit unnecessary instructions)
+- Optimize UNWIND 0 K as noop in VM (defense in depth)
+
+--- lx (10 runs each) ---
+sum_loop (50M):
+  Times: 0.67 / 0.70 / 0.70 / 0.75
+  Checksum: 1250000025000000
+
+fizzbuzz (20M):
+  Times: 1.07 / 1.09 / 1.09 / 1.11
+  Checksum: 14666666
+
+fib_iter (5M):
+  Times: 0.15 / 0.15 / 0.15 / 0.16
+  Checksum: 416450835
+
+array_fill (10M):
+  Times: 0.41 / 0.41 / 0.42 / 0.43
+  Checksum: 50000005000000
+
+map_hit_miss (5M):
+  Times: 0.78 / 0.79 / 0.79 / 0.84
+  Checksum: 6250002500000
+
+--- Summary (using median values) ---
+sum_loop:     0.70s
+fizzbuzz:     1.09s
+fib_iter:     0.15s
+array_fill:   0.41s
+map_hit_miss: 0.79s
+
+--- Round 2 vs Round 1 Improvement ---
+sum_loop:     0.79s → 0.70s  (11.4% faster, 1.13x)
+fizzbuzz:     1.16s → 1.09s  (6.0% faster, 1.06x)
+fib_iter:     0.16s → 0.15s  (6.2% faster, 1.07x)
+array_fill:   0.44s → 0.41s  (6.8% faster, 1.07x)
+map_hit_miss: 0.85s → 0.79s  (7.1% faster, 1.08x)
+
+Average improvement: 7.5% faster per round, 1.08x speedup
+
+--- Cumulative vs Baseline (commit 50f9d72) ---
+sum_loop:     1.04s → 0.70s  (32.7% faster, 1.49x)
+fizzbuzz:     1.30s → 1.09s  (16.2% faster, 1.19x)
+fib_iter:     0.19s → 0.15s  (21.1% faster, 1.27x)
+array_fill:   0.61s → 0.41s  (32.8% faster, 1.49x)
+map_hit_miss: 0.92s → 0.79s  (14.1% faster, 1.16x)
+
+Average cumulative improvement: 23.4% faster, 1.32x speedup
+
+--- Comparison vs Python 3 ---
+Python performance (same hardware):
+  sum_loop: 1.16s → lx is 1.66x FASTER ✓
+  fizzbuzz: 0.88s → lx is 1.24x slower (was 1.32x slower)
+  fib_iter: 0.15s → lx is same speed ✓
+  array_fill: 0.49s → lx is 1.20x FASTER ✓
+  map_hit_miss: 0.45s → lx is 1.76x slower
+
+--- Notes ---
+- UNWIND 0 1 appeared 3× per iteration in fizzbuzz (60M total)
+- Completely eliminated from bytecode at codegen level
+- Consistent 6-11% improvement across all benchmarks
+- sum_loop and array_fill now significantly faster than Python!
+- Fizzbuzz gap vs Python reduced from 32% to 24%

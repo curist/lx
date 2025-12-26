@@ -8,16 +8,25 @@ Source
   → AST
   → lower.lx
   → Lowered AST
-  → anf.lx (optional)
+  → anf.lx
+  → ANF AST
   → resolve.lx
   → Resolved AST + Side Tables
-  → typecheck.lx
-  → (a) codegen.lx → Bytecode
+  → typecheck.lx (optional)
+  → Type Information
+  → codegen.lx
+  → Bytecode + Chunk
+  → verify-bytecode.lx
+  → Verified Bytecode
+  → (a) objbuilder.lx → Object File
   → (b) LSP / tooling outputs
 ```
 
 Each phase has a **single responsibility** and produces **immutable outputs**.
 Later phases consume earlier results but never mutate them.
+
+**Error handling** is centralized in `errors.lx`, which provides unified error
+formatting and position resolution across all compilation phases.
 
 ---
 
@@ -46,12 +55,13 @@ Later phases consume earlier results but never mutate them.
 
 ---
 
-### **anf.lx** — Evaluation-order normalization (optional)
+### **anf.lx** — Evaluation-order normalization
 
 * Lowers expressions into A-normal form (ANF)
 * Introduces temp `let` bindings to preserve left-to-right evaluation
 * Makes block expression values explicit without changing semantics
 * Does **not** perform semantic analysis or name resolution
+* **Mandatory phase** — always runs after lower, before resolve
 
 ---
 
@@ -106,9 +116,43 @@ Later phases consume earlier results but never mutate them.
 * Walks resolved AST in **source order**
 * Looks up decisions from side tables
 * Emits bytecode and builds chunks
+* Tracks **nodeId for each bytecode instruction** (`chunk.nodeIds[]`)
 * No semantic analysis
 * No reordering or deduplication
 * All invariants enforced by resolver
+
+---
+
+### **verify-bytecode.lx** — Stack discipline validation
+
+* Validates bytecode stack operations
+* Ensures balanced stack effects for all execution paths
+* Detects stack underflow/overflow
+* Uses dataflow analysis (worklist algorithm)
+* Reports errors with **nodeId** (resolved via `chunk.nodeIds[]`)
+* Returns: `{ success: bool, errors: [...] }`
+* **Mandatory phase** — compilation fails if verification fails
+
+---
+
+### **errors.lx** — Error handling utilities
+
+* Centralizes all error formatting and reporting
+* **buildNodesIndex(ast)** — builds complete `{ nodeId: node }` map
+  * Uses dynamic property traversal with `keys(node)`
+  * Filters metadata properties (id, type, line, col, etc.)
+  * O(1) lookup for any node ID
+  * Lazy — only built when errors occur
+* **resolveNodePosition(nodeId, result)** — maps nodeId to position
+  * Follows origin chains: ANF → lowered → parser
+  * Returns `{ filename, line, col }`
+* **formatError(err, result)** — formats single error to string
+* **printErrors(errors, result)** — prints to stderr
+* **collectErrors(result)** — gathers errors from all phases
+
+**Error Structure:**
+* Parser: pre-formatted strings (e.g., `"[file:L1:C5] message"`)
+* All semantic phases: `{ nodeId, message, severity: "error" }`
 
 ---
 
@@ -130,7 +174,31 @@ The driver:
 * Auto-increment per module, starting at 1
 * Parse: `1..N`
 * Lower: `N+1..M` (same module ID space)
+* ANF: `M+1..K` (same module ID space)
 * Used as stable keys across all side tables and tooling
+
+---
+
+### **Origin Chains**
+
+Lowering and ANF phases create new nodes and track their provenance:
+
+```
+ANF node (id: 31)
+  → lowerResult.origin[31] = 20
+  → loweredNode (id: 20)
+    → lowerResult.origin[20] = 7
+    → parserNode (id: 7)
+      → has position: { filename, line, col }
+```
+
+**Error reporting** follows origin chains backward to find the original
+parser node with position information:
+
+1. Error occurs in resolve phase → reports nodeId from ANF AST
+2. `errors.resolveNodePosition()` follows chain: ANF → lower → parser
+3. Looks up final parser node to extract source position
+4. Formats error: `[file.lx:3:6] Variable 'x' already declared`
 
 ---
 
@@ -148,10 +216,18 @@ The driver:
   * upvalues
   * hoisting metadata
 
-* `nodes[nodeId]`
+* `nodes[nodeId]` (in resolve phase)
 
-  * AST node lookup (O(1))
-  * enables diagnostics and LSP queries
+  * **Partial** AST node lookup
+  * Contains nodes visited during main resolution traversal
+  * May not include all nodes (e.g., nested identifiers in `let` name properties)
+
+* **Complete node index** (built by `errors.buildNodesIndex()`)
+
+  * **Complete** mapping of all nodeIds to nodes
+  * Built on-demand when formatting errors
+  * Traverses entire AST with dynamic property iteration
+  * Guaranteed O(1) lookup for any nodeId in the AST
 
 ---
 
@@ -178,7 +254,10 @@ The driver:
 
 2. **Better error reporting**
 
-   * Collect and report semantic and type errors with precise spans
+   * Unified error structure across all phases
+   * Precise source positions via nodeId tracking and origin chains
+   * Centralized error formatting in `errors.lx`
+   * Deterministic node lookup with complete AST indexing
 
 3. **Tooling-first architecture**
 
@@ -223,16 +302,46 @@ Lx supports **multiple consumers** of the same frontend pipeline:
 ### 1. Compiler
 
 ```
-parser → lower → resolve → typecheck → codegen → runtime
+parser → lower → anf → resolve → codegen → verify-bytecode → objbuilder → runtime
+                          ↓
+                    errors.lx (error formatting & reporting)
 ```
 
 ### 2. Tooling / LSP
 
 ```
 parser → lower → resolve → typecheck → diagnostics / IDE features
+                    ↓
+              errors.lx (error formatting & reporting)
 ```
 
-These paths share the same frontend phases and guarantees.
+These paths share the same frontend phases, error handling, and guarantees.
+
+---
+
+## Error Handling Flow
+
+All compilation phases follow a consistent error handling pattern:
+
+1. **Error Detection** — Each phase detects its own class of errors
+   * Parser: syntax errors
+   * Lower/ANF: transformation errors (rare)
+   * Resolve: semantic errors (undefined vars, duplicates, etc.)
+   * Typecheck: type incompatibilities
+   * Codegen: bytecode generation errors
+   * Verify: stack discipline violations
+
+2. **Error Recording** — Errors stored in standardized format
+   * Parser: pre-formatted strings with position
+   * Semantic phases: `{ nodeId, message, severity }`
+
+3. **Error Collection** — `errors.collectErrors(result)` gathers from all phases
+
+4. **Error Formatting** — `errors.formatError(err, result)` resolves positions
+   * Follows origin chains for semantic errors
+   * Uses `buildNodesIndex()` for O(1) node lookup
+
+5. **Error Reporting** — `errors.printErrors(errors, result)` outputs to stderr
 
 ---
 

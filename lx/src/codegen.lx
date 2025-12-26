@@ -21,6 +21,7 @@ fn Chunk(filename) {.{
   bytecode: [],
   constants: [],
   lines: [],
+  nodeIds: [],
   constantsCache: .{},
   importConstCache: .{},
 }}
@@ -62,6 +63,7 @@ fn emitByte(gen, byte, line) {
   let chunk = gen.currentFunction.chunk
   push(chunk.bytecode, lib.tohex(byte))
   push(chunk.lines, line or gen.currentLine or 1)
+  push(chunk.nodeIds, node and node.id or 0)
 }
 
 fn emitBytes(gen, byte1, byte2, line) {

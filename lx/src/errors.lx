@@ -1,0 +1,212 @@
+// Error handling utilities for the lx compiler
+//
+// Provides:
+// - buildNodesIndex: Build complete nodeId -> node map from AST
+// - resolveNodePosition: Map nodeId to source position (file:line:col)
+// - formatError: Format a single error to string
+// - printErrors: Print errors to stderr
+// - collectErrors: Collect errors from compilation result
+
+// ========================================
+// Build Complete Nodes Index
+// ========================================
+
+fn buildNodesIndex(ast) {
+  // Build a complete { nodeId: node } map by traversing entire AST
+  // Guarantees O(1) lookup for any node ID
+  let index = .{}
+
+  fn traverse(node) {
+    if !node or type(node) != "map" { return }
+
+    // Register this node
+    if node.id {
+      index[node.id] = node
+    }
+
+    // Traverse all properties, filtering out metadata
+    let props = keys(node)
+    let metadataProps = .{
+      id: true,
+      type: true,
+      line: true,
+      col: true,
+      endLine: true,
+      endCol: true,
+      filename: true,
+      lexeme: true,
+      anfSynthetic: true,
+    }
+
+    for let i = 0; i < len(props); i = i + 1 {
+      let prop = props[i]
+
+      // Skip metadata properties
+      if metadataProps[prop] { continue }
+
+      let child = node[prop]
+      if child {
+        if type(child) == "array" {
+          for let j = 0; j < len(child); j = j + 1 {
+            traverse(child[j])
+          }
+        } else if type(child) == "map" {
+          // Only traverse map children (actual AST nodes)
+          traverse(child)
+        }
+      }
+    }
+  }
+
+  traverse(ast)
+  index
+}
+
+// ========================================
+// Resolve Node Position
+// ========================================
+
+fn resolveNodePosition(nodeId, result) {
+  // Resolve nodeId to source position by:
+  // 1. Following origin chains: ANF -> lowered -> parser
+  // 2. Looking up node in appropriate AST
+  // 3. Extracting position info
+
+  if !nodeId or !result { return nil }
+
+  let currentId = nodeId
+  let maxDepth = 100  // Prevent infinite loops
+  let depth = 0
+
+  // Follow origin chain: ANF -> lowered -> parser
+  // First, follow ANF origin if available
+  if result.anfResult and result.anfResult.origin {
+    for depth < maxDepth and result.anfResult.origin[currentId] {
+      currentId = result.anfResult.origin[currentId]
+      depth = depth + 1
+    }
+  }
+
+  // Then follow lowered origin if available
+  if result.lowerResult and result.lowerResult.origin {
+    for depth < maxDepth and result.lowerResult.origin[currentId] {
+      currentId = result.lowerResult.origin[currentId]
+      depth = depth + 1
+    }
+  }
+
+  // Now currentId should be a parser node ID
+  // Build index and look up the node
+  let node = nil
+  if result.parseResult and result.parseResult.ast {
+    let index = buildNodesIndex(result.parseResult.ast)
+    node = index[currentId]
+  }
+
+  if !node { return nil }
+
+  return .{
+    filename: node.filename,
+    line: node.line,
+    col: node.col or 0,
+  }
+}
+
+// ========================================
+// Format Single Error
+// ========================================
+
+fn formatError(err, result) {
+  // Format a single error to string
+  // Handles both string errors (from parser) and object errors (from semantic phases)
+
+  if type(err) == "string" {
+    // Parser error - already formatted
+    return err
+  }
+
+  if err.nodeId {
+    // Semantic error - resolve nodeId to position
+    let pos = resolveNodePosition(err.nodeId, result)
+    if pos {
+      let file = pos.filename
+      let prefix = file and join([file, ":", pos.line, ":", pos.col], "") or
+        join([pos.line, ":", pos.col], "")
+      return join(["[", prefix, "] ", err.message], "")
+    }
+
+    // Fallback if position resolution fails
+    return join(["[nodeId:", err.nodeId, "] ", err.message], "")
+  }
+
+  // Fallback for unknown error format
+  err.message or str(err)
+}
+
+// ========================================
+// Print Errors
+// ========================================
+
+fn printErrors(errors, result) {
+  // Print all errors to stderr
+  // errors: array of error objects or strings
+  // result: compilation result (for resolving nodeIds)
+
+  if !errors or len(errors) == 0 { return }
+
+  for let i = 0; i < len(errors); i = i + 1 {
+    let err = errors[i]
+    groanln(formatError(err, result))
+  }
+}
+
+// ========================================
+// Collect Errors from Result
+// ========================================
+
+fn collectErrors(result) {
+  // Collect all errors from a compilation result object
+  // Returns array of errors from all phases
+
+  let errors = []
+
+  // Note: parseErrors/lowerErrors are for backward compat
+  // Prefer parseResult.errors/lowerResult.errors
+  if result.parseResult and result.parseResult.errors {
+    errors = concat(errors, result.parseResult.errors)
+  } else if result.parseErrors {
+    errors = concat(errors, result.parseErrors)
+  }
+
+  if result.lowerResult and result.lowerResult.errors {
+    errors = concat(errors, result.lowerResult.errors)
+  } else if result.lowerErrors {
+    errors = concat(errors, result.lowerErrors)
+  }
+
+  if result.resolveResult and result.resolveResult.errors {
+    errors = concat(errors, result.resolveResult.errors)
+  }
+
+  if result.codegenResult and result.codegenResult.errors {
+    errors = concat(errors, result.codegenResult.errors)
+  }
+
+  if result.verifyResult and result.verifyResult.errors {
+    errors = concat(errors, result.verifyResult.errors)
+  }
+
+  errors
+}
+
+// ========================================
+// Module Exports
+// ========================================
+
+.{
+  buildNodesIndex: buildNodesIndex,
+  resolveNodePosition: resolveNodePosition,
+  formatError: formatError,
+  printErrors: printErrors,
+  collectErrors: collectErrors,
+}

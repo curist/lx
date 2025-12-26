@@ -346,9 +346,14 @@ fn makeVerifier(fnObj) {
 }
 
 fn addError(verifier, ip, message) {
+  // Look up nodeId from chunk.nodeIds array
+  let nodeIds = verifier.chunk.nodeIds
+  let nodeId = (nodeIds and ip >= 0 and ip < len(nodeIds)) and nodeIds[ip] or 0
+
   push(verifier.errors, .{
-    ip: ip,
+    nodeId: nodeId,
     message: message,
+    severity: "error",
   })
   verifier.hadError = true
 }
@@ -532,17 +537,11 @@ fn verifyFunction(fnObj) {
     processInstruction(verifier, ip)
   }
 
-  // Report errors
-  if verifier.hadError {
-    groanln("Bytecode verification failed:")
-    for let i = 0; i < len(verifier.errors); i = i + 1 {
-      let err = verifier.errors[i]
-      groanln("  [" + str(err.ip) + "] " + err.message)
-    }
-    return false
+  // Return result object
+  return .{
+    success: !verifier.hadError,
+    errors: verifier.errors,
   }
-
-  return true
 }
 
 // ========================================

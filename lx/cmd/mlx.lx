@@ -5,6 +5,7 @@ let anf = import "src/anf.lx"
 let codegen = import "src/codegen.lx"
 let verify = import "src/verify-bytecode.lx"
 let objbuilder = import "src/objbuilder.lx"
+let errors = import "src/errors.lx"
 let tohex = (import "src/lib.lx").tohex
 let OP = (import "src/types.lx").OP
 
@@ -28,48 +29,9 @@ fn loadSource(path, sourceOverride, overridePath) {
   slurp(realPath)
 }
 
-fn printErrors(errors) {
-  if !errors or len(errors) == 0 { return }
-  for let i = 0; i < len(errors); i = i + 1 {
-    let err = errors[i]
-    // Handle string errors (from parser)
-    if type(err) == "string" {
-      groanln(err)
-    } else if err.pos {
-      let file = err.pos.filename or err.filename
-      let prefix = file and join([file, ":", err.pos.line, ":", err.pos.col or 0], "") or
-        join([err.pos.line, ":", err.pos.col or 0], "")
-      groanln(join(["[", prefix, "] ", err.message], ""))
-    } else if err.line {
-      groanln(join(["[L", err.line, "] ", err.message], ""))
-    } else {
-      groanln(err.message or str(err))
-    }
-  }
-}
-
-fn collectErrors(result) {
-  let errors = []
-  if result.parseErrors { errors = concat(errors, result.parseErrors) }
-  if result.lowerErrors { errors = concat(errors, result.lowerErrors) }
-  if result.parseResult and result.parseResult.errors {
-    errors = concat(errors, result.parseResult.errors)
-  }
-  if result.lowerResult and result.lowerResult.errors {
-    errors = concat(errors, result.lowerResult.errors)
-  }
-  if result.resolveResult and result.resolveResult.errors {
-    errors = concat(errors, result.resolveResult.errors)
-  }
-  if result.codegenResult and result.codegenResult.errors {
-    errors = concat(errors, result.codegenResult.errors)
-  }
-  errors
-}
 
 fn makeDriverWithSource(source, path) {
   driver.make(.{
-    withAnf: true,
     withTypecheck: false,
     loadSource: fn(p) { loadSource(p, source, path) },
   })
@@ -84,7 +46,7 @@ fn compileWithDriver(driverInstance, path) {
 
     let result = driverInstance.compileModule(modulePath)
     if !result or result.status != "done" {
-      printErrors(collectErrors(result or .{}))
+      errors.printErrors(errors.collectErrors(result or .{}), result)
       return nil
     }
 
@@ -94,13 +56,15 @@ fn compileWithDriver(driverInstance, path) {
     })
     result.codegenResult = cg
     if !cg.success {
-      printErrors(cg.errors)
+      errors.printErrors(cg.errors, result)
       return nil
     }
 
     // Verify bytecode stack discipline (mandatory phase)
-    if !verify.verifyFunction(cg.function) {
-      // Verification failed - errors already printed to stderr
+    let verifyResult = verify.verifyFunction(cg.function)
+    result.verifyResult = verifyResult
+    if !verifyResult.success {
+      errors.printErrors(verifyResult.errors, result)
       return nil
     }
 

@@ -22,7 +22,6 @@ fn make(opts) {
   driver.compiledModules = []  // Track compilation order
   driver.loadSource = opts and opts.loadSource or nil
   driver.withTypecheck = !(opts and opts.withTypecheck == false)  // Default: true
-  driver.withAnf = opts and opts.withAnf or false
 
   driver.compileModule = fn(path) {
     // Track compilation
@@ -65,6 +64,7 @@ fn make(opts) {
       let result = .{
         status: "failed",
         path: path,
+        parseResult: parseResult,
         parseErrors: parseResult.errors,
       }
       driver.cache[path] = result
@@ -88,27 +88,23 @@ fn make(opts) {
     }
 
     // ========================================
-    // PHASE 3: ANF (optional)
+    // PHASE 3: ANF
     // ========================================
-    let anfResult = nil
-    let anfAst = lowerResult.ast
-    let nextNodeId = lowerResult.nextNodeId
-    if driver.withAnf {
-      anfResult = anf(anfAst, .{ startNodeId: nextNodeId })
-      if !anfResult.success {
-        let result = .{
-          status: "failed",
-          path: path,
-          parseResult: parseResult,
-          lowerResult: lowerResult,
-          anfResult: anfResult,
-        }
-        driver.cache[path] = result
-        return result
+    let anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
+    if !anfResult.success {
+      let result = .{
+        status: "failed",
+        path: path,
+        parseResult: parseResult,
+        lowerResult: lowerResult,
+        anfResult: anfResult,
       }
-      anfAst = anfResult.ast
-      nextNodeId = anfResult.nextNodeId
+      driver.cache[path] = result
+      return result
     }
+
+    let anfAst = anfResult.ast
+    let nextNodeId = anfResult.nextNodeId
 
     // ========================================
     // PHASE 4: Resolve

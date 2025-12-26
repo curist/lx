@@ -1,0 +1,239 @@
+// Test error handling and formatting
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let driver = import "src/driver.lx"
+let errors = import "src/errors.lx"
+
+// ========================================
+// Helper: Compile and get formatted errors
+// ========================================
+
+fn compileAndGetErrors(source, path) {
+  let driverInstance = driver.make(.{
+    withTypecheck: false,
+    loadSource: fn(p) { if p == path { source } },
+  })
+
+  let result = driverInstance.compileModule(path)
+  let errorList = errors.collectErrors(result)
+
+  // Format errors to strings
+  let formatted = []
+  for let i = 0; i < len(errorList); i = i + 1 {
+    push(formatted, errors.formatError(errorList[i], result))
+  }
+
+  return .{
+    result: result,
+    errors: errorList,
+    formatted: formatted,
+  }
+}
+
+// ========================================
+// Parser Error Tests
+// ========================================
+
+test("parser error - syntax error", fn(assert) {
+  let result = compileAndGetErrors("let x = 1 +", "test.lx")
+
+  assert.equal(len(result.errors), 1, "Should have 1 error")
+  assert.truthy(result.formatted[0], "Should format error")
+
+  // Parser errors are pre-formatted strings
+  let err = result.formatted[0]
+  assert.truthy(type(err) == "string", "Error should be string")
+  assert.truthy(join([err], "")->len() > 0, "Error should not be empty")
+})
+
+test("parser error - unexpected token", fn(assert) {
+  let result = compileAndGetErrors("fn test() { return } }", "test.lx")
+
+  assert.equal(len(result.errors), 1, "Should have 1 error")
+  assert.truthy(result.formatted[0], "Should format error")
+})
+
+// ========================================
+// Semantic Error Tests (Resolve Phase)
+// ========================================
+
+test("resolve error - duplicate variable", fn(assert) {
+  let source = "fn test() {\n  let x = 1\n  let x = 2\n  x\n}"
+  let result = compileAndGetErrors(source, "test.lx")
+
+  assert.equal(len(result.errors), 1, "Should have 1 error")
+
+  let err = result.formatted[0]
+  assert.truthy(err, "Should format error")
+
+  // Should contain filename, line number, and message
+  assert.truthy(join([err], "")[0] == "[", "Should start with [")
+  assert.truthy(join([err], "") and join([err], "")->len() > 0 and
+    (fn() {
+      for let i = 0; i < len(err); i = i + 1 {
+        if err[i] == "3" { return true }
+      }
+      false
+    })(), "Should contain line 3")
+  assert.truthy(join([err], "") and join([err], "")->len() > 0 and
+    (fn() {
+      let str = join([err], "")
+      for let i = 0; i < len(str) - 8; i = i + 1 {
+        if str[i] == "a" and str[i+1] == "l" and str[i+2] == "r" and
+           str[i+3] == "e" and str[i+4] == "a" and str[i+5] == "d" and
+           str[i+6] == "y" {
+          return true
+        }
+      }
+      false
+    })(), "Should contain 'already'")
+})
+
+test("resolve error - multiple errors", fn(assert) {
+  let source = "fn test() {\n  let x = 1\n  let x = 2\n  let y = 1\n  let y = 2\n}"
+  let result = compileAndGetErrors(source, "test.lx")
+
+  assert.equal(len(result.errors), 2, "Should have 2 errors")
+  assert.equal(len(result.formatted), 2, "Should format both errors")
+})
+
+// ========================================
+// Error Formatting Tests
+// ========================================
+
+test("formatError - handles string errors", fn(assert) {
+  let err = "[test.lx:L1:C5] Parse error"
+  let formatted = errors.formatError(err, nil)
+
+  assert.equal(formatted, err, "String errors should pass through unchanged")
+})
+
+test("formatError - handles object errors with nodeId", fn(assert) {
+  // Create a simple AST and result for testing
+  let source = "let x = 1"
+  let result = compileAndGetErrors(source, "test.lx")
+
+  // Create a mock error with nodeId
+  let mockError = .{
+    nodeId: 1,
+    message: "Test error message",
+    severity: "error",
+  }
+
+  let formatted = errors.formatError(mockError, result.result)
+
+  assert.truthy(formatted, "Should format error")
+  assert.truthy(type(formatted) == "string", "Should return string")
+})
+
+// ========================================
+// buildNodesIndex Tests
+// ========================================
+
+test("buildNodesIndex - indexes all nodes", fn(assert) {
+  let source = "fn test() {\n  let x = 1\n  x\n}"
+  let driverInstance = driver.make(.{
+    withTypecheck: false,
+    loadSource: fn(p) { source },
+  })
+
+  let result = driverInstance.compileModule("test.lx")
+
+  if result.parseResult and result.parseResult.ast {
+    let index = errors.buildNodesIndex(result.parseResult.ast)
+    let nodeIds = keys(index)
+
+    assert.truthy(len(nodeIds) > 0, "Should index at least some nodes")
+
+    // Check that nodes in index are actual nodes
+    let firstId = nodeIds[0]
+    let node = index[firstId]
+    assert.truthy(node, "Should return node for ID")
+    assert.truthy(type(node) == "map", "Node should be a map")
+  }
+})
+
+test("buildNodesIndex - includes identifier nodes", fn(assert) {
+  let source = "let x = 1"
+  let driverInstance = driver.make(.{
+    withTypecheck: false,
+    loadSource: fn(p) { source },
+  })
+
+  let result = driverInstance.compileModule("test.lx")
+
+  if result.parseResult and result.parseResult.ast {
+    let index = errors.buildNodesIndex(result.parseResult.ast)
+
+    // Find an identifier node (should exist)
+    let hasIdentifier = false
+    let nodeIds = keys(index)
+    for let i = 0; i < len(nodeIds); i = i + 1 {
+      let node = index[nodeIds[i]]
+      if node.type == "Identifier" {
+        hasIdentifier = true
+      }
+    }
+
+    assert.truthy(hasIdentifier, "Should index identifier nodes")
+  }
+})
+
+// ========================================
+// collectErrors Tests
+// ========================================
+
+test("collectErrors - collects from all phases", fn(assert) {
+  // Syntax error - only parser errors
+  let result1 = compileAndGetErrors("let x = +", "test.lx")
+  assert.truthy(len(result1.errors) > 0, "Should collect parser errors")
+
+  // Semantic error - resolve errors
+  let result2 = compileAndGetErrors("fn test() { let x = 1\n let x = 2 }", "test.lx")
+  assert.truthy(len(result2.errors) > 0, "Should collect resolve errors")
+})
+
+test("collectErrors - no double collection", fn(assert) {
+  let source = "let x = +"
+  let result = compileAndGetErrors(source, "test.lx")
+
+  // Parser errors should only be collected once
+  // (not from both parseErrors and parseResult.errors)
+  assert.equal(len(result.errors), 1, "Should not double-collect errors")
+})
+
+// ========================================
+// Integration Tests
+// ========================================
+
+test("integration - compile success has no errors", fn(assert) {
+  let source = "let x = 1\nx + 2"
+  let result = compileAndGetErrors(source, "test.lx")
+
+  assert.equal(len(result.errors), 0, "Valid code should have no errors")
+  assert.equal(len(result.formatted), 0, "Should format no errors")
+})
+
+test("integration - error includes position info", fn(assert) {
+  let source = "fn test() {\n  let x = 1\n  let x = 2\n}"
+  let result = compileAndGetErrors(source, "test.lx")
+
+  assert.equal(len(result.errors), 1, "Should have 1 error")
+
+  let formatted = result.formatted[0]
+  // Should have format like: [test.lx:3:6] Variable 'x' already declared
+  assert.truthy(formatted, "Should format error")
+
+  // Check it contains line number (3)
+  let hasLineNumber = false
+  for let i = 0; i < len(formatted); i = i + 1 {
+    if formatted[i] == "3" {
+      hasLineNumber = true
+    }
+  }
+  assert.truthy(hasLineNumber, "Should include line number in formatted error")
+})
+
+suite.run()

@@ -787,16 +787,7 @@ fn compileContinue(gen, node) {
 }
 
 fn compileFor(gen, node) {
-  // Reserve loop result slot in the enclosing scope
-  let loopResultSlot = gen.nextLocalSlot
-  gen.nextLocalSlot = gen.nextLocalSlot + 1
-  push(gen.loopResultSlots, loopResultSlot)
-
-  // Push NIL to reserve slot, KEEP it on stack
-  emitByte(gen, OP.NIL, node.line)
-  // NIL stays on stack - this IS the loop result slot
-
-  // Record the loop base slot for break - the slot height after loop result (before init)
+  // Record the loop base slot for break
   let loopBreakSlot = gen.nextLocalSlot
   push(gen.loopBaseSlots, loopBreakSlot)
 
@@ -834,7 +825,6 @@ fn compileFor(gen, node) {
   }
 
   compileStmt(gen, node.body)
-  // For loops always return nil (the initial value in loopResultSlot)
 
   patchContinues(gen)
   emitLoop(gen, loopStart, loopStartLine)
@@ -854,11 +844,8 @@ fn compileFor(gen, node) {
 
   popScope(gen)
 
-  // Single-stack - the loopResultSlot IS the result value, leave it on stack
-  // Decrement nextLocalSlot because we're "returning" it as a temporary value
-  // (The caller's compileExpr will POP it if in STMT mode)
-  gen.nextLocalSlot = gen.nextLocalSlot - 1
-  pop(gen.loopResultSlots)
+  // For loops always return nil
+  emitByte(gen, OP.NIL, node.line)
 }
 
 fn compileImport(gen, node) {
@@ -984,7 +971,6 @@ fn codegen(ast, resolveResult, opts) {
     scopeBaseSlots: [],  // Track baseline nextLocalSlot when entering each scope
     breakOffsets: [],
     continueOffsets: [],
-    loopResultSlots: [],
     loopBaseSlots: [],  // Track loop base slots for break (pops everything)
     loopContinueSlots: [],  // Track loop continue slots (keeps loop var)
     loopScopeDepth: 0,

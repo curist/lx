@@ -53,6 +53,21 @@ static int unwindInstruction(const char* name, Chunk* chunk, int offset) {
   return offset + 3;
 }
 
+static int twoByteInstruction(const char* name, Chunk* chunk, int offset) {
+  uint8_t byte1 = chunk->code[offset + 1];
+  uint8_t byte2 = chunk->code[offset + 2];
+  printf("%-16s %4d %4d\n", name, byte1, byte2);
+  return offset + 3;
+}
+
+static int threeByteInstruction(const char* name, Chunk* chunk, int offset) {
+  uint8_t byte1 = chunk->code[offset + 1];
+  uint8_t byte2 = chunk->code[offset + 2];
+  uint8_t byte3 = chunk->code[offset + 3];
+  printf("%-16s %4d %4d %4d\n", name, byte1, byte2, byte3);
+  return offset + 4;
+}
+
 int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
   printf("%04d ", offset);
 
@@ -167,6 +182,12 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return simpleInstruction("OP_CLOSE_UPVALUE", offset);
     case OP_UNWIND:
       return unwindInstruction("OP_UNWIND", chunk, offset);
+    case OP_ADD_LOCAL_IMM:
+      return twoByteInstruction("OP_ADD_LOCAL_IMM", chunk, offset);
+    case OP_STORE_LOCAL:
+      return byteInstruction("OP_STORE_LOCAL", chunk, offset);
+    case OP_STORE_IDX_LOCAL:
+      return threeByteInstruction("OP_STORE_IDX_LOCAL", chunk, offset);
     case OP_RETURN:
       return simpleInstruction("OP_RETURN", offset);
     default:

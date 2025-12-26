@@ -673,30 +673,89 @@ fn compileFunctionExpr(gen, node, mode) {
 
 fn compileAssignment(gen, node, mode) {
   if node.target.type == "Identifier" {
-    compileValue(gen, node.value)
     let info = gen.assignmentInfo[node.id]
     if !info {
       addError(gen, node, "Missing assignment info.")
       return
     }
+
+    // Try to emit ADD_LOCAL_IMM superinstruction for i = i + n pattern
+    if info.kind == "local" and node.value.type == "Binary" {
+      let binOp = node.value.operator and node.value.operator.lexeme or ""
+      if binOp == "+" and
+         node.value.left.type == "Identifier" and
+         node.value.right.type == "Number" {
+        // Check if left is the same identifier as target
+        if node.value.left.name == node.target.name {
+          let imm = node.value.right.value
+          // Check if immediate fits in a byte
+          if imm >= 0 and imm < 256 and int(imm) == imm {
+            let targetBinding = gen.resolvedNames[node.target.id]
+            let absoluteSlot = computeAbsoluteSlot(gen, targetBinding)
+            // Emit ADD_LOCAL_IMM superinstruction
+            emit3(gen, OP.ADD_LOCAL_IMM, localSlot(absoluteSlot), int(imm), node.line)
+            if mode == MODE.STMT {
+              emitByte(gen, OP.POP, node.line)
+            }
+            return
+          }
+        }
+      }
+    }
+
+    // Normal path: compile value and emit SET_LOCAL/SET_UPVALUE
+    compileValue(gen, node.value)
     if info.kind == "local" {
-      // Get the binding to compute absolute slot
       let targetBinding = gen.resolvedNames[node.target.id]
       let absoluteSlot = computeAbsoluteSlot(gen, targetBinding)
-      emitBytes(gen, OP.SET_LOCAL, localSlot(absoluteSlot), node.line)
+      if mode == MODE.STMT {
+        // Emit STORE_LOCAL superinstruction (SET_LOCAL + POP)
+        emitBytes(gen, OP.STORE_LOCAL, localSlot(absoluteSlot), node.line)
+      } else {
+        emitBytes(gen, OP.SET_LOCAL, localSlot(absoluteSlot), node.line)
+      }
     } else if info.kind == "upvalue" {
       emitBytes(gen, OP.SET_UPVALUE, info.upvalueIndex, node.line)
+      if mode == MODE.STMT {
+        emitByte(gen, OP.POP, node.line)
+      }
     } else {
       addError(gen, node, "Invalid assignment target.")
       return
-    }
-    if mode == MODE.STMT {
-      emitByte(gen, OP.POP, node.line)
     }
     return
   }
 
   if node.target.type == "Index" {
+    // Try to emit STORE_IDX_LOCAL for arr[i] = val where all are locals
+    if node.target.object.type == "Identifier" and
+       node.target.index.type == "Identifier" and
+       node.value.type == "Identifier" {
+      let objBinding = gen.resolvedNames[node.target.object.id]
+      let idxBinding = gen.resolvedNames[node.target.index.id]
+      let valBinding = gen.resolvedNames[node.value.id]
+
+      if objBinding and objBinding.kind == "local" and
+         idxBinding and idxBinding.kind == "local" and
+         valBinding and valBinding.kind == "local" {
+        // Emit STORE_IDX_LOCAL superinstruction
+        let objSlot = computeAbsoluteSlot(gen, objBinding)
+        let idxSlot = computeAbsoluteSlot(gen, idxBinding)
+        let valSlot = computeAbsoluteSlot(gen, valBinding)
+
+        emitByte(gen, OP.STORE_IDX_LOCAL, node.line)
+        emitByte(gen, localSlot(objSlot), node.line)
+        emitByte(gen, localSlot(idxSlot), node.line)
+        emitByte(gen, localSlot(valSlot), node.line)
+
+        if mode == MODE.STMT {
+          emitByte(gen, OP.POP, node.line)
+        }
+        return
+      }
+    }
+
+    // Normal path
     compileValue(gen, node.target.object)
     compileValue(gen, node.target.index)
     compileValue(gen, node.value)

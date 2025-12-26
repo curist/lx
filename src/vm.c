@@ -757,6 +757,73 @@ static InterpretResult run(void) {
         break;
       }
 
+      case OP_ADD_LOCAL_IMM: {
+        // Superinstruction: GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
+        uint8_t slot = READ_BYTE();
+        uint8_t imm = READ_BYTE();
+        Value local = slots[slot];
+        if (!IS_NUMBER(local)) {
+          runtimeError("ADD_LOCAL_IMM operand must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        Value result = NUMBER_VAL(AS_NUMBER(local) + (double)imm);
+        slots[slot] = result;
+        push(result); // Like SET_LOCAL, leaves value on stack
+        break;
+      }
+
+      case OP_STORE_LOCAL: {
+        // Superinstruction: SET_LOCAL + POP
+        uint8_t slot = READ_BYTE();
+        slots[slot] = pop();
+        break;
+      }
+
+      case OP_STORE_IDX_LOCAL: {
+        // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
+        uint8_t arrSlot = READ_BYTE();
+        uint8_t idxSlot = READ_BYTE();
+        uint8_t valSlot = READ_BYTE();
+
+        Value object = slots[arrSlot];
+        Value key = slots[idxSlot];
+        Value value = slots[valSlot];
+
+        if (!IS_HASHMAP(object) && !IS_ARRAY(object)) {
+          runtimeError("Only array or hashmap can set value by index.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        if (IS_ARRAY(object)) {
+          if (!IS_NUMBER(key)) {
+            runtimeError("Can only use number index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          int index = (int)AS_NUMBER(key);
+          if ((double)index != AS_NUMBER(key)) {
+            runtimeError("Can only use integer index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+
+          ValueArray* array = &AS_ARRAY(object);
+          if (index >= 0 && index < array->count) {
+            array->values[index] = value;
+          } else {
+            value = NIL_VAL;
+          }
+          push(value);
+        } else {
+          if (!IS_NUMBER(key) && !IS_STRING(key)) {
+            runtimeError("Hashmap key type must be number or string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* table = &AS_HASHMAP(object);
+          tableSet(table, key, value);
+          push(value);
+        }
+        break;
+      }
+
       case OP_RETURN: {
         Value result = pop();
         closeUpvalues(frame->slots);

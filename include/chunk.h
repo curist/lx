@@ -50,6 +50,9 @@ typedef enum {
   OP_CLOSURE,
   OP_CLOSE_UPVALUE,
   OP_UNWIND,
+  OP_ADD_LOCAL_IMM,       // Superinstruction: GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
+  OP_STORE_LOCAL,         // Superinstruction: SET_LOCAL + POP
+  OP_STORE_IDX_LOCAL,   // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
   OP_RETURN = 0xff,
 } OpCode;
 

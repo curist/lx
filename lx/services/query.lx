@@ -1371,6 +1371,7 @@ fn compile(filepath) {
   let driver = Driver.make(.{
     loadSource: fn(path) { slurp(path) },
     withTypecheck: true,
+    withAnf: false,  // Query service needs non-ANF AST (imports not hoisted, etc.)
   })
 
   // Compile module through full pipeline

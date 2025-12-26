@@ -15,6 +15,7 @@ fn compileAndQuery(source, filename) {
       return slurp(path)
     },
     withTypecheck: true,
+    withAnf: false,  // Query tests need non-ANF AST (imports not hoisted, etc.)
   })
 
   let result = driver.compileModule(filename)

@@ -1,10 +1,11 @@
-// Driver - Orchestrates compilation pipeline: parse → lower → resolve → typecheck
+// Driver - Orchestrates compilation pipeline: parse → lower → resolve → typecheck → anf
 //
 // Responsibilities:
 // - Coordinate phase execution
 // - Manage import cache for multi-file compilation
 // - Handle circular import detection
 // - Provide compilation artifacts for query service and codegen
+// - ANF runs after typecheck (optional, default on) for codegen optimization
 
 let parse = import "src/parser.lx"
   let lower = import "src/lower.lx"
@@ -22,6 +23,7 @@ fn make(opts) {
   driver.compiledModules = []  // Track compilation order
   driver.loadSource = opts and opts.loadSource or nil
   driver.withTypecheck = !(opts and opts.withTypecheck == false)  // Default: true
+  driver.withAnf = !(opts and opts.withAnf == false)  // Default: true
 
   driver.compileModule = fn(path) {
     // Track compilation
@@ -88,23 +90,27 @@ fn make(opts) {
     }
 
     // ========================================
-    // PHASE 3: ANF
+    // PHASE 3: ANF (optional, default on)
     // ========================================
-    let anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
-    if !anfResult.success {
-      let result = .{
-        status: "failed",
-        path: path,
-        parseResult: parseResult,
-        lowerResult: lowerResult,
-        anfResult: anfResult,
+    let anfResult = nil
+    let anfAst = lowerResult.ast
+    let nextNodeId = lowerResult.nextNodeId
+    if driver.withAnf {
+      anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
+      if !anfResult.success {
+        let result = .{
+          status: "failed",
+          path: path,
+          parseResult: parseResult,
+          lowerResult: lowerResult,
+          anfResult: anfResult,
+        }
+        driver.cache[path] = result
+        return result
       }
-      driver.cache[path] = result
-      return result
+      anfAst = anfResult.ast
+      nextNodeId = anfResult.nextNodeId
     }
-
-    let anfAst = anfResult.ast
-    let nextNodeId = anfResult.nextNodeId
 
     // ========================================
     // PHASE 4: Resolve
@@ -120,12 +126,12 @@ fn make(opts) {
         status: "failed",
         path: path,
         parseResult: parseResult,
-      lowerResult: lowerResult,
-      anfResult: anfResult,
-      resolveResult: resolveResult,
-    }
-    driver.cache[path] = result
-    return result
+        lowerResult: lowerResult,
+        anfResult: anfResult,
+        resolveResult: resolveResult,
+      }
+      driver.cache[path] = result
+      return result
     }
 
     // ========================================

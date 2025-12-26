@@ -155,7 +155,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
 
   let codeSize = len(chunk.bytecode)
   obj = concat(obj, int32ToBytes(codeSize))
-  obj = concat(obj, chunk.bytecode)
+  obj = concat(obj, map(chunk.bytecode, lib.tohex))
 
   // save start index, we will update this to actual constants size
   let constSectionStart = len(obj)

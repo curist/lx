@@ -3,16 +3,19 @@
     let i = start - 1
     fn() { i = i + 1 }
   },
-  tohex: fn (num) {
+  tohex: {
     let map = .{
       [10]: "a", [11]: "b", [12]: "c",
       [13]: "d", [14]: "e", [15]: "f",
     }
-    if num < 0 or num > 255 {
-      return nil
+
+    fn (num) {
+      if num < 0 or num > 255 {
+        return nil
+      }
+      let x = int(num / 16)
+      let y = num % 16
+      return join([map[x] or x, map[y] or y], "")
     }
-    let x = int(num / 16)
-    let y = num % 16
-    return join([map[x] or x, map[y] or y], "")
   },
 }

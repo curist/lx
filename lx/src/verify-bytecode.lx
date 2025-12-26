@@ -197,8 +197,8 @@ fn hexToByte(hex) {
 }
 
 fn readByte(code, ip) {
-  // Assumes bounds already checked by caller
-  return hexToByte(code[ip])
+  // Bytecode now stored as numbers, not hex strings
+  return code[ip]
 }
 
 fn readShort(code, ip) {

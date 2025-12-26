@@ -47,50 +47,73 @@ fn addError(gen, node, message) {
   })
 }
 
-fn emitByte(gen, byte, line) {
-  let node = gen.currentNode
-  let nodeInfo = node and (node.type + " L" + str(node.line or gen.currentLine or 0)) or "unknown"
-  if type(byte) != "number" {
-    addError(gen, gen.currentNode, "Invalid bytecode (non-number): " + str(byte) + " at " + nodeInfo)
-    byte = 0
-  } else {
-    byte = int(byte)
-    if byte < 0 or byte > 255 {
-      addError(gen, gen.currentNode, "Invalid bytecode (out of range): " + str(byte) + " at " + nodeInfo)
-      byte = 0
-    }
-  }
+// Primitive emit functions - do not call each other to avoid overhead
+// Store bytes as numbers, not hex strings (objbuilder will convert)
+fn emit1(gen, b, line) {
+  gen.metrics.emitCalls = gen.metrics.emitCalls + 1
   let chunk = gen.currentFunction.chunk
-  push(chunk.bytecode, lib.tohex(byte))
-  push(chunk.lines, line or gen.currentLine or 1)
-  push(chunk.nodeIds, node and node.id or 0)
+  let ln = line or gen.currentLine or 1
+  let nodeId = gen.currentNode and gen.currentNode.id or 0
+
+  push(chunk.bytecode, int(b))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
 }
 
-fn emitBytes(gen, byte1, byte2, line) {
-  emitByte(gen, byte1, line)
-  emitByte(gen, byte2, line)
+fn emit2(gen, b1, b2, line) {
+  gen.metrics.emitCalls = gen.metrics.emitCalls + 2
+  let chunk = gen.currentFunction.chunk
+  let ln = line or gen.currentLine or 1
+  let nodeId = gen.currentNode and gen.currentNode.id or 0
+
+  push(chunk.bytecode, int(b1))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
+  push(chunk.bytecode, int(b2))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
 }
+
+fn emit3(gen, b1, b2, b3, line) {
+  gen.metrics.emitCalls = gen.metrics.emitCalls + 3
+  let chunk = gen.currentFunction.chunk
+  let ln = line or gen.currentLine or 1
+  let nodeId = gen.currentNode and gen.currentNode.id or 0
+
+  push(chunk.bytecode, int(b1))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
+  push(chunk.bytecode, int(b2))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
+  push(chunk.bytecode, int(b3))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
+}
+
+// Backwards compatibility wrappers
+fn emitByte(gen, byte, line) { emit1(gen, byte, line) }
+fn emitBytes(gen, byte1, byte2, line) { emit2(gen, byte1, byte2, line) }
 
 fn emitLoop(gen, loopStart, line) {
-  emitByte(gen, OP.LOOP, line)
+  emit1(gen, OP.LOOP, line)
   let offset = len(gen.currentFunction.chunk.bytecode) - loopStart + 2
-  emitByte(gen, int(offset / 256), line)
-  emitByte(gen, offset % 256, line)
+  emit2(gen, int(offset / 256), offset % 256, line)
 }
 
 fn emitJump(gen, instruction, line) {
-  emitByte(gen, instruction, line)
-  emitBytes(gen, 255, 255, line)
+  emit3(gen, instruction, 255, 255, line)
   return len(gen.currentFunction.chunk.bytecode) - 2
 }
 
 fn patchJump(gen, offset) {
+  gen.metrics.patchCount = gen.metrics.patchCount + 1
   let jump = len(gen.currentFunction.chunk.bytecode) - offset - 2
   if jump > UINT16_MAX {
     addError(gen, gen.currentNode, "Too much code to jump over.")
   }
-  gen.currentFunction.chunk.bytecode[offset] = lib.tohex(int(jump / 256))
-  gen.currentFunction.chunk.bytecode[offset + 1] = lib.tohex(jump % 256)
+  gen.currentFunction.chunk.bytecode[offset] = int(jump / 256)
+  gen.currentFunction.chunk.bytecode[offset + 1] = jump % 256
 }
 
 fn calcValueKey(value) {
@@ -111,14 +134,20 @@ fn calcValueKey(value) {
   k
 }
 
-fn addConstant(chunk, value) {
+fn addConstant(chunk, value, gen) {
+  gen.metrics.constLookups = gen.metrics.constLookups + 1
   let k = calcValueKey(value)
   if k == "nocache" {
+    gen.metrics.constAdds = gen.metrics.constAdds + 1
     push(chunk.constants, value)
     return len(chunk.constants) - 1
   }
   let index = chunk.constantsCache[k]
-  if index { return index }
+  if index {
+    gen.metrics.constHits = gen.metrics.constHits + 1
+    return index
+  }
+  gen.metrics.constAdds = gen.metrics.constAdds + 1
   push(chunk.constants, value)
   index = len(chunk.constants) - 1
   chunk.constantsCache[k] = index
@@ -126,7 +155,7 @@ fn addConstant(chunk, value) {
 }
 
 fn makeConstant(gen, value) {
-  let constant = addConstant(gen.currentFunction.chunk, value)
+  let constant = addConstant(gen.currentFunction.chunk, value, gen)
   if constant > 256 {
     addError(gen, gen.currentNode, "Too many constants in one chunk.")
     return 0
@@ -254,8 +283,8 @@ fn patchBreaks(gen) {
     if jump > UINT16_MAX {
       addError(gen, gen.currentNode, "Too much code to jump over.")
     }
-    gen.currentFunction.chunk.bytecode[addr] = lib.tohex(int(jump / 256))
-    gen.currentFunction.chunk.bytecode[addr + 1] = lib.tohex(jump % 256)
+    gen.currentFunction.chunk.bytecode[addr] = int(jump / 256)
+    gen.currentFunction.chunk.bytecode[addr + 1] = jump % 256
   }
 }
 
@@ -268,8 +297,8 @@ fn patchContinues(gen) {
     if jump > UINT16_MAX {
       addError(gen, gen.currentNode, "Loop body too large.")
     }
-    gen.currentFunction.chunk.bytecode[addr] = lib.tohex(int(jump / 256))
-    gen.currentFunction.chunk.bytecode[addr + 1] = lib.tohex(jump % 256)
+    gen.currentFunction.chunk.bytecode[addr] = int(jump / 256)
+    gen.currentFunction.chunk.bytecode[addr + 1] = jump % 256
   }
 }
 
@@ -858,6 +887,7 @@ fn compileImport(gen, node) {
 
 fn compileValueExpr(gen, node) {
   if !node { return }
+  gen.metrics.nodesVisited = gen.metrics.nodesVisited + 1
   gen.currentNode = node
   gen.currentLine = node.line
 
@@ -963,6 +993,16 @@ fn codegen(ast, resolveResult, opts) {
     // Track actual emitted local positions (nodeId -> absolute slot)
     emittedLocals: .{},
     nextLocalSlot: 0,  // Counter for absolute local positions
+
+    // Performance counters
+    metrics: .{
+      nodesVisited: 0,
+      emitCalls: 0,
+      patchCount: 0,
+      constAdds: 0,
+      constLookups: 0,
+      constHits: 0,
+    },
   }
 
   compileBlock(gen, ast)
@@ -972,6 +1012,8 @@ fn codegen(ast, resolveResult, opts) {
     success: len(gen.errors) == 0,
     function: gen.currentFunction,
     errors: gen.errors,
+    metrics: gen.metrics,
+    bytesEmitted: len(gen.currentFunction.chunk.bytecode),
   }
 }
 

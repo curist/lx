@@ -23,7 +23,7 @@ Added three superinstructions to further optimize common patterns:
    - Replaces: SET_LOCAL + POP (2 ops → 1 op)
    - 50% reduction
 
-3. **STORE_IDX_LOCAL** - `arr[i] = val` (all locals)
+3. **STORE_BY_IDX** - `arr[i] = val` (all locals)
    - Replaces: GET_LOCAL×3 + SET_BY_INDEX (4 ops → 1 op)
    - 75% reduction
 
@@ -31,6 +31,60 @@ Added three superinstructions to further optimize common patterns:
 - `i = i + 1`: 8 ops → 1 op (87.5% reduction)
 - `arr[i] = i`: 8 ops → 1 op (87.5% reduction)
 - All tests passing, optimizations verified in bytecode
+
+---
+
+## Benchmark Results
+
+**Baseline:** commit 50f9d72 (before optimizations)
+**Optimized:** commit 2286bed (after all optimizations)
+**Test Date:** 2025-12-26
+**Hardware:** Darwin 24.6.0
+
+### Performance Comparison
+
+| Benchmark | Before (sec) | After (sec) | Improvement | Speedup |
+|-----------|--------------|-------------|-------------|---------|
+| **sum_loop** (50M iterations) | 1.04 | **0.78** | **25.0%** | 1.33x |
+| **fizzbuzz** (20M iterations) | 1.30 | **1.16** | **10.8%** | 1.12x |
+| **fib_iter** (5M iterations) | 0.19 | **0.15** | **21.1%** | 1.27x |
+| **array_fill** (10M elements) | 0.61 | **0.42** | **31.1%** | 1.45x |
+| **map_hit_miss** (5M ops) | 0.92 | **0.83** | **9.8%** | 1.11x |
+| **Average** | | | **19.6%** | 1.26x |
+
+### Key Findings
+
+1. **array_fill: 31% faster** - Best improvement due to heavy use of array indexing
+   - Pattern `arr[i] = i` optimized from 8 ops to 1 op with STORE_BY_IDX
+   - Pattern `i = i + 1` optimized with ADD_LOCAL_IMM
+
+2. **sum_loop: 25% faster** - Tight arithmetic loop
+   - Two assignments per iteration benefit from superinstructions
+   - `i = i + 1` and `acc = acc + i` both optimized
+
+3. **fib_iter: 21% faster** - Multiple loop variables
+   - Benefits from ANF temp elimination and loop optimizations
+
+4. **fizzbuzz & map_hit_miss: 10-11% faster** - More complex control flow
+   - Smaller relative benefit but still consistent improvement
+
+### Comparison with Other Languages (optimized lx)
+
+From the same benchmark run:
+
+| Benchmark | lx | Python | Lua | LuaJIT | Chez |
+|-----------|-----|--------|-----|--------|------|
+| sum_loop | 0.78s | 1.16s | 0.15s | 0.02s | 0.06s |
+| fizzbuzz | 1.16s | 0.89s | 0.30s | 0.04s | 0.16s |
+| fib_iter | 0.15s | 0.16s | 0.05s | 0.02s | 0.04s |
+| array_fill | 0.42s | 0.51s | 0.18s | 0.06s | 0.06s |
+| map_hit_miss | 0.83s | 0.49s | 0.11s | 0.03s | 0.32s |
+
+**Observations:**
+- lx now faster than Python on sum_loop and array_fill
+- Lua (interpreter) is 2-5x faster than lx
+- LuaJIT is 13-40x faster (JIT compilation advantage)
+- Chez Scheme is comparable or faster on most benchmarks
 
 ---
 

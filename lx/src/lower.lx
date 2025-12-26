@@ -479,16 +479,14 @@ fn lowerCollect(lowerer, node) {
   // Desugar: collect <for-syntax> { body }
   // Into: {
   //   let $result = []
-  //   let $break_value = for <for-syntax> { push($result, body) }
-  //   if $break_value != nil { push($result, $break_value) }
+  //   for <for-syntax> { array_append($result, body) }
   //   $result
   // }
 
   let loweredBody = lowerExpr(lowerer, node.body)
 
-  // Generate hygienic names
+  // Generate hygienic name
   let resultName = "$result_" + str(node.id)
-  let breakValueName = "$break_value_" + str(node.id)
 
   // Helper to create an Identifier node
   fn makeIdent(name) {
@@ -502,34 +500,6 @@ fn lowerCollect(lowerer, node) {
       endCol: node.col,
       name: name,
       lexeme: name,
-    }
-  }
-
-  // Helper to create an empty Array node
-  fn makeEmptyArray() {
-    .{
-      type: "Array",
-      filename: node.filename,
-      id: allocNodeId(lowerer),
-      line: node.line,
-      col: node.col,
-      endLine: node.line,
-      endCol: node.col,
-      elements: [],
-    }
-  }
-
-  // Helper to create nil node
-  fn makeNil() {
-    .{
-      type: "Nil",
-      filename: node.filename,
-      id: allocNodeId(lowerer),
-      line: node.line,
-      col: node.col,
-      endLine: node.line,
-      endCol: node.col,
-      lexeme: "nil",
     }
   }
 
@@ -574,33 +544,6 @@ fn lowerCollect(lowerer, node) {
   }
   lowerer.origin[arrayAppendNode.id] = node.id
 
-  // Create: nil (to ensure loop body doesn't return $result)
-  let nilNode = .{
-    type: "Nil",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.line,
-    endCol: node.col,
-    lexeme: "nil",
-  }
-  lowerer.origin[nilNode.id] = node.id
-
-  // Create the for loop body as a block containing the array_append call followed by nil
-  // This ensures the loop returns nil on normal exit, not $result
-  let forBodyNode = .{
-    type: "Block",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.endLine,
-    endCol: node.endCol,
-    expressions: [arrayAppendNode, nilNode],
-  }
-  lowerer.origin[forBodyNode.id] = node.id
-
   // Lower the init, condition, update (if present)
   let loweredInit = node.init and lowerExpr(lowerer, node.init) or nil
   let loweredCondition = node.condition and lowerExpr(lowerer, node.condition) or nil
@@ -618,74 +561,11 @@ fn lowerCollect(lowerer, node) {
     init: loweredInit,
     condition: loweredCondition,
     update: loweredUpdate,
-    body: forBodyNode,
+    body: arrayAppendNode,
   }
   lowerer.origin[forNode.id] = node.id
 
-  // Create: let $break_value = for ...
-  let breakValueLetNode = .{
-    type: "Let",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.endLine,
-    endCol: node.endCol,
-    name: makeIdent(breakValueName),
-    init: forNode,
-  }
-  lowerer.origin[breakValueLetNode.id] = node.id
-
-  // Create: $break_value != nil
-  let breakValueCheckNode = .{
-    type: "Binary",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.line,
-    endCol: node.col,
-    left: makeIdent(breakValueName),
-    operator: .{
-      type: TOKEN.BANG_EQUAL,
-      lexeme: "!=",
-      line: node.line,
-      col: node.col,
-    },
-    right: makeNil(),
-  }
-  lowerer.origin[breakValueCheckNode.id] = node.id
-
-  // Create: array_append($result, $break_value) intrinsic
-  let arrayAppendBreakNode = .{
-    type: "IntrinsicCall",
-    intrinsic: "array_append",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.line,
-    endCol: node.col,
-    args: [makeIdent(resultName), makeIdent(breakValueName)],
-  }
-  lowerer.origin[arrayAppendBreakNode.id] = node.id
-
-  // Create: if $break_value != nil { array_append($result, $break_value) }
-  let ifNode = .{
-    type: "If",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.line,
-    endCol: node.col,
-    condition: breakValueCheckNode,
-    then: arrayAppendBreakNode,
-    else: nil,
-  }
-  lowerer.origin[ifNode.id] = node.id
-
-  // Create the outer block
+  // Create the outer block: { let $result = []; for ...; $result }
   let outerBlockNode = .{
     type: "Block",
     filename: node.filename,
@@ -694,7 +574,7 @@ fn lowerCollect(lowerer, node) {
     col: node.col,
     endLine: node.endLine,
     endCol: node.endCol,
-    expressions: [resultLetNode, breakValueLetNode, ifNode, makeIdent(resultName)],
+    expressions: [resultLetNode, forNode, makeIdent(resultName)],
   }
   lowerer.origin[outerBlockNode.id] = node.id
 
@@ -709,7 +589,6 @@ fn lowerCollectIn(lowerer, node) {
   let loweredBody = lowerExpr(lowerer, node.body)
 
   let resultName = "$result_" + str(node.id)
-  let breakValueName = "$break_value_" + str(node.id)
   let arrName = "$arr_" + str(node.id)
   let lenName = "$len_" + str(node.id)
   let idxName = "$i_" + str(node.id)
@@ -902,11 +781,6 @@ fn lowerCollectIn(lowerer, node) {
   lowerer.origin[arrayAppendNode.id] = node.id
   push(innerBodyExprs, arrayAppendNode)
 
-  // Create: nil (to ensure loop body doesn't return $result)
-  let nilNode = makeNil()
-  lowerer.origin[nilNode.id] = node.id
-  push(innerBodyExprs, nilNode)
-
   // Create the inner block for the for loop body
   let innerBlockNode = .{
     type: "Block",
@@ -1003,70 +877,7 @@ fn lowerCollectIn(lowerer, node) {
   }
   lowerer.origin[forNode.id] = node.id
 
-  // Create: let $break_value = for ...
-  let breakValueLetNode = .{
-    type: "Let",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.endLine,
-    endCol: node.endCol,
-    name: makeIdent(breakValueName),
-    init: forNode,
-  }
-  lowerer.origin[breakValueLetNode.id] = node.id
-
-  // Create: $break_value != nil
-  let breakValueCheckNode = .{
-    type: "Binary",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.line,
-    endCol: node.col,
-    left: makeIdent(breakValueName),
-    operator: .{
-      type: TOKEN.BANG_EQUAL,
-      lexeme: "!=",
-      line: node.line,
-      col: node.col,
-    },
-    right: makeNil(),
-  }
-  lowerer.origin[breakValueCheckNode.id] = node.id
-
-  // Create: array_append($result, $break_value) intrinsic
-  let arrayAppendBreakNode = .{
-    type: "IntrinsicCall",
-    intrinsic: "array_append",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.line,
-    endCol: node.col,
-    args: [makeIdent(resultName), makeIdent(breakValueName)],
-  }
-  lowerer.origin[arrayAppendBreakNode.id] = node.id
-
-  // Create: if $break_value != nil { array_append($result, $break_value) }
-  let ifNode = .{
-    type: "If",
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.line,
-    endCol: node.col,
-    condition: breakValueCheckNode,
-    then: arrayAppendBreakNode,
-    else: nil,
-  }
-  lowerer.origin[ifNode.id] = node.id
-
-  // Create the outer block with all the pieces
+  // Create the outer block: { let $result = []; let $arr = ...; let $len = ...; for ...; $result }
   let outerBlockNode = .{
     type: "Block",
     filename: node.filename,
@@ -1075,7 +886,7 @@ fn lowerCollectIn(lowerer, node) {
     col: node.col,
     endLine: node.endLine,
     endCol: node.endCol,
-    expressions: [resultLetNode, arrLetNode, lenLetNode, breakValueLetNode, ifNode, makeIdent(resultName)],
+    expressions: [resultLetNode, arrLetNode, lenLetNode, forNode, makeIdent(resultName)],
   }
   lowerer.origin[outerBlockNode.id] = node.id
 
@@ -1091,11 +902,7 @@ fn lowerReturn(lowerer, node) {
 }
 
 fn lowerBreak(lowerer, node) {
-  let newNode = copyNodeShallow(lowerer, node)
-  if node.value {
-    newNode.value = lowerExpr(lowerer, node.value)
-  }
-  newNode
+  copyNodeShallow(lowerer, node)
 }
 
 fn lowerContinue(lowerer, node) {

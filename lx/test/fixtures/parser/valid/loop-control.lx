@@ -6,11 +6,6 @@ for true {
   break
 }
 
-// Break with value
-for true {
-  break 42
-}
-
 // Continue at end of loop block
 for let i = 0; i < 10; i = i + 1 {
   continue

@@ -149,8 +149,8 @@ fn find(arr, target) {
 **Return values:**
 - `let x = value` returns `value` (the RHS)
 - Assignments `x = value` return `value`
-- `for` loops return the last evaluated body expression
-- `break` returns `nil`, `break value` returns `value`
+- `for` loops always return `nil`
+- `break` returns `nil` (for loops are statements, not expressions)
 
 ```lx
 fn example1() {
@@ -159,16 +159,18 @@ fn example1() {
 
 fn example2() {
   for let i = 0; i < 3; i = i + 1 {
-    i * 10  // Last iteration: i=2, returns 20
+    i * 10  // Loop body executes, but loop returns nil
   }
+  // Returns nil
 }
 
 fn example3() {
-  for let i = 0; i < 10; i = i + 1 {
+  let result = for let i = 0; i < 10; i = i + 1 {
     if i == 5 {
-      break "found"  // Returns "found"
+      break  // Exit loop early
     }
   }
+  // result is nil
 }
 ```
 
@@ -262,6 +264,17 @@ let indexed = collect val, i in ["a", "b"] {
 ```lx
 collect i in range(3) { str(i) }  // Array[String]
 collect i in range(3) { i * 2 }    // Array[Number]
+```
+
+**Early termination with `break`:**
+- Using `break` in a collect expression exits the loop early
+- The array contains all elements collected before the break
+```lx
+collect i in [1, 2, 3, 4, 5] {
+  if i == 3 { break }
+  i * 2
+}
+// Result: [2, 4] (collected before break at i=3)
 ```
 
 ### Operators

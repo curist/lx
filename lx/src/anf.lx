@@ -426,11 +426,7 @@ fn anfReturn(anf, node) {
 }
 
 fn anfBreak(anf, node) {
-  let newNode = copyNodeShallow(anf, node)
-  if node.value {
-    newNode.value = anfToValue(anf, node.value)
-  }
-  newNode
+  copyNodeShallow(anf, node)
 }
 
 fn anfContinue(anf, node) {

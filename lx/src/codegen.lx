@@ -736,12 +736,6 @@ fn compileBreak(gen, node) {
     addError(gen, node, "Break used outside loop.")
     return
   }
-  if node.value {
-    compileValue(gen, node.value)
-    let loopResultSlot = gen.loopResultSlots[len(gen.loopResultSlots) - 1]
-    emitBytes(gen, OP.SET_LOCAL, localSlot(loopResultSlot), node.line)
-    emitByte(gen, OP.POP, node.line)
-  }
   // Unwind to loop base slot (the slot height after loop result slot)
   let loopBaseSlot = gen.loopBaseSlots[len(gen.loopBaseSlots) - 1]
   unwindToSlot(gen, loopBaseSlot)
@@ -808,10 +802,8 @@ fn compileFor(gen, node) {
     patchJump(gen, bodyJump)
   }
 
-  compileValue(gen, node.body)
-  // Persist last body value as loop result.
-  emitBytes(gen, OP.SET_LOCAL, localSlot(loopResultSlot), node.body.line)
-  emitByte(gen, OP.POP, node.body.line)
+  compileStmt(gen, node.body)
+  // For loops always return nil (the initial value in loopResultSlot)
 
   patchContinues(gen)
   emitLoop(gen, loopStart, loopStartLine)

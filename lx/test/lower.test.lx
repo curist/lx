@@ -291,15 +291,6 @@ test("lower - return with arrow", fn(assert) {
   assert.equal(node.value.type, "Call")
 })
 
-test("lower - break with arrow", fn(assert) {
-  let result = parseAndLower("break x->f()")
-  assert.truthy(result.success)
-
-  let node = first(result)
-  assert.equal(node.type, "Break")
-  assert.equal(node.value.type, "Call")
-})
-
 test("lower - assignment with arrow", fn(assert) {
   let result = parseAndLower("x = y->f()")
   assert.truthy(result.success)

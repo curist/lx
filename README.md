@@ -10,8 +10,8 @@ Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived pr
 * Minimal
 * Compiled
 * Alpha quality
-* Almost everything is expression
-* (Half) self hosted; Lx can compile itself, but relies on a C runtime.
+* (Almost) everything is expression
+* (Half) self hosted; Lx can compile itself, but relies on a C runtime
 
 ## Lx is not
 * Object oriented; Lx doesn't come with class.
@@ -23,7 +23,7 @@ Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived pr
 
 ```sh
 ❯ lx version
-lx version 2022.12.12-f57332b (Darwin)
+lx version 2025.12.26-ea09e35 (Darwin)
 
 ❯ lx
 Usage:
@@ -34,8 +34,8 @@ The commands are:
   run          Run source or lxobj
   eval         Evaluate expression
   repl         Start REPL
-  compile      Compile source to lxobj
-  disasm       Disassemble lxobj
+  compile      Compile source to lxobj (-o/--output <output>)
+  disasm       Disassemble lxobj or lx source
   version      Print version
   help         Print this helpful page
 ```
@@ -60,7 +60,8 @@ true false
 // string
 "Lx strings are double quoted"
 "few escape sequences are supported: \r \n \t \\ \" "
-"there's no utf-8 support currently though :("
+"utf-8 strings are supported: Hello 世界 🌍"
+// len() returns byte length, use range(string) for character array
 
 // falsy values: only `false` & `nil` are treated as falsy, just like in lua
 
@@ -102,12 +103,11 @@ print(arr[2]) // 6 printed
 // or using range builtin
 let countToFive = range(5) // [0, 1, 2, 3, 4]
 
-// hashmap... ah, I have to confess; having a different syntax here,
-// is mostly because I want to keep the single pass compiler simpler.
-// it's certainly possible to let Lx to have regular hashmap syntax
-// like most other languages, a plain good old `{}`
-// but that complicates the parser code quite a bit...
-// so, in Lx, hashmap begins with `.{`, and ends with `}`
+// hashmap - uses `.{` syntax to distinguish from block expressions `{}`
+// since blocks are expressions in Lx, we need a way to tell them apart:
+//   { x + 1 }   // this is a block expression
+//   .{ x: 1 }   // this is a hashmap
+// so in Lx, hashmaps begin with `.{` and end with `}`
 let mymap = .{
   key: "value", // key in string
   [40]: "a number key", // key could also in numbers
@@ -123,25 +123,41 @@ let howdy = foo and bar or baz // ternary expression
 
 let ifResult = if foo {
   print("then clause")
-} else if {
+} else if bar {
   "else if"
-} // if-else resolves to last evaluted result, or nil
+} // if-else resolves to last evaluated result, or nil
 
 // loops
-for true { print("endsless") } // while loop
+for true { print("endless") } // while loop
 let result = for let i = 0; i < 10; i = i + 1 {
   // traditional loop
   print(i)
   i
-} // for loop resolves to last evaluated value, => result == 9
+} // for loops always return nil => result == nil
 
-// break
-result = for let i = 0; i < 10; i = i + 1 {
-  if i == 3 { break "ohnoez" } // break could optionally pass a value
-  i
-} // result == "ohnoez"
+// break - exits loop early
+for let i = 0; i < 10; i = i + 1 {
+  if i == 3 { break } // break exits the loop
+  print(i)
+} // prints 0, 1, 2
 
-// arrow chainging, `->`, which pass lhs as first arg of rhs
+// collect expressions - build arrays from loops
+let squares = collect let i = 0; i < 5; i = i + 1 {
+  i * i
+} // squares == [0, 1, 4, 9, 16]
+
+// collect also works with for-in style
+let doubled = collect x in [1, 2, 3] {
+  x * 2
+} // doubled == [2, 4, 6]
+
+// collect with break - returns elements collected before break
+let partial = collect i in range(10) {
+  if i == 5 { break }
+  i * 2
+} // partial == [0, 2, 4, 6, 8]
+
+// arrow chaining, `->`, which passes lhs as first arg of rhs
 each(Lx.globals(), fn(x) { print(x) }) // could be rewritten as
 Lx.globals()->each(fn(x) { print(x) })
 
@@ -152,7 +168,7 @@ Lx.globals()->each(_1(print))
 
 ```
 
-## Bulitin functions
+## Builtin functions
 
 Lx currently has enough of builtin functions to compile itself, and a few other QOL collection functions, those could be checked with `Lx.globals()`.
 

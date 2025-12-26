@@ -771,11 +771,6 @@ fn resolveExpr(resolver, node, context) {
     if context and !context.isLastExpr {
       addError(resolver, node.id, "Break must be at end of block")
     }
-
-    // Resolve break value if present
-    if node.value {
-      resolveExpr(resolver, node.value, context)
-    }
   } else if node.type == "Continue" {
     // Continue: must be inside loop
     if !isInLoop(resolver.currentScope) {

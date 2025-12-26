@@ -320,14 +320,8 @@ fn ReturnNode(filename, startToken, value) {
   node
 }
 
-fn BreakNode(filename, startToken, value) {
-  let node = Node("Break", filename, startToken)
-  node.value = value
-  if value {
-    node.endLine = value.endLine
-    node.endCol = value.endCol
-  }
-  node
+fn BreakNode(filename, startToken) {
+  Node("Break", filename, startToken)
 }
 
 fn ContinueNode(filename, token) {
@@ -1049,18 +1043,11 @@ fn parse(src, filename) {
     ReturnNode(filename, startToken, value)
   }
 
-  fn breakExpr() {
-    let startToken = parser.previous
-
-    let value = nil
-    if !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF) {
-      value = expression()
-    }
-
-    BreakNode(filename, startToken, value)
+  fn breakStmt() {
+    BreakNode(filename, parser.previous)
   }
 
-  fn continueExpr() {
+  fn continueStmt() {
     ContinueNode(filename, parser.previous)
   }
 
@@ -1131,8 +1118,8 @@ fn parse(src, filename) {
     [TOKEN.NIL]:             [literal,    nil,    PREC.NONE],
     [TOKEN.OR]:              [nil,        or_,    PREC.OR],
     [TOKEN.RETURN]:          [returnStatement, nil, PREC.NONE],
-    [TOKEN.BREAK]:           [breakExpr,  nil,    PREC.NONE],
-    [TOKEN.CONTINUE]:        [continueExpr, nil,  PREC.NONE],
+    [TOKEN.BREAK]:           [breakStmt,  nil,    PREC.NONE],
+    [TOKEN.CONTINUE]:        [continueStmt, nil,  PREC.NONE],
     [TOKEN.TRUE]:            [literal,    nil,    PREC.NONE],
     [TOKEN.IN]:              [nil,        nil,    PREC.NONE],
     [TOKEN.COLLECT]:         [collectExpr, nil,   PREC.NONE],

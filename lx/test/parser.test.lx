@@ -425,13 +425,12 @@ test("parser - break in loop", fn(assert) {
   assert.equal(body.expressions[0].value, nil)
 })
 
-test("parser - break with value in loop", fn(assert) {
-  let result = parse("for true { break 10 }", "test.lx")
+test("parser - break in loop (no value)", fn(assert) {
+  let result = parse("for true { break }", "test.lx")
   assert.truthy(result.success)
 
   let body = first(result).body
   assert.equal(body.expressions[0].type, "Break")
-  assert.equal(body.expressions[0].value.value, 10)
 })
 
 test("parser - continue in loop", fn(assert) {

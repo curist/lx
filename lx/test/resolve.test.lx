@@ -485,12 +485,6 @@ test("resolve - break inside loop (valid)", fn(assert) {
   assert.equal(len(result.errors), 0, "Should have no errors")
 })
 
-test("resolve - break inside loop with value (valid)", fn(assert) {
-  let result = parseAndResolve("for true { break 1 }")
-  assert.truthy(result.success, "Should allow break with value inside loop")
-  assert.equal(len(result.errors), 0, "Should have no errors")
-})
-
 test("resolve - break outside loop (invalid)", fn(assert) {
   let result = parseAndResolve("{ break }")
   assert.equal(result.success, false, "Should reject break outside loop")

@@ -779,7 +779,7 @@ static InterpretResult run(void) {
         break;
       }
 
-      case OP_STORE_IDX_LOCAL: {
+      case OP_STORE_BY_IDX: {
         // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
         uint8_t arrSlot = READ_BYTE();
         uint8_t idxSlot = READ_BYTE();

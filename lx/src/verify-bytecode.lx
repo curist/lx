@@ -93,7 +93,7 @@ let STACK_MIN = .{
   // Superinstructions
   [OP.ADD_LOCAL_IMM]:      0,  // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL: reads from local slot
   [OP.STORE_LOCAL]:        1,  // SET_LOCAL + POP: needs value to store
-  [OP.STORE_IDX_LOCAL]:  0,    // GET_LOCAL×3 + SET_BY_INDEX: reads all from local slots
+  [OP.STORE_BY_IDX]:  0,    // GET_LOCAL×3 + SET_BY_INDEX: reads all from local slots
 }
 
 // Static table of stack effects for each opcode
@@ -161,7 +161,7 @@ let STACK_EFFECTS = .{
   // Superinstructions
   [OP.ADD_LOCAL_IMM]:      1,   // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL: net +1
   [OP.STORE_LOCAL]:       -1,   // SET_LOCAL + POP: net -1
-  [OP.STORE_IDX_LOCAL]:  1,     // GET_LOCAL×3 + SET_BY_INDEX: net +1 (3 pushes, SET_BY_INDEX is -2)
+  [OP.STORE_BY_IDX]:  1,     // GET_LOCAL×3 + SET_BY_INDEX: net +1 (3 pushes, SET_BY_INDEX is -2)
 
   // RETURN (0): special handling in stackEffect()
   [OP.RETURN]:        0,
@@ -294,7 +294,7 @@ let INSTRUCTION_LENGTHS = .{
   // Superinstructions
   [OP.ADD_LOCAL_IMM]:      3,  // opcode + slot + imm
   [OP.STORE_LOCAL]:        2,  // opcode + slot
-  [OP.STORE_IDX_LOCAL]:    4,  // opcode + arr_slot + idx_slot + val_slot
+  [OP.STORE_BY_IDX]:    4,  // opcode + arr_slot + idx_slot + val_slot
 }
 
 fn instructionLength(chunk, ip) {

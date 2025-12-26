@@ -727,7 +727,7 @@ fn compileAssignment(gen, node, mode) {
   }
 
   if node.target.type == "Index" {
-    // Try to emit STORE_IDX_LOCAL for arr[i] = val where all are locals
+    // Try to emit STORE_BY_IDX for arr[i] = val where all are locals
     if node.target.object.type == "Identifier" and
        node.target.index.type == "Identifier" and
        node.value.type == "Identifier" {
@@ -738,12 +738,12 @@ fn compileAssignment(gen, node, mode) {
       if objBinding and objBinding.kind == "local" and
          idxBinding and idxBinding.kind == "local" and
          valBinding and valBinding.kind == "local" {
-        // Emit STORE_IDX_LOCAL superinstruction
+        // Emit STORE_BY_IDX superinstruction
         let objSlot = computeAbsoluteSlot(gen, objBinding)
         let idxSlot = computeAbsoluteSlot(gen, idxBinding)
         let valSlot = computeAbsoluteSlot(gen, valBinding)
 
-        emitByte(gen, OP.STORE_IDX_LOCAL, node.line)
+        emitByte(gen, OP.STORE_BY_IDX, node.line)
         emitByte(gen, localSlot(objSlot), node.line)
         emitByte(gen, localSlot(idxSlot), node.line)
         emitByte(gen, localSlot(valSlot), node.line)

@@ -109,6 +109,98 @@ Keywords can be used as hashmap keys:
 let x = .{ if: 1, and: 2 }  // Valid!
 ```
 
+### Implicit Return
+
+**Functions and blocks automatically return their last expression:**
+
+```lx
+fn add(a, b) {
+  a + b  // Implicitly returned
+}
+
+fn max(a, b) {
+  if a > b {
+    a  // Implicitly returned from if branch
+  } else {
+    b  // Implicitly returned from else branch
+  }
+}
+
+// Blocks are expressions
+let result = {
+  let x = 10
+  let y = 20
+  x + y  // Block evaluates to 30
+}
+```
+
+**Explicit `return` for early exit:**
+```lx
+fn find(arr, target) {
+  for let i = 0; i < len(arr); i = i + 1 {
+    if arr[i] == target {
+      return i  // Early return
+    }
+  }
+  nil  // Implicitly returned if not found
+}
+```
+
+**Return values:**
+- `let x = value` returns `value` (the RHS)
+- Assignments `x = value` return `value`
+- `for` loops return the last evaluated body expression
+- `break` returns `nil`, `break value` returns `value`
+
+```lx
+fn example1() {
+  let x = 5  // Returns 5 (the RHS)
+}
+
+fn example2() {
+  for let i = 0; i < 3; i = i + 1 {
+    i * 10  // Last iteration: i=2, returns 20
+  }
+}
+
+fn example3() {
+  for let i = 0; i < 10; i = i + 1 {
+    if i == 5 {
+      break "found"  // Returns "found"
+    }
+  }
+}
+```
+
+### Truthiness
+
+**Only `nil` and `false` are falsy. Everything else is truthy:**
+
+```lx
+if nil { }        // falsy
+if false { }      // falsy
+
+if 0 { }          // truthy (!)
+if "" { }         // truthy (!)
+if [] { }         // truthy (!)
+if .{} { }        // truthy (!)
+```
+
+**Idiomatic nil checking:**
+```lx
+let value = findSomething()
+
+// Check if value exists
+if value {
+  use(value)
+}
+
+// Check if value is nil
+if !value {
+  handleMissing()
+}
+```
+
 ### For Loops
 
 **C-style:**

@@ -372,7 +372,7 @@ fn compileLet(gen, node, mode) {
   }
 }
 
-fn compileBlock(gen, node) {
+fn compileBlock(gen, node, mode) {
   pushScope(gen, node)
 
   // CRITICAL FIX: Pre-emit hoisted function locals to match resolver's slot allocation
@@ -415,21 +415,29 @@ fn compileBlock(gen, node) {
 
   let exprs = node.expressions or []
   if len(exprs) == 0 {
-    emitByte(gen, OP.NIL, node.line)
+    // Empty block: nil in VALUE mode, nothing in STMT mode
+    if mode == MODE.VALUE {
+      emitByte(gen, OP.NIL, node.line)
+    }
   } else {
     for let i = 0; i < len(exprs); i = i + 1 {
       let expr = exprs[i]
       if i < len(exprs) - 1 {
         compileStmt(gen, expr)
       } else {
-        compileValue(gen, expr)
+        // Last expression: compile according to block's mode
+        if mode == MODE.VALUE {
+          compileValue(gen, expr)
+        } else {
+          compileStmt(gen, expr)
+        }
       }
     }
   }
 
-  // block exit - UNWIND pops locals under result
-  // At this point: value stack has [... locals... result]
-  // UNWIND <toPop> 1 pops/closes locals while preserving result
+  // Block exit - UNWIND pops locals, optionally preserving result
+  // VALUE mode: [... locals... result] → UNWIND toPop 1 → [... result]
+  // STMT mode:  [... locals... ] → UNWIND toPop 0 → [... ]
   let baseSlot = gen.scopeBaseSlots[len(gen.scopeBaseSlots) - 1]
   let toPop = gen.nextLocalSlot - baseSlot
 
@@ -437,7 +445,11 @@ fn compileBlock(gen, node) {
   if toPop > 0 {
     emitByte(gen, OP.UNWIND, node.line)
     emitByte(gen, toPop, node.line)  // count = actual stack slots to pop
-    emitByte(gen, 1, node.line)  // keep=1: preserve block result
+    if mode == MODE.VALUE {
+      emitByte(gen, 1, node.line)  // keep=1: preserve block result
+    } else {
+      emitByte(gen, 0, node.line)  // keep=0: statement mode, no result needed
+    }
   }
 
   // Update slot counter - locals are now popped
@@ -604,7 +616,7 @@ fn compileFunctionExpr(gen, node, mode) {
   }
 
   pushScope(gen, node)
-  compileBlock(gen, node.body)
+  compileBlock(gen, node.body, MODE.VALUE)
   popScope(gen)
 
   emitByte(gen, OP.RETURN, node.line)
@@ -942,7 +954,7 @@ fn compileValueExpr(gen, node) {
   gen.currentLine = node.line
 
   if node.type == "Block" {
-    compileBlock(gen, node)
+    compileBlock(gen, node, MODE.VALUE)
   } else if node.type == "Call" {
     compileCall(gen, node)
   } else if node.type == "If" {
@@ -1012,6 +1024,12 @@ fn compileExpr(gen, node, mode) {
     return
   }
 
+  // Block handles mode internally to avoid value/POP overhead
+  if node.type == "Block" {
+    compileBlock(gen, node, mode)
+    return
+  }
+
   // All other nodes: compile as value expression, then discard if STMT
   compileValueExpr(gen, node)
   if mode == MODE.STMT {
@@ -1054,7 +1072,7 @@ fn codegen(ast, resolveResult, opts) {
     },
   }
 
-  compileBlock(gen, ast)
+  compileBlock(gen, ast, MODE.VALUE)
   emitByte(gen, OP.RETURN, gen.currentLine)
 
   .{

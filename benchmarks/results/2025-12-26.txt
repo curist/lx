@@ -1,0 +1,77 @@
+Benchmark Results - 2025-12-26
+================================
+
+Commit: 2286bed (Rename STORE_IDX_LOCAL to STORE_BY_IDX for consistency)
+Hardware: Darwin 24.6.0
+Test configuration: REPEAT=10
+Statistics: min / median / avg / max
+
+Optimizations included:
+- Removed loopResultSlot from for loops
+- ANF temp elimination for simple expressions
+- ADD_LOCAL_IMM superinstruction (i = i + n)
+- STORE_LOCAL superinstruction (local = value in stmt context)
+- STORE_BY_IDX superinstruction (arr[i] = val)
+
+--- lx (10 runs each) ---
+sum_loop (50M):
+  Times: 0.78 / 0.79 / 0.80 / 0.82
+  Checksum: 1250000025000000
+
+fizzbuzz (20M):
+  Times: 1.15 / 1.16 / 1.16 / 1.18
+  Checksum: 14666666
+
+fib_iter (5M):
+  Times: 0.15 / 0.16 / 0.16 / 0.17
+  Checksum: 416450835
+
+array_fill (10M):
+  Times: 0.42 / 0.44 / 0.44 / 0.46
+  Checksum: 50000005000000
+
+map_hit_miss (5M):
+  Times: 0.83 / 0.85 / 0.86 / 1.00 (1.00 is outlier, median=0.85)
+  Checksum: 6250002500000
+
+--- Summary (using median values) ---
+sum_loop:     0.79s
+fizzbuzz:     1.16s
+fib_iter:     0.16s
+array_fill:   0.44s
+map_hit_miss: 0.85s
+
+--- Baseline Comparison (commit 50f9d72, pre-optimization) ---
+Baseline run: REPEAT=3, best time selected
+
+sum_loop:     1.04s → 0.79s  (24.0% faster, 1.32x)
+fizzbuzz:     1.30s → 1.16s  (10.8% faster, 1.12x)
+fib_iter:     0.19s → 0.16s  (15.8% faster, 1.19x)
+array_fill:   0.61s → 0.44s  (27.9% faster, 1.39x)
+map_hit_miss: 0.92s → 0.85s  (7.6% faster, 1.08x)
+
+Average improvement: 17.2% faster, 1.22x speedup
+
+--- Other Languages (representative run) ---
+Python 3:
+  sum_loop: 1.16s, fizzbuzz: 0.88s, fib_iter: 0.15s
+  array_fill: 0.49s, map_hit_miss: 0.45s
+
+Lua 5.4:
+  sum_loop: 0.15s, fizzbuzz: 0.30s, fib_iter: 0.05s
+  array_fill: 0.16s, map_hit_miss: 0.10s
+
+LuaJIT (JIT compiled):
+  sum_loop: 0.02s, fizzbuzz: 0.04s, fib_iter: 0.02s
+  array_fill: 0.05s, map_hit_miss: 0.02s
+
+Chez Scheme (compiled):
+  sum_loop: 0.05s, fizzbuzz: 0.15s, fib_iter: 0.03s
+  array_fill: 0.05s, map_hit_miss: 0.29s
+
+--- Notes ---
+- Median values provide more stable comparison than best/worst times
+- array_fill shows moderate variance (0.42-0.46s, ~9% range)
+- map_hit_miss had one outlier at 1.00s (likely GC or background process)
+- sum_loop and fizzbuzz are most consistent (±2-3% variance)
+- Using median for comparison is more conservative than best-of-N

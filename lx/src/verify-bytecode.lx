@@ -58,6 +58,8 @@ let STACK_MIN = .{
   [OP.JUMP_IF_TRUE]:  1,
   [OP.JUMP_IF_FALSE]: 1,
   [OP.RETURN]:        1,
+  [OP.COALESCE_CONST]: 1,  // Needs value to check
+  [OP.IS_EVEN]:       1,   // Needs value to test
 
   // Need 0 inputs
   [OP.CLOSE_UPVALUE]: 0,  // Closes upvalue + pops from value stack
@@ -128,6 +130,8 @@ let STACK_EFFECTS = .{
   [OP.SWAP]:          0,
   [OP.NOP]:           0,
   [OP.CLOSE_UPVALUE]: 0,   // Closes upvalue + pops from value stack
+  [OP.COALESCE_CONST]: 0,  // Conditionally replaces TOS, always leaves 1 value
+  [OP.IS_EVEN]:       0,   // pop 1 (value), push 1 (bool)
 
   // Binary operations (-1): pop 2, push 1
   [OP.EQUAL]:         -1,
@@ -250,6 +254,7 @@ let INSTRUCTION_LENGTHS = .{
   [OP.GET_UPVALUE]:   2,
   [OP.SET_UPVALUE]:   2,
   [OP.CALL]:          2,
+  [OP.COALESCE_CONST]: 2,  // opcode + constant index
 
   // 2-byte operand (length = 3)
   [OP.JUMP]:          3,
@@ -290,6 +295,7 @@ let INSTRUCTION_LENGTHS = .{
   [OP.CLOSE_UPVALUE]: 1,
   [OP.UNWIND]:        3,  // opcode + count + keep
   [OP.RETURN]:        1,
+  [OP.IS_EVEN]:       1,  // No operands
 
   // Superinstructions
   [OP.ADD_LOCAL_IMM]:      3,  // opcode + slot + imm

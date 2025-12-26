@@ -188,6 +188,10 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return byteInstruction("OP_STORE_LOCAL", chunk, offset);
     case OP_STORE_BY_IDX:
       return threeByteInstruction("OP_STORE_BY_IDX", chunk, offset);
+    case OP_COALESCE_CONST:
+      return constantInstruction("OP_COALESCE_CONST", chunk, offset);
+    case OP_IS_EVEN:
+      return simpleInstruction("OP_IS_EVEN", offset);
     case OP_RETURN:
       return simpleInstruction("OP_RETURN", offset);
     default:

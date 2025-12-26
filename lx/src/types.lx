@@ -151,6 +151,8 @@ types.OP = {
     ADD_LOCAL_IMM: iota(),      // Superinstruction: GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
     STORE_LOCAL: iota(),        // Superinstruction: SET_LOCAL + POP
     STORE_BY_IDX: iota(),  // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
+    COALESCE_CONST: iota(),     // Replace TOS with constant if TOS is falsy
+    IS_EVEN: iota(),            // Test if TOS integer is even (hot-path for % 2 == 0)
     RETURN: 255, // 0xff - fixed to allow adding opcodes without breaking RETURN
   }
 }

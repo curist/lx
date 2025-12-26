@@ -302,6 +302,37 @@ fn anfAssignmentValue(anf, node) {
 // ========================================
 
 fn anfBinary(anf, node) {
+  // Optimization: (x % 2) == 0 → is_even(x)
+  let op = node.operator and node.operator.lexeme
+  if op == "==" {
+    let left = node.left
+    let right = node.right
+    // Check if left is (something % 2)
+    if left.type == "Binary" and left.operator and left.operator.lexeme == "%" {
+      let modRight = left.right
+      // Check if pattern matches: (x % 2) == 0
+      if modRight.type == "Number" and modRight.value == 2 and
+         right.type == "Number" and right.value == 0 {
+        // Create is_even intrinsic instead
+        let arg = anfToAtomic(anf, left.left)
+        let intrinsicNode = .{
+          type: "IntrinsicCall",
+          intrinsic: "is_even",
+          args: [arg.expr],
+          filename: node.filename,
+          id: allocNodeId(anf),
+          line: node.line,
+          col: node.col,
+          endLine: node.endLine,
+          endCol: node.endCol,
+        }
+        anf.origin[intrinsicNode.id] = node.id
+        return wrapWithPrelude(anf, node, arg.pre, intrinsicNode)
+      }
+    }
+  }
+
+  // Default binary handling
   let left = anfToAtomic(anf, node.left)
   let right = anfToAtomic(anf, node.right)
   let newNode = copyNodeShallow(anf, node)

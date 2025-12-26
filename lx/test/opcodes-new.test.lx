@@ -1,0 +1,60 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+test("OP_COALESCE_CONST: truthyvalue or const returns truthy", fn(assert) {
+  let x = 5
+  let result = x or 10
+  assert.equal(result, 5, "Should return truthy value, not const")
+})
+
+test("OP_COALESCE_CONST: nil or const returns const", fn(assert) {
+  let x = nil
+  let result = x or 42
+  assert.equal(result, 42, "Should return const when falsy")
+})
+
+test("OP_COALESCE_CONST: false or const returns const", fn(assert) {
+  let x = false
+  let result = x or "default"
+  assert.equal(result, "default", "Should return const when false")
+})
+
+test("OP_COALESCE_CONST: 0 or const returns 0 (0 is truthy)", fn(assert) {
+  let x = 0
+  let result = x or 99
+  assert.equal(result, 0, "0 is truthy in lx, should not coalesce")
+})
+
+test("OP_COALESCE_CONST: empty string or const returns empty string", fn(assert) {
+  let x = ""
+  let result = x or "fallback"
+  assert.equal(result, "", "Empty string is truthy, should not coalesce")
+})
+
+test("OP_IS_EVEN: even numbers", fn(assert) {
+  assert.truthy(0 % 2 == 0, "0 is even")
+  assert.truthy(2 % 2 == 0, "2 is even")
+  assert.truthy(42 % 2 == 0, "42 is even")
+  assert.truthy(-4 % 2 == 0, "-4 is even")
+})
+
+test("OP_IS_EVEN: odd numbers", fn(assert) {
+  assert.truthy(!(1 % 2 == 0), "1 is odd")
+  assert.truthy(!(3 % 2 == 0), "3 is odd")
+  assert.truthy(!(99 % 2 == 0), "99 is odd")
+  assert.truthy(!(-3 % 2 == 0), "-3 is odd")
+})
+
+test("OP_IS_EVEN: loop with even check", fn(assert) {
+  let evens = []
+  for let i = 0; i < 10; i = i + 1 {
+    if i % 2 == 0 {
+      push(evens, i)
+    }
+  }
+  assert.equal(len(evens), 5, "Should find 5 even numbers")
+  assert.equal(evens[0], 0, "First even is 0")
+  assert.equal(evens[4], 8, "Fifth even is 8")
+})
+
+suite.run()

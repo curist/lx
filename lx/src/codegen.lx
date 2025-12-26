@@ -34,6 +34,7 @@ fn Function(name, arity, chunk) {.{
 }}
 
 fn NUMBER_VAL(value) { Value(ValueType.NUMBER, value) }
+fn BOOL_VAL(value) { Value(ValueType.BOOL, value) }
 fn OBJ_VAL(value) { Value(ValueType.OBJ, value) }
 
 fn ObjectFunction(func) { OBJ_VAL(object.ObjectFunction(func)) }
@@ -472,6 +473,9 @@ fn compileUnary(gen, node) {
 }
 
 fn compileBinary(gen, node) {
+  // Note: Pattern optimizations like (x % 2 == 0) → IS_EVEN
+  // are done in ANF phase, not here, to work correctly with ANF transformations
+
   compileValue(gen, node.left)
   compileValue(gen, node.right)
   let op = node.operator and node.operator.lexeme or ""
@@ -515,11 +519,28 @@ fn compileLogical(gen, node) {
     compileValue(gen, node.right)
     patchJump(gen, endJump)
   } else if op == "or" {
-    emitByte(gen, OP.DUP, node.line)
-    let endJump = emitJump(gen, OP.JUMP_IF_TRUE, node.line)
-    emitByte(gen, OP.POP, node.line)
-    compileValue(gen, node.right)
-    patchJump(gen, endJump)
+    // Optimize: v or CONST → OP_COALESCE_CONST
+    // Note: Only for Number/String. Bool constants can't be serialized in constant pool
+    // (they're represented as opcodes), so use the general jump-based form for those.
+    let rightType = node.right and node.right.type
+    if rightType == "Number" or rightType == "String" {
+      // Right side is a literal constant - use specialized opcode
+      let constValue = nil
+      if rightType == "Number" {
+        constValue = NUMBER_VAL(node.right.value)
+      } else if rightType == "String" {
+        constValue = ObjectString(node.right.value)
+      }
+      let constIndex = makeConstant(gen, constValue)
+      emitBytes(gen, OP.COALESCE_CONST, constIndex, node.line)
+    } else {
+      // General case: use jump-based implementation
+      emitByte(gen, OP.DUP, node.line)
+      let endJump = emitJump(gen, OP.JUMP_IF_TRUE, node.line)
+      emitByte(gen, OP.POP, node.line)
+      compileValue(gen, node.right)
+      patchJump(gen, endJump)
+    }
   } else {
     addError(gen, node, "Unsupported logical op: " + op)
   }
@@ -575,6 +596,15 @@ fn compileIntrinsicCall(gen, node) {
       compileValue(gen, args[i])
     }
     emitByte(gen, OP.APPEND, node.line)
+  } else if node.intrinsic == "is_even" {
+    // is_even expects 1 arg: value
+    if len(args) != 1 {
+      addError(gen, node, "Internal error: is_even expects 1 arg, got " + str(len(args)))
+      emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+      return
+    }
+    compileValue(gen, args[0])
+    emitByte(gen, OP.IS_EVEN, node.line)
   } else {
     addError(gen, node, "Unknown intrinsic: " + node.intrinsic)
     emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline

@@ -830,6 +830,31 @@ static InterpretResult run(void) {
         break;
       }
 
+      case OP_COALESCE_CONST: {
+        // Replace TOS with constant if TOS is falsy (defaulting/fallback operation)
+        uint8_t constantIdx = READ_BYTE();
+        Value tos = peek(0);
+        if (isFalsey(tos)) {
+          pop();
+          push(frame->closure->function->chunk.constants.values[constantIdx]);
+        }
+        break;
+      }
+
+      case OP_IS_EVEN: {
+        // Test if TOS integer is even (hot-path for x % 2 == 0)
+        // Uses same truncation semantics as OP_MOD for consistency
+        Value value = pop();
+        if (!IS_NUMBER(value)) {
+          runtimeError("Operand must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        double num = AS_NUMBER(value);
+        int intVal = (int)num;  // Truncate to int like MOD does
+        push(BOOL_VAL((intVal & 1) == 0));
+        break;
+      }
+
       case OP_RETURN: {
         Value result = pop();
         closeUpvalues(frame->slots);

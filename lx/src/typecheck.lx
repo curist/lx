@@ -1932,6 +1932,17 @@ fn checkIntrinsicCall(checker, node) {
       // Return the array type
       t = arrType
     }
+  } else if node.intrinsic == "is_even" {
+    // is_even expects 1 arg: number
+    if len(argTypes) != 1 {
+      addError(checker, node.id, "Internal error: is_even expects 1 arg, got " + str(len(argTypes)))
+      // Fall through with Any
+    } else {
+      // Constrain argument to be a number
+      unify(checker, argTypes[0], typeNumber())
+      // is_even returns Bool
+      t = typeBool()
+    }
   } else {
     addError(checker, node.id, "Internal error: unknown intrinsic: " + node.intrinsic)
   }

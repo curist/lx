@@ -20,9 +20,6 @@ typedef struct {
 
   Value stack[STACK_MAX];
   Value* stackTop;
-  Value locals[STACK_MAX];
-  Value* localsTop;
-
   Value lastResult;
 
   Table globals;
@@ -35,6 +32,10 @@ typedef struct {
   int grayCount;
   int grayCapacity;
   Obj** grayStack;
+
+#ifdef PROFILE_OPCODES
+  uint64_t opCounts[256];
+#endif
 } VM;
 
 typedef enum {
@@ -50,7 +51,18 @@ extern VM vm;
 void initVM();
 void freeVM();
 InterpretResult interpret(uint8_t* obj);
-void push(Value value);
-Value pop();
+
+// Inline stack operations for performance
+static inline void push(Value value) {
+  *vm.stackTop++ = value;
+}
+
+static inline Value pop(void) {
+  return *--vm.stackTop;
+}
+
+static inline Value peek(int distance) {
+  return vm.stackTop[-1 - distance];
+}
 
 #endif

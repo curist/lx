@@ -14,7 +14,6 @@ VM vm;
 
 static void resetStack() {
   vm.stackTop = vm.stack;
-  vm.localsTop = vm.locals;
   vm.frameCount = 0;
   vm.openUpvalues = NULL;
 }
@@ -105,6 +104,12 @@ void initVM() {
   initTable(&vm.globals);
   initTable(&vm.strings);
 
+#ifdef PROFILE_OPCODES
+  for (int i = 0; i < 256; i++) {
+    vm.opCounts[i] = 0;
+  }
+#endif
+
   defineBuiltinNatives();
 
   // include global fns
@@ -120,23 +125,45 @@ void initVM() {
 }
 
 void freeVM() {
+#ifdef PROFILE_OPCODES
+  // Print top 15 opcodes by frequency
+  fprintf(stderr, "\n=== Opcode Profile ===\n");
+
+  // Create sorted list of (opcode, count) pairs
+  typedef struct { uint8_t op; uint64_t count; } OpCount;
+  OpCount sorted[256];
+  for (int i = 0; i < 256; i++) {
+    sorted[i].op = i;
+    sorted[i].count = vm.opCounts[i];
+  }
+
+  // Simple bubble sort (good enough for 256 entries)
+  for (int i = 0; i < 255; i++) {
+    for (int j = i + 1; j < 256; j++) {
+      if (sorted[j].count > sorted[i].count) {
+        OpCount tmp = sorted[i];
+        sorted[i] = sorted[j];
+        sorted[j] = tmp;
+      }
+    }
+  }
+
+  // Print top 15
+  uint64_t total = 0;
+  for (int i = 0; i < 256; i++) total += vm.opCounts[i];
+
+  for (int i = 0; i < 15 && sorted[i].count > 0; i++) {
+    double pct = 100.0 * sorted[i].count / total;
+    fprintf(stderr, "%2d. OP_%02x: %12llu (%5.2f%%)\n",
+            i+1, sorted[i].op, sorted[i].count, pct);
+  }
+  fprintf(stderr, "Total ops: %llu\n", total);
+  fprintf(stderr, "======================\n\n");
+#endif
+
   freeTable(&vm.globals);
   freeTable(&vm.strings);
   freeObjects();
-}
-
-void push(Value value) {
-  *vm.stackTop = value;
-  vm.stackTop++;
-}
-
-Value pop() {
-  vm.stackTop--;
-  return *vm.stackTop;
-}
-
-static Value peek(int distance) {
-  return vm.stackTop[-1 - distance];
 }
 
 static bool call(ObjClosure* closure, int argCount) {
@@ -230,7 +257,7 @@ static ObjUpvalue* captureUpvalue(Value* local) {
   return createdUpvalue;
 }
 
-static void closeUpvalues(Value* last) {
+inline static void closeUpvalues(Value* last) {
   while (vm.openUpvalues != NULL && vm.openUpvalues->location >= last) {
     ObjUpvalue* upvalue = vm.openUpvalues;
     upvalue->closed = *upvalue->location;
@@ -239,7 +266,7 @@ static void closeUpvalues(Value* last) {
   }
 }
 
-static bool isFalsey(Value value) {
+inline static bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
 
@@ -331,7 +358,11 @@ static InterpretResult run() {
 #ifdef DEBUG_TRACE_EXECUTION
 #define DISPATCH() goto DO_DEBUG_PRINT
 #else
-#define DISPATCH() do { op = READ_BYTE(); goto *dispatch_table[op]; } while (false)
+  #ifdef PROFILE_OPCODES
+    #define DISPATCH() do { op = READ_BYTE(); vm.opCounts[op]++; goto *dispatch_table[op]; } while (false)
+  #else
+    #define DISPATCH() do { op = READ_BYTE(); goto *dispatch_table[op]; } while (false)
+  #endif
 #endif
 #define READ_BYTE() (*frame->ip++)
 #define READ_SHORT() \
@@ -369,12 +400,6 @@ static InterpretResult run() {
 DO_DEBUG_PRINT:
     printf("        |       \x1b[1;32m[ ");
     for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
-      printValue(stdout, *slot);
-      printf(" ");
-    }
-    printf("]\x1b[0m\n");
-    printf("        |     \x1b[0;33mL:[ ");
-    for (Value* slot = vm.locals; slot < vm.localsTop; slot++) {
       printValue(stdout, *slot);
       printf(" ");
     }
@@ -752,7 +777,7 @@ DO_OP_CLOSURE:
       DISPATCH();
     }
 DO_OP_CLOSE_UPVALUE:
-    closeUpvalues(vm.localsTop - 1);
+    closeUpvalues(vm.stackTop - 1);
     pop();
     DISPATCH();
 DO_OP_UNWIND:
@@ -764,18 +789,16 @@ DO_OP_UNWIND:
         return INTERPRET_RUNTIME_ERROR;
       }
       if (keep == 0) {
-        // Pop count values, closing any upvalues
-        for (int i = 0; i < count; i++) {
-          closeUpvalues(vm.stackTop - 1);
-          pop();
-        }
+        // Close upvalues once for the entire range being discarded
+        Value* newTop = vm.stackTop - count;
+        closeUpvalues(newTop);
+        vm.stackTop = newTop;
       } else {
         // keep == 1: preserve top value, discard count values under it
         Value top = pop();
-        for (int i = 0; i < count; i++) {
-          closeUpvalues(vm.stackTop - 1);
-          pop();
-        }
+        Value* newTop = vm.stackTop - count;
+        closeUpvalues(newTop);
+        vm.stackTop = newTop;
         push(top);
       }
       DISPATCH();
@@ -791,7 +814,6 @@ DO_OP_RETURN:
 
         // Ensure next interpret() starts from a clean slate.
         vm.stackTop = vm.stack;
-        vm.localsTop = vm.locals;
         vm.openUpvalues = NULL;
 
         return INTERPRET_OK;

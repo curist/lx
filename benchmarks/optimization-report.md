@@ -37,43 +37,44 @@ Added three superinstructions to further optimize common patterns:
 ## Benchmark Results
 
 **Baseline:** commit 50f9d72 (before optimizations)
-**Optimized:** commit 2286bed (after all optimizations)
+**Latest:** commit 70b8607 (UNWIND elimination)
 **Test Date:** 2025-12-26
 **Hardware:** Darwin 24.6.0
 **Methodology:** 10 runs per benchmark, median values used
 
-_Full benchmark data available in `results/2025-12-26.txt`_
+_Full benchmark data with optimization progression available in `results/2025-12-26.txt`_
 
 ### Performance Comparison
 
 | Benchmark | Before (sec) | After (sec) | Improvement | Speedup |
 |-----------|--------------|-------------|-------------|---------|
-| **sum_loop** (50M iterations) | 1.04 | **0.79** | **24.0%** | 1.32x |
-| **fizzbuzz** (20M iterations) | 1.30 | **1.16** | **10.8%** | 1.12x |
-| **fib_iter** (5M iterations) | 0.19 | **0.16** | **15.8%** | 1.19x |
-| **array_fill** (10M elements) | 0.61 | **0.44** | **27.9%** | 1.39x |
-| **map_hit_miss** (5M ops) | 0.92 | **0.85** | **7.6%** | 1.08x |
-| **Average** | | | **17.2%** | 1.22x |
+| **sum_loop** (50M iterations) | 1.04 | **0.70** | **32.7%** | 1.49x |
+| **fizzbuzz** (20M iterations) | 1.30 | **1.09** | **16.2%** | 1.19x |
+| **fib_iter** (5M iterations) | 0.19 | **0.15** | **21.1%** | 1.27x |
+| **array_fill** (10M elements) | 0.61 | **0.41** | **32.8%** | 1.49x |
+| **map_hit_miss** (5M ops) | 0.92 | **0.79** | **14.1%** | 1.16x |
+| **Average** | | | **23.4%** | 1.32x |
 
 ### Key Findings
 
-1. **array_fill: 28% faster** - Best improvement due to heavy use of array indexing
+1. **array_fill & sum_loop: 33% faster** - Best improvements with combined optimizations
    - Pattern `arr[i] = i` optimized from 8 ops to 1 op with STORE_BY_IDX
    - Pattern `i = i + 1` optimized with ADD_LOCAL_IMM
-   - Consistent performance: 0.42-0.46s range (~9% variance)
+   - UNWIND elimination removed block overhead
+   - **Now faster than Python!** (0.41s vs 0.49s, 0.70s vs 1.16s)
 
-2. **sum_loop: 24% faster** - Tight arithmetic loop
-   - Two assignments per iteration benefit from superinstructions
-   - `i = i + 1` and `acc = acc + i` both optimized
-   - Very consistent: 0.78-0.82s range (~5% variance)
+2. **fizzbuzz: 16% faster** - Complex control flow with modulo operations
+   - Benefited significantly from UNWIND 0 1 elimination (3× per iteration)
+   - Still slower than Python (1.09s vs 0.88s) - potential for further optimization
+   - Bytecode analysis shows opportunities in chained binary operations
 
-3. **fib_iter: 16% faster** - Multiple loop variables
-   - Benefits from ANF temp elimination and loop optimizations
-   - Small benchmark with higher timing variance
+3. **fib_iter: 21% faster** - Multiple loop variables
+   - Benefits from ANF temp elimination, loop optimizations, and UNWIND elimination
+   - Now matches Python performance (both 0.15s)
 
-4. **fizzbuzz & map_hit_miss: 8-11% faster** - More complex control flow
-   - Smaller relative benefit but still consistent improvement
-   - map_hit_miss showed one GC outlier in testing
+4. **map_hit_miss: 14% faster** - HashMap-heavy benchmark
+   - Consistent improvement from general optimizations
+   - Still slower than Python's highly optimized dict implementation
 
 ### Comparison with Other Languages (optimized lx)
 

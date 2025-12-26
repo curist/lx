@@ -171,14 +171,50 @@ static void handleRun(int argc, const char* argv[]) {
 }
 
 static void handleEval(int argc, const char* argv[]) {
+  ObjString* source;
+
+  // Read from stdin if no expression argument provided
   if (argc <= 2) {
-    fprintf(stderr, "Usage: %s eval <expression>\n", argv[0]);
-    exit(64);
+    // Read all of stdin into a buffer
+    size_t capacity = 1024;
+    size_t length = 0;
+    char* stdinBuffer = (char*)malloc(capacity);
+    if (stdinBuffer == NULL) {
+      fprintf(stderr, "out of memory\n");
+      exit(70);
+    }
+
+    int c;
+    while ((c = fgetc(stdin)) != EOF) {
+      if (length + 1 >= capacity) {
+        capacity *= 2;
+        char* newBuffer = (char*)realloc(stdinBuffer, capacity);
+        if (newBuffer == NULL) {
+          fprintf(stderr, "out of memory\n");
+          free(stdinBuffer);
+          exit(70);
+        }
+        stdinBuffer = newBuffer;
+      }
+      stdinBuffer[length++] = (char)c;
+    }
+    stdinBuffer[length] = '\0';
+
+    if (length == 0) {
+      fprintf(stderr, "Usage: %s eval <expression>\n", argv[0]);
+      fprintf(stderr, "  or pipe input via stdin: echo 'println(42)' | %s eval\n", argv[0]);
+      free(stdinBuffer);
+      exit(64);
+    }
+
+    source = COPY_CSTRING(stdinBuffer);
+    free(stdinBuffer);  // Done with the buffer after copying
+  } else {
+    source = COPY_CSTRING(argv[2]);
   }
 
   // 1) Set __lx_input__ in vm.globals (host -> compiler-driver script).
   ObjString* key = COPY_CSTRING("__lx_input__");
-  ObjString* source = COPY_CSTRING(argv[2]);
 
   // Root 'source' while inserting into globals in case table grows / GC runs.
   push(OBJ_VAL(source));

@@ -37,7 +37,7 @@ Added three superinstructions to further optimize common patterns:
 ## Benchmark Results
 
 **Baseline:** commit 50f9d72 (before optimizations)
-**Latest:** commit 70b8607 (UNWIND elimination)
+**Latest:** commit 6d43a4b (block-mode optimization)
 **Test Date:** 2025-12-26
 **Hardware:** Darwin 24.6.0
 **Methodology:** 10 runs per benchmark, median values used
@@ -48,51 +48,57 @@ _Full benchmark data with optimization progression available in `results/2025-12
 
 | Benchmark | Before (sec) | After (sec) | Improvement | Speedup |
 |-----------|--------------|-------------|-------------|---------|
-| **sum_loop** (50M iterations) | 1.04 | **0.70** | **32.7%** | 1.49x |
-| **fizzbuzz** (20M iterations) | 1.30 | **1.09** | **16.2%** | 1.19x |
-| **fib_iter** (5M iterations) | 0.19 | **0.15** | **21.1%** | 1.27x |
-| **array_fill** (10M elements) | 0.61 | **0.41** | **32.8%** | 1.49x |
-| **map_hit_miss** (5M ops) | 0.92 | **0.79** | **14.1%** | 1.16x |
-| **Average** | | | **23.4%** | 1.32x |
+| **sum_loop** (50M iterations) | 1.04 | **0.62** | **40.4%** | 1.68x |
+| **fizzbuzz** (20M iterations) | 1.30 | **1.08** | **16.9%** | 1.20x |
+| **fib_iter** (5M iterations) | 0.19 | **0.145** | **23.7%** | 1.31x |
+| **array_fill** (10M elements) | 0.61 | **0.39** | **36.1%** | 1.56x |
+| **map_hit_miss** (5M ops) | 0.92 | **0.795** | **13.6%** | 1.16x |
+| **Average** | | | **26.1%** | 1.38x |
 
 ### Key Findings
 
-1. **array_fill & sum_loop: 33% faster** - Best improvements with combined optimizations
-   - Pattern `arr[i] = i` optimized from 8 ops to 1 op with STORE_BY_IDX
+1. **sum_loop: 40% faster (1.68x)** - Best improvement from all optimizations
    - Pattern `i = i + 1` optimized with ADD_LOCAL_IMM
-   - UNWIND elimination removed block overhead
-   - **Now faster than Python!** (0.41s vs 0.49s, 0.70s vs 1.16s)
+   - UNWIND 0 K elimination removed unnecessary stack operations
+   - Block-mode optimization eliminated value/POP overhead (11% gain)
+   - **Now 1.87x faster than Python!** (0.62s vs 1.16s)
 
-2. **fizzbuzz: 16% faster** - Complex control flow with modulo operations
-   - Benefited significantly from UNWIND 0 1 elimination (3× per iteration)
-   - Still slower than Python (1.09s vs 0.88s) - potential for further optimization
-   - Bytecode analysis shows opportunities in chained binary operations
+2. **array_fill: 36% faster (1.56x)** - Second-best improvement
+   - Pattern `arr[i] = i` optimized from 8 ops to 1 op with STORE_BY_IDX
+   - Combined optimizations deliver consistent gains
+   - **Now 1.26x faster than Python!** (0.39s vs 0.49s)
 
-3. **fib_iter: 21% faster** - Multiple loop variables
-   - Benefits from ANF temp elimination, loop optimizations, and UNWIND elimination
-   - Now matches Python performance (both 0.15s)
+3. **fib_iter: 24% faster (1.31x)** - Multiple loop variables
+   - Benefits from ANF temp elimination, loop optimizations, and block-mode
+   - Matches Python performance (0.145s vs 0.15s)
 
-4. **map_hit_miss: 14% faster** - HashMap-heavy benchmark
+4. **fizzbuzz: 17% faster (1.20x)** - Complex control flow with modulo operations
+   - Benefited from UNWIND 0 K elimination and block-mode optimization
+   - Still 1.23x slower than Python (1.08s vs 0.88s)
+   - Further optimization opportunity: chained binary operations in ANF
+
+5. **map_hit_miss: 14% faster (1.16x)** - HashMap-heavy benchmark
    - Consistent improvement from general optimizations
-   - Still slower than Python's highly optimized dict implementation
+   - Still 1.77x slower than Python's highly optimized dict implementation
 
 ### Comparison with Other Languages (optimized lx)
 
-From the same benchmark run:
+Latest benchmark run (Round 3):
 
-| Benchmark | lx | Python | Lua | LuaJIT | Chez |
-|-----------|-----|--------|-----|--------|------|
-| sum_loop | 0.78s | 1.16s | 0.15s | 0.02s | 0.06s |
-| fizzbuzz | 1.16s | 0.89s | 0.30s | 0.04s | 0.16s |
-| fib_iter | 0.15s | 0.16s | 0.05s | 0.02s | 0.04s |
-| array_fill | 0.42s | 0.51s | 0.18s | 0.06s | 0.06s |
-| map_hit_miss | 0.83s | 0.49s | 0.11s | 0.03s | 0.32s |
+| Benchmark | lx | Python | vs Python | Lua | LuaJIT | Chez |
+|-----------|-----|--------|-----------|-----|--------|------|
+| sum_loop | 0.62s | 1.16s | **1.87x faster** ✓ | 0.15s | 0.02s | 0.06s |
+| fizzbuzz | 1.08s | 0.88s | 1.23x slower | 0.30s | 0.04s | 0.16s |
+| fib_iter | 0.145s | 0.15s | **matches** ✓ | 0.05s | 0.02s | 0.04s |
+| array_fill | 0.39s | 0.49s | **1.26x faster** ✓ | 0.18s | 0.06s | 0.06s |
+| map_hit_miss | 0.795s | 0.45s | 1.77x slower | 0.11s | 0.03s | 0.32s |
 
 **Observations:**
-- lx now faster than Python on sum_loop and array_fill
-- Lua (interpreter) is 2-5x faster than lx
+- **lx now significantly faster than Python** on sum_loop (1.87x) and array_fill (1.26x)
+- lx matches Python on fib_iter
+- Lua (interpreter) is still 2-5x faster than lx (register-based VM advantage)
 - LuaJIT is 13-40x faster (JIT compilation advantage)
-- Chez Scheme is comparable or faster on most benchmarks
+- Chez Scheme is comparable or faster on most benchmarks (compiled code)
 
 ---
 

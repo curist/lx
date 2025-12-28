@@ -97,25 +97,6 @@ fn foldOrigins(nodeId, result) {
     return currentId
   }
 
-  // Fallback: legacy hard-coded origin walking (for compatibility)
-  let depth = 0
-
-  // Follow ANF origin if available
-  if result.anfResult and result.anfResult.origin {
-    for depth < maxDepth and result.anfResult.origin[currentId] {
-      currentId = result.anfResult.origin[currentId]
-      depth = depth + 1
-    }
-  }
-
-  // Then follow lowered origin if available
-  if result.lowerResult and result.lowerResult.origin {
-    for depth < maxDepth and result.lowerResult.origin[currentId] {
-      currentId = result.lowerResult.origin[currentId]
-      depth = depth + 1
-    }
-  }
-
   currentId
 }
 
@@ -138,12 +119,7 @@ fn resolveNodePosition(nodeId, result) {
   // Look up node in parser AST
   let node = nil
   if result.passes and result.passes.parse and result.passes.parse.ast {
-    // New pipeline: use passes.parse.ast
     let index = buildNodesIndex(result.passes.parse.ast)
-    node = index[leafId]
-  } else if result.parseResult and result.parseResult.ast {
-    // Legacy: use parseResult.ast
-    let index = buildNodesIndex(result.parseResult.ast)
     node = index[leafId]
   }
 
@@ -238,32 +214,7 @@ fn collectErrors(result) {
     return errors
   }
 
-  // Legacy fallback: collect from individual result fields
-  // Note: parseErrors/lowerErrors are for backward compat
-  if result.parseResult and result.parseResult.errors {
-    errors = concat(errors, result.parseResult.errors)
-  } else if result.parseErrors {
-    errors = concat(errors, result.parseErrors)
-  }
-
-  if result.lowerResult and result.lowerResult.errors {
-    errors = concat(errors, result.lowerResult.errors)
-  } else if result.lowerErrors {
-    errors = concat(errors, result.lowerErrors)
-  }
-
-  if result.resolveResult and result.resolveResult.errors {
-    errors = concat(errors, result.resolveResult.errors)
-  }
-
-  if result.codegenResult and result.codegenResult.errors {
-    errors = concat(errors, result.codegenResult.errors)
-  }
-
-  if result.verifyResult and result.verifyResult.errors {
-    errors = concat(errors, result.verifyResult.errors)
-  }
-
+  // No passes/passOrder - return empty errors
   errors
 }
 

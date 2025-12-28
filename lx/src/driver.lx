@@ -157,11 +157,19 @@ fn make(opts) {
     }
 
     if !source {
-      // Source loading failed - return legacy format for compatibility
+      // Source loading failed - represent as failed parse pass
       let result = .{
         status: "failed",
+        success: false,
         path: path,
-        parseResult: .{ success: false, errors: ["Failed to load source: " + path] },
+        failedPass: "parse",
+        passOrder: ["parse"],
+        passes: .{
+          parse: .{
+            success: false,
+            errors: ["Failed to load source: " + path],
+          },
+        },
       }
       driver.cache[path] = result
       return result
@@ -195,24 +203,7 @@ fn make(opts) {
     let passList = buildPassList(ctx)
     let pipelineResult = pipeline.runPasses(passList, ctx, state)
 
-    // ========================================
-    // Legacy Projection Layer (backward compatibility)
-    // ========================================
-
-    // Extract individual pass results
-    let parseResult = pipelineResult.passes.parse
-    let lowerResult = pipelineResult.passes.lower
-    let anfResult = pipelineResult.passes.anf
-    let resolveResult = pipelineResult.passes.resolve
-    let anfInlineResult = pipelineResult.passes["anf-inline"]
-    let typecheckResult = pipelineResult.passes.typecheck
-
-    // Special handling: anf-inline updates anfResult.ast (preserve existing behavior)
-    if anfResult and anfInlineResult and anfInlineResult.ast {
-      anfResult.ast = anfInlineResult.ast
-    }
-
-    // Build result with both new and legacy fields
+    // Build result with pipeline fields
     let result = .{
       // Core fields
       status: pipelineResult.status,
@@ -220,22 +211,9 @@ fn make(opts) {
       path: path,
       failedPass: pipelineResult.failedPass,
 
-      // New pipeline fields
+      // Pipeline fields
       passOrder: pipelineResult.passOrder,
       passes: pipelineResult.passes,
-
-      // Legacy projection fields (for existing tests/tooling)
-      parseResult: parseResult,
-      lowerResult: lowerResult,
-      anfResult: anfResult,
-      anfInlineResult: anfInlineResult,
-      resolveResult: resolveResult,
-      typecheckResult: typecheckResult,
-
-      // Legacy error fields (backward compat)
-      // Only set when pass actually failed, to preserve phase-detection logic
-      parseErrors: parseResult and !parseResult.success and parseResult.errors,
-      lowerErrors: lowerResult and !lowerResult.success and lowerResult.errors,
     }
 
     driver.cache[path] = result

@@ -147,20 +147,10 @@ Pass-specific keys are allowed (and expected). Example: `resolve` can keep its c
 
   passOrder: ["parse","lower","anf","resolve","anf-inline","typecheck"],
   passes: .{ [passName]: passResult },
-
-  // Convenience mirrors:
-  ast: <final ast>,
-  nextNodeId: <final nextNodeId>,
-
-  // Backward-compat projections (temporary during migration):
-  parseResult: passes.parse,
-  lowerResult: passes.lower,
-  anfResult: passes.anf,
-  resolveResult: passes.resolve,
-  anfInlineResult: passes["anf-inline"],
-  typecheckResult: passes.typecheck,
 }
 ```
+
+**Note:** After Phase 4, legacy projection fields (parseResult, lowerResult, anfResult, etc.) have been removed. All consumers now use `result.passes.*` directly.
 
 ---
 
@@ -393,6 +383,20 @@ Migration strategy:
 10. Update high-level consumers (`lx/cmd/mlx.lx`, `lx/scripts/build-*.lx`, `lx/services/query.lx`) to read from `result.passes.*`.
 11. Update tests gradually (many refer to legacy `lowerResult/anfResult/...`).
 12. Optionally: keep legacy aliases indefinitely or mark as deprecated in docs.
+
+### Phase 4: Remove legacy surface (completed)
+
+13. Migrate remaining uses of `parseErrors`/`lowerErrors` to `passes.parse.errors`/`passes.lower.errors`.
+14. Remove legacy projection layer from `driver.lx`:
+    - Delete all backward-compat projection fields (parseResult, lowerResult, anfResult, etc.)
+    - Delete legacy error fields (parseErrors, lowerErrors)
+    - Remove anfResult.ast overwrite hack
+15. Remove backward-compat fallbacks from `errors.lx`:
+    - Remove legacy origin walking from `foldOrigins()`
+    - Remove parseResult.ast fallback from `resolveNodePosition()`
+    - Remove legacy field collection from `collectErrors()`
+16. Fix source load failure to return proper failed parse pass with error message.
+17. Run tests.
 
 ---
 

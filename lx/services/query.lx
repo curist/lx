@@ -1241,17 +1241,17 @@ fn queryDiagnostics(result) {
   // Guard against early failures (e.g., source load failure) that may not have passes
   let passes = compileResult.passes or .{}
 
-  if compileResult.parseErrors {
-    for let i = 0; i < len(compileResult.parseErrors); i = i + 1 {
-      let d = parseParseError(compileResult.parseErrors[i])
+  if passes.parse and passes.parse.errors {
+    for let i = 0; i < len(passes.parse.errors); i = i + 1 {
+      let d = parseParseError(passes.parse.errors[i])
       if d { push(diags, d) }
     }
   }
 
-  if compileResult.lowerErrors {
-    let nodes = buildNodeIndexFromAst(passes.lower and passes.lower.ast)
-    for let i = 0; i < len(compileResult.lowerErrors); i = i + 1 {
-      let err = compileResult.lowerErrors[i]
+  if passes.lower and passes.lower.errors {
+    let nodes = buildNodeIndexFromAst(passes.lower.ast)
+    for let i = 0; i < len(passes.lower.errors); i = i + 1 {
+      let err = passes.lower.errors[i]
       let nodeId = err.nodeId
       push(diags, diagFromNodeId(nodes, nodeId, err, "lower"))
     }
@@ -1384,19 +1384,20 @@ fn compile(filepath) {
   if result.status != "done" {
     let phase = "unknown"
     let errors = []
+    let passes = result.passes or .{}
 
-    if result.parseErrors {
+    if passes.parse and passes.parse.errors {
       phase = "parse"
-      errors = result.parseErrors
-    } else if result.lowerErrors {
+      errors = passes.parse.errors
+    } else if passes.lower and passes.lower.errors {
       phase = "lower"
-      errors = result.lowerErrors
-    } else if result.passes.resolve and !result.passes.resolve.success {
+      errors = passes.lower.errors
+    } else if passes.resolve and !passes.resolve.success {
       phase = "resolve"
-      errors = result.passes.resolve.errors
-    } else if result.passes.typecheck and !result.passes.typecheck.success {
+      errors = passes.resolve.errors
+    } else if passes.typecheck and !passes.typecheck.success {
       phase = "typecheck"
-      errors = result.passes.typecheck.errors
+      errors = passes.typecheck.errors
     }
 
     return .{

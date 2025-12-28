@@ -23,16 +23,17 @@ fn compileAndQuery(source, filename) {
   if result.status != "done" {
     let phase = "unknown"
     let errors = []
+    let passes = result.passes or .{}
 
-    if result.parseErrors {
+    if passes.parse and passes.parse.errors {
       phase = "parse"
-      errors = result.parseErrors
-    } else if result.lowerErrors {
+      errors = passes.parse.errors
+    } else if passes.lower and passes.lower.errors {
       phase = "lower"
-      errors = result.lowerErrors
-    } else if result.passes.resolve and !result.passes.resolve.success {
+      errors = passes.lower.errors
+    } else if passes.resolve and !passes.resolve.success {
       phase = "resolve"
-      errors = result.passes.resolve.errors
+      errors = passes.resolve.errors
     }
 
     return .{ success: false, phase: phase, errors: errors }

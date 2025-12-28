@@ -193,12 +193,12 @@ static bool sqrtNative(int argCount, Value *args) {
 
 static bool keysNative(int argCount, Value *args) {
   if (argCount < 1) {
-    args[-1] = CSTRING_VAL("Error: Arg must be a map.");
+    args[-1] = CSTRING_VAL("Error: keys takes 1 arg.");
     return false;
   }
   Value arg = args[0];
   if (!IS_HASHMAP(arg) && !IS_ENUM(arg)) {
-    args[-1] = CSTRING_VAL("Error: Arg must be a map.");
+    args[-1] = CSTRING_VAL("Error: Arg must be a map or enum.");
     return false;
   }
   ObjArray *array = newArray();

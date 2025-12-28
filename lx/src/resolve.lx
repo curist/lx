@@ -462,16 +462,16 @@ fn isInFunction(scope) {
   // Helper to extract import type from compilation result
   fn extractImportType(result) {
     if !result or result.status != "done" or
-       !result.typecheckResult or !result.typecheckResult.success {
+       !result.passes.typecheck or !result.passes.typecheck.success {
       return nil
     }
 
     // Use the same AST that was typechecked (ANF if available, else lower)
-    let modAst = (result.anfInlineResult and result.anfInlineResult.ast) or
-                 (result.anfResult and result.anfResult.ast) or
-                 (result.lowerResult and result.lowerResult.ast)
-    let modTypes = result.typecheckResult.types
-    let modBindings = result.typecheckResult.typeVarBindings
+    let modAst = (result.passes["anf-inline"] and result.passes["anf-inline"].ast) or
+                 (result.passes.anf and result.passes.anf.ast) or
+                 (result.passes.lower and result.passes.lower.ast)
+    let modTypes = result.passes.typecheck.types
+    let modBindings = result.passes.typecheck.typeVarBindings
 
     if modAst and modAst.expressions and len(modAst.expressions) > 0 and modTypes {
       let lastExpr = modAst.expressions[len(modAst.expressions) - 1]

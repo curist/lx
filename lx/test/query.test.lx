@@ -30,28 +30,28 @@ fn compileAndQuery(source, filename) {
     } else if result.lowerErrors {
       phase = "lower"
       errors = result.lowerErrors
-    } else if result.resolveResult and !result.resolveResult.success {
+    } else if result.passes.resolve and !result.passes.resolve.success {
       phase = "resolve"
-      errors = result.resolveResult.errors
+      errors = result.passes.resolve.errors
     }
 
     return .{ success: false, phase: phase, errors: errors }
   }
 
   let initResult = query.queryInit(
-    result.lowerResult.ast,
-    result.resolveResult,
-    result.typecheckResult,
+    result.passes.lower.ast,
+    result.passes.resolve,
+    result.passes.typecheck,
     .{ buildIndex: true }
   )
 
   .{
     success: initResult.success,
     ctx: initResult.ctx,
-    parseResult: result.parseResult,
-    lowerResult: result.lowerResult,
-    resolveResult: result.resolveResult,
-    typecheckResult: result.typecheckResult,
+    parseResult: result.passes.parse,
+    lowerResult: result.passes.lower,
+    resolveResult: result.passes.resolve,
+    typecheckResult: result.passes.typecheck,
   }
 }
 

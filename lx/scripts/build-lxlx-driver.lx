@@ -45,9 +45,9 @@ fn codegenModule(modulePath) {
     return nil
   }
 
-  let ast = modResult.anfResult and modResult.anfResult.ast or modResult.lowerResult.ast
+  let ast = modResult.passes.anf and modResult.passes.anf.ast or modResult.passes.lower.ast
   let t2 = now()
-  let cg = codegen(ast, modResult.resolveResult, .{
+  let cg = codegen(ast, modResult.passes.resolve, .{
     codegenModule: codegenModule,
   })
   let t3 = now()

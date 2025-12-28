@@ -50,8 +50,8 @@ fn compileWithDriver(driverInstance, path) {
       return nil
     }
 
-    let ast = result.anfResult and result.anfResult.ast or result.lowerResult.ast
-    let cg = codegen(ast, result.resolveResult, .{
+    let ast = result.passes.anf and result.passes.anf.ast or result.passes.lower.ast
+    let cg = codegen(ast, result.passes.resolve, .{
       codegenModule: codegenModule,
     })
     result.codegenResult = cg

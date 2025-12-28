@@ -141,8 +141,8 @@ test("buildNodesIndex - indexes all nodes", fn(assert) {
 
   let result = driverInstance.compileModule("test.lx")
 
-  if result.parseResult and result.parseResult.ast {
-    let index = errors.buildNodesIndex(result.parseResult.ast)
+  if result.passes.parse and result.passes.parse.ast {
+    let index = errors.buildNodesIndex(result.passes.parse.ast)
     let nodeIds = keys(index)
 
     assert.truthy(len(nodeIds) > 0, "Should index at least some nodes")
@@ -164,8 +164,8 @@ test("buildNodesIndex - includes identifier nodes", fn(assert) {
 
   let result = driverInstance.compileModule("test.lx")
 
-  if result.parseResult and result.parseResult.ast {
-    let index = errors.buildNodesIndex(result.parseResult.ast)
+  if result.passes.parse and result.passes.parse.ast {
+    let index = errors.buildNodesIndex(result.passes.parse.ast)
 
     // Find an identifier node (should exist)
     let hasIdentifier = false

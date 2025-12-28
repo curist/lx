@@ -1238,6 +1238,9 @@ fn queryDiagnostics(result) {
     return diags
   }
 
+  // Guard against early failures (e.g., source load failure) that may not have passes
+  let passes = compileResult.passes or .{}
+
   if compileResult.parseErrors {
     for let i = 0; i < len(compileResult.parseErrors); i = i + 1 {
       let d = parseParseError(compileResult.parseErrors[i])
@@ -1246,7 +1249,7 @@ fn queryDiagnostics(result) {
   }
 
   if compileResult.lowerErrors {
-    let nodes = buildNodeIndexFromAst(compileResult.lowerResult and compileResult.lowerResult.ast)
+    let nodes = buildNodeIndexFromAst(passes.lower and passes.lower.ast)
     for let i = 0; i < len(compileResult.lowerErrors); i = i + 1 {
       let err = compileResult.lowerErrors[i]
       let nodeId = err.nodeId
@@ -1254,28 +1257,28 @@ fn queryDiagnostics(result) {
     }
   }
 
-  if compileResult.resolveResult and !compileResult.resolveResult.success {
-    let nodes = compileResult.resolveResult.nodes
-    for let i = 0; i < len(compileResult.resolveResult.errors); i = i + 1 {
-      let err = compileResult.resolveResult.errors[i]
+  if passes.resolve and !passes.resolve.success {
+    let nodes = passes.resolve.nodes
+    for let i = 0; i < len(passes.resolve.errors); i = i + 1 {
+      let err = passes.resolve.errors[i]
       let nodeId = err.nodeId
       push(diags, diagFromNodeId(nodes, nodeId, err, "resolve"))
     }
   }
 
-  if compileResult.typecheckResult and !compileResult.typecheckResult.success {
+  if passes.typecheck and !passes.typecheck.success {
     // Start with resolver nodes if available, otherwise use ctx.nodes or empty map
-    let nodes = (compileResult.resolveResult and compileResult.resolveResult.nodes) or (ctx and ctx.nodes)
+    let nodes = (passes.resolve and passes.resolve.nodes) or (ctx and ctx.nodes)
     if !nodes {
       nodes = .{}
     }
     // Always merge in nodes from lowered AST to ensure completeness
     // (resolver.nodes may be incomplete, missing some AST nodes)
-    if compileResult.lowerResult and compileResult.lowerResult.ast {
-      collectAllNodes(compileResult.lowerResult.ast, nodes)
+    if passes.lower and passes.lower.ast {
+      collectAllNodes(passes.lower.ast, nodes)
     }
-    for let i = 0; i < len(compileResult.typecheckResult.errors); i = i + 1 {
-      let err = compileResult.typecheckResult.errors[i]
+    for let i = 0; i < len(passes.typecheck.errors); i = i + 1 {
+      let err = passes.typecheck.errors[i]
       let nodeId = err.nodeId
       push(diags, diagFromNodeId(nodes, nodeId, err, "typecheck"))
     }
@@ -1388,12 +1391,12 @@ fn compile(filepath) {
     } else if result.lowerErrors {
       phase = "lower"
       errors = result.lowerErrors
-    } else if result.resolveResult and !result.resolveResult.success {
+    } else if result.passes.resolve and !result.passes.resolve.success {
       phase = "resolve"
-      errors = result.resolveResult.errors
-    } else if result.typecheckResult and !result.typecheckResult.success {
+      errors = result.passes.resolve.errors
+    } else if result.passes.typecheck and !result.passes.typecheck.success {
       phase = "typecheck"
-      errors = result.typecheckResult.errors
+      errors = result.passes.typecheck.errors
     }
 
     return .{
@@ -1406,7 +1409,7 @@ fn compile(filepath) {
 
   // Merge all compiled modules into a single query context with global IDs.
   let merged = .{
-    ast: result.lowerResult and result.lowerResult.ast,
+    ast: result.passes.lower and result.passes.lower.ast,
     nodes: .{},
     resolvedNames: .{},
     types: .{},
@@ -1421,15 +1424,15 @@ fn compile(filepath) {
   for let i = 0; i < len(cacheKeys); i = i + 1 {
     let k = cacheKeys[i]
     let mod = driver.cache[k]
-    if mod and mod.status == "done" and mod.resolveResult and mod.typecheckResult {
+    if mod and mod.status == "done" and mod.passes.resolve and mod.passes.typecheck {
       let moduleNodes = .{}
-      let baseNodeKeys = keys(mod.resolveResult.nodes)
+      let baseNodeKeys = keys(mod.passes.resolve.nodes)
       for let j = 0; j < len(baseNodeKeys); j = j + 1 {
         let id = baseNodeKeys[j]
-        moduleNodes[id] = mod.resolveResult.nodes[id]
+        moduleNodes[id] = mod.passes.resolve.nodes[id]
       }
-      if mod.lowerResult and mod.lowerResult.ast {
-        collectAllNodes(mod.lowerResult.ast, moduleNodes)
+      if mod.passes.lower and mod.passes.lower.ast {
+        collectAllNodes(mod.passes.lower.ast, moduleNodes)
       }
 
       let nodeKeys = keys(moduleNodes)
@@ -1443,16 +1446,16 @@ fn compile(filepath) {
         }
       }
 
-      if mod.lowerResult and mod.lowerResult.ast and mod.path {
-        merged.moduleAsts[mod.path] = mod.lowerResult.ast
+      if mod.passes.lower and mod.passes.lower.ast and mod.path {
+        merged.moduleAsts[mod.path] = mod.passes.lower.ast
       }
 
       // Remap and merge resolved names
-      let resKeys = keys(mod.resolveResult.resolvedNames)
+      let resKeys = keys(mod.passes.resolve.resolvedNames)
       resKeys->sort(keyLess)
       for let j = 0; j < len(resKeys); j = j + 1 {
         let oldId = resKeys[j]
-        let r = mod.resolveResult.resolvedNames[oldId]
+        let r = mod.passes.resolve.resolvedNames[oldId]
         if r {
           let node = moduleNodes[oldId]
           let newId = node and node.filename and nodeKeyFromParts(node.filename, oldId) or nil
@@ -1475,7 +1478,7 @@ fn compile(filepath) {
 
       // Remap and merge types + bindings
       let typeVarMap = .{}
-      let typeKeys = keys(mod.typecheckResult.types)
+      let typeKeys = keys(mod.passes.typecheck.types)
       typeKeys->sort(keyLess)
       for let j = 0; j < len(typeKeys); j = j + 1 {
         let oldId = typeKeys[j]
@@ -1483,14 +1486,14 @@ fn compile(filepath) {
         let newId = node and node.filename and nodeKeyFromParts(node.filename, oldId) or nil
         if newId {
           merged.types[newId] = remapType(
-            mod.typecheckResult.types[oldId],
+            mod.passes.typecheck.types[oldId],
             typeVarMap,
             nextTypeVarId
           )
         }
       }
 
-      let bindKeys = keys(mod.typecheckResult.typeVarBindings)
+      let bindKeys = keys(mod.passes.typecheck.typeVarBindings)
       bindKeys->sort(keyLess)
       for let j = 0; j < len(bindKeys); j = j + 1 {
         let oldTid = bindKeys[j]
@@ -1502,7 +1505,7 @@ fn compile(filepath) {
           typeVarMap[str(oldTid)] = newTid
         }
         merged.typeVarBindings[newTid] = remapType(
-          mod.typecheckResult.typeVarBindings[oldTid],
+          mod.passes.typecheck.typeVarBindings[oldTid],
           typeVarMap,
           nextTypeVarId
         )

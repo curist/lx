@@ -2119,6 +2119,22 @@ fn checkLet(checker, node) {
   if node.init {
     let it = synthExpr(checker, node.init)
     constrain(checker, tv, it, node.init.id, "Initializer mismatch")
+
+    // Record enum literal member values so we can treat `E.Member` as a literal
+    // key in record/hashmap literals and record indexing.
+    if node.init.type == "Hashmap" and checker.enumInfo and checker.enumInfo[node.init.id] {
+      let info = checker.enumInfo[node.init.id]
+      if info and info.members {
+        let m = .{}
+        for let i = 0; i < len(info.members); i = i + 1 {
+          let mem = info.members[i]
+          if mem and mem.name != nil and mem.value != nil {
+            m[mem.name] = mem.value
+          }
+        }
+        checker.enumDeclValues[node.name.id] = m
+      }
+    }
   }
 
   checker.types[node.id] = typeNil()
@@ -2339,10 +2355,11 @@ fn checkArray(checker, node) {
 }
 
 fn checkHashmap(checker, node) {
-  // Hashmap literals:
+  // Hashmap/record literals:
   // - Empty `.{}` is a Map (hashmap).
   // - Any non-empty `.{ ... }` is a closed Record.
-  // - Computed keys in a Record must be literal String/Number (Option A).
+  // - Computed keys in a Record must be statically resolvable (literal
+  //   String/Number, or an enum member like `E.A`).
   let fields = .{}
 
   let isEnum = checker.enumInfo and checker.enumInfo[node.id]
@@ -2362,31 +2379,24 @@ fn checkHashmap(checker, node) {
     return t
   }
 
+  let enumKeyOrigins = .{}
+  let sawInvalidKey = false
+
   for let i = 0; i < len(node.pairs); i = i + 1 {
     let p = node.pairs[i]
-    if p.key { synthExpr(checker, p.key) }
     let vType = p.value and synthExpr(checker, p.value) or typeAny()
 
     // Determine record field key.
-    // Bare keys are normalized to String nodes with lexeme not starting with '"'.
-    // Computed keys (`[expr]`) come through as expression nodes; we only accept
-    // literal String/Number for closed record shapes.
-    let key = nil
-    if p.key and p.key.type == "String" and p.key.lexeme and len(p.key.lexeme) > 0 and p.key.lexeme[0] != "\"" {
-      // Bare key: `.{ a: 1 }`
-      key = p.key.value
-    } else if p.key and p.key.type == "String" {
-      // Computed string literal: `.{ [\"a\"]: 1 }`
-      key = p.key.value
-    } else if p.key and p.key.type == "Number" {
-      // Computed number literal: `.{ [1]: \"a\" }`
-      key = p.key.value
-    }
-
+    let keyInfo = literalKeyInfoFromIndexExpr(checker, p.key)
+    let key = keyInfo and keyInfo.key or nil
     if key == nil {
+      sawInvalidKey = true
       addError(checker, (p.key and p.key.id) or node.id,
-        "Record literal computed key must be a string or number literal")
+        "Record literal computed key must be a literal string, number, or enum member.")
       continue
+    }
+    if keyInfo and keyInfo.origin {
+      enumKeyOrigins[key] = keyInfo.origin
     }
 
     let existing = fields[key]
@@ -2403,17 +2413,57 @@ fn checkHashmap(checker, node) {
   let t = isEnum and typeEnum(fields) or typeRecord(fields)
 
   checker.types[node.id] = t
+  if len(keys(enumKeyOrigins)) > 0 {
+    checker.recordEnumKeyOrigins[node.id] = enumKeyOrigins
+  }
+  if sawInvalidKey and !isEnum {
+    addError(checker, node.id,
+      "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value")
+  }
   t
 }
 
-fn literalKeyFromIndexExpr(node) {
+fn literalKeyInfoFromEnumMemberExpr(checker, node) {
+  if !checker or !node or node.type != "Dot" { return nil }
+  if !node.object or node.object.type != "Identifier" { return nil }
+
+  let memberName = nil
+  if node.property and node.property.type == "Identifier" {
+    memberName = node.property.name
+  } else if node.property and node.property.type == "String" {
+    memberName = node.property.value
+  } else {
+    return nil
+  }
+  if memberName == nil { return nil }
+
+  let binding = checker.resolvedNames and checker.resolvedNames[node.object.id]
+  if !binding or binding.kind == "builtin" or !binding.declaredAt { return nil }
+
+  let m = checker.enumDeclValues and checker.enumDeclValues[binding.declaredAt]
+  if !m { return nil }
+  let v = m[memberName]
+  if v == nil { return nil }
+  .{
+    key: v,
+    origin: .{ enumDeclId: binding.declaredAt, enumName: node.object.name, member: memberName },
+  }
+}
+
+fn literalKeyInfoFromIndexExpr(checker, node) {
   if !node { return nil }
   if node.type == "Grouping" {
-    return literalKeyFromIndexExpr(node.expression)
+    return literalKeyInfoFromIndexExpr(checker, node.expression)
   }
-  if node.type == "String" { return node.value }
-  if node.type == "Number" { return node.value }
+  if node.type == "String" { return .{ key: node.value, origin: nil } }
+  if node.type == "Number" { return .{ key: node.value, origin: nil } }
+  if node.type == "Dot" { return literalKeyInfoFromEnumMemberExpr(checker, node) }
   nil
+}
+
+fn literalKeyFromIndexExpr(checker, node) {
+  let info = literalKeyInfoFromIndexExpr(checker, node)
+  info and info.key or nil
 }
 
 fn checkIndex(checker, node) {
@@ -2424,7 +2474,7 @@ fn checkIndex(checker, node) {
     kind: "Index",
     base: objT,
     index: idxT,
-    literalKey: literalKeyFromIndexExpr(node.index),
+    literalKey: literalKeyFromIndexExpr(checker, node.index),
     out: out,
     nodeId: node.id,
   }
@@ -2499,7 +2549,7 @@ fn checkAssignment(checker, node) {
       kind: "IndexSet",
       base: objT,
       index: idxT,
-      literalKey: literalKeyFromIndexExpr(node.target.index),
+      literalKey: literalKeyFromIndexExpr(checker, node.target.index),
       value: vt,
       nodeId: node.id,
     })
@@ -2641,6 +2691,8 @@ fn makeChecker(resolveResult, opts) {
     currentReturn: nil,
 
     enumInfo: (opts and opts.enumInfo) or .{},
+    enumDeclValues: .{}, // let declNodeId -> { memberName -> number }
+    recordEnumKeyOrigins: .{}, // recordLiteralNodeId -> { key -> { enumDeclId, enumName, member } }
 
     changed: false,
     solverHitMaxRounds: nil,
@@ -2718,6 +2770,7 @@ fn typecheck(ast, resolveResult, opts) {
     types: outTypes,
     typeVarBindings: outBindings,
     errors: checker.errors,
+    recordEnumKeyOrigins: checker.recordEnumKeyOrigins,
   }
 }
 

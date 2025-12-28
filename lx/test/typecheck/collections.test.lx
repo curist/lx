@@ -4,6 +4,7 @@ let helpers = import "test/typecheck/helpers.lx"
 fn register(test) {
   let parseAndTypecheck = helpers.parseAndTypecheck
   let getExprType = helpers.getExprType
+  let getExprNode = helpers.getExprNode
   let deref = helpers.deref
   let hasError = helpers.hasError
 
@@ -38,7 +39,74 @@ fn register(test) {
   test("typecheck - record literal rejects non-literal computed key", fn(assert) {
     let result = parseAndTypecheck("{ let k = \"a\"\nlet m = .{ [k]: 1 }\nm }")
     assert.truthy(!result.success)
-    assert.truthy(hasError(result, "Record literal computed key must be a string or number literal"))
+    assert.truthy(hasError(result, "Record literal computed key must be a literal string, number, or enum member."))
+    assert.truthy(hasError(result, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value"))
+  })
+
+  test("typecheck - enum member key can form Record", fn(assert) {
+    let result = parseAndTypecheck("{ let E = enum { A, B }\nlet m = .{ [E.A]: 1, [E.B]: 2 }\nm }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Record")
+    assert.equal(deref(result, t.fields[0]).kind, "Number")
+    assert.equal(deref(result, t.fields[1]).kind, "Number")
+
+    let mDecl = getExprNode(result, 1)
+    let origins = result.recordEnumKeyOrigins and result.recordEnumKeyOrigins[mDecl.init.id]
+    assert.truthy(origins != nil)
+    assert.equal(origins[0].member, "A")
+    assert.equal(origins[1].member, "B")
+    assert.equal(origins[0].enumName, "E")
+    assert.equal(origins[1].enumName, "E")
+  })
+
+  test("typecheck - enum member key with nested groupings", fn(assert) {
+    let result = parseAndTypecheck("{ let E = enum { A }\nlet m = .{ [((E.A))]: 1 }\nm }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Record")
+    assert.equal(deref(result, t.fields[0]).kind, "Number")
+
+    let mDecl = getExprNode(result, 1)
+    let origins = result.recordEnumKeyOrigins and result.recordEnumKeyOrigins[mDecl.init.id]
+    assert.truthy(origins != nil)
+    assert.equal(origins[0].member, "A")
+    assert.equal(origins[0].enumName, "E")
+  })
+
+  test("typecheck - enum member in value position", fn(assert) {
+    let result = parseAndTypecheck("{ let E = enum { Active, Inactive }\nlet m = .{ a: E.Active }\nm }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Record")
+    assert.equal(deref(result, t.fields["a"]).kind, "Number")
+  })
+
+  test("typecheck - non-enum Dot key is rejected", fn(assert) {
+    let result = parseAndTypecheck("{ let obj = .{ x: \"foo\" }\nlet m = .{ [obj.x]: 1 }\nm }")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Record literal computed key must be a literal string, number, or enum member."))
+    assert.truthy(hasError(result, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value"))
+  })
+
+  test("typecheck - shadowed enum name is not treated as enum", fn(assert) {
+    let result = parseAndTypecheck("{ let E = enum { A }\n{ let E = \"not an enum\"\n  let m = .{ [E.A]: 1 }\n  m\n}\n}")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Record literal computed key must be a literal string, number, or enum member."))
+    assert.truthy(hasError(result, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value"))
+  })
+
+  test("typecheck - index assignment recognizes enum member literal key", fn(assert) {
+    let result = parseAndTypecheck("{ let E = enum { A, B }\nlet m = .{ [E.A]: 1 }\nm[E.B] = 2 }")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Missing field: 1"))
+    assert.truthy(!hasError(result, "Record index assignment must use a literal string or number key"))
   })
 
   test("typecheck - string indexing yields String", fn(assert) {

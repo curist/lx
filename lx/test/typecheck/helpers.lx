@@ -60,6 +60,7 @@ fn parseAndTypecheck(source) {
     types: typecheckResult.types,
     typeVarBindings: typecheckResult.typeVarBindings,
     errors: typecheckResult.errors,
+    recordEnumKeyOrigins: typecheckResult.recordEnumKeyOrigins,
     parseResult: parseResult,
     lowerResult: lowerResult,
     resolveResult: resolveResult,

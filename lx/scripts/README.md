@@ -54,7 +54,7 @@ Edit `src/vm.c`:
 Run the drivers with your **system lx** (the old version):
 
 ```bash
-# From lx/lx directory
+# From lx/ directory
 lx run scripts/build-lxlx-driver.lx
 lx run scripts/build-globals-driver.lx
 ```
@@ -90,7 +90,7 @@ This builds the VM with:
 ### 7. Test the new compiler
 
 ```bash
-# From lx/lx directory
+# From lx/ directory
 ../out/lx run test/some-test.lx
 
 # Or run the full test suite

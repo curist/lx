@@ -15,7 +15,7 @@ Use the helper script; it defaults to larger sizes for better timing resolution.
 ```sh
 cd benchmarks
 ./run.sh              # runs all langs that are available
-LX=../lx/lx ./run.sh  # point to custom lx binary if not on PATH
+LX=../out/lx ./run.sh  # point to custom lx binary if not on PATH
 ```
 
 The script skips a language if its interpreter is missing. Results include each checksum (to confirm correctness) followed by wall-clock seconds from `/usr/bin/env time` (uses `gtime -f "%e"` when available). For better stability, bump `REPEAT` and take the best or median.

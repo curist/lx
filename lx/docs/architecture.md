@@ -200,6 +200,28 @@ The driver:
 
 ---
 
+## Pipelines (Profiles)
+
+Lx supports multiple **pipelines** (a.k.a. profiles) that select a **known-good**
+sequence of passes for a given product line (compiler vs tooling).
+
+This is intentional: allowing arbitrary pass subsets quickly creates a
+combinatorial space that is hard to test and reason about. Instead, Lx prefers:
+
+* a small number of curated pipelines (e.g. `tooling`, `O0`, `O2`, `typed-backend`)
+* pass-level toggles used internally by those pipelines (not as a public API)
+
+Within a pipeline:
+
+* passes that establish correctness invariants (e.g. binding resolution) are mandatory
+* optional passes are limited to semantics-preserving optimizations or instrumentation
+
+Future direction: a pass manager can enforce this mechanically via
+`requires`/`provides` metadata, rejecting invalid combinations and auto-inserting
+prerequisites when appropriate.
+
+---
+
 ## Data Structures
 
 ### **Node IDs**

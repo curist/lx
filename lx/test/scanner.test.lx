@@ -46,11 +46,10 @@ test("scanner - values", fn(assert) {
 })
 
 test("scanner - token type string", fn(assert) {
-  let NAME = types.TOKEN_NAME
-  assert.equal(NAME[TOKEN.STRING], "STRING")
-  assert.equal(NAME[TOKEN.LET], "LET")
-  assert.equal(NAME[TOKEN.IDENTIFIER], "IDENTIFIER")
-  assert.equal(NAME[TOKEN.TRUE], "TRUE")
+  assert.equal(nameOf(TOKEN, TOKEN.STRING), "STRING")
+  assert.equal(nameOf(TOKEN, TOKEN.LET), "LET")
+  assert.equal(nameOf(TOKEN, TOKEN.IDENTIFIER), "IDENTIFIER")
+  assert.equal(nameOf(TOKEN, TOKEN.TRUE), "TRUE")
 })
 
 suite.run()

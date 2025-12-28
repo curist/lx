@@ -439,7 +439,7 @@ static InterpretResult run(void) {
       }
 
       case OP_GET_BY_INDEX: {
-        if (!IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1)) && !IS_STRING(peek(1))) {
+        if (!IS_ENUM(peek(1)) && !IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1)) && !IS_STRING(peek(1))) {
           runtimeError("Only array / hashmap / string can get value by index.");
           return INTERPRET_RUNTIME_ERROR;
         }
@@ -461,6 +461,18 @@ static InterpretResult run(void) {
           if (index >= 0 && index < array->count) {
             value = array->values[index];
           }
+          pop(); // key
+          pop(); // container
+          push(value);
+
+        } else if (IS_ENUM(peek(1))) {
+          if (!IS_NUMBER(key) && !IS_STRING(key)) {
+            runtimeError("Enum key type must be number or string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* table = &AS_ENUM_FORWARD(peek(1));
+          Value value;
+          if (!tableGet(table, key, &value)) value = NIL_VAL;
           pop(); // key
           pop(); // container
           push(value);
@@ -498,6 +510,10 @@ static InterpretResult run(void) {
       }
 
       case OP_SET_BY_INDEX: {
+        if (IS_ENUM(peek(2))) {
+          runtimeError("Enum is immutable.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
         if (!IS_HASHMAP(peek(2)) && !IS_ARRAY(peek(2))) {
           runtimeError("Only array or hashmap can set value by index.");
           return INTERPRET_RUNTIME_ERROR;
@@ -632,16 +648,32 @@ static InterpretResult run(void) {
         Value key     = peek(1);
         Value value   = peek(0);
 
-        if (!IS_HASHMAP(hashmap)) {
+        if (IS_ENUM(hashmap)) {
+          if (!IS_STRING(key)) {
+            runtimeError("Enum member name must be a string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          if (!IS_NUMBER(value)) {
+            runtimeError("Enum member value must be a number.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* forward = &AS_ENUM_FORWARD(hashmap);
+          Table* reverse = &AS_ENUM_REVERSE(hashmap);
+          tableSet(forward, key, value);
+          tableSet(reverse, value, key);
+
+        } else if (IS_HASHMAP(hashmap)) {
+          if (!IS_NUMBER(key) && !IS_STRING(key)) {
+            runtimeError("Hashmap key type must be number or string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* table = &AS_HASHMAP(hashmap);
+          tableSet(table, key, value);
+
+        } else {
           runtimeError("Can only assoc to hashmap.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        if (!IS_NUMBER(key) && !IS_STRING(key)) {
-          runtimeError("Hashmap key type must be number or string.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        Table* table = &AS_HASHMAP(hashmap);
-        tableSet(table, key, value);
 
         pop(); // value
         pop(); // key
@@ -662,6 +694,10 @@ static InterpretResult run(void) {
 
       case OP_HASHMAP:
         push(OBJ_VAL(newHashmap()));
+        break;
+
+      case OP_ENUM:
+        push(OBJ_VAL(newEnum()));
         break;
 
       case OP_ARRAY:
@@ -795,6 +831,10 @@ static InterpretResult run(void) {
         Value key = slots[idxSlot];
         Value value = slots[valSlot];
 
+        if (IS_ENUM(object)) {
+          runtimeError("Enum is immutable.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
         if (!IS_HASHMAP(object) && !IS_ARRAY(object)) {
           runtimeError("Only array or hashmap can set value by index.");
           return INTERPRET_RUNTIME_ERROR;

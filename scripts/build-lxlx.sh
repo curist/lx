@@ -2,7 +2,8 @@
 
 set -eo pipefail
 
-if ! [ -x "$(command -v lx)" ]; then
+LX=${LX:-lx}
+if ! command -v "$LX" >/dev/null 2>&1 && ! [ -x "$LX" ]; then
   echo skip building lxlx.h
   exit 0
 fi
@@ -10,9 +11,18 @@ fi
 cd lx
 
 TARGET=../include/lx/lxlx.h
-LX=${LX:-lx}
+OBJ=/tmp/lxlx-new.lxobj
 
 echo "#include <stdint.h>" > $TARGET
 echo "const uint8_t lxlx_bytecode[] = {" >> $TARGET
-$LX compile cmd/mlx.lx | xxd -i >> $TARGET
+# If $LX is the in-repo compiler (`out/lx`), use fast-path compile.
+# Otherwise, use the driver pipeline to avoid bootstrapping mismatches.
+if [[ "$LX" == *"/out/lx" || "$LX" == "out/lx" || "$LX" == "./out/lx" || "$LX" == "../out/lx" ]]; then
+  if ! $LX compile cmd/mlx.lx > "$OBJ"; then
+    $LX run scripts/build-lxlx-driver.lx > /dev/null
+  fi
+else
+  $LX run scripts/build-lxlx-driver.lx > /dev/null
+fi
+xxd -i < "$OBJ" >> $TARGET
 echo "};" >> $TARGET

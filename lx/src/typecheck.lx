@@ -28,6 +28,7 @@ fn typeNil()     { .{ kind: "Nil" } }
 fn typeNumber()  { .{ kind: "Number" } }
 fn typeBool()    { .{ kind: "Bool" } }
 fn typeString()  { .{ kind: "String" } }
+fn typeEnum(fields) { .{ kind: "Enum", fields: fields } }
 
 fn typeVar(id) {
   .{ kind: "TypeVar", id: id }
@@ -915,6 +916,14 @@ fn overloadCasesByName(name) {
         true
       }),
 
+      overloadCase("range:enum", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Enum" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(typeString()))
+        true
+      }),
+
       // Unknown/unresolved base: defer and allow later refinement.
       overloadCase("range:unresolved", fn(checker, c) {
         let baseInfo = derefWithRootVar(checker, c.args[0])
@@ -985,6 +994,14 @@ fn overloadCasesByName(name) {
         true
       }),
 
+      overloadCase("keys:enum", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Enum" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(typeString()))
+        true
+      }),
+
       // Unknown/unresolved base: do not guess; record a deferred check.
       overloadCase("keys:unresolved", fn(checker, c) {
         let baseInfo = derefWithRootVar(checker, c.args[0])
@@ -1002,12 +1019,13 @@ fn overloadCasesByName(name) {
         if base.kind == "Any" { return "no" }
         if base.kind == "Map" { return "no" }
         if base.kind == "Record" { return "no" }
+        if base.kind == "Enum" { return "no" }
         if base.kind == "Indexable" { return "defer" }
         if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
         "match"
       }, fn(checker, c) {
         unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(typeAny()))
-        addError(checker, c.nodeId, "keys() requires map or record")
+        addError(checker, c.nodeId, "keys() requires map, record, or enum")
         true
       }),
     ]
@@ -1029,9 +1047,9 @@ fn overloadCasesByName(name) {
         true
       }),
 
-      overloadCase("nameOf:record", fn(checker, c) {
+      overloadCase("nameOf:enum", fn(checker, c) {
         let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Record" and "match" or "no"
+        base.kind == "Enum" and "match" or "no"
       }, fn(checker, c) {
         unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
 
@@ -1058,17 +1076,6 @@ fn overloadCasesByName(name) {
         true
       }),
 
-      overloadCase("nameOf:map", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Map" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        let nid = (c.argNodeIds and len(c.argNodeIds) > 1) and c.argNodeIds[1] or c.nodeId
-        unifyOrContain(checker, nid, "nameOf() value mismatch", c.args[1], base.elem)
-        true
-      }),
-
       // Unknown/unresolved base: do not guess; record a deferred check.
       overloadCase("nameOf:unresolved", fn(checker, c) {
         let baseInfo = derefWithRootVar(checker, c.args[0])
@@ -1084,14 +1091,13 @@ fn overloadCasesByName(name) {
         let root = baseInfo.root
         let base = deref(checker, baseInfo.type)
         if base.kind == "Any" { return "no" }
-        if base.kind == "Map" { return "no" }
-        if base.kind == "Record" { return "no" }
+        if base.kind == "Enum" { return "no" }
         if base.kind == "Indexable" { return "defer" }
         if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
         "match"
       }, fn(checker, c) {
         unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
-        addError(checker, c.nodeId, "nameOf() requires map or record")
+        addError(checker, c.nodeId, "nameOf() requires enum")
         true
       }),
     ]
@@ -1205,8 +1211,14 @@ fn trySolveConstraint(checker, c) {
     // If we reached here with a TypeVar base, it's still unresolved; defer.
     if base.kind == "TypeVar" { return false }
 
-	    // Closed record: must contain the field.
-    if base.kind == "Record" {
+    // Closed record / enum: must contain the field (and enums are immutable).
+    if base.kind == "Enum" and mode == "write" {
+      addError(checker, c.nodeId, "Enum is immutable.")
+      markConstraintError(c)
+      containHasFieldFailure(checker, ft)
+      return true
+    }
+    if base.kind == "Record" or base.kind == "Enum" {
       let field = base.fields[c.fieldName]
       if field {
         if !unify(checker, field, ft) {
@@ -1380,9 +1392,9 @@ fn trySolveConstraint(checker, c) {
       return true
     }
 
-    if base.kind == "Record" {
+    if base.kind == "Record" or base.kind == "Enum" {
       if c.literalKey == nil {
-        addError(checker, c.nodeId, "Record index must be a literal string or number key")
+        addError(checker, c.nodeId, (base.kind == "Enum" and "Enum" or "Record") + " index must be a literal string or number key")
         markConstraintError(c)
         if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
         return true
@@ -1481,7 +1493,7 @@ fn trySolveConstraint(checker, c) {
     }
 
     // Not indexable
-    addError(checker, c.nodeId, "Only array / hashmap / string can get value by index.")
+    addError(checker, c.nodeId, "Only array / map / enum / string can get value by index.")
     markConstraintError(c)
     if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
     return true
@@ -1495,6 +1507,11 @@ fn trySolveConstraint(checker, c) {
 
     if base.kind == "Any" { return true }
 
+    if base.kind == "Enum" {
+      addError(checker, c.nodeId, "Enum is immutable.")
+      markConstraintError(c)
+      return true
+    }
     if base.kind == "Record" {
       if c.literalKey == nil {
         addError(checker, c.nodeId, "Record index assignment must use a literal string or number key")
@@ -2328,8 +2345,15 @@ fn checkHashmap(checker, node) {
   // - Computed keys in a Record must be literal String/Number (Option A).
   let fields = .{}
 
-  // Empty literal `.{}` is treated as an empty hashmap.
+  let isEnum = checker.enumInfo and checker.enumInfo[node.id]
+
+  // Empty literal `.{}` is treated as an empty hashmap, but empty `enum {}` is an Enum.
   if !node.pairs or len(node.pairs) == 0 {
+    if isEnum {
+      let t = typeEnum(.{})
+      checker.types[node.id] = t
+      return t
+    }
     let keyT = freshTypeVar(checker)
     let elemT = freshTypeVar(checker)
     let t = typeMap(keyT, elemT)
@@ -2376,7 +2400,7 @@ fn checkHashmap(checker, node) {
     }
   }
 
-  let t = typeRecord(fields)
+  let t = isEnum and typeEnum(fields) or typeRecord(fields)
 
   checker.types[node.id] = t
   t
@@ -2596,7 +2620,7 @@ synthExpr = fn(checker, node) {
 // Public API
 // ========================================================
 
-fn makeChecker(resolveResult) {
+fn makeChecker(resolveResult, opts) {
   let root = TypeEnv(nil)
   .{
     types: .{},
@@ -2615,6 +2639,8 @@ fn makeChecker(resolveResult) {
     functionInfos: [],
 
     currentReturn: nil,
+
+    enumInfo: (opts and opts.enumInfo) or .{},
 
     changed: false,
     solverHitMaxRounds: nil,
@@ -2643,7 +2669,7 @@ fn predeclareTopLevel(checker, ast) {
   }
 }
 
-fn typecheck(ast, resolveResult) {
+fn typecheck(ast, resolveResult, opts) {
   if !resolveResult.success {
     return .{
       success: false,
@@ -2653,7 +2679,7 @@ fn typecheck(ast, resolveResult) {
     }
   }
 
-  let checker = makeChecker(resolveResult)
+  let checker = makeChecker(resolveResult, opts)
 
   if !ast {
     // XXX: should we report some errors?

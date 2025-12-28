@@ -94,6 +94,12 @@ static void blackenObject(Obj* object) {
     case OBJ_HASHMAP:
       markTable(&((ObjHashmap*)object)->table);
       break;
+    case OBJ_ENUM: {
+      ObjEnum* e = (ObjEnum*)object;
+      markTable(&e->forward);
+      markTable(&e->reverse);
+      break;
+    }
     case OBJ_ARRAY: {
       ValueArray array = ((ObjArray*)object)->array;
       markArray(&array);
@@ -135,6 +141,15 @@ static void freeObject(Obj* object) {
       Table table = ((ObjHashmap*)object)->table;
       freeTable(&table);
       FREE(ObjHashmap, object);
+      break;
+    }
+    case OBJ_ENUM: {
+      ObjEnum* e = (ObjEnum*)object;
+      Table forward = e->forward;
+      Table reverse = e->reverse;
+      freeTable(&forward);
+      freeTable(&reverse);
+      FREE(ObjEnum, object);
       break;
     }
     case OBJ_ARRAY: {

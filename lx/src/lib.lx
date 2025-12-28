@@ -1,8 +1,4 @@
 .{
-  iota: fn (start) {
-    let i = start - 1
-    fn() { i = i + 1 }
-  },
   tohex: {
     let map = .{
       [10]: "a", [11]: "b", [12]: "c",

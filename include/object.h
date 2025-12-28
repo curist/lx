@@ -13,6 +13,7 @@
 #define IS_NATIVE(value)       isObjType(value, OBJ_NATIVE)
 #define IS_STRING(value)       isObjType(value, OBJ_STRING)
 #define IS_HASHMAP(value)      isObjType(value, OBJ_HASHMAP)
+#define IS_ENUM(value)         isObjType(value, OBJ_ENUM)
 #define IS_ARRAY(value)        isObjType(value, OBJ_ARRAY)
 
 #define AS_CLOSURE(value)      ((ObjClosure*)AS_OBJ(value))
@@ -21,6 +22,9 @@
 #define AS_STRING(value)       ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value)      (((ObjString*)AS_OBJ(value))->chars)
 #define AS_HASHMAP(value)      (((ObjHashmap*)AS_OBJ(value))->table)
+#define AS_ENUM(value)         ((ObjEnum*)AS_OBJ(value))
+#define AS_ENUM_FORWARD(value) (((ObjEnum*)AS_OBJ(value))->forward)
+#define AS_ENUM_REVERSE(value) (((ObjEnum*)AS_OBJ(value))->reverse)
 #define AS_ARRAY(value)        (((ObjArray*)AS_OBJ(value))->array)
 
 #define COPY_CSTRING(string)   copyString(string, (int)strlen(string))
@@ -33,6 +37,7 @@ typedef enum {
   OBJ_STRING,
   OBJ_UPVALUE,
   OBJ_HASHMAP,
+  OBJ_ENUM,
   OBJ_ARRAY,
 } ObjType;
 
@@ -63,6 +68,12 @@ typedef struct {
   Obj obj;
   Table table;
 } ObjHashmap;
+
+typedef struct {
+  Obj obj;
+  Table forward;  // name -> value
+  Table reverse;  // value -> name
+} ObjEnum;
 
 typedef struct {
   Obj obj;
@@ -97,6 +108,7 @@ ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);
 ObjUpvalue* newUpvalue(Value* slot);
 ObjHashmap* newHashmap();
+ObjEnum* newEnum();
 ObjArray* newArray();
 void printObject(FILE* fd, Value value);
 

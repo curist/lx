@@ -173,6 +173,13 @@ ObjHashmap* newHashmap() {
   return hashmap;
 }
 
+ObjEnum* newEnum() {
+  ObjEnum* e = ALLOCATE_OBJ(ObjEnum, OBJ_ENUM);
+  initTable(&e->forward);
+  initTable(&e->reverse);
+  return e;
+}
+
 ObjArray* newArray() {
   ObjArray* array = ALLOCATE_OBJ(ObjArray, OBJ_ARRAY);
   initValueArray(&array->array);
@@ -213,6 +220,26 @@ void printObject(FILE* fd, Value value) {
 
         for (int i = hashmap->capacity - 1; i >= 0; --i) {
           Entry* entry = &hashmap->entries[i];
+          if (!IS_NIL(entry->key)) {
+            if (printed) fprintf(fd, ",");
+            else printed = true;
+            printValue(fd, entry->key);
+            fprintf(fd, ":");
+            printValue(fd, entry->value);
+          }
+        }
+        fprintf(fd, "}");
+        break;
+      }
+    case OBJ_ENUM:
+      {
+        fprintf(fd, "enum{");
+        Table* forward = &AS_ENUM_FORWARD(value);
+
+        bool printed = false;
+
+        for (int i = forward->capacity - 1; i >= 0; --i) {
+          Entry* entry = &forward->entries[i];
           if (!IS_NIL(entry->key)) {
             if (printed) fprintf(fd, ",");
             else printed = true;

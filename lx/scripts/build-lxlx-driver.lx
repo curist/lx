@@ -50,9 +50,15 @@ fn codegenModule(modulePath) {
   let ast = (passes["anf-inline"] and passes["anf-inline"].ast) or
             (passes.anf and passes.anf.ast) or
             (passes.lower and passes.lower.ast)
+  let enumInfo =
+    (passes.anf and passes.anf.enumInfo) or
+    (passes.lower and passes.lower.enumInfo) or
+    (passes.parse and passes.parse.enumInfo) or
+    .{}
   let t2 = now()
   let cg = codegen(ast, modResult.passes.resolve, .{
     codegenModule: codegenModule,
+    enumInfo: enumInfo,
   })
   let t3 = now()
 

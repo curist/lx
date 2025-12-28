@@ -39,7 +39,21 @@ fn parseAndTypecheck(source) {
     return .{ success: false, phase: "resolve", resolveErrors: resolveResult.errors }
   }
 
-  let typecheckResult = typecheck(lowerResult.ast, resolveResult, .{})
+  // Remap parse enumInfo (parse node ids) to lowered node ids via `origin`.
+  let remappedEnumInfo = .{}
+  if parseResult.enumInfo and lowerResult.origin {
+    let newIds = keys(lowerResult.origin)
+    for let i = 0; i < len(newIds); i = i + 1 {
+      let newId = newIds[i]
+      let oldId = lowerResult.origin[newId]
+      let info = parseResult.enumInfo[oldId]
+      if info {
+        remappedEnumInfo[newId] = info
+      }
+    }
+  }
+
+  let typecheckResult = typecheck(lowerResult.ast, resolveResult, .{ enumInfo: remappedEnumInfo })
   .{
     success: typecheckResult.success,
     phase: "typecheck",

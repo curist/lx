@@ -1,0 +1,180 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+// Basic enum functionality
+test("enum basic creation", fn(assert) {
+  let Color = enum { Red, Green, Blue }
+  assert.equal(Color.Red, 0)
+  assert.equal(Color.Green, 1)
+  assert.equal(Color.Blue, 2)
+})
+
+test("enum with start value", fn(assert) {
+  let Status = enum(100) { Pending, Running, Done }
+  assert.equal(Status.Pending, 100)
+  assert.equal(Status.Running, 101)
+  assert.equal(Status.Done, 102)
+})
+
+test("enum with explicit values", fn(assert) {
+  let Priority = enum { Low, Medium = 5, High, Critical = 10 }
+  assert.equal(Priority.Low, 0)
+  assert.equal(Priority.Medium, 5)
+  assert.equal(Priority.High, 6)
+  assert.equal(Priority.Critical, 10)
+})
+
+// Type system
+test("enum type() returns enum", fn(assert) {
+  let E = enum { A, B }
+  assert.equal(type(E), "enum")
+})
+
+test("enum member access", fn(assert) {
+  let E = enum { Foo, Bar, Baz }
+  assert.equal(E.Foo, 0)
+  assert.equal(E["Bar"], 1)
+  assert.equal(E.Baz, 2)
+})
+
+test("enum member access nonexistent returns nil", fn(assert) {
+  let E = enum { A }
+  assert.equal(E.B, nil)
+  assert.equal(E["missing"], nil)
+})
+
+// nameOf() functionality
+test("nameOf returns member name", fn(assert) {
+  let Color = enum { Red, Green, Blue }
+  assert.equal(nameOf(Color, 0), "Red")
+  assert.equal(nameOf(Color, 1), "Green")
+  assert.equal(nameOf(Color, 2), "Blue")
+})
+
+test("nameOf returns nil for invalid value", fn(assert) {
+  let E = enum { A, B }
+  assert.equal(nameOf(E, 999), nil)
+  assert.equal(nameOf(E, -1), nil)
+})
+
+test("nameOf works with explicit values", fn(assert) {
+  let E = enum { X = 10, Y = 20, Z = 30 }
+  assert.equal(nameOf(E, 10), "X")
+  assert.equal(nameOf(E, 20), "Y")
+  assert.equal(nameOf(E, 30), "Z")
+  assert.equal(nameOf(E, 0), nil)
+})
+
+test("nameOf works with arrow operator", fn(assert) {
+  let E = enum { A, B, C }
+  assert.equal(E->nameOf(0), "A")
+  assert.equal(E->nameOf(1), "B")
+})
+
+// Immutability
+test("enum is immutable via dot notation", fn(assert) {
+  let Color = enum { Red, Green }
+
+  // This should cause a runtime error
+  // We can't directly test for errors in lx yet, so we document the behavior
+  // Color.Blue = 2  // Would error: "Enum is immutable."
+
+  // Verify original values unchanged
+  assert.equal(Color.Red, 0)
+  assert.equal(Color.Green, 1)
+})
+
+test("enum is immutable via bracket notation", fn(assert) {
+  let E = enum { A, B }
+
+  // Color["C"] = 3  // Would error: "Enum is immutable."
+
+  assert.equal(E.A, 0)
+  assert.equal(E.B, 1)
+})
+
+// Collection operations
+test("enum with range()", fn(assert) {
+  let E = enum { A, B, C }
+  let keys = range(E)
+
+  // Should contain member names
+  assert.truthy(len(keys) == 3)
+})
+
+test("enum with keys()", fn(assert) {
+  let Color = enum { Red, Green, Blue }
+  let k = keys(Color)
+
+  assert.truthy(len(k) == 3)
+  // Keys should include member names
+})
+
+// Edge cases
+test("enum with single member", fn(assert) {
+  let Single = enum { Only }
+  assert.equal(Single.Only, 0)
+  assert.equal(nameOf(Single, 0), "Only")
+  assert.equal(type(Single), "enum")
+})
+
+test("enum empty", fn(assert) {
+  let Empty = enum {}
+  assert.equal(type(Empty), "enum")
+  assert.equal(len(keys(Empty)), 0)
+})
+
+test("enum with gaps in values", fn(assert) {
+  let E = enum { A = 0, B = 10, C = 20 }
+  assert.equal(E.A, 0)
+  assert.equal(E.B, 10)
+  assert.equal(E.C, 20)
+  assert.equal(nameOf(E, 5), nil)
+  assert.equal(nameOf(E, 15), nil)
+})
+
+// Comparison with hashmaps
+test("enum differs from hashmap", fn(assert) {
+  let enumObj = enum { A, B }
+  let hashObj = .{ A: 0, B: 1 }
+
+  assert.equal(type(enumObj), "enum")
+  assert.equal(type(hashObj), "map")
+})
+
+test("nameOf works on enum", fn(assert) {
+  let enumObj = enum { A, B }
+  assert.equal(nameOf(enumObj, 0), "A")
+})
+
+// Real-world usage patterns
+test("enum as state machine", fn(assert) {
+  let State = enum { Idle, Running, Paused, Stopped }
+
+  let currentState = State.Idle
+  assert.equal(currentState, 0)
+
+  currentState = State.Running
+  assert.equal(nameOf(State, currentState), "Running")
+
+  currentState = State.Stopped
+  assert.truthy(currentState == State.Stopped)
+})
+
+test("enum as error codes", fn(assert) {
+  let ErrorCode = enum(1000) {
+    NotFound,
+    Unauthorized,
+    Forbidden,
+    ServerError = 5000
+  }
+
+  assert.equal(ErrorCode.NotFound, 1000)
+  assert.equal(ErrorCode.Unauthorized, 1001)
+  assert.equal(ErrorCode.ServerError, 5000)
+
+  let code = ErrorCode.Unauthorized
+  assert.equal(nameOf(ErrorCode, code), "Unauthorized")
+})
+
+suite.run()

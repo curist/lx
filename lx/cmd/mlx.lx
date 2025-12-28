@@ -50,9 +50,18 @@ fn compileWithDriver(driverInstance, path) {
       return nil
     }
 
-    let ast = result.passes.anf and result.passes.anf.ast or result.passes.lower.ast
+    let passes = result.passes or .{}
+    let ast = (passes["anf-inline"] and passes["anf-inline"].ast) or
+              (passes.anf and passes.anf.ast) or
+              (passes.lower and passes.lower.ast)
+    let enumInfo =
+      (passes.anf and passes.anf.enumInfo) or
+      (passes.lower and passes.lower.enumInfo) or
+      (passes.parse and passes.parse.enumInfo) or
+      .{}
     let cg = codegen(ast, result.passes.resolve, .{
       codegenModule: codegenModule,
+      enumInfo: enumInfo,
     })
     result.codegenResult = cg
     if !cg.success {

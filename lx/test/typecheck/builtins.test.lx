@@ -175,7 +175,7 @@ fn register(test) {
     assert.equal(deref(result, getExprType(result, 1)).kind, "String")
   })
 
-  test("typecheck - nameOf works for enum-like Record", fn(assert) {
+  test("typecheck - nameOf works for enum", fn(assert) {
     let result = parseAndTypecheck("{ let Color = enum { Red, Green = 3, Blue }\nnameOf(Color, Color.Red) }")
     assert.truthy(result.success)
     if !result.success { return }
@@ -184,10 +184,16 @@ fn register(test) {
     assert.equal(deref(result, t.value).kind, "String")
   })
 
-  test("typecheck - nameOf rejects non-map/record", fn(assert) {
+  test("typecheck - nameOf rejects non-enum", fn(assert) {
     let result = parseAndTypecheck("nameOf([1, 2], 1)")
     assert.truthy(!result.success)
-    assert.truthy(helpers.hasError(result, "nameOf() requires map or record"))
+    assert.truthy(helpers.hasError(result, "nameOf() requires enum"))
+  })
+
+  test("typecheck - nameOf rejects map/record", fn(assert) {
+    let result = parseAndTypecheck("nameOf(.{ a: 1 }, 1)")
+    assert.truthy(!result.success)
+    assert.truthy(helpers.hasError(result, "nameOf() requires enum"))
   })
 
   test("typecheck - nameOf constrains value type for enum", fn(assert) {

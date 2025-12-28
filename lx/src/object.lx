@@ -1,15 +1,4 @@
-let ObjType = {
-  let iota = {import "src/lib.lx"}.iota(0)
-  .{
-    CLOSURE: iota(),
-    FUNCTION: iota(),
-    NATIVE: iota(),
-    STRING: iota(),
-    UPVALUE: iota(),
-    HASHMAP: iota(),
-    ARRAY: iota(),
-  }
-}
+let ObjType = enum { CLOSURE, FUNCTION, NATIVE, STRING, UPVALUE, HASHMAP, ENUM, ARRAY }
 
 fn Object(kind, value) {.{
   kind: kind,

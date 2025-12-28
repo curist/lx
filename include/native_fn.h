@@ -197,11 +197,11 @@ static bool keysNative(int argCount, Value *args) {
     return false;
   }
   Value arg = args[0];
-  if (!IS_HASHMAP(arg)) {
+  if (!IS_HASHMAP(arg) && !IS_ENUM(arg)) {
     args[-1] = CSTRING_VAL("Error: Arg must be a map.");
     return false;
   }
-  Table *table = &AS_HASHMAP(arg);
+  Table *table = IS_ENUM(arg) ? &AS_ENUM_FORWARD(arg) : &AS_HASHMAP(arg);
   ObjArray *array = newArray();
   args[-1] = OBJ_VAL(array);
 
@@ -220,28 +220,22 @@ static bool nameOfNative(int argCount, Value *args) {
     return false;
   }
   Value enumLike = args[0];
-  if (!IS_HASHMAP(enumLike)) {
-    args[-1] = CSTRING_VAL("Error: nameOf(enum, value) expects enum to be a map/record.");
-    return false;
-  }
-
-  Table *table = &AS_HASHMAP(enumLike);
-  Value target = args[1];
-
-  for (int i = table->capacity - 1; i >= 0; --i) {
-    Entry *entry = &table->entries[i];
-    if (IS_NIL(entry->key)) continue;
-    if (valuesEqual(entry->value, target)) {
-      // Typically a string for enum members.
-      if (IS_STRING(entry->key)) {
-        args[-1] = entry->key;
-        return true;
-      }
+  if (IS_ENUM(enumLike)) {
+    Value target = args[1];
+    if (!IS_NUMBER(target) && !IS_STRING(target)) {
+      args[-1] = NIL_VAL;
+      return true;
     }
+    Value name;
+    if (tableGet(&AS_ENUM_REVERSE(enumLike), target, &name) && IS_STRING(name)) {
+      args[-1] = name;
+      return true;
+    }
+    args[-1] = NIL_VAL;
+    return true;
   }
-
-  args[-1] = NIL_VAL;
-  return true;
+  args[-1] = CSTRING_VAL("Error: nameOf(enum, value) expects enum to be an enum.");
+  return false;
 }
 
 static bool globalsNative(int argCount, Value *args) {
@@ -295,6 +289,8 @@ static bool typeNative(int argCount, Value *args) {
     args[-1] = CSTRING_VAL("fn");
   } else if (IS_STRING(arg)) {
     args[-1] = CSTRING_VAL("string");
+  } else if (IS_ENUM(arg)) {
+    args[-1] = CSTRING_VAL("enum");
   } else if (IS_HASHMAP(arg)) {
     args[-1] = CSTRING_VAL("map");
   } else if (IS_ARRAY(arg)) {
@@ -410,8 +406,8 @@ static bool rangeNative(int argCount, Value *args) {
         pop();
         i += charlen;
       }
-    } else if (IS_HASHMAP(arg)) {
-      Table *table = &AS_HASHMAP(arg);
+    } else if (IS_ENUM(arg) || IS_HASHMAP(arg)) {
+      Table *table = IS_ENUM(arg) ? &AS_ENUM_FORWARD(arg) : &AS_HASHMAP(arg);
       for (int i = table->capacity - 1; i >= 0; --i) {
         Entry *entry = &table->entries[i];
         if (!IS_NIL(entry->key)) {

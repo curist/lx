@@ -1,4 +1,3 @@
-let lib = import "src/lib.lx"
 let types = import "src/types.lx"
 let object = import "src/object.lx"
 

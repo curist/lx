@@ -14,11 +14,18 @@ else
 	CFLAGS += -O3 -flto
 endif
 
-lxlx:
+include/lx:
+	@mkdir -p include/lx
+
+include/lx/lxlx.h: lx/cmd/mlx.lx lx/src/*.lx lx/scripts/build-lxlx-driver.lx scripts/build-lxlx.sh include/chunk.h include/object.h | include/lx
 	./scripts/build-lxlx.sh
 
-lxglobals:
+include/lx/lxglobals.h: lx/globals.lx lx/src/*.lx lx/scripts/build-globals-driver.lx scripts/build-globals.sh include/chunk.h include/object.h | include/lx
 	./scripts/build-globals.sh
+
+lxlx: include/lx/lxlx.h
+
+lxglobals: include/lx/lxglobals.h
 
 lxversion:
 	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > include/lx/lxversion.h

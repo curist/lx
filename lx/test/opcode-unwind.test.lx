@@ -4,7 +4,6 @@ let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 let types = import "src/types.lx"
 let OP = types.OP
-let OP_NAME = types.OP_NAME
 
 test("OP_UNWIND opcode is defined", fn(assert) {
   assert.truthy(OP.UNWIND, "OP.UNWIND should be defined")
@@ -13,7 +12,7 @@ test("OP_UNWIND opcode is defined", fn(assert) {
 })
 
 test("OP_UNWIND has correct name mapping", fn(assert) {
-  assert.equal(OP_NAME[OP.UNWIND], "UNWIND", "OP_NAME should map OP.UNWIND to 'UNWIND'")
+  assert.equal(nameOf(OP, OP.UNWIND), "UNWIND", "nameOf should map OP.UNWIND to 'UNWIND'")
 })
 
 suite.run()

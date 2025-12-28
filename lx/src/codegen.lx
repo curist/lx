@@ -1,7 +1,6 @@
 // Codegen Phase - Emit bytecode from resolved ANF AST
 // Responsibility: Mechanical bytecode emission, no semantic decisions.
 
-let lib = import "src/lib.lx"
 let types = import "src/types.lx"
 let object = import "src/object.lx"
 
@@ -848,7 +847,8 @@ fn compileArray(gen, node) {
 }
 
 fn compileHashmap(gen, node) {
-  emitByte(gen, OP.HASHMAP, node.line)
+  let isEnum = gen.enumInfo and gen.enumInfo[node.id]
+  emitByte(gen, isEnum and OP.ENUM or OP.HASHMAP, node.line)
   let pairs = node.pairs or []
   for let i = 0; i < len(pairs); i = i + 1 {
     let pair = pairs[i]
@@ -1075,6 +1075,7 @@ fn codegen(ast, resolveResult, opts) {
     scopeInfo: resolveResult.scopeInfo or .{},
     nodes: resolveResult.nodes or .{},
     localsByDecl: buildDeclMap(resolveResult.scopeInfo),
+    enumInfo: opts and opts.enumInfo or .{},
     errors: [],
     currentLine: 1,
     currentNode: nil,

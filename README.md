@@ -7,15 +7,15 @@ Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived pr
 
 ## Lx is
 * Dynamic
-* Minimal
 * Compiled
 * Alpha quality
+* Small and pragmatic
 * (Almost) everything is expression
 * (Half) self hosted; Lx can compile itself, but relies on a C runtime
 
 ## Lx is not
-* Object oriented; Lx doesn't come with class.
-* Static type; Lx isn't suitable to build your next big project.
+* Object oriented; Lx doesn't come with classes.
+* Statically typed; Lx isn't suitable to build your next big project.
 * Inspiring; there are no big ideas in Lx.
 * That serious; it doesn't come with error handling, for ~~instance~~ example.
 
@@ -115,6 +115,12 @@ let mymap = .{
 }
 print(mymap.key) // `value` printed
 mymap[42] = "forty-two" // updating value
+
+// enum - named integer constants (an expression)
+let Color = enum { Red, Green = 3, Blue } // 0, 3, 4
+print(Color.Red) // 0
+print(nameOf(Color, Color.Blue)) // "Blue"
+print(Color->nameOf(Color.Green)) // "Green"
 
 
 // conditions

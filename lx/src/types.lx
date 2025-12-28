@@ -1,95 +1,70 @@
-let lib = import "src/lib.lx"
-
 // let globals = import "globals.lx"
 // let fold = globals.fold
 
 let types = .{}
 
-fn enumNameMapper(enumObj) {
-  fold(keys(enumObj), .{}, fn(acc, k) {
-    acc[enumObj[k]] = k
-    acc
-  })
+types.TOKEN = enum(100) {
+  LEFT_PAREN,
+  RIGHT_PAREN,
+  LEFT_BRACE,
+  RIGHT_BRACE,
+  LEFT_BRACKET,
+  RIGHT_BRACKET,
+  COMMA,
+  DOT,
+  MINUS,
+  PLUS,
+  SEMICOLON,
+  SLASH,
+  STAR,
+  COLON,
+  MOD,
+
+  // One or two character tokens.
+  BANG = 200,
+  BANG_EQUAL,
+  EQUAL,
+  EQUAL_EQUAL,
+  GREATER,
+  GREATER_EQUAL,
+  GREATER_GREATER,
+  LESS,
+  LESS_EQUAL,
+  LESS_LESS,
+  DOT_BRACE,
+  MINUS_GREATER,
+  AMPERSAND,
+  PIPE,
+  CARET,
+
+  // Literals.
+  IDENTIFIER = 300,
+  STRING,
+  NUMBER,
+
+  // Keywords.
+  AND = 400,
+  OR,
+  IF,
+  ELSE,
+  FN,
+  FOR,
+  NIL,
+  RETURN,
+  TRUE,
+  FALSE,
+  LET,
+  ENUM,
+  BREAK,
+  CONTINUE,
+  IMPORT,
+  IN,
+  COLLECT,
+
+  // Termination
+  ERROR = 990,
+  EOF = 999,
 }
-
-types.TOKEN = {
-  let iota
-  .{
-    LEFT_PAREN: {
-      iota = lib.iota(100)
-      iota()
-    },
-    RIGHT_PAREN: iota(),
-    LEFT_BRACE: iota(),
-    RIGHT_BRACE: iota(),
-    LEFT_BRACKET: iota(),
-    RIGHT_BRACKET: iota(),
-    COMMA: iota(),
-    DOT: iota(),
-    MINUS: iota(),
-    PLUS: iota(),
-    SEMICOLON: iota(),
-    SLASH: iota(),
-    STAR: iota(),
-    COLON: iota(),
-    MOD: iota(),
-
-    // One or two character tokens.
-    BANG: {
-      iota = lib.iota(200)
-      iota()
-    },
-    BANG_EQUAL: iota(),
-    EQUAL: iota(),
-    EQUAL_EQUAL: iota(),
-    GREATER: iota(),
-    GREATER_EQUAL: iota(),
-    GREATER_GREATER: iota(),
-    LESS: iota(),
-    LESS_EQUAL: iota(),
-    LESS_LESS: iota(),
-    DOT_BRACE: iota(),
-    MINUS_GREATER: iota(),
-    AMPERSAND: iota(),
-    PIPE: iota(),
-    CARET: iota(),
-
-    // Literals.
-    IDENTIFIER: {
-      iota = lib.iota(300)
-      iota()
-    },
-    STRING: iota(),
-    NUMBER: iota(),
-
-    // Keywords.
-    AND: {
-      iota = lib.iota(400) 
-      iota()
-    },
-    OR: iota(),
-    IF: iota(),
-    ELSE: iota(),
-    FN: iota(),
-    FOR: iota(),
-    NIL: iota(),
-    RETURN: iota(),
-    TRUE: iota(),
-    FALSE: iota(),
-    LET: iota(),
-    ENUM: iota(),
-    BREAK: iota(),
-    CONTINUE: iota(),
-    IMPORT: iota(),
-    IN: iota(),
-    COLLECT: iota(),
-
-    // Termination
-    ERROR: 990,
-    EOF: 999,
-  }
-}
-types.TOKEN_NAME = enumNameMapper(types.TOKEN)
 
 types.KEYWORDS = fold(keys(types.TOKEN), .{}, fn(acc, k) {
   let tokenValue = types.TOKEN[k]
@@ -100,73 +75,62 @@ types.KEYWORDS = fold(keys(types.TOKEN), .{}, fn(acc, k) {
 })
 
 // XXX: need to keep this in sync with clox
-types.OP = {
-  let iota = lib.iota(0)
-  .{
-    NOP: iota(), // might be useful in the future if we want to do op patching
-    CONSTANT: iota(),
-    CONST_BYTE: iota(),
-    NIL: iota(),
-    TRUE: iota(),
-    FALSE: iota(),
-    EQUAL: iota(),
-    POP: iota(),
-    DUP: iota(),
-    SWAP: iota(),
-    GET_LOCAL: iota(),
-    SET_LOCAL: iota(),
-    GET_GLOBAL: iota(),
-    DEFINE_GLOBAL: iota(),
-    SET_GLOBAL: iota(),
-    GET_UPVALUE: iota(),
-    SET_UPVALUE: iota(),
-    GET_BY_INDEX: iota(),
-    SET_BY_INDEX: iota(),
-    GREATER: iota(),
-    LESS: iota(),
-    ADD: iota(),
-    SUBTRACT: iota(),
-    MULTIPLY: iota(),
-    DIVIDE: iota(),
-    NOT: iota(),
-    MOD: iota(),
-    NEGATE: iota(),
-    BIT_AND: iota(),
-    BIT_OR: iota(),
-    BIT_XOR: iota(),
-    BIT_LSHIFT: iota(),
-    BIT_RSHIFT: iota(),
-    JUMP: iota(),
-    JUMP_IF_TRUE: iota(),
-    JUMP_IF_FALSE: iota(),
-    LOOP: iota(),
-    ASSOC: iota(),
-    APPEND: iota(),
-    HASHMAP: iota(),
-    ARRAY: iota(),
-    LENGTH: iota(),
-    CALL: iota(),
-    CLOSURE: iota(),
-    CLOSE_UPVALUE: iota(),
-    UNWIND: iota(),
-    ADD_LOCAL_IMM: iota(),      // Superinstruction: GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
-    STORE_LOCAL: iota(),        // Superinstruction: SET_LOCAL + POP
-    STORE_BY_IDX: iota(),  // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
-    COALESCE_CONST: iota(),     // Replace TOS with constant if TOS is falsy
-    IS_EVEN: iota(),            // Test if TOS integer is even (hot-path for % 2 == 0)
-    RETURN: 255, // 0xff - fixed to allow adding opcodes without breaking RETURN
-  }
+types.OP = enum {
+  NOP, // might be useful in the future if we want to do op patching
+  CONSTANT,
+  CONST_BYTE,
+  NIL,
+  TRUE,
+  FALSE,
+  EQUAL,
+  POP,
+  DUP,
+  SWAP,
+  GET_LOCAL,
+  SET_LOCAL,
+  GET_GLOBAL,
+  DEFINE_GLOBAL,
+  SET_GLOBAL,
+  GET_UPVALUE,
+  SET_UPVALUE,
+  GET_BY_INDEX,
+  SET_BY_INDEX,
+  GREATER,
+  LESS,
+  ADD,
+  SUBTRACT,
+  MULTIPLY,
+  DIVIDE,
+  NOT,
+  MOD,
+  NEGATE,
+  BIT_AND,
+  BIT_OR,
+  BIT_XOR,
+  BIT_LSHIFT,
+  BIT_RSHIFT,
+  JUMP,
+  JUMP_IF_TRUE,
+  JUMP_IF_FALSE,
+  LOOP,
+  ASSOC,
+  APPEND,
+  HASHMAP,
+  ENUM,
+  ARRAY,
+  LENGTH,
+  CALL,
+  CLOSURE,
+  CLOSE_UPVALUE,
+  UNWIND,
+  ADD_LOCAL_IMM,    // Superinstruction: GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
+  STORE_LOCAL,      // Superinstruction: SET_LOCAL + POP
+  STORE_BY_IDX,     // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
+  COALESCE_CONST,   // Replace TOS with constant if TOS is falsy
+  IS_EVEN,          // Test if TOS integer is even (hot-path for % 2 == 0)
+  RETURN = 255,     // 0xff - fixed to allow adding opcodes without breaking RETURN
 }
-types.OP_NAME = enumNameMapper(types.OP)
 
-types.ValueType = {
-  let iota = lib.iota(0)
-  .{
-    BOOL:    iota(),
-    NIL:     iota(),
-    NUMBER:  iota(),
-    OBJ:     iota(),
-  }
-}
+types.ValueType = enum { BOOL, NIL, NUMBER, OBJ }
 
 types

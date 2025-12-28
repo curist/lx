@@ -12,6 +12,8 @@ This document contains important information for AI assistants working with the 
 6. **No string interpolation** - use concatenation
 7. **No `++`/`--` operators** - use `i = i + 1`
 8. **Hashmaps use `.{ }` syntax** - dot prefix required
+9. **Opcode/object changes may require bootstrapping** - embedded bytecode headers must be regenerated (see `lx/scripts/README.md`)
+10. **`nameOf()` expects an `enum`** - it no longer accepts generic maps/records
 
 ## Communication Guidelines
 
@@ -48,11 +50,12 @@ The commands are:
 ```lx
 type(42)           // "number"
 type("hello")      // "string"
-type(true)         // "bool"
+type(true)         // "boolean"
 type(nil)          // "nil"
 type([1, 2, 3])    // "array"
 type(.{ a: 1 })    // "map"       ⚠️ NOT "hashmap" or "object"!
-type(fn() {})      // "function"
+type(fn() {})      // "fn"
+type(enum { A })   // "enum"
 ```
 
 **Debugging tip:**
@@ -102,7 +105,9 @@ Current keywords (see `lx/src/types.lx`):
 - `fn`, `for`
 - `nil`, `return`, `true`, `false`
 - `let`, `break`, `continue`
-- `import`
+- `import`, `in`
+- `collect`
+- `enum`
 
 Keywords can be used as hashmap keys:
 ```lx

@@ -1,29 +1,25 @@
-let lib = import "src/lib.lx"
 let types = import "src/types.lx"
 let initScanner = import "src/scanner.lx"
 
 let TOKEN = types.TOKEN
 
-let PREC = {
-  let iota = lib.iota(0)
-  .{
-    NONE:       iota(),
-    ASSIGNMENT: iota(),  // =
-    OR:         iota(),  // or
-    AND:        iota(),  // and
-    BIT_OR:     iota(),  // |
-    BIT_XOR:    iota(),  // ^
-    BIT_AND:    iota(),  // &
-    EQUALITY:   iota(),  // == !=
-    COMPARISON: iota(),  // < > <= >=
-    BIT_SHIFT:  iota(),  // << >>
-    TERM:       iota(),  // + -
-    FACTOR:     iota(),  // * /
-    PIPELINE:   iota(),  // ->
-    UNARY:      iota(),  // ! -
-    CALL:       iota(),  // . () []
-    PRIMARY:    iota(),
-  }
+let PREC = enum {
+  NONE,        // 0
+  ASSIGNMENT,  // =
+  OR,          // or
+  AND,         // and
+  BIT_OR,      // |
+  BIT_XOR,     // ^
+  BIT_AND,     // &
+  EQUALITY,    // == !=
+  COMPARISON,  // < > <= >=
+  BIT_SHIFT,   // << >>
+  TERM,        // + -
+  FACTOR,      // * /
+  PIPELINE,    // ->
+  UNARY,       // ! -
+  CALL,        // . () []
+  PRIMARY,
 }
 
 // Node ID counter - reset at start of each parse()

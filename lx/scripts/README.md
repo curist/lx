@@ -2,6 +2,10 @@
 
 This directory contains scripts for bootstrapping the lx compiler when making non-backward compatible opcode changes.
 
+These scripts are also used as a fallback by the repo build scripts:
+- `scripts/build-lxlx.sh` (generates `include/lx/lxlx.h`)
+- `scripts/build-globals.sh` (generates `include/lx/lxglobals.h`)
+
 ## When You Need These Scripts
 
 Use these scripts when:
@@ -32,6 +36,25 @@ Compiles `globals.lx` (standard library) using the NEW codegen from `src/codegen
 ## Bootstrap Process
 
 When you've made non-backward compatible opcode changes:
+
+### 0. Prefer the normal build scripts (fast-path + fallback)
+
+Most of the time you can just run:
+
+```bash
+make prepare
+```
+
+`make prepare` regenerates the embedded bytecode headers.
+
+If `$LX` points at the in-repo compiler (`out/lx`), the build scripts use a fast path:
+- `$LX compile ...` (fast, uses the already-built compiler)
+
+Otherwise, they use the driver pipeline (safer across opcode/object changes):
+- `$LX run lx/scripts/build-lxlx-driver.lx`
+- `$LX run lx/scripts/build-globals-driver.lx`
+
+This keeps the normal workflow fast while still handling incompatible opcode/object changes.
 
 ### 1. Update the opcode definitions
 
@@ -67,7 +90,7 @@ lx run scripts/build-globals-driver.lx
 
 ### 5. Install the new bytecode
 
-Convert the .lxobj files to C headers and install them:
+Convert the .lxobj files to C headers and install them (or just run `make prepare` from repo root):
 
 ```bash
 # From lx/ directory (parent of lx/)

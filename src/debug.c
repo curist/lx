@@ -146,6 +146,8 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return simpleInstruction("OP_APPEND", offset);
     case OP_HASHMAP:
       return simpleInstruction("OP_HASHMAP", offset);
+    case OP_ENUM:
+      return simpleInstruction("OP_ENUM", offset);
     case OP_ARRAY:
       return simpleInstruction("OP_ARRAY", offset);
     case OP_LENGTH:

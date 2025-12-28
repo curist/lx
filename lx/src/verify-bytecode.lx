@@ -18,7 +18,6 @@
 
 let types = import "src/types.lx"
 let OP = types.OP
-let OP_NAME = types.OP_NAME
 
 // ========================================
 // Stack Effect Tables
@@ -39,6 +38,7 @@ let STACK_MIN = .{
   [OP.GET_GLOBAL]:    0,
   [OP.GET_UPVALUE]:   0,
   [OP.HASHMAP]:       0,
+  [OP.ENUM]:          0,
   [OP.ARRAY]:         0,
   [OP.CLOSURE]:       0,
   [OP.JUMP]:          0,
@@ -111,6 +111,7 @@ let STACK_EFFECTS = .{
   [OP.GET_GLOBAL]:    1,
   [OP.GET_UPVALUE]:   1,
   [OP.HASHMAP]:       1,
+  [OP.ENUM]:          1,
   [OP.ARRAY]:         1,
   [OP.DUP]:           1,
   [OP.CLOSURE]:       1,
@@ -290,6 +291,7 @@ let INSTRUCTION_LENGTHS = .{
   [OP.ASSOC]:         1,
   [OP.APPEND]:        1,
   [OP.HASHMAP]:       1,
+  [OP.ENUM]:          1,
   [OP.ARRAY]:         1,
   [OP.LENGTH]:        1,
   [OP.CLOSE_UPVALUE]: 1,
@@ -453,7 +455,7 @@ fn processInstruction(verifier, ip) {
       minRequired = operand + 1
     }
   }
-  let opName = OP_NAME[opcode] or ("UNKNOWN(" + str(opcode) + ")")
+  let opName = nameOf(OP, opcode) or ("UNKNOWN(" + str(opcode) + ")")
 
   if !minRequired {
     // minRequired is nil or false (unknown opcode)

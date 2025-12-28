@@ -46,5 +46,5 @@ clean:
 	rm -rf out
 	rm include/lx/*
 
-test:
+test: build
 	@cd lx && make runall && make test

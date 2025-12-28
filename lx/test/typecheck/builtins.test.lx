@@ -175,6 +175,27 @@ fn register(test) {
     assert.equal(deref(result, getExprType(result, 1)).kind, "String")
   })
 
+  test("typecheck - nameOf works for enum-like Record", fn(assert) {
+    let result = parseAndTypecheck("{ let Color = enum { Red, Green = 3, Blue }\nnameOf(Color, Color.Red) }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "String")
+  })
+
+  test("typecheck - nameOf rejects non-map/record", fn(assert) {
+    let result = parseAndTypecheck("nameOf([1, 2], 1)")
+    assert.truthy(!result.success)
+    assert.truthy(helpers.hasError(result, "nameOf() requires map or record"))
+  })
+
+  test("typecheck - nameOf constrains value type for enum", fn(assert) {
+    let result = parseAndTypecheck("{ let Color = enum { Red, Blue }\nnameOf(Color, \"x\") }")
+    assert.truthy(!result.success)
+    assert.truthy(helpers.hasError(result, "nameOf() value mismatch"))
+  })
+
   test("typecheck - globals.lx prelude builtins", fn(assert) {
     let result = parseAndTypecheck("{
       map([1, 2], fn(x, i, arr) { x + i })

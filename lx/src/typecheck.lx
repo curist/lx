@@ -93,6 +93,7 @@ fn builtinTypeByName(checker, name) {
   if name == "random" { return typeFunction([], typeNumber()) }
   if name == "sqrt" { return typeFunction([typeNumber()], typeNumber()) }
   if name == "type" { return typeFunction([typeAny()], typeString()) }
+  if name == "nameOf" { return .{ kind: "Function", params: [typeAny(), typeAny()], return: typeOption(typeString()), builtinName: "nameOf" } }
 
   // Collection helpers (best-effort; some are polymorphic in runtime).
   // Some builtins have special typing behavior at call sites (handled in the
@@ -1012,6 +1013,90 @@ fn overloadCasesByName(name) {
     ]
   }
 
+  if name == "nameOf" {
+    return [
+      overloadCase("nameOf:tooFew", fn(checker, c) { len(c.args) < 2 and "match" or "no" }, fn(checker, c) {
+        addError(checker, c.nodeId, "Too few arguments: expected at least 2, got " + str(len(c.args)))
+        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        true
+      }),
+
+      overloadCase("nameOf:any", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Any" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
+        true
+      }),
+
+      overloadCase("nameOf:record", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Record" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
+
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        let fs = keys(base.fields)
+        if len(fs) == 0 { return true }
+
+        // If all field types are the same, use that as the expected value type.
+        // Otherwise, fall back to Any (nameOf is still well-defined).
+        let expected = deref(checker, base.fields[fs[0]])
+        for let i = 1; i < len(fs); i = i + 1 {
+          let ft = deref(checker, base.fields[fs[i]])
+          if !typeEquals(checker, expected, ft) {
+            expected = typeAny()
+            break
+          }
+        }
+
+        if expected.kind != "Any" {
+          let nid = (c.argNodeIds and len(c.argNodeIds) > 1) and c.argNodeIds[1] or c.nodeId
+          unifyOrContain(checker, nid, "nameOf() value mismatch", c.args[1], expected)
+        }
+
+        true
+      }),
+
+      overloadCase("nameOf:map", fn(checker, c) {
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        base.kind == "Map" and "match" or "no"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
+        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
+        let nid = (c.argNodeIds and len(c.argNodeIds) > 1) and c.argNodeIds[1] or c.nodeId
+        unifyOrContain(checker, nid, "nameOf() value mismatch", c.args[1], base.elem)
+        true
+      }),
+
+      // Unknown/unresolved base: do not guess; record a deferred check.
+      overloadCase("nameOf:unresolved", fn(checker, c) {
+        let baseInfo = derefWithRootVar(checker, c.args[0])
+        let root = baseInfo.root
+        let base = deref(checker, baseInfo.type)
+        if base.kind == "Indexable" { return "defer" }
+        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
+        "no"
+      }, fn(checker, c) { true }),
+
+      overloadCase("nameOf:invalid", fn(checker, c) {
+        let baseInfo = derefWithRootVar(checker, c.args[0])
+        let root = baseInfo.root
+        let base = deref(checker, baseInfo.type)
+        if base.kind == "Any" { return "no" }
+        if base.kind == "Map" { return "no" }
+        if base.kind == "Record" { return "no" }
+        if base.kind == "Indexable" { return "defer" }
+        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
+        "match"
+      }, fn(checker, c) {
+        unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
+        addError(checker, c.nodeId, "nameOf() requires map or record")
+        true
+      }),
+    ]
+  }
+
   nil
 }
 
@@ -1032,6 +1117,10 @@ fn applyOverloadDefer(checker, c) {
       c.deferElemVar = freshTypeVar(checker)
     }
     unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(c.deferElemVar))
+    return
+  }
+  if c.builtinName == "nameOf" {
+    unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
     return
   }
 }

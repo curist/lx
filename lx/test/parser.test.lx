@@ -219,6 +219,57 @@ test("parser - hashmap with computed key", fn(assert) {
   assert.equal(node.pairs[0].key.name, "x")
 })
 
+test("parser - enum basic", fn(assert) {
+  let result = parse("enum { A, B, C }", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Hashmap")
+  assert.equal(len(node.pairs), 3)
+  assert.equal(node.pairs[0].key.value, "A")
+  assert.equal(node.pairs[0].value.value, 0)
+  assert.equal(node.pairs[1].key.value, "B")
+  assert.equal(node.pairs[1].value.value, 1)
+  assert.equal(node.pairs[2].key.value, "C")
+  assert.equal(node.pairs[2].value.value, 2)
+})
+
+test("parser - enum start and explicit values", fn(assert) {
+  let result = parse("enum(100) { LEFT, RIGHT, MID = 200, END }", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, "Hashmap")
+  assert.equal(len(node.pairs), 4)
+  assert.truthy(result.enumInfo[node.id])
+  assert.equal(len(result.enumInfo[node.id].members), 4)
+  assert.equal(node.pairs[0].key.value, "LEFT")
+  assert.equal(node.pairs[0].value.value, 100)
+  assert.equal(node.pairs[1].key.value, "RIGHT")
+  assert.equal(node.pairs[1].value.value, 101)
+  assert.equal(node.pairs[2].key.value, "MID")
+  assert.equal(node.pairs[2].value.value, 200)
+  assert.equal(node.pairs[3].key.value, "END")
+  assert.equal(node.pairs[3].value.value, 201)
+})
+
+test("parser - enum duplicate member errors", fn(assert) {
+  let result = parse("enum { A, A }", "test.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+test("parser - enum duplicate value errors", fn(assert) {
+  let result = parse("enum { A = 0, B, C, D = 0 }", "test.lx")
+  assert.truthy(!result.success)
+  assert.truthy(len(result.errors) > 0)
+})
+
+test("parser - enum allows reset if unique", fn(assert) {
+  let result = parse("enum { A = 10, B, C, D = 0, E, F }", "test.lx")
+  assert.truthy(result.success)
+})
+
 test("parser - hashmap key positions", fn(assert) {
   // ".{ a: 1 }" - key "a" should have correct position
   let result = parse(".{ a: 1 }", "test.lx")

@@ -214,6 +214,36 @@ static bool keysNative(int argCount, Value *args) {
   return true;
 }
 
+static bool nameOfNative(int argCount, Value *args) {
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: nameOf(enum, value) requires 2 args.");
+    return false;
+  }
+  Value enumLike = args[0];
+  if (!IS_HASHMAP(enumLike)) {
+    args[-1] = CSTRING_VAL("Error: nameOf(enum, value) expects enum to be a map/record.");
+    return false;
+  }
+
+  Table *table = &AS_HASHMAP(enumLike);
+  Value target = args[1];
+
+  for (int i = table->capacity - 1; i >= 0; --i) {
+    Entry *entry = &table->entries[i];
+    if (IS_NIL(entry->key)) continue;
+    if (valuesEqual(entry->value, target)) {
+      // Typically a string for enum members.
+      if (IS_STRING(entry->key)) {
+        args[-1] = entry->key;
+        return true;
+      }
+    }
+  }
+
+  args[-1] = NIL_VAL;
+  return true;
+}
+
 static bool globalsNative(int argCount, Value *args) {
   Table *table = &vm.globals;
   ObjArray *array = newArray();
@@ -956,6 +986,7 @@ void defineBuiltinNatives() {
   defineNative("random", randomNative);
   defineNative("sqrt", sqrtNative);
   defineNative("keys", keysNative);
+  defineNative("nameOf", nameOfNative);
   defineNative("len", lenNative);
   defineNative("type", typeNative);
   defineNative("push", pushNative);

@@ -436,6 +436,7 @@ fn parse(src, filename) {
     hadError: false,
     panicMode: false,
     errors: [],
+    enumInfo: .{}, // nodeId -> { members: [{ name, value }] }
   }
 
   fn errorAt(token, message) {
@@ -512,6 +513,7 @@ fn parse(src, filename) {
     tokenType == TOKEN.FOR or
     tokenType == TOKEN.FN or
     tokenType == TOKEN.LET or
+    tokenType == TOKEN.ENUM or
     tokenType == TOKEN.RETURN or
     tokenType == TOKEN.BREAK or
     tokenType == TOKEN.CONTINUE or
@@ -552,6 +554,7 @@ fn parse(src, filename) {
       let breakpoints = .{
         [TOKEN.FN]: true,
         [TOKEN.LET]: true,
+        [TOKEN.ENUM]: true,
         [TOKEN.FOR]: true,
         [TOKEN.IF]: true,
         [TOKEN.RETURN]: true,
@@ -747,6 +750,100 @@ fn parse(src, filename) {
 
     consume(TOKEN.RIGHT_BRACKET, "Expect ']' after array.")
     ArrayNode(filename, startToken, elements, parser.previous)
+  }
+
+  fn enumExpr() {
+    let enumToken = parser.previous
+
+    let nextValue = 0
+    if match(TOKEN.LEFT_PAREN) {
+      consume(TOKEN.NUMBER, "Expect enum start value number.")
+      nextValue = int(parser.previous.literal)
+      if nextValue != parser.previous.literal {
+        errorAt(parser.previous, "Enum start value must be an integer.")
+      }
+      consume(TOKEN.RIGHT_PAREN, "Expect ')' after enum start value.")
+    }
+
+    consume(TOKEN.LEFT_BRACE, "Expect '{' after enum.")
+
+    let pairs = []
+    let seen = .{}
+    let seenValues = .{}
+    let valueToName = .{}
+
+    fn hasNextMember() {
+      !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF)
+    }
+
+    fn autoNumberNode(value) {
+      NumberNode(filename, .{
+        lexeme: join([value], ""),
+        literal: value,
+        line: enumToken.line,
+        col: enumToken.col,
+      })
+    }
+
+    if hasNextMember() {
+      fn member() {
+        consumeKey("Expect enum member name.")
+        let nameToken = parser.previous
+        let key = StringKeyNodeFromToken(filename, nameToken)
+
+        if seen[key.value] {
+          errorAt(nameToken, "Duplicate enum member: " + key.value)
+          return
+        }
+        seen[key.value] = true
+
+        let valueNode = autoNumberNode(nextValue)
+        let valueToken = nameToken
+
+        if match(TOKEN.EQUAL) {
+          consume(TOKEN.NUMBER, "Expect enum value number.")
+          valueNode = NumberNode(filename, parser.previous)
+          valueToken = parser.previous
+          nextValue = int(valueNode.value)
+          if nextValue != valueNode.value {
+            errorAt(valueToken, "Enum value must be an integer.")
+            return
+          }
+        }
+
+        let valueInt = int(valueNode.value)
+        if valueInt != valueNode.value {
+          // Defensive (auto values are always int).
+          errorAt(valueToken, "Enum value must be an integer.")
+          return
+        }
+
+        let existingName = valueToName[valueInt]
+        if existingName {
+          errorAt(valueToken,
+            "Duplicate enum value: " + join([valueInt], "") + " (already used by " + existingName + ")")
+          return
+        }
+
+        seenValues[valueInt] = true
+        valueToName[valueInt] = key.value
+
+        push(pairs, .{ key: key, value: valueNode })
+        nextValue = nextValue + 1
+      }
+
+      member()
+      for match(TOKEN.COMMA) and hasNextMember() {
+        member()
+      }
+    }
+
+    consume(TOKEN.RIGHT_BRACE, "Expect '}' after enum.")
+    let node = HashmapNode(filename, enumToken, pairs, parser.previous)
+    parser.enumInfo[node.id] = .{
+      members: collect p in pairs { .{ name: p.key.value, value: p.value.value } },
+    }
+    node
   }
 
   fn hashmap() {
@@ -1106,6 +1203,7 @@ fn parse(src, filename) {
     [TOKEN.PIPE]:            [nil,        binary, PREC.BIT_OR],
     [TOKEN.CARET]:           [nil,        binary, PREC.BIT_XOR],
     [TOKEN.LET]:             [letExpr,    nil,    PREC.NONE],
+    [TOKEN.ENUM]:            [enumExpr,   nil,    PREC.NONE],
     [TOKEN.IDENTIFIER]:      [variable,   nil,    PREC.NONE],
     [TOKEN.STRING]:          [string,     nil,    PREC.NONE],
     [TOKEN.NUMBER]:          [number,     nil,    PREC.NONE],
@@ -1158,6 +1256,7 @@ fn parse(src, filename) {
     success: !parser.hadError,
     ast: root,
     errors: parser.errors,
+    enumInfo: parser.enumInfo,
     nextNodeId: nodeIdCounter + 1,
   }
 }

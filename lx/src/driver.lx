@@ -85,7 +85,32 @@ fn buildPassList(ctx) {
       requires: ["ast"],
       provides: ["loweredAst"],
       run: fn(ctx, state) {
-        lower(state.ast, .{ startNodeId: state.nextNodeId })
+        let result = lower(state.ast, .{ startNodeId: state.nextNodeId })
+
+        // Remap parse enum info (if present) onto lowered node IDs via origin.
+        let parseResult = state.passes and state.passes.parse
+        if parseResult and parseResult.enumInfo and result and result.origin {
+          let remapped = .{}
+          let newIds = keys(result.origin)
+          for let i = 0; i < len(newIds); i = i + 1 {
+            let newId = newIds[i]
+            let oldId = result.origin[newId]
+            if (type(oldId) == "number" or type(oldId) == "string") {
+              let info = parseResult.enumInfo[oldId]
+              if info { remapped[newId] = info }
+            }
+          }
+          return .{
+            success: result.success,
+            ast: result.ast,
+            origin: result.origin,
+            errors: result.errors,
+            nextNodeId: result.nextNodeId,
+            enumInfo: remapped,
+          }
+        }
+
+        result
       },
     },
 
@@ -102,7 +127,32 @@ fn buildPassList(ctx) {
         true
       },
       run: fn(ctx, state) {
-        anf(state.ast, .{ startNodeId: state.nextNodeId })
+        let result = anf(state.ast, .{ startNodeId: state.nextNodeId })
+
+        // Remap enum info through ANF transform (node IDs change again).
+        let prev = state.passes and state.passes.lower
+        if prev and prev.enumInfo and result and result.origin {
+          let remapped = .{}
+          let newIds = keys(result.origin)
+          for let i = 0; i < len(newIds); i = i + 1 {
+            let newId = newIds[i]
+            let oldId = result.origin[newId]
+            if (type(oldId) == "number" or type(oldId) == "string") {
+              let info = prev.enumInfo[oldId]
+              if info { remapped[newId] = info }
+            }
+          }
+          return .{
+            success: result.success,
+            ast: result.ast,
+            origin: result.origin,
+            errors: result.errors,
+            nextNodeId: result.nextNodeId,
+            enumInfo: remapped,
+          }
+        }
+
+        result
       },
     },
 
@@ -155,7 +205,12 @@ fn buildPassList(ctx) {
       },
       run: fn(ctx, state) {
         let resolveResult = state.passes.resolve
-        let result = typecheck(state.ast, resolveResult, .{})
+        // Pass enum info through opts for future special handling.
+        let enumInfo =
+          (state.passes and state.passes.anf and state.passes.anf.enumInfo) or
+          (state.passes and state.passes.lower and state.passes.lower.enumInfo) or
+          (state.passes and state.passes.parse and state.passes.parse.enumInfo)
+        let result = typecheck(state.ast, resolveResult, .{ enumInfo: enumInfo })
 
         // Defensive: handle nil return (shouldn't happen, but be safe)
         if !result {

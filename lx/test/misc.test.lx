@@ -48,4 +48,11 @@ test("lines", fn(assert) {
   assert.equal(splitted[2], "c")
 })
 
+test("nameOf", fn(assert) {
+  let Color = enum { Red, Green = 3, Blue }
+  assert.equal(nameOf(Color, Color.Red), "Red")
+  assert.equal(Color->nameOf(Color.Blue), "Blue")
+  assert.equal(nameOf(Color, 999), nil)
+})
+
 suite.run()

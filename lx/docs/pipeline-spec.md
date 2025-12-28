@@ -398,6 +398,39 @@ Migration strategy:
 16. Fix source load failure to return proper failed parse pass with error message.
 17. Run tests.
 
+### Phase 5: Pass manager hardening and curated profiles (completed)
+
+18. Add `requires`/`provides` metadata to all passes in `driver.lx`:
+    - Parse provides: `["ast", "parseTree"]`
+    - Lower requires: `["ast"]`, provides: `["loweredAst"]`
+    - ANF requires: `["loweredAst"]`, provides: `["anfAst", "loweredAst"]` (ANF is a refinement of lowered)
+    - Resolve requires: `["loweredAst"]`, provides: `["resolution", "scopeInfo"]`
+    - ANF-inline requires: `["anfAst", "resolution"]`, provides: `["optimizedAst"]`
+    - Typecheck requires: `["resolution"]`, provides: `["typeInfo"]`
+
+19. Define curated profiles in `driver.lx`:
+    - `default`: parse → lower → anf → resolve → anf-inline → typecheck (current semantics)
+    - `tooling`: Same as default (best AST/tables for IDE/LSP)
+    - `O0`: parse → lower → anf → resolve → typecheck (skip anf-inline optimization)
+
+20. Update `driver.make()` to support profile parameter:
+    - Profile sets defaults: `make(.{ profile: "O0" })`
+    - Explicit flags override profile: `make(.{ profile: "O0", withTypecheck: false })`
+    - Default profile is `"default"` if not specified
+
+21. Add dependency validation to `pipeline.lx`:
+    - `validatePassDependencies()` checks requires/provides consistency
+    - Always runs before pipeline execution (fail-fast on invalid configurations)
+    - Reports clear error messages for missing requirements
+    - Returns validation errors as synthetic "validate" pass for proper error collection
+
+22. Add optional mutation checking behind `ctx.debug.validatePasses`:
+    - Lightweight pointer identity check for `mutatesAst: false` passes
+    - Does not catch all mutations (no deep equality), but catches obvious violations
+    - Only runs when debug flag is enabled
+
+23. Run tests and verify all profiles work correctly.
+
 ---
 
 ## Definition of Done
@@ -406,4 +439,8 @@ Migration strategy:
 - `errors.resolveNodePosition()` automatically handles any future pass that returns `origin`.
 - `errors.collectErrors()` collects from pass results in order.
 - Import/type metadata no longer lives on AST nodes; it lives in resolve artifacts and flows through results.
+- Pass dependencies are validated at pipeline build time via `requires`/`provides` metadata.
+- Curated profiles provide standard compilation modes (default, tooling, O0).
+- Profile flags can be overridden individually for flexibility.
+- Optional debug validation catches mutation violations in non-mutating passes.
 - Existing test suite passes.

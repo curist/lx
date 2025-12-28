@@ -17,6 +17,49 @@ let typecheck = import "src/typecheck.lx"
 let pipeline = import "src/passes/pipeline.lx"
 
 // ========================================
+// Profile Definitions
+// ========================================
+
+fn getProfile(name) {
+  // Returns .{ withAnf, withAnfInline, withTypecheck } for the given profile
+  // Profiles define curated pass combinations for specific use cases
+
+  if name == "default" {
+    // Current compiler semantics: all passes enabled
+    // parse → lower → anf → resolve → anf-inline → typecheck (non-fatal)
+    return .{
+      withAnf: true,
+      withAnfInline: true,
+      withTypecheck: true,
+    }
+  }
+
+  if name == "tooling" {
+    // Best AST/tables for IDE/LSP
+    // Same as default: parse → lower → anf → resolve → anf-inline → typecheck (non-fatal)
+    return .{
+      withAnf: true,
+      withAnfInline: true,
+      withTypecheck: true,
+    }
+  }
+
+  if name == "O0" {
+    // No optimizations, but keep passes that establish correctness invariants
+    // parse → lower → anf → resolve → typecheck (non-fatal)
+    // Skip anf-inline optimization
+    return .{
+      withAnf: true,
+      withAnfInline: false,
+      withTypecheck: true,
+    }
+  }
+
+  // Unknown profile - return nil to signal error
+  nil
+}
+
+// ========================================
 // Build Pass List
 // ========================================
 
@@ -29,6 +72,7 @@ fn buildPassList(ctx) {
     .{
       name: "parse",
       mutatesAst: false,
+      provides: ["ast", "parseTree"],
       run: fn(ctx, state) {
         parse(state.source, state.path)
       },
@@ -38,6 +82,8 @@ fn buildPassList(ctx) {
     .{
       name: "lower",
       mutatesAst: false,
+      requires: ["ast"],
+      provides: ["loweredAst"],
       run: fn(ctx, state) {
         lower(state.ast, .{ startNodeId: state.nextNodeId })
       },
@@ -47,6 +93,8 @@ fn buildPassList(ctx) {
     .{
       name: "anf",
       mutatesAst: false,
+      requires: ["loweredAst"],
+      provides: ["anfAst", "loweredAst"],  // ANF is a refinement, still satisfies loweredAst contracts
       enabled: fn(ctx, state) {
         // Explicit boolean: default to true if opts missing
         if !ctx.opts { return true }
@@ -62,6 +110,8 @@ fn buildPassList(ctx) {
     .{
       name: "resolve",
       mutatesAst: false,  // Phase 2: import metadata moved to side tables
+      requires: ["loweredAst"],  // Requires lowered form (works with lowered or ANF)
+      provides: ["resolution", "scopeInfo"],
       run: fn(ctx, state) {
         let opts = .{
           importCache: ctx.importCache,
@@ -75,6 +125,8 @@ fn buildPassList(ctx) {
     .{
       name: "anf-inline",
       mutatesAst: true,  // Explicitly mutates AST in-place
+      requires: ["anfAst", "resolution"],
+      provides: ["optimizedAst"],
       enabled: fn(ctx, state) {
         // Only run if both ANF and ANF-inline are enabled
         if !ctx.opts { return true }
@@ -93,6 +145,8 @@ fn buildPassList(ctx) {
       name: "typecheck",
       mutatesAst: false,
       fatal: false,  // Non-fatal: don't stop pipeline on typecheck errors
+      requires: ["resolution"],
+      provides: ["typeInfo"],
       enabled: fn(ctx, state) {
         // Explicit boolean: default to true if opts missing
         if !ctx.opts { return true }
@@ -129,10 +183,41 @@ fn make(opts) {
   let driver = .{}
   driver.cache = .{}
   driver.compiledModules = []  // Track compilation order
-  driver.loadSource = opts and opts.loadSource or nil
-  driver.withTypecheck = !(opts and opts.withTypecheck == false)  // Default: true
-  driver.withAnf = !(opts and opts.withAnf == false)  // Default: true
-  driver.withAnfInline = !(opts and opts.withAnfInline == false)  // Default: true
+  driver.loadSource = opts.loadSource
+
+  // Profile support: profile sets defaults, explicit flags override
+  let profileName = opts.profile or "default"
+  let profileDefaults = getProfile(profileName)
+
+  if !profileDefaults {
+    // Unknown profile - error
+    groanln("Error: Unknown profile '" + profileName + "'")
+    groanln("Available profiles: default, tooling, O0")
+    return nil
+  }
+
+  // Apply profile defaults, then override with explicit flags
+  // Check if flag is explicitly set (not nil), if so use it, else use profile default
+  if opts.withTypecheck != nil {
+    driver.withTypecheck = opts.withTypecheck
+  } else {
+    driver.withTypecheck = profileDefaults.withTypecheck
+  }
+
+  if opts.withAnf != nil {
+    driver.withAnf = opts.withAnf
+  } else {
+    driver.withAnf = profileDefaults.withAnf
+  }
+
+  if opts.withAnfInline != nil {
+    driver.withAnfInline = opts.withAnfInline
+  } else {
+    driver.withAnfInline = profileDefaults.withAnfInline
+  }
+
+  // Debug flags (optional)
+  driver.debug = opts.debug
 
   driver.compileModule = fn(path) {
     // Check cache first
@@ -188,6 +273,7 @@ fn make(opts) {
         withAnfInline: driver.withAnfInline,
         withTypecheck: driver.withTypecheck,
       },
+      debug: driver.debug,
     }
 
     // Build initial state

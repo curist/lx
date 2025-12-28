@@ -2406,10 +2406,14 @@ fn checkImport(checker, node) {
   // Path is usually String or Identifier
   if node.path { synthExpr(checker, node.path) }
 
-  // Resolver may attach module type information for the import expression.
-  if node.importType {
-    checker.types[node.id] = node.importType
-    return node.importType
+  // Check resolve side table for module type information
+  let importInfo = checker.resolveResult and
+                   checker.resolveResult.importInfoByNodeId and
+                   checker.resolveResult.importInfoByNodeId[node.id]
+
+  if importInfo and importInfo.importType {
+    checker.types[node.id] = importInfo.importType
+    return importInfo.importType
   }
 
   let t = typeAny()

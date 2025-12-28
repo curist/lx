@@ -593,9 +593,6 @@ fn anfAssignment(anf, node) {
 fn anfImport(anf, node) {
   let newNode = copyNodeShallow(anf, node)
   newNode.path = anfExpr(anf, node.path)
-  if node.importResult {
-    newNode.importResult = node.importResult
-  }
   newNode
 }
 

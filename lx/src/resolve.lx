@@ -79,6 +79,7 @@ fn makeResolver(opts) {
     resolvedNames: .{},    // nodeId → BindingInfo
     scopeInfo: .{},        // nodeId → ScopeInfo
     assignmentInfo: .{},   // nodeId → AssignmentInfo (for Assignment nodes)
+    importInfoByNodeId: .{}, // nodeId → { importResult, importType, importBindings }
     nodes: .{},            // nodeId → AST node (built during traversal)
     errors: [],            // [{ nodeId, message, severity }]
     hadError: false,
@@ -458,16 +459,49 @@ fn isInFunction(scope) {
 
   let path = node.path.value
 
+  // Helper to extract import type from compilation result
+  fn extractImportType(result) {
+    if !result or result.status != "done" or
+       !result.typecheckResult or !result.typecheckResult.success {
+      return nil
+    }
+
+    // Use the same AST that was typechecked (ANF if available, else lower)
+    let modAst = (result.anfInlineResult and result.anfInlineResult.ast) or
+                 (result.anfResult and result.anfResult.ast) or
+                 (result.lowerResult and result.lowerResult.ast)
+    let modTypes = result.typecheckResult.types
+    let modBindings = result.typecheckResult.typeVarBindings
+
+    if modAst and modAst.expressions and len(modAst.expressions) > 0 and modTypes {
+      let lastExpr = modAst.expressions[len(modAst.expressions) - 1]
+      return .{
+        importType: modTypes[lastExpr.id],
+        importBindings: modBindings,
+      }
+    }
+
+    nil
+  }
+
   // Check cache if available
     if resolver.importCache {
       let cached = resolver.importCache[path]
       if cached {
-        node.importResult = cached
         // Check for circular import (status is neither done nor failed)
         if cached.status != "done" and cached.status != "failed" {
           addError(resolver, node.id, "Circular import detected: " + path)
           return nil
         }
+
+        // Store import metadata in side table (consistent with non-cached path)
+        let importInfo = .{ importResult: cached }
+        let typeInfo = extractImportType(cached)
+        if typeInfo {
+          importInfo.importType = typeInfo.importType
+          importInfo.importBindings = typeInfo.importBindings
+        }
+        resolver.importInfoByNodeId[node.id] = importInfo
 
       // Already compiled successfully or failed - return cached result
       return cached
@@ -477,19 +511,16 @@ fn isInFunction(scope) {
     // Compile module via callback if provided
     if resolver.compileModule {
       let result = resolver.compileModule(path)
-      node.importResult = result
-      // Stash resolved type info for downstream phases
-      if result and result.status == "done" and
-         result.typecheckResult and result.typecheckResult.success {
-        let modAst = result.lowerResult and result.lowerResult.ast
-        let modTypes = result.typecheckResult.types
-        let modBindings = result.typecheckResult.typeVarBindings
-        if modAst and modAst.expressions and len(modAst.expressions) > 0 and modTypes {
-          let lastExpr = modAst.expressions[len(modAst.expressions) - 1]
-          node.importType = modTypes[lastExpr.id]
-          node.importBindings = modBindings
-        }
+
+      // Store import metadata in side table
+      let importInfo = .{ importResult: result }
+      let typeInfo = extractImportType(result)
+      if typeInfo {
+        importInfo.importType = typeInfo.importType
+        importInfo.importBindings = typeInfo.importBindings
       }
+
+      resolver.importInfoByNodeId[node.id] = importInfo
       return result
     }
 
@@ -812,6 +843,7 @@ fn resolve(ast, opts) {
     resolvedNames: resolver.resolvedNames,
     scopeInfo: resolver.scopeInfo,
     assignmentInfo: resolver.assignmentInfo,
+    importInfoByNodeId: resolver.importInfoByNodeId,
     errors: resolver.errors,
   }
 }

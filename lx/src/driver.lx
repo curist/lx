@@ -61,7 +61,7 @@ fn buildPassList(ctx) {
     // PASS 4: Resolve
     .{
       name: "resolve",
-      mutatesAst: true,  // Currently mutates import nodes (to be fixed in Phase 2)
+      mutatesAst: false,  // Phase 2: import metadata moved to side tables
       run: fn(ctx, state) {
         let opts = .{
           importCache: ctx.importCache,

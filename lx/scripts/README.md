@@ -16,13 +16,17 @@ Use these scripts when:
 ### `build-lxlx-driver.lx`
 Compiles `cmd/mlx.lx` (the lx compiler) using the NEW codegen from `src/codegen.lx`.
 
+- Uses `profile: "default"` (all passes including ANF inline optimization)
 - Recursively compiles all imported modules
 - Runs bytecode verification on all functions
 - Outputs to `/tmp/lxlx-new.lxobj`
+- Codegen uses the most optimized AST available: anf-inline → anf → lower
 
 ### `build-globals-driver.lx`
 Compiles `globals.lx` (standard library) using the NEW codegen from `src/codegen.lx`.
 
+- Uses `profile: "default"` (all passes including ANF inline optimization)
+- Codegen uses the most optimized AST available: anf-inline → anf → lower
 - Outputs to `/tmp/lxglobals-new.lxobj`
 
 ## Bootstrap Process

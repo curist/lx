@@ -23,6 +23,7 @@ println("")
 
 // Create driver with NEW codegen (PR3)
 let d = driver.make(.{
+  profile: "default",
   withTypecheck: false,
   loadSource: fn(path) { slurp(path) }
 })
@@ -45,7 +46,10 @@ fn codegenModule(modulePath) {
     return nil
   }
 
-  let ast = modResult.passes.anf and modResult.passes.anf.ast or modResult.passes.lower.ast
+  let passes = modResult.passes or .{}
+  let ast = (passes["anf-inline"] and passes["anf-inline"].ast) or
+            (passes.anf and passes.anf.ast) or
+            (passes.lower and passes.lower.ast)
   let t2 = now()
   let cg = codegen(ast, modResult.passes.resolve, .{
     codegenModule: codegenModule,

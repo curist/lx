@@ -1,0 +1,106 @@
+// Pipeline Runner - Generic pass orchestration with unified error handling
+//
+// Provides:
+// - runPasses: Execute a list of passes with state threading
+// - normalizeErrors: Ensure errors have pass attribution
+
+// ========================================
+// Normalize Errors
+// ========================================
+
+fn normalizeErrors(passName, errors) {
+  // Ensure errors is an array and tag object errors with pass name
+  if !errors { return [] }
+
+  // Ensure array
+  let out = type(errors) == "array" and errors or [errors]
+
+  // Tag objects with pass name if missing
+  for let i = 0; i < len(out); i = i + 1 {
+    let e = out[i]
+    if type(e) == "map" and !e.pass {
+      e.pass = passName
+    }
+  }
+
+  out
+}
+
+// ========================================
+// Run Passes
+// ========================================
+
+fn runPasses(passList, ctx, state) {
+  // Execute passes in order, threading state between them
+  // Returns a pipeline result with pass outputs and final state
+
+  let passesOut = .{}
+  let passOrder = []
+  let failedPass = nil
+
+  // Ensure state.passes exists
+  if !state.passes { state.passes = .{} }
+
+  for let i = 0; i < len(passList); i = i + 1 {
+    let p = passList[i]
+    if !p or !p.name or !p.run { continue }
+
+    // Check if pass is enabled (default: true)
+    let enabled = true
+    if p.enabled {
+      enabled = p.enabled(ctx, state)
+    }
+    if !enabled { continue }
+
+    push(passOrder, p.name)
+
+    // Run the pass
+    let raw = p.run(ctx, state) or .{ success: false, errors: ["Pass returned nil: " + p.name] }
+
+    // Normalize errors with pass attribution
+    raw.errors = normalizeErrors(p.name, raw.errors)
+
+    // Record output
+    passesOut[p.name] = raw
+    state.passes[p.name] = raw
+
+    // Thread state: update ast and nextNodeId if provided
+    if raw.ast { state.ast = raw.ast }
+    if raw.nextNodeId { state.nextNodeId = raw.nextNodeId }
+
+    // Check for failure (unless pass is non-fatal)
+    let isFatal = true  // Default: fatal=true
+    if p.fatal == false {
+      isFatal = false
+    }
+    if !raw.success and isFatal {
+      failedPass = p.name
+      break
+    }
+
+    // Debug: stop after specific pass
+    if ctx and ctx.debug and ctx.debug.stopAfter and ctx.debug.stopAfter == p.name {
+      break
+    }
+  }
+
+  .{
+    status: failedPass and "failed" or "done",
+    success: failedPass == nil,
+    path: state.path,
+    failedPass: failedPass,
+    passOrder: passOrder,
+    passes: passesOut,
+    ast: state.ast,
+    nextNodeId: state.nextNodeId,
+  }
+}
+
+// ========================================
+// Module Exports
+// ========================================
+
+.{
+  runPasses: runPasses,
+  normalizeErrors: normalizeErrors,
+}

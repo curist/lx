@@ -14,6 +14,112 @@ let anf = import "src/anf.lx"
 let anfInline = import "src/anf-inline.lx"
 let resolve = import "src/resolve.lx"
 let typecheck = import "src/typecheck.lx"
+let pipeline = import "src/passes/pipeline.lx"
+
+// ========================================
+// Build Pass List
+// ========================================
+
+fn buildPassList(ctx) {
+  // Build the list of passes with their adapters
+  // ctx contains: importCache, compileModule, opts (withAnf, withAnfInline, withTypecheck)
+
+  [
+    // PASS 1: Parse
+    .{
+      name: "parse",
+      mutatesAst: false,
+      run: fn(ctx, state) {
+        parse(state.source, state.path)
+      },
+    },
+
+    // PASS 2: Lower
+    .{
+      name: "lower",
+      mutatesAst: false,
+      run: fn(ctx, state) {
+        lower(state.ast, .{ startNodeId: state.nextNodeId })
+      },
+    },
+
+    // PASS 3: ANF (optional, default on)
+    .{
+      name: "anf",
+      mutatesAst: false,
+      enabled: fn(ctx, state) {
+        // Explicit boolean: default to true if opts missing
+        if !ctx.opts { return true }
+        if ctx.opts.withAnf == false { return false }
+        true
+      },
+      run: fn(ctx, state) {
+        anf(state.ast, .{ startNodeId: state.nextNodeId })
+      },
+    },
+
+    // PASS 4: Resolve
+    .{
+      name: "resolve",
+      mutatesAst: true,  // Currently mutates import nodes (to be fixed in Phase 2)
+      run: fn(ctx, state) {
+        let opts = .{
+          importCache: ctx.importCache,
+          compileModule: ctx.compileModule,
+        }
+        resolve(state.ast, opts)
+      },
+    },
+
+    // PASS 5: ANF Inline Optimization (optional, default on, post-resolve)
+    .{
+      name: "anf-inline",
+      mutatesAst: true,  // Explicitly mutates AST in-place
+      enabled: fn(ctx, state) {
+        // Only run if both ANF and ANF-inline are enabled
+        if !ctx.opts { return true }
+        if ctx.opts.withAnf == false { return false }
+        if ctx.opts.withAnfInline == false { return false }
+        true
+      },
+      run: fn(ctx, state) {
+        let resolveResult = state.passes.resolve
+        anfInline(state.ast, resolveResult)
+      },
+    },
+
+    // PASS 6: Typecheck (optional, non-fatal)
+    .{
+      name: "typecheck",
+      mutatesAst: false,
+      fatal: false,  // Non-fatal: don't stop pipeline on typecheck errors
+      enabled: fn(ctx, state) {
+        // Explicit boolean: default to true if opts missing
+        if !ctx.opts { return true }
+        if ctx.opts.withTypecheck == false { return false }
+        true
+      },
+      run: fn(ctx, state) {
+        let resolveResult = state.passes.resolve
+        let result = typecheck(state.ast, resolveResult, .{})
+
+        // Defensive: handle nil return (shouldn't happen, but be safe)
+        if !result {
+          return .{
+            success: false,
+            errors: [.{
+              pass: "typecheck",
+              message: "typecheck returned nil",
+              severity: "error",
+            }],
+          }
+        }
+
+        result
+      },
+    },
+  ]
+}
 
 // ========================================
 // Driver Factory
@@ -51,11 +157,10 @@ fn make(opts) {
     }
 
     if !source {
-      // Source loading failed
+      // Source loading failed - return legacy format for compatibility
       let result = .{
         status: "failed",
         path: path,
-        // Route through parse errors for centralized formatting/printing.
         parseResult: .{ success: false, errors: ["Failed to load source: " + path] },
       }
       driver.cache[path] = result
@@ -63,128 +168,76 @@ fn make(opts) {
     }
 
     // ========================================
-    // PASS 1: Parse
+    // Run Pipeline
     // ========================================
-    let parseResult = parse(source, path)
-    if !parseResult.success {
-      let result = .{
-        status: "failed",
-        path: path,
-        parseResult: parseResult,
-        parseErrors: parseResult.errors,
-      }
-      driver.cache[path] = result
-      return result
-    }
 
-    // ========================================
-    // PASS 2: Lower
-    // ========================================
-    let lowerResult = lower(parseResult.ast, .{
-      startNodeId: parseResult.nextNodeId,
-    })
-    if !lowerResult.success {
-      let result = .{
-        status: "failed",
-        path: path,
-        parseResult: parseResult,
-        lowerResult: lowerResult,
-        lowerErrors: lowerResult.errors,
-      }
-      driver.cache[path] = result
-      return result
-    }
-
-    // ========================================
-    // PASS 3: ANF (optional, default on)
-    // ========================================
-    let anfResult = nil
-    let anfAst = lowerResult.ast
-    let nextNodeId = lowerResult.nextNodeId
-    if driver.withAnf {
-      anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
-      if !anfResult.success {
-        let result = .{
-          status: "failed",
-          path: path,
-          parseResult: parseResult,
-          lowerResult: lowerResult,
-          anfResult: anfResult,
-        }
-        driver.cache[path] = result
-        return result
-      }
-      anfAst = anfResult.ast
-      nextNodeId = anfResult.nextNodeId
-    }
-
-    // ========================================
-    // PASS 4: Resolve
-    // ========================================
-    let resolveOpts = .{
+    // Build context for passes
+    let ctx = .{
       importCache: driver.cache,
       compileModule: driver.compileModule,
-    }
-    let resolveResult = resolve(anfAst, resolveOpts)
-
-    if !resolveResult.success {
-      let result = .{
-        status: "failed",
-        path: path,
-        parseResult: parseResult,
-        lowerResult: lowerResult,
-        anfResult: anfResult,
-        resolveResult: resolveResult,
-      }
-      driver.cache[path] = result
-      return result
+      opts: .{
+        withAnf: driver.withAnf,
+        withAnfInline: driver.withAnfInline,
+        withTypecheck: driver.withTypecheck,
+      },
     }
 
-    // ========================================
-    // PASS 4.5: ANF Inline Optimization (optional, default on, post-resolve)
-    // ========================================
-    let anfInlineResult = nil
-    if driver.withAnf and driver.withAnfInline {
-      anfInlineResult = anfInline(anfAst, resolveResult)
-      if !anfInlineResult.success {
-        let result = .{
-          status: "failed",
-          path: path,
-          parseResult: parseResult,
-          lowerResult: lowerResult,
-          anfResult: anfResult,
-          resolveResult: resolveResult,
-          anfInlineResult: anfInlineResult,
-        }
-        driver.cache[path] = result
-        return result
-      }
-      anfAst = anfInlineResult.ast
-      // Update cached anfResult if it exists
-      if anfResult {
-        anfResult.ast = anfInlineResult.ast
-      }
-    }
-
-    // ========================================
-    // PASS 5: Typecheck (optional)
-    // ========================================
-    let typecheckResult = nil
-    if driver.withTypecheck {
-      typecheckResult = typecheck(anfAst, resolveResult, .{})
-    }
-
-    // Store result in cache
-    let result = .{
-      status: "done",
+    // Build initial state
+    let state = .{
       path: path,
+      source: source,
+      ast: nil,
+      nextNodeId: 1,
+      passes: .{},
+    }
+
+    // Execute passes
+    let passList = buildPassList(ctx)
+    let pipelineResult = pipeline.runPasses(passList, ctx, state)
+
+    // ========================================
+    // Legacy Projection Layer (backward compatibility)
+    // ========================================
+
+    // Extract individual pass results
+    let parseResult = pipelineResult.passes.parse
+    let lowerResult = pipelineResult.passes.lower
+    let anfResult = pipelineResult.passes.anf
+    let resolveResult = pipelineResult.passes.resolve
+    let anfInlineResult = pipelineResult.passes["anf-inline"]
+    let typecheckResult = pipelineResult.passes.typecheck
+
+    // Special handling: anf-inline updates anfResult.ast (preserve existing behavior)
+    if anfResult and anfInlineResult and anfInlineResult.ast {
+      anfResult.ast = anfInlineResult.ast
+    }
+
+    // Build result with both new and legacy fields
+    let result = .{
+      // Core fields
+      status: pipelineResult.status,
+      success: pipelineResult.success,
+      path: path,
+      failedPass: pipelineResult.failedPass,
+
+      // New pipeline fields
+      passOrder: pipelineResult.passOrder,
+      passes: pipelineResult.passes,
+
+      // Legacy projection fields (for existing tests/tooling)
       parseResult: parseResult,
       lowerResult: lowerResult,
       anfResult: anfResult,
       anfInlineResult: anfInlineResult,
       resolveResult: resolveResult,
       typecheckResult: typecheckResult,
+
+      // Legacy error fields (backward compat)
+      // Only set when pass actually failed, to preserve phase-detection logic
+      parseErrors: parseResult and !parseResult.success and parseResult.errors,
+      lowerErrors: lowerResult and !lowerResult.success and lowerResult.errors,
     }
+
     driver.cache[path] = result
     return result
   }

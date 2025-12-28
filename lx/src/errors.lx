@@ -63,23 +63,44 @@ fn buildNodesIndex(ast) {
 }
 
 // ========================================
-// Resolve Node Position
+// Fold Origins Across Passes
 // ========================================
 
-fn resolveNodePosition(nodeId, result) {
-  // Resolve nodeId to source position by:
-  // 1. Following origin chains: ANF -> lowered -> parser
-  // 2. Looking up node in appropriate AST
-  // 3. Extracting position info
+fn foldOrigins(nodeId, result) {
+  // Generic origin folder that walks backwards through all passes
+  // Returns the final (parser-level) node ID after following all origin chains
 
   if !nodeId or !result { return nil }
 
   let currentId = nodeId
   let maxDepth = 100  // Prevent infinite loops
+
+  // If result has passOrder, walk it generically
+  if result.passOrder and type(result.passOrder) == "array" {
+    let order = result.passOrder
+
+    // Walk from last executed pass backwards
+    for let oi = len(order) - 1; oi >= 0; oi = oi - 1 {
+      let name = order[oi]
+      let pr = (result.passes and result.passes[name]) or nil
+      let origin = pr and pr.origin
+
+      if !origin { continue }
+
+      let depth = 0
+      for depth < maxDepth and origin[currentId] {
+        currentId = origin[currentId]
+        depth = depth + 1
+      }
+    }
+
+    return currentId
+  }
+
+  // Fallback: legacy hard-coded origin walking (for compatibility)
   let depth = 0
 
-  // Follow origin chain: ANF -> lowered -> parser
-  // First, follow ANF origin if available
+  // Follow ANF origin if available
   if result.anfResult and result.anfResult.origin {
     for depth < maxDepth and result.anfResult.origin[currentId] {
       currentId = result.anfResult.origin[currentId]
@@ -95,12 +116,35 @@ fn resolveNodePosition(nodeId, result) {
     }
   }
 
-  // Now currentId should be a parser node ID
-  // Build index and look up the node
+  currentId
+}
+
+// ========================================
+// Resolve Node Position
+// ========================================
+
+fn resolveNodePosition(nodeId, result) {
+  // Resolve nodeId to source position by:
+  // 1. Following origin chains across all passes
+  // 2. Looking up node in parser AST
+  // 3. Extracting position info
+
+  if !nodeId or !result { return nil }
+
+  // Fold origins to get parser-level node ID
+  let leafId = foldOrigins(nodeId, result)
+  if !leafId { return nil }
+
+  // Look up node in parser AST
   let node = nil
-  if result.parseResult and result.parseResult.ast {
+  if result.passes and result.passes.parse and result.passes.parse.ast {
+    // New pipeline: use passes.parse.ast
+    let index = buildNodesIndex(result.passes.parse.ast)
+    node = index[leafId]
+  } else if result.parseResult and result.parseResult.ast {
+    // Legacy: use parseResult.ast
     let index = buildNodesIndex(result.parseResult.ast)
-    node = index[currentId]
+    node = index[leafId]
   }
 
   if !node { return nil }
@@ -170,8 +214,32 @@ fn collectErrors(result) {
 
   let errors = []
 
+  // New pipeline: prefer result.passOrder and result.passes
+  if result.passOrder and result.passes and type(result.passOrder) == "array" {
+    // Iterate through passes in execution order
+    for let i = 0; i < len(result.passOrder); i = i + 1 {
+      let passName = result.passOrder[i]
+      let passResult = result.passes[passName]
+
+      if passResult and passResult.errors {
+        errors = concat(errors, passResult.errors)
+      }
+    }
+
+    // Also collect from codegen/verify if present (post-pipeline passes)
+    if result.codegenResult and result.codegenResult.errors {
+      errors = concat(errors, result.codegenResult.errors)
+    }
+
+    if result.verifyResult and result.verifyResult.errors {
+      errors = concat(errors, result.verifyResult.errors)
+    }
+
+    return errors
+  }
+
+  // Legacy fallback: collect from individual result fields
   // Note: parseErrors/lowerErrors are for backward compat
-  // Prefer parseResult.errors/lowerResult.errors
   if result.parseResult and result.parseResult.errors {
     errors = concat(errors, result.parseResult.errors)
   } else if result.parseErrors {
@@ -205,6 +273,7 @@ fn collectErrors(result) {
 
 .{
   buildNodesIndex: buildNodesIndex,
+  foldOrigins: foldOrigins,
   resolveNodePosition: resolveNodePosition,
   formatError: formatError,
   printErrors: printErrors,

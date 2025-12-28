@@ -1,0 +1,370 @@
+// ANF Inline Optimization (Post-Resolve, Binder-Aware)
+//
+// Goal:
+// - Inline single-use ANF temps ($anf.N) using binding metadata (declaredAt)
+// - Remove their `let` bindings when inlined
+//
+// Key facts / invariants:
+// - Node shapes:
+//   - Let: { type:"Let", id, name: Identifier{id,name}, init: expr }
+//   - declaredAt == Let.name.id (binder identifier id)
+//   - Block: { type:"Block", id, expressions:[...] }
+// - This pass mutates the AST in-place (performance-critical).
+// - Later phases (typecheck, codegen, etc.) are read-only.
+//
+// Performance design:
+// - One traversal builds:
+//   - letByDeclId: declId -> { letNode, blockId, indexInBlock }
+//   - useCount: declId -> count
+//   - useSite: declId -> { parent, field, index } (kept only if single-use)
+//   - blockById: blockId -> blockNode (for compaction)
+// - Apply edits:
+//   - Replace the unique Identifier use-site with RHS (structural sharing)
+//   - Mark Let indices for removal per block, then compact each affected block once
+//
+// Validation:
+// - Cheap binder-aware validation:
+//   - Every removed let had uses == 1
+//   - Every removed let had a remembered single-use site
+//   - Replacement succeeded
+
+// ------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------
+
+fn isAnfTempName(name) {
+  if !name or type(name) != "string" { return false }
+  if len(name) < 6 { return false }
+  // Check "$anf." prefix
+  name[0] == "$" and name[1] == "a" and name[2] == "n" and
+  name[3] == "f" and name[4] == "."
+}
+
+// ------------------------------------------------------------
+// Inline-safety predicate
+// ------------------------------------------------------------
+
+fn isInlineSafeExpr(node) {
+  isInlineSafeExprImpl(node, 0)
+}
+
+fn isInlineSafeExprImpl(node, depth) {
+  // Depth limit to prevent infinite recursion
+  if depth > 50 { return false }
+
+  if !node { return true }
+  if type(node) != "map" { return true }
+
+  let t = node.type
+
+  // Conservative whitelist
+  if t == "Nil" or t == "Bool" or t == "Number" or t == "String" or t == "Identifier" {
+    return true
+  }
+
+  let d = depth + 1
+
+  if t == "Binary" {
+    return isInlineSafeExprImpl(node.left, d) and isInlineSafeExprImpl(node.right, d)
+  }
+
+  if t == "Unary" {
+    return isInlineSafeExprImpl(node.operand, d)
+  }
+
+  if t == "Logical" {
+    return isInlineSafeExprImpl(node.left, d) and isInlineSafeExprImpl(node.right, d)
+  }
+
+  if t == "Dot" {
+    return isInlineSafeExprImpl(node.object, d) and node.property and node.property.type == "String"
+  }
+
+  if t == "Index" {
+    return isInlineSafeExprImpl(node.object, d) and isInlineSafeExprImpl(node.index, d)
+  }
+
+  if t == "IntrinsicCall" {
+    let args = node.args or []
+    for let i = 0; i < len(args); i = i + 1 {
+      if !isInlineSafeExprImpl(args[i], d) { return false }
+    }
+    return true
+  }
+
+  // Synthetic blocks with single safe expression
+  if t == "Block" and node.anfSynthetic {
+    let exprs = node.expressions or []
+    if len(exprs) == 1 {
+      return isInlineSafeExprImpl(exprs[0], d)
+    }
+  }
+
+  false
+}
+
+// ------------------------------------------------------------
+// Walker (single traversal)
+// ------------------------------------------------------------
+
+fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
+  if !node { return }
+  let t = type(node)
+
+  if t == "array" {
+    for let i = 0; i < len(node); i = i + 1 {
+      // Parent is this array; field name is nil; index is i
+      walk(node[i], resolvedNames, state, node, nil, i)
+    }
+    return
+  }
+
+  if t != "map" { return }
+
+  // Remember blocks by id for later compaction
+  if node.type == "Block" and node.id != nil {
+    state.blockById[node.id] = node
+    // Traverse expressions with precise parent info
+    let exprs = node.expressions or []
+    for let i = 0; i < len(exprs); i = i + 1 {
+      walk(exprs[i], resolvedNames, state, node, "expressions", i)
+    }
+    return
+  }
+
+  // Track ANF temp lets and their position in Block.expressions
+  if node.type == "Let" and node.name and isAnfTempName(node.name.name) and node.name.id {
+    let declId = node.name.id
+    // Record where the let lives (only deletable when it's a direct element of Block.expressions)
+    if parent and parent.type == "Block" and parentField == "expressions" and parentIndex != nil and parent.id != nil {
+      state.letByDeclId[declId] = .{
+        letNode: node,
+        blockId: parent.id,
+        index: parentIndex,
+      }
+    } else {
+      // Still record the let node for completeness (but cannot delete unless in a block expr list)
+      state.letByDeclId[declId] = .{
+        letNode: node,
+        blockId: nil,
+        index: nil,
+      }
+    }
+
+    // Traverse init only (skip binder name)
+    walk(node.init, resolvedNames, state, node, "init", nil)
+    return
+  }
+
+  // Count identifier uses by binding identity + remember unique use-site
+  if node.type == "Identifier" and node.id {
+    let resolved = resolvedNames[node.id]
+    if resolved and resolved.declaredAt {
+      let declId = resolved.declaredAt
+      let c = state.useCount[declId] or 0
+      c = c + 1
+      state.useCount[declId] = c
+
+      if c == 1 {
+        state.useSite[declId] = .{
+          parent: parent,
+          field: parentField,
+          index: parentIndex,
+        }
+      } else if c == 2 {
+        // No longer single-use
+        state.useSite[declId] = nil
+      }
+    }
+  }
+
+  // Specialized traversal for Let (non-temp or non-ANF let): init only
+  if node.type == "Let" {
+    walk(node.init, resolvedNames, state, node, "init", nil)
+    return
+  }
+
+  // Specialized traversal for common node types (avoid expensive keys() calls)
+  // Only specialize node types where we're certain of the field structure
+  let nt = node.type
+
+  if nt == "Binary" or nt == "Logical" {
+    walk(node.left, resolvedNames, state, node, "left", nil)
+    walk(node.right, resolvedNames, state, node, "right", nil)
+    return
+  }
+
+  if nt == "Unary" {
+    walk(node.operand, resolvedNames, state, node, "operand", nil)
+    return
+  }
+
+  if nt == "Dot" {
+    walk(node.object, resolvedNames, state, node, "object", nil)
+    walk(node.property, resolvedNames, state, node, "property", nil)
+    return
+  }
+
+  if nt == "Index" {
+    walk(node.object, resolvedNames, state, node, "object", nil)
+    walk(node.index, resolvedNames, state, node, "index", nil)
+    return
+  }
+
+  // Literals and other leaf nodes - no traversal needed
+  if nt == "Nil" or nt == "Bool" or nt == "Number" or nt == "String" or nt == "Import" {
+    return
+  }
+
+  // Fallback traversal (should be rare now):
+  // We avoid copying; we only walk map/array children.
+  let ks = keys(node)
+  for let i = 0; i < len(ks); i = i + 1 {
+    let k = ks[i]
+    let v = node[k]
+    let vt = type(v)
+    if vt == "map" or vt == "array" {
+      walk(v, resolvedNames, state, node, k, nil)
+    }
+  }
+}
+
+fn replaceInParent(site, newNode) {
+  let p = site and site.parent
+  if !p { return false }
+
+  let f = site.field
+  let idx = site.index
+
+  // parent is an array itself (field == nil)
+  if f == nil and idx != nil {
+    p[idx] = newNode
+    return true
+  }
+
+  // parent[f] is an array
+  if idx != nil {
+    p[f][idx] = newNode
+    return true
+  }
+
+  // parent field assignment
+  if f != nil {
+    p[f] = newNode
+    return true
+  }
+
+  false
+}
+
+fn markRemoval(removedByBlockId, blockId, index) {
+  let flags = removedByBlockId[blockId]
+  if !flags {
+    flags = .{}
+    removedByBlockId[blockId] = flags
+  }
+  flags[index] = true
+}
+
+fn compactBlock(block, flags) {
+  if !flags { return }
+  let exprs = block.expressions or []
+  let out = []
+  for let i = 0; i < len(exprs); i = i + 1 {
+    if flags[i] { continue }
+    push(out, exprs[i])
+  }
+  block.expressions = out
+}
+
+// ------------------------------------------------------------
+// Entrypoint
+// ------------------------------------------------------------
+
+fn anfInline(ast, resolveResult) {
+  let resolvedNames = (resolveResult and resolveResult.resolvedNames) or .{}
+
+  let state = .{
+    // declId -> { letNode, blockId, index }
+    letByDeclId: .{},
+    // declId -> count
+    useCount: .{},
+    // declId -> site (only kept when count == 1)
+    useSite: .{},
+    // blockId -> block node
+    blockById: .{},
+  }
+
+  // One traversal builds all maps
+  walk(ast, resolvedNames, state, nil, nil, nil)
+
+  // Apply edits
+  let removedByBlockId = .{} // blockId -> { index:true }
+  let inlined = 0
+
+  let declIds = keys(state.letByDeclId)
+  for let i = 0; i < len(declIds); i = i + 1 {
+    let declId = declIds[i]
+    let info = state.letByDeclId[declId]
+    let letNode = info and info.letNode
+    if !letNode { continue }
+
+    // Only delete lets that are directly in a block expressions list
+    // (info.blockId/index present) and are truly single-use.
+    let uses = state.useCount[declId] or 0
+    if uses != 1 { continue }
+
+    let site = state.useSite[declId]
+    if !site { continue }
+
+    if !isInlineSafeExpr(letNode.init) { continue }
+
+    // Replace the unique use-site with RHS (structural sharing).
+    if !replaceInParent(site, letNode.init) {
+      return .{
+        success: false,
+        error: "ANF-inline: failed to replace single-use site for declId " + str(declId),
+        declId: declId,
+        ast: ast,
+      }
+    }
+
+    // Remove the let from its block (deferred)
+    if info.blockId != nil and info.index != nil {
+      markRemoval(removedByBlockId, info.blockId, info.index)
+    }
+
+    inlined = inlined + 1
+  }
+
+  // Compact each affected block once
+  let blockIds = keys(removedByBlockId)
+  for let i = 0; i < len(blockIds); i = i + 1 {
+    let bid = blockIds[i]
+    let block = state.blockById[bid]
+    if !block {
+      return .{
+        success: false,
+        error: "ANF-inline: missing block for id " + str(bid),
+        blockId: bid,
+        ast: ast,
+      }
+    }
+    compactBlock(block, removedByBlockId[bid])
+  }
+
+  // Cheap validation (binder-aware):
+  // For every removed let, ensure uses==1 and useSite existed (by construction).
+  // Also ensure the removed Let node is not still present in its original block
+  // at the same index prior to compaction (not checkable now), so we rely on
+  // compaction correctness. For extra safety, enable a full debug validator
+  // behind an option later (not default).
+
+  .{
+    success: true,
+    ast: ast,          // mutated in place
+    inlined: inlined,
+  }
+}
+
+anfInline

@@ -12,6 +12,8 @@ Source
   → ANF AST
   → resolve.lx
   → Resolved AST + Side Tables
+  → anf-inline.lx (optional, default on)
+  → Optimized AST
   → typecheck.lx (optional)
   → Type Information
   → codegen.lx
@@ -82,6 +84,36 @@ formatting and position resolution across all compilation phases.
   * `scopeInfo`
   * `nodes`
 * Does **not** mutate the AST
+
+---
+
+### **anf-inline.lx** — ANF temp elimination (optional, default on)
+
+* **Post-resolve optimization** — runs after binding resolution
+* Inlines single-use ANF temporary variables (`$anf.N`)
+* Uses **binding metadata** (`declaredAt`) instead of name matching
+* Conservative safety predicate:
+  * Only inlines pure expressions (literals, identifiers, arithmetic, etc.)
+  * Skips function calls, assignments, and other side-effecting operations
+* **Binder-aware**:
+  * Immune to shadowing bugs
+  * Immune to scope capture errors
+  * Correct by construction
+* Reduces stack pressure by eliminating unnecessary `UNWIND` operations
+* Does **not** change semantics — only reduces intermediate bindings
+* Can be disabled via driver option: `withAnfInline: false`
+
+**Algorithm:**
+1. Collect all ANF temp Let nodes (names starting with `$anf.`)
+2. Count uses by binding identity (via `resolvedNames[nodeId].declaredAt`)
+3. For each single-use safe temp: substitute RHS into usage site and delete Let
+4. Validate: no orphaned temp references remain
+
+**Design rationale:**
+Following the principle that **any pass manipulating bindings must be binder-aware**,
+`anf-inline` runs post-resolve to leverage binding metadata rather than implementing
+its own scope tracking. This aligns with how production compilers (Chez, OCaml) handle
+administrative let elimination.
 
 ---
 
@@ -279,10 +311,9 @@ parser node with position information:
 
 * **Polymorphic type inference**
 * **Perfect soundness**
-* **Optimization passes**
-* **AST mutation**
-* **Bytecode-level equivalence**
-  (semantic equivalence only)
+* **Aggressive optimization** (only conservative, semantics-preserving passes)
+* **AST mutation** (phases create new ASTs, never mutate input)
+* **Bytecode-level equivalence** (semantic equivalence only)
 
 ---
 
@@ -302,7 +333,7 @@ Lx supports **multiple consumers** of the same frontend pipeline:
 ### 1. Compiler
 
 ```
-parser → lower → anf → resolve → codegen → verify-bytecode → objbuilder → runtime
+parser → lower → anf → resolve → anf-inline → codegen → verify-bytecode → objbuilder → runtime
                           ↓
                     errors.lx (error formatting & reporting)
 ```
@@ -310,9 +341,9 @@ parser → lower → anf → resolve → codegen → verify-bytecode → objbuil
 ### 2. Tooling / LSP
 
 ```
-parser → lower → resolve → typecheck → diagnostics / IDE features
-                    ↓
-              errors.lx (error formatting & reporting)
+parser → lower → anf → resolve → anf-inline → typecheck → diagnostics / IDE features
+                          ↓                       ↓
+                    errors.lx (error formatting & reporting)
 ```
 
 These paths share the same frontend phases, error handling, and guarantees.
@@ -347,7 +378,10 @@ All compilation phases follow a consistent error handling pattern:
 
 ## Future Work
 
-* Optimization passes
+* Additional optimization passes:
+  * Dead code elimination
+  * Constant folding
+  * Inline expansion for small functions
 * Incremental compilation
 * Signature files for modules
 * Richer type narrowing

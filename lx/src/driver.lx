@@ -1,11 +1,12 @@
-// Driver - Orchestrates compilation pipeline: parse → lower → anf → anf-inline → resolve → typecheck
+// Driver - Orchestrates compilation pipeline (passes): parse → lower → anf → resolve → anf-inline → typecheck
 //
 // Responsibilities:
-// - Coordinate phase execution
+// - Coordinate pass execution
 // - Manage import cache for multi-file compilation
 // - Handle circular import detection
 // - Provide compilation artifacts for query service and codegen
-// - ANF runs after lower, followed by ANF inline optimization (optional, default on)
+// - ANF runs after lower (optional, default on)
+// - ANF inline runs post-resolve (optional, default on)
 
 let parse = import "src/parser.lx"
 let lower = import "src/lower.lx"
@@ -28,14 +29,14 @@ fn make(opts) {
   driver.withAnfInline = !(opts and opts.withAnfInline == false)  // Default: true
 
   driver.compileModule = fn(path) {
-    // Track compilation
-    push(driver.compiledModules, path)
-
     // Check cache first
     let cached = driver.cache[path]
     if cached {
       return cached
     }
+
+    // Track compilation (first time only)
+    push(driver.compiledModules, path)
 
     // Mark as compiling (for circular import detection)
     driver.cache[path] = .{
@@ -54,14 +55,15 @@ fn make(opts) {
       let result = .{
         status: "failed",
         path: path,
-        errors: [.{ message: "Failed to load source: " + path }],
+        // Route through parse errors for centralized formatting/printing.
+        parseResult: .{ success: false, errors: ["Failed to load source: " + path] },
       }
       driver.cache[path] = result
       return result
     }
 
     // ========================================
-    // PHASE 1: Parse
+    // PASS 1: Parse
     // ========================================
     let parseResult = parse(source, path)
     if !parseResult.success {
@@ -76,7 +78,7 @@ fn make(opts) {
     }
 
     // ========================================
-    // PHASE 2: Lower
+    // PASS 2: Lower
     // ========================================
     let lowerResult = lower(parseResult.ast, .{
       startNodeId: parseResult.nextNodeId,
@@ -85,6 +87,8 @@ fn make(opts) {
       let result = .{
         status: "failed",
         path: path,
+        parseResult: parseResult,
+        lowerResult: lowerResult,
         lowerErrors: lowerResult.errors,
       }
       driver.cache[path] = result
@@ -92,7 +96,7 @@ fn make(opts) {
     }
 
     // ========================================
-    // PHASE 3: ANF (optional, default on)
+    // PASS 3: ANF (optional, default on)
     // ========================================
     let anfResult = nil
     let anfAst = lowerResult.ast
@@ -115,7 +119,7 @@ fn make(opts) {
     }
 
     // ========================================
-    // PHASE 4: Resolve
+    // PASS 4: Resolve
     // ========================================
     let resolveOpts = .{
       importCache: driver.cache,
@@ -137,7 +141,7 @@ fn make(opts) {
     }
 
     // ========================================
-    // PHASE 4.5: ANF Inline Optimization (optional, default on, post-resolve)
+    // PASS 4.5: ANF Inline Optimization (optional, default on, post-resolve)
     // ========================================
     let anfInlineResult = nil
     if driver.withAnf and driver.withAnfInline {
@@ -163,7 +167,7 @@ fn make(opts) {
     }
 
     // ========================================
-    // PHASE 5: Typecheck (optional)
+    // PASS 5: Typecheck (optional)
     // ========================================
     let typecheckResult = nil
     if driver.withTypecheck {

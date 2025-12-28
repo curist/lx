@@ -24,17 +24,18 @@ Source
   → (b) LSP / tooling outputs
 ```
 
-Each phase has a **single responsibility** and produces **immutable outputs**.
-Later phases consume earlier results but never mutate them.
+Each pass has a **single responsibility**.
+Most passes treat their inputs as immutable; a small number of optimization passes
+(notably `anf-inline.lx`) intentionally mutate the AST in-place for performance.
 
 **Error handling** is centralized in `errors.lx`, which provides unified error
-formatting and position resolution across all compilation phases.
+formatting and position resolution across all compilation passes.
 
 ---
 
-## Phases
+## Passes
 
-### **parser.lx** — Syntax validation → AST
+### **parser.lx** — Syntax validation pass → AST
 
 * Recognizes lx grammar
 * Creates AST with node IDs and position spans
@@ -45,29 +46,29 @@ formatting and position resolution across all compilation phases.
 
 ---
 
-### **lower.lx** — Desugaring → Canonical AST
+### **lower.lx** — Desugaring pass → Canonical AST
 
 * Pure syntactic transformations
 * Arrow operator: `x->f(a)` → `f(x, a)`
 * Missing else normalization: `if cond {a}` → `if cond {a} else {nil}`
 * Creates new AST with fresh node IDs (continuation of module ID space)
 * Copies position spans for accurate diagnostics
-* Makes "everything is expression" semantics uniform for later phases
+* Makes "everything is expression" semantics uniform for later passes
 * Future: other syntax sugar (spread, destructuring, for-loops, etc.)
 
 ---
 
-### **anf.lx** — Evaluation-order normalization
+### **anf.lx** — Evaluation-order normalization pass
 
 * Lowers expressions into A-normal form (ANF)
 * Introduces temp `let` bindings to preserve left-to-right evaluation
 * Makes block expression values explicit without changing semantics
 * Does **not** perform semantic analysis or name resolution
-* **Mandatory phase** — always runs after lower, before resolve
+* Enabled by default (can be disabled via driver option `withAnf: false`)
 
 ---
 
-### **resolve.lx** — Binding + Semantic validation
+### **resolve.lx** — Binding + semantic validation pass
 
 * Name resolution (locals, upvalues, globals)
 * Function hoisting for mutual recursion
@@ -87,7 +88,7 @@ formatting and position resolution across all compilation phases.
 
 ---
 
-### **anf-inline.lx** — ANF temp elimination (optional, default on)
+### **anf-inline.lx** — ANF temp elimination pass (optional, default on)
 
 * **Post-resolve optimization** — runs after binding resolution
 * Inlines single-use ANF temporary variables (`$anf.N`)
@@ -117,7 +118,7 @@ administrative let elimination.
 
 ---
 
-### **typecheck.lx** — Static analysis (monomorphic, best-effort)
+### **typecheck.lx** — Static analysis pass (monomorphic, best-effort)
 
 * Infers stable types for:
 
@@ -138,12 +139,12 @@ administrative let elimination.
   * structured type diagnostics
 * **No runtime or codegen impact**
 
-> This phase is designed to support **tooling and IDE features** independently
+> This pass is designed to support **tooling and IDE features** independently
 > of backend code generation.
 
 ---
 
-### **codegen.lx** — Mechanical bytecode emission
+### **codegen.lx** — Mechanical bytecode emission pass
 
 * Walks resolved AST in **source order**
 * Looks up decisions from side tables
@@ -155,7 +156,7 @@ administrative let elimination.
 
 ---
 
-### **verify-bytecode.lx** — Stack discipline validation
+### **verify-bytecode.lx** — Stack discipline validation pass
 
 * Validates bytecode stack operations
 * Ensures balanced stack effects for all execution paths
@@ -163,7 +164,7 @@ administrative let elimination.
 * Uses dataflow analysis (worklist algorithm)
 * Reports errors with **nodeId** (resolved via `chunk.nodeIds[]`)
 * Returns: `{ success: bool, errors: [...] }`
-* **Mandatory phase** — compilation fails if verification fails
+* **Mandatory pass** — compilation fails if verification fails
 
 ---
 
@@ -180,11 +181,11 @@ administrative let elimination.
   * Returns `{ filename, line, col }`
 * **formatError(err, result)** — formats single error to string
 * **printErrors(errors, result)** — prints to stderr
-* **collectErrors(result)** — gathers errors from all phases
+* **collectErrors(result)** — gathers errors from all passes
 
 **Error Structure:**
 * Parser: pre-formatted strings (e.g., `"[file:L1:C5] message"`)
-* All semantic phases: `{ nodeId, message, severity: "error" }`
+* All semantic passes: `{ nodeId, message, severity: "error" }`
 
 ---
 
@@ -192,7 +193,7 @@ administrative let elimination.
 
 The driver:
 
-* orchestrates phase execution
+* orchestrates pass execution
 * owns the import cache
 * manages module compilation lifecycle
 * provides callbacks for recursive imports
@@ -213,7 +214,7 @@ The driver:
 
 ### **Origin Chains**
 
-Lowering and ANF phases create new nodes and track their provenance:
+Lowering and ANF passes create new nodes and track their provenance:
 
 ```
 ANF node (id: 31)
@@ -227,7 +228,7 @@ ANF node (id: 31)
 **Error reporting** follows origin chains backward to find the original
 parser node with position information:
 
-1. Error occurs in resolve phase → reports nodeId from ANF AST
+1. Error occurs in resolve pass → reports nodeId from ANF AST
 2. `errors.resolveNodePosition()` follows chain: ANF → lower → parser
 3. Looks up final parser node to extract source position
 4. Formats error: `[file.lx:3:6] Variable 'x' already declared`
@@ -248,7 +249,7 @@ parser node with position information:
   * upvalues
   * hoisting metadata
 
-* `nodes[nodeId]` (in resolve phase)
+* `nodes[nodeId]` (in resolve pass)
 
   * **Partial** AST node lookup
   * Contains nodes visited during main resolution traversal
@@ -266,15 +267,13 @@ parser node with position information:
 ### **Import Cache**
 
 * Driver-owned
-* Keyed by canonical absolute path
 * Lifecycle:
 
   ```
-  parsing → lowering → resolving → typechecking → codegen → done | failed
+  compiling → done | failed
   ```
 * Circular imports detected via status checks
-* Same module path returns the same Function object
-  (enables REF chunk deduplication)
+* Keyed by the import path string (as written in source, after any caller-level path mapping)
 
 ---
 
@@ -286,7 +285,7 @@ parser node with position information:
 
 2. **Better error reporting**
 
-   * Unified error structure across all phases
+   * Unified error structure across all passes
    * Precise source positions via nodeId tracking and origin chains
    * Centralized error formatting in `errors.lx`
    * Deterministic node lookup with complete AST indexing
@@ -301,9 +300,9 @@ parser node with position information:
 
 5. **Maintainability**
 
-   * Clear phase separation
+   * Clear pass separation
    * Deterministic behavior
-   * Each phase testable in isolation
+   * Each pass testable in isolation
 
 ---
 
@@ -312,7 +311,7 @@ parser node with position information:
 * **Polymorphic type inference**
 * **Perfect soundness**
 * **Aggressive optimization** (only conservative, semantics-preserving passes)
-* **AST mutation** (phases create new ASTs, never mutate input)
+* **Pervasive AST mutation** (most passes create new ASTs; a few targeted opts may mutate in-place)
 * **Bytecode-level equivalence** (semantic equivalence only)
 
 ---
@@ -346,15 +345,15 @@ parser → lower → anf → resolve → anf-inline → typecheck → diagnostic
                     errors.lx (error formatting & reporting)
 ```
 
-These paths share the same frontend phases, error handling, and guarantees.
+These paths share the same frontend passes, error handling, and guarantees.
 
 ---
 
 ## Error Handling Flow
 
-All compilation phases follow a consistent error handling pattern:
+All compilation passes follow a consistent error handling pattern:
 
-1. **Error Detection** — Each phase detects its own class of errors
+1. **Error Detection** — Each pass detects its own class of errors
    * Parser: syntax errors
    * Lower/ANF: transformation errors (rare)
    * Resolve: semantic errors (undefined vars, duplicates, etc.)
@@ -364,9 +363,9 @@ All compilation phases follow a consistent error handling pattern:
 
 2. **Error Recording** — Errors stored in standardized format
    * Parser: pre-formatted strings with position
-   * Semantic phases: `{ nodeId, message, severity }`
+   * Semantic passes: `{ nodeId, message, severity }`
 
-3. **Error Collection** — `errors.collectErrors(result)` gathers from all phases
+3. **Error Collection** — `errors.collectErrors(result)` gathers from all passes
 
 4. **Error Formatting** — `errors.formatError(err, result)` resolves positions
    * Follows origin chains for semantic errors

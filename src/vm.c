@@ -657,10 +657,12 @@ static InterpretResult run(void) {
             runtimeError("Enum member value must be a number.");
             return INTERPRET_RUNTIME_ERROR;
           }
-          Table* forward = &AS_ENUM_FORWARD(hashmap);
-          Table* reverse = &AS_ENUM_REVERSE(hashmap);
-          tableSet(forward, key, value);
-          tableSet(reverse, value, key);
+          ObjEnum* e = AS_ENUM(hashmap);
+          bool isNewName = tableSet(&e->forward, key, value);
+          tableSet(&e->reverse, value, key);
+          if (isNewName) {
+            writeValueArray(&e->names, key);
+          }
 
         } else if (IS_HASHMAP(hashmap)) {
           if (!IS_NUMBER(key) && !IS_STRING(key)) {

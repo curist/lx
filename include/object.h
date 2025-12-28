@@ -73,6 +73,7 @@ typedef struct {
   Obj obj;
   Table forward;  // name -> value
   Table reverse;  // value -> name
+  ValueArray names; // declaration order member names
 } ObjEnum;
 
 typedef struct {

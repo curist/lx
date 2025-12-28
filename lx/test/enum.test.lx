@@ -100,6 +100,9 @@ test("enum with range()", fn(assert) {
 
   // Should contain member names
   assert.truthy(len(keys) == 3)
+  assert.equal(keys[0], "A")
+  assert.equal(keys[1], "B")
+  assert.equal(keys[2], "C")
 })
 
 test("enum with keys()", fn(assert) {
@@ -107,7 +110,9 @@ test("enum with keys()", fn(assert) {
   let k = keys(Color)
 
   assert.truthy(len(k) == 3)
-  // Keys should include member names
+  assert.equal(k[0], "Red")
+  assert.equal(k[1], "Green")
+  assert.equal(k[2], "Blue")
 })
 
 // Edge cases

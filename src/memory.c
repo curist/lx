@@ -98,6 +98,7 @@ static void blackenObject(Obj* object) {
       ObjEnum* e = (ObjEnum*)object;
       markTable(&e->forward);
       markTable(&e->reverse);
+      markArray(&e->names);
       break;
     }
     case OBJ_ARRAY: {
@@ -149,6 +150,8 @@ static void freeObject(Obj* object) {
       Table reverse = e->reverse;
       freeTable(&forward);
       freeTable(&reverse);
+      ValueArray names = e->names;
+      freeValueArray(&names);
       FREE(ObjEnum, object);
       break;
     }

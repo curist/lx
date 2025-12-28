@@ -201,14 +201,21 @@ static bool keysNative(int argCount, Value *args) {
     args[-1] = CSTRING_VAL("Error: Arg must be a map.");
     return false;
   }
-  Table *table = IS_ENUM(arg) ? &AS_ENUM_FORWARD(arg) : &AS_HASHMAP(arg);
   ObjArray *array = newArray();
   args[-1] = OBJ_VAL(array);
 
-  for (int i = table->capacity - 1; i >= 0; --i) {
-    Entry *entry = &table->entries[i];
-    if (!IS_NIL(entry->key)) {
-      writeValueArray(&array->array, entry->key);
+  if (IS_ENUM(arg)) {
+    ValueArray* names = &AS_ENUM(arg)->names;
+    for (int i = 0; i < names->count; i++) {
+      writeValueArray(&array->array, names->values[i]);
+    }
+  } else {
+    Table *table = &AS_HASHMAP(arg);
+    for (int i = table->capacity - 1; i >= 0; --i) {
+      Entry *entry = &table->entries[i];
+      if (!IS_NIL(entry->key)) {
+        writeValueArray(&array->array, entry->key);
+      }
     }
   }
   return true;
@@ -407,11 +414,18 @@ static bool rangeNative(int argCount, Value *args) {
         i += charlen;
       }
     } else if (IS_ENUM(arg) || IS_HASHMAP(arg)) {
-      Table *table = IS_ENUM(arg) ? &AS_ENUM_FORWARD(arg) : &AS_HASHMAP(arg);
-      for (int i = table->capacity - 1; i >= 0; --i) {
-        Entry *entry = &table->entries[i];
-        if (!IS_NIL(entry->key)) {
-          writeValueArray(&AS_ARRAY(args[-1]), entry->key);
+      if (IS_ENUM(arg)) {
+        ValueArray* names = &AS_ENUM(arg)->names;
+        for (int i = 0; i < names->count; i++) {
+          writeValueArray(&AS_ARRAY(args[-1]), names->values[i]);
+        }
+      } else {
+        Table *table = &AS_HASHMAP(arg);
+        for (int i = table->capacity - 1; i >= 0; --i) {
+          Entry *entry = &table->entries[i];
+          if (!IS_NIL(entry->key)) {
+            writeValueArray(&AS_ARRAY(args[-1]), entry->key);
+          }
         }
       }
     }

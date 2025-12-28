@@ -177,6 +177,7 @@ ObjEnum* newEnum() {
   ObjEnum* e = ALLOCATE_OBJ(ObjEnum, OBJ_ENUM);
   initTable(&e->forward);
   initTable(&e->reverse);
+  initValueArray(&e->names);
   return e;
 }
 
@@ -234,19 +235,19 @@ void printObject(FILE* fd, Value value) {
     case OBJ_ENUM:
       {
         fprintf(fd, "enum{");
-        Table* forward = &AS_ENUM_FORWARD(value);
+        ObjEnum* e = AS_ENUM(value);
 
         bool printed = false;
 
-        for (int i = forward->capacity - 1; i >= 0; --i) {
-          Entry* entry = &forward->entries[i];
-          if (!IS_NIL(entry->key)) {
-            if (printed) fprintf(fd, ",");
-            else printed = true;
-            printValue(fd, entry->key);
-            fprintf(fd, ":");
-            printValue(fd, entry->value);
-          }
+        for (int i = 0; i < e->names.count; i++) {
+          Value key = e->names.values[i];
+          Value val = NIL_VAL;
+          (void)tableGet(&e->forward, key, &val);
+          if (printed) fprintf(fd, ",");
+          else printed = true;
+          printValue(fd, key);
+          fprintf(fd, ":");
+          printValue(fd, val);
         }
         fprintf(fd, "}");
         break;

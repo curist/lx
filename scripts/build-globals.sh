@@ -3,12 +3,14 @@
 set -eo pipefail
 
 LX=${LX:-lx}
+cd lx
+if [[ "$LX" == */* ]] && ! [ -x "$LX" ] && [ -x "../$LX" ]; then
+  LX="../$LX"
+fi
 if ! command -v "$LX" >/dev/null 2>&1 && ! [ -x "$LX" ]; then
   echo skip building lxglobals.h
   exit 0
 fi
-
-cd lx
 
 TARGET=../include/lx/lxglobals.h
 OBJ=/tmp/lxglobals-new.lxobj

@@ -536,35 +536,53 @@ static bool joinNative(int argCount, Value *args) {
     args[-1] = CSTRING_VAL("");
     return true;
   }
-  char *s = NULL;
-  int slen = tostring(&s, array->values[0]);
-  if (array->count == 1) {
-    args[-1] = CSTRING_VAL(s);
-    free(s);
-    return true;
-  }
-  char *result = malloc(slen);
-  size_t result_size = slen;
-  memcpy(result, s, slen);
-  free(s);
 
   const char *sep = AS_STRING(args[1])->chars;
   size_t seplen = AS_STRING(args[1])->length;
 
-  for (int i = 1; i < array->count; ++i) {
-    slen = tostring(&s, array->values[i]);
-    char *result_tmp = realloc(result, result_size + seplen + slen + 1);
-    if (result_tmp == NULL) {
-      args[-1] = CSTRING_VAL("Error: Realloc failed.");
-      return false;
-    }
-    result = result_tmp;
-    memcpy(result + result_size, sep, seplen);
-    memcpy(result + result_size + seplen, s, slen);
-    free(s);
-    result_size += seplen + slen;
+  // First pass: calculate total length needed
+  // Store string representations to avoid converting twice
+  char **strings = malloc(sizeof(char*) * array->count);
+  if (strings == NULL) {
+    args[-1] = CSTRING_VAL("Error: Malloc failed.");
+    return false;
   }
-  result[result_size] = '\0';
+
+  size_t total_length = 0;
+  for (int i = 0; i < array->count; i++) {
+    int slen = tostring(&strings[i], array->values[i]);
+    total_length += slen;
+    if (i > 0) {
+      total_length += seplen;
+    }
+  }
+
+  // Single allocation for final result
+  char *result = malloc(total_length + 1);
+  if (result == NULL) {
+    for (int i = 0; i < array->count; i++) {
+      free(strings[i]);
+    }
+    free(strings);
+    args[-1] = CSTRING_VAL("Error: Malloc failed.");
+    return false;
+  }
+
+  // Second pass: copy all strings into result
+  size_t offset = 0;
+  for (int i = 0; i < array->count; i++) {
+    if (i > 0) {
+      memcpy(result + offset, sep, seplen);
+      offset += seplen;
+    }
+    size_t slen = strlen(strings[i]);
+    memcpy(result + offset, strings[i], slen);
+    offset += slen;
+    free(strings[i]);
+  }
+  result[total_length] = '\0';
+  free(strings);
+
   args[-1] = CSTRING_VAL(result);
   free(result);
   return true;

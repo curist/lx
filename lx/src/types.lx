@@ -189,9 +189,9 @@ let NODE = enum {
 }
 
 .{
-  TOKEN: TOKEN,
-  KEYWORDS: KEYWORDS,
-  OP: OP,
-  ValueType: ValueType,
-  NODE: NODE,
+  TOKEN,
+  KEYWORDS,
+  OP,
+  ValueType,
+  NODE,
 }

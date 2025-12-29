@@ -8,9 +8,7 @@
 // IMPORTANT: Resolve MUST NOT mutate the AST.
 // All information stored in side tables keyed by node ID.
 
-let types = import "src/types.lx"
-let OP = types.OP
-let NODE = types.NODE
+let .{ OP, NODE } = import "src/types.lx"
 
 // ========================================
 // Data Structures

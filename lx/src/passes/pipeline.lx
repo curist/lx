@@ -41,7 +41,7 @@ fn validatePassDependencies(passList) {
   }
 
   if len(errors) > 0 {
-    return .{ valid: false, errors: errors }
+    return .{ valid: false, errors }
   }
 
   .{ valid: true }
@@ -193,7 +193,7 @@ fn runPasses(passList, ctx, state) {
 // ========================================
 
 .{
-  runPasses: runPasses,
-  normalizeErrors: normalizeErrors,
-  validatePassDependencies: validatePassDependencies,
+  runPasses,
+  normalizeErrors,
+  validatePassDependencies,
 }

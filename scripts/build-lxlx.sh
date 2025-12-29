@@ -2,8 +2,15 @@
 
 set -eo pipefail
 
-LX=${LX:-lx}
+LX=${LX:-}
 cd lx
+if [[ -z "$LX" ]]; then
+  if [[ -x "../out/lx" ]]; then
+    LX="../out/lx"
+  else
+    LX=lx
+  fi
+fi
 if [[ "$LX" == */* ]] && ! [ -x "$LX" ] && [ -x "../$LX" ]; then
   LX="../$LX"
 fi

@@ -8,7 +8,7 @@ fn buildSnapshot(cases) {
     let c = cases[i]
     let result = helpers.parseLowerAnf(c.source)
     if !result.success {
-      return .{ success: false, message: "anf failed for " + c.name, result: result }
+      return .{ success: false, message: "anf failed for " + c.name, result }
     }
     out = out + "\n## " + c.name + "\n"
     out = out + "source: " + c.source + "\n"

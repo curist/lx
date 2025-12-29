@@ -111,7 +111,7 @@ fn scc(nodes, edgesFor) {
     }
   }
 
-  .{ components: components, componentOf: componentOf }
+  .{ components, componentOf }
 }
 
 // Returns SCCs in a topological order of the condensation graph.

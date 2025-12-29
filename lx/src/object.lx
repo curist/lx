@@ -1,8 +1,8 @@
 let ObjType = enum { CLOSURE, FUNCTION, NATIVE, STRING, UPVALUE, HASHMAP, ENUM, ARRAY }
 
 fn Object(kind, value) {.{
-  kind: kind,
-  value: value,
+  kind,
+  value,
 }}
 
 fn ObjectFunction(function) {
@@ -13,9 +13,4 @@ fn ObjectString(string) {
   Object(ObjType.STRING, string)
 }
 
-return .{
-  ObjType: ObjType,
-  Object: Object,
-  ObjectFunction: ObjectFunction,
-  ObjectString: ObjectString,
-}
+return .{ ObjType, Object, ObjectFunction, ObjectString }

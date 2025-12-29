@@ -329,7 +329,7 @@ fn nodeAtPosWithTies(ctx, filename, line, col) {
     }
   }
 
-  .{ node: best, ties: ties }
+  .{ node: best, ties }
 }
 
 fn lastExprFromAst(ast) {
@@ -437,7 +437,7 @@ fn findRecordField(recordNode, fieldName) {
     let pair = recordNode.pairs[i]
     let key = pair and pair.key
     if key and key.type == NODE.String and key.value == fieldName {
-      return .{ key: key, value: pair.value }
+      return .{ key, value: pair.value }
     }
   }
   nil
@@ -1036,7 +1036,7 @@ fn queryInit(ast, resolveResult, typecheckResult, opts) {
     buildFileIndex(ctx)
   }
 
-  .{ success: true, ctx: ctx }
+  .{ success: true, ctx }
 }
 
 fn queryHover(ctx, filename, line, col) {
@@ -1095,9 +1095,9 @@ fn queryHover(ctx, filename, line, col) {
     success: true,
     kind: "hover",
     range: rangeOf(n),
-    contents: contents,
-    details: details,
-    candidates: candidates,
+    contents,
+    details,
+    candidates,
   }
 }
 
@@ -1208,9 +1208,9 @@ fn parseParseError(err) {
   .{
     message: msg,
     severity: "error",
-    filename: filename,
-    line: line,
-    col: col,
+    filename,
+    line,
+    col,
   }
 }
 
@@ -1219,7 +1219,7 @@ fn diagFromNodeId(nodes, nodeId, err, phase) {
   let diag = .{
     message: err.message or err,
     severity: err.severity or "error",
-    phase: phase,
+    phase,
   }
   if n {
     diag.filename = n.filename
@@ -1406,8 +1406,8 @@ fn compile(filepath) {
 
     return .{
       success: false,
-      phase: phase,
-      errors: errors,
+      phase,
+      errors,
       compileResult: result,
     }
   }
@@ -1534,11 +1534,11 @@ fn compile(filepath) {
 
 .{
   // High-level API (recommended)
-  compile: compile,
+  compile,
 
   // Low-level API (for advanced use cases)
-  queryInit: queryInit,
-  queryHover: queryHover,
-  queryGotoDefinition: queryGotoDefinition,
-  queryDiagnostics: queryDiagnostics,
+  queryInit,
+  queryHover,
+  queryGotoDefinition,
+  queryDiagnostics,
 }

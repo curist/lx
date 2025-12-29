@@ -213,4 +213,3 @@ for let i = 0; i < len(moduleKeys); i = i + 1 {
   println("    Total:    " + str(m.total) + "ms")
 }
 
-nil

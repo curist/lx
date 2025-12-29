@@ -269,7 +269,7 @@ fn hexToBytes(hex) {
 }
 
 fn objbuilder(main, debug) {
-  let flags = .{ debug: debug }
+  let flags = .{ debug }
   let functions = []
   fn ensureFunctionId(func) {
     for let i = 0; i < len(functions); i = i + 1 {

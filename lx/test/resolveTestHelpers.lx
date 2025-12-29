@@ -129,13 +129,13 @@ fn makeResolveHelpers(parseResult, resolveResult) {
 
   // Return helper object
   .{
-    findAllNodes: findAllNodes,
-    findIdentifiersByName: findIdentifiersByName,
-    findNthIdentifier: findNthIdentifier,
-    getBinding: getBinding,
-    getUpvalues: getUpvalues,
-    getScopeInfo: getScopeInfo,
-    findAllFunctions: findAllFunctions,
+    findAllNodes,
+    findIdentifiersByName,
+    findNthIdentifier,
+    getBinding,
+    getUpvalues,
+    getScopeInfo,
+    findAllFunctions,
   }
 }
 

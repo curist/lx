@@ -26,5 +26,4 @@ fn register(test) {
   })
 }
 
-.{ register: register }
-
+.{ register }

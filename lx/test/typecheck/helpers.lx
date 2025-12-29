@@ -64,9 +64,9 @@ fn parseAndTypecheck(source) {
     typeVarBindings: typecheckResult.typeVarBindings,
     errors: typecheckResult.errors,
     recordEnumKeyOrigins: typecheckResult.recordEnumKeyOrigins,
-    parseResult: parseResult,
-    lowerResult: lowerResult,
-    resolveResult: resolveResult,
+    parseResult,
+    lowerResult,
+    resolveResult,
   }
 }
 
@@ -132,12 +132,12 @@ fn findFirstImport(ast) {
   nil
 }
 
-.{ 
-  parseAndTypecheck: parseAndTypecheck,
-  normalizeExprList: normalizeExprList,
-  getExprType: getExprType,
-  getExprNode: getExprNode,
-  deref: deref,
-  hasError: hasError,
-  findFirstImport: findFirstImport,
+.{
+  parseAndTypecheck,
+  normalizeExprList,
+  getExprType,
+  getExprNode,
+  deref,
+  hasError,
+  findFirstImport,
 }

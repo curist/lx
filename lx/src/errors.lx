@@ -223,10 +223,10 @@ fn collectErrors(result) {
 // ========================================
 
 .{
-  buildNodesIndex: buildNodesIndex,
-  foldOrigins: foldOrigins,
-  resolveNodePosition: resolveNodePosition,
-  formatError: formatError,
-  printErrors: printErrors,
-  collectErrors: collectErrors,
+  buildNodesIndex,
+  foldOrigins,
+  resolveNodePosition,
+  formatError,
+  printErrors,
+  collectErrors,
 }

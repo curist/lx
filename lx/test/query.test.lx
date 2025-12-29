@@ -39,7 +39,7 @@ fn compileAndQuery(source, filename) {
       errors = passes.resolve.errors
     }
 
-    return .{ success: false, phase: phase, errors: errors }
+    return .{ success: false, phase, errors }
   }
 
   let initResult = query.queryInit(

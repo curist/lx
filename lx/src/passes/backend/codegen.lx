@@ -1,23 +1,20 @@
 // Codegen Phase - Emit bytecode from resolved ANF AST
 // Responsibility: Mechanical bytecode emission, no semantic decisions.
 
-let types = import "src/types.lx"
+let .{ OP, ValueType, NODE } = import "src/types.lx"
 let object = import "src/object.lx"
 
-let OP = types.OP
-let ValueType = types.ValueType
-let NODE = types.NODE
 let ObjType = object.ObjType
 
 let UINT16_MAX = 256 * 256
 
 fn Value(kind, value) {.{
-  kind: kind,
-  value: value,
+  kind,
+  value,
 }}
 
 fn Chunk(filename) {.{
-  filename: filename,
+  filename,
   bytecode: [],
   constants: [],
   lines: [],
@@ -27,9 +24,9 @@ fn Chunk(filename) {.{
 }}
 
 fn Function(name, arity, chunk) {.{
-  name: name,
-  arity: arity,
-  chunk: chunk,
+  name,
+  arity,
+  chunk,
   upvalueCount: 0,
 }}
 

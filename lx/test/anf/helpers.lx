@@ -8,18 +8,18 @@ let NODE = types.NODE
 fn parseLowerAnf(src) {
   let parseResult = parse(src, "test.lx")
   if !parseResult.success {
-    return .{ success: false, parseResult: parseResult }
+    return .{ success: false, parseResult }
   }
   let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
   if !lowerResult.success {
-    return .{ success: false, lowerResult: lowerResult }
+    return .{ success: false, lowerResult }
   }
   let anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
   .{
     success: anfResult.success,
-    parseResult: parseResult,
-    lowerResult: lowerResult,
-    anfResult: anfResult,
+    parseResult,
+    lowerResult,
+    anfResult,
   }
 }
 
@@ -238,4 +238,4 @@ fn serializeAst(ast) {
   join(lines, "\n") + "\n"
 }
 
-.{ parseLowerAnf: parseLowerAnf, serializeAst: serializeAst }
+  .{ parseLowerAnf, serializeAst }

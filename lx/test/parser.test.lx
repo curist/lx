@@ -2,9 +2,7 @@ let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
 let parse = import "src/passes/frontend/parser.lx"
-let types = import "src/types.lx"
-let TOKEN = types.TOKEN
-let NODE = types.NODE
+let .{ TOKEN, NODE } = import "src/types.lx"
 
 // Helper to get first statement from parsed program
 fn first(result) {

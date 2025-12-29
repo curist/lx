@@ -209,6 +209,21 @@ test("parser - hashmap literal", fn(assert) {
   assert.equal(node.pairs[1].value.value, 2)
 })
 
+test("parser - hashmap shorthand fields", fn(assert) {
+  let result = parse(".{ x, y }", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Hashmap)
+  assert.equal(len(node.pairs), 2)
+  assert.equal(node.pairs[0].key.value, "x")
+  assert.equal(node.pairs[0].value.type, NODE.Identifier)
+  assert.equal(node.pairs[0].value.name, "x")
+  assert.equal(node.pairs[1].key.value, "y")
+  assert.equal(node.pairs[1].value.type, NODE.Identifier)
+  assert.equal(node.pairs[1].value.name, "y")
+})
+
 test("parser - hashmap with computed key", fn(assert) {
   let result = parse(".{ [x]: 1 }", "test.lx")
   assert.truthy(result.success)

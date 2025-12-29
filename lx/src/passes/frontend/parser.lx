@@ -858,29 +858,44 @@ fn parse(src, filename) {
       }
     }
 
-    if hasNextKeyValuePair() {
-      fn keyvalue() {
-        let key
-        if match(TOKEN.LEFT_BRACKET) {
-          // index pattern `.{ [expr]: value }`
-          key = expression()
-          if !key {
-            syncHashmapPair()  // Recover to comma/brace boundary
-            return
-          }
-          consume(TOKEN.RIGHT_BRACKET, "Expect ']' for hashmap index key.")
-        } else {
-          // key pattern `.{ key: value }`
-          consumeKey("Expect key for hashmap.")
-          key = StringKeyNodeFromToken(filename, parser.previous)
-        }
+	    if hasNextKeyValuePair() {
+	      fn keyvalue() {
+	        let key
+	        let keyIdentToken = nil
+	        if match(TOKEN.LEFT_BRACKET) {
+	          // index pattern `.{ [expr]: value }`
+	          key = expression()
+	          if !key {
+	            syncHashmapPair()  // Recover to comma/brace boundary
+	            return
+	          }
+	          consume(TOKEN.RIGHT_BRACKET, "Expect ']' for hashmap index key.")
+	        } else {
+	          // key pattern `.{ key: value }` or shorthand `.{ key }`
+	          if parser.current.type == TOKEN.IDENTIFIER {
+	            advance()
+	            keyIdentToken = parser.previous
+	            key = StringKeyNodeFromToken(filename, keyIdentToken)
+	          } else {
+	            // Accept keywords as explicit keys (must use `:` form).
+	            consumeKey("Expect key for hashmap.")
+	            key = StringKeyNodeFromToken(filename, parser.previous)
+	          }
+	        }
 
-        consume(TOKEN.COLON, "Expect ':' for hashmap.")
+	        // Shorthand: `.{ x, y }` expands to `.{ x: x, y: y }`.
+	        // Only supported for identifiers (keywords require explicit `:`).
+	        if keyIdentToken and !check(TOKEN.COLON) {
+	          push(pairs, .{ key: key, value: IdentifierNode(filename, keyIdentToken) })
+	          return
+	        }
 
-        let value = expression()
-        if value {
-          push(pairs, .{ key: key, value: value })
-        }
+	        consume(TOKEN.COLON, "Expect ':' for hashmap.")
+
+	        let value = expression()
+	        if value {
+	          push(pairs, .{ key: key, value: value })
+	        }
       }
 
       keyvalue()

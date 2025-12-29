@@ -5,8 +5,8 @@ let errors = import "src/errors.lx"
 
 fn usage() {
   groanln("Usage:")
-  groanln("  ./cmd/lxcheck.lx typecheck <entry>")
-  groanln("  # e.g. from lx/: ./cmd/lxcheck.lx typecheck cmd/mlx.lx")
+  groanln("  ./cmd/lxcheck.lx <entry>")
+  groanln("  # e.g. from lx/: ./cmd/lxcheck.lx cmd/mlx.lx")
   groanln("")
   groanln("Notes:")
   groanln("  - Run from the `lx/` directory so imports like \"src/...\" resolve.")
@@ -90,30 +90,24 @@ fn main() {
   // This script is intended to be executed via `lx run <file> ...`, which keeps
   // the outer argv (so args[1] is typically "run" and args[2] is the script path).
   // Support both modes:
-  // - `lx run cmd/lxcheck.lx <cmd> ...`   => base=3
+  // - `lx run cmd/lxcheck.lx <entry>`    => base=3
   // - embedded main program execution    => base=1
   let base = 1
   if Lx.args[1] == "run" { base = 3 }
 
-  let cmd = Lx.args[base]
-  if !cmd or cmd == "help" or cmd == "--help" or cmd == "-h" {
+  let entry = Lx.args[base]
+  if !entry or entry == "help" or entry == "--help" or entry == "-h" {
     usage()
     return
   }
 
-  if cmd == "typecheck" {
-    let entry = Lx.args[base + 1]
-    if !entry {
-      usage()
-      Lx.exit(28)
-    }
-    typecheckEntry(entry)
-    return
+  if Lx.args[base + 1] {
+    groanln("Unexpected extra arguments.")
+    usage()
+    Lx.exit(28)
   }
 
-  groanln("Unknown command: " + cmd)
-  usage()
-  Lx.exit(28)
+  typecheckEntry(entry)
 }
 
 main()

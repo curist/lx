@@ -27,7 +27,7 @@ lx/
 User-facing programs you run directly, e.g.:
 - `lx/cmd/mlx.lx`: the compiler command surface
 - `lx/cmd/anf_debug.lx`: debugging / introspection commands
-- `lx/cmd/lxcheck.lx`: developer-facing CLI to typecheck an entry module (run as `./cmd/lxcheck.lx typecheck <entry>` from `lx/`)
+- `lx/cmd/lxcheck.lx`: developer-facing CLI to typecheck an entry module (run as `./cmd/lxcheck.lx <entry>` from `lx/`)
 
 Guideline: `cmd/` should be thin wrappers around `src/` libraries.
 

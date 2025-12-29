@@ -22,6 +22,23 @@ fn register(test) {
     assert.truthy(hasError(result, "Expected number") or hasError(result, "Expected string"))
   })
 
+  test("typecheck - bitwise and shift ops return Number", fn(assert) {
+    let result = parseAndTypecheck("{ 1 & 2\n1 | 2\n1 ^ 2\n1 << 2\n1 >> 2 }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 0)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 2)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 3)).kind, "Number")
+    assert.equal(deref(result, getExprType(result, 4)).kind, "Number")
+  })
+
+  test("typecheck - invalid bitwise reports error", fn(assert) {
+    let result = parseAndTypecheck("\"a\" & 1")
+    assert.truthy(!result.success)
+    assert.truthy(hasError(result, "Expected number"))
+  })
+
   test("typecheck - comparisons return Bool", fn(assert) {
     let result = parseAndTypecheck("{ 1 < 2\n1 <= 2\n1 > 2\n1 >= 2 }")
     assert.truthy(result.success)

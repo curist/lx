@@ -1919,7 +1919,8 @@ fn checkBinary(checker, node) {
     return t
   }
 
-  if op == "-" or op == "*" or op == "/" or op == "%" {
+  if op == "-" or op == "*" or op == "/" or op == "%" or
+     op == "<<" or op == ">>" or op == "&" or op == "|" or op == "^" {
     let lt = synthExpr(checker, node.left)
     let rt = synthExpr(checker, node.right)
     checkExprWithActual(checker, node.left, lt, typeNumber(), node.left.id, "Expected number")

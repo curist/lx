@@ -14,13 +14,19 @@ else
 	CFLAGS += -O3 -flto
 endif
 
+# All .lx sources needed to build embedded compiler/globals bytecode.
+# Excludes tests/docs/examples to avoid unnecessary rebuilds.
+LX_LX_SOURCES := $(shell find lx \
+	\( -path 'lx/test' -o -path 'lx/docs' -o -path 'lx/examples' \) -prune -o \
+	-name '*.lx' -print)
+
 include/lx:
 	@mkdir -p include/lx
 
-include/lx/lxlx.h: lx/cmd/mlx.lx lx/src/*.lx lx/scripts/build-lxlx-driver.lx scripts/build-lxlx.sh include/chunk.h include/object.h | include/lx
+include/lx/lxlx.h: $(LX_LX_SOURCES) scripts/build-lxlx.sh include/chunk.h include/object.h | include/lx
 	./scripts/build-lxlx.sh
 
-include/lx/lxglobals.h: lx/globals.lx lx/src/*.lx lx/scripts/build-globals-driver.lx scripts/build-globals.sh include/chunk.h include/object.h | include/lx
+include/lx/lxglobals.h: $(LX_LX_SOURCES) scripts/build-globals.sh include/chunk.h include/object.h | include/lx
 	./scripts/build-globals.sh
 
 lxlx: include/lx/lxlx.h

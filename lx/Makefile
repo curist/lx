@@ -6,7 +6,7 @@ $(LX):
 	@cd .. && make
 
 runall: $(LX)
-	$(LX) compile cmd/mlx.lx > /dev/null
+	$(LX) compile cmd/mlx.lx > /dev/null || $(LX) run scripts/build-lxlx-driver.lx > /dev/null
 	$(LX) run test/stub/ch17.lx
 	$(LX) run test/stub/ch18.lx
 	$(LX) run test/stub/ch19.lx

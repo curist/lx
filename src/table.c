@@ -14,6 +14,11 @@
 
 void initTable(Table* table) {
   table->count = 0;
+  table->arrayCount = 0;
+  table->arrayCapacity = 0;
+  table->arrayValues = NULL;
+  table->arrayPresent = NULL;
+  table->hasIntKeysInHash = false;
   table->tombstones = 0;
   table->capacity = 0;
   table->bucketCount = 0;
@@ -23,11 +28,14 @@ void initTable(Table* table) {
 }
 
 void freeTable(Table* table) {
+  FREE_ARRAY(Value, table->arrayValues, table->arrayCapacity);
+  FREE_ARRAY(uint8_t, table->arrayPresent, table->arrayCapacity);
   FREE_ARRAY(Entry, table->entries, table->capacity);
   FREE_ARRAY(uint8_t, table->control, table->capacity);
   initTable(table);
 }
 
+#ifndef NAN_BOXING
 static uint32_t hashDouble(double value) {
   // Normalize -0.0 and +0.0 to the same hash.
   if (value == 0) value = 0;
@@ -43,13 +51,24 @@ static uint32_t hashDouble(double value) {
   bits ^= bits >> 33;
   return (uint32_t)(bits ^ (bits >> 32));
 }
+#endif
 
 uint32_t hashValue(Value value) {
 #ifdef NAN_BOXING
   if (IS_STRING(value)) {
     return (uint32_t)AS_STRING(value)->hash;
   } else if (IS_NUMBER(value)) {
-    return hashDouble(valueToNum(value));
+    uint64_t bits = (uint64_t)value;
+    // Normalize -0.0 and +0.0 to the same hash.
+    if ((bits << 1) == 0) bits = 0;
+
+    // 64-bit mix (similar to splitmix64 finalizer).
+    bits ^= bits >> 33;
+    bits *= 0xff51afd7ed558ccdULL;
+    bits ^= bits >> 33;
+    bits *= 0xc4ceb9fe1a85ec53ULL;
+    bits ^= bits >> 33;
+    return (uint32_t)(bits ^ (bits >> 32));
   } else {
     return 0;
   }
@@ -65,6 +84,102 @@ uint32_t hashValue(Value value) {
     default: return 0;
   }
 #endif
+}
+
+static inline Value normalizeNumberKey(Value key) {
+#ifdef NAN_BOXING
+  if (IS_NUMBER(key)) {
+    uint64_t bits = (uint64_t)key;
+    if ((bits << 1) == 0) return NUMBER_VAL(0);
+  }
+#else
+  if (IS_NUMBER(key) && AS_NUMBER(key) == 0) return NUMBER_VAL(0);
+#endif
+  return key;
+}
+
+static inline bool numberKeyToArrayIndex(Value key, uint32_t* index) {
+#ifdef NAN_BOXING
+  if (!IS_NUMBER(key)) return false;
+
+  uint64_t bits = (uint64_t)key;
+  // Accept both +0.0 and -0.0 as index 0.
+  if ((bits << 1) == 0) {
+    *index = 0;
+    return true;
+  }
+
+  // Negative numbers are never array indices.
+  if ((bits & SIGN_BIT) != 0) return false;
+
+  // IEEE-754 binary64: sign(1) exponent(11) mantissa(52)
+  uint32_t exponent = (uint32_t)((bits >> 52) & 0x7FFu);
+  if (exponent == 0 || exponent == 0x7FFu) return false;
+
+  int32_t e = (int32_t)exponent - 1023;
+  if (e < 0 || e > 31) return false;
+
+  uint64_t mantissa = bits & ((1ULL << 52) - 1);
+  uint64_t sig = (1ULL << 52) | mantissa;
+  int shift = 52 - e;
+
+  uint64_t val;
+  if (shift > 0) {
+    uint64_t fracMask = (1ULL << shift) - 1;
+    if ((sig & fracMask) != 0) return false;
+    val = sig >> shift;
+  } else {
+    val = sig << (-shift);
+  }
+
+  if (val > UINT32_MAX) return false;
+  *index = (uint32_t)val;
+  return true;
+#else
+  if (!IS_NUMBER(key)) return false;
+  double num = AS_NUMBER(key);
+  if (num == 0) {
+    *index = 0;
+    return true;
+  }
+  if (num < 0) return false;
+  uint32_t i = (uint32_t)num;
+  if ((double)i != num) return false;
+  *index = i;
+  return true;
+#endif
+}
+
+static bool shouldGrowArrayForIndex(const Table* table, uint32_t index) {
+  // Only grow for indices that are plausibly part of a dense int-key map.
+  // This avoids allocating enormous arrays for sparse outliers.
+  uint32_t threshold = (uint32_t)(table->count * 2 + 8);
+  return index <= threshold;
+}
+
+static void ensureArrayCapacity(Table* table, uint32_t minCapacity) {
+  if (minCapacity <= (uint32_t)table->arrayCapacity) return;
+
+  int newCapacity = table->arrayCapacity < 8 ? 8 : table->arrayCapacity;
+  while ((uint32_t)newCapacity < minCapacity) newCapacity *= 2;
+
+  Value* newValues = ALLOCATE(Value, newCapacity);
+  uint8_t* newPresent = ALLOCATE(uint8_t, newCapacity);
+  for (int i = 0; i < newCapacity; i++) {
+    newValues[i] = NIL_VAL;
+    newPresent[i] = 0;
+  }
+
+  for (int i = 0; i < table->arrayCapacity; i++) {
+    newValues[i] = table->arrayValues[i];
+    newPresent[i] = table->arrayPresent[i];
+  }
+
+  FREE_ARRAY(Value, table->arrayValues, table->arrayCapacity);
+  FREE_ARRAY(uint8_t, table->arrayPresent, table->arrayCapacity);
+  table->arrayValues = newValues;
+  table->arrayPresent = newPresent;
+  table->arrayCapacity = newCapacity;
 }
 
 static inline uint8_t h2hash(uint32_t hash) { return (uint8_t)(hash & H2_MASK); }
@@ -95,9 +210,10 @@ static inline int lowestBitIndex(uint32_t mask) { return __builtin_ctz(mask); }
 
 static bool tableShouldGrow(Table* table) {
   if (table->bucketCount == 0) return true;
-  double projected = (double)(table->count + table->tombstones + 1);
+  int hashCount = table->count - table->arrayCount;
+  double projected = (double)(hashCount + table->tombstones + 1);
   if (projected > (double)table->capacity * TABLE_MAX_LOAD) return true;
-  return table->tombstones > table->count / 2;
+  return table->tombstones > hashCount / 2;
 }
 
 static void adjustCapacity(Table* table, int capacity) {
@@ -124,7 +240,7 @@ static void adjustCapacity(Table* table, int capacity) {
   table->capacity = capacity;
   table->bucketCount = bucketCount;
   table->bucketMask = bucketMask;
-  table->count = 0;
+  table->count = table->arrayCount;
   table->tombstones = 0;
 
   if (oldEntries != NULL) {
@@ -228,6 +344,21 @@ static Entry* findExisting(Table* table, Value key, uint32_t hash) {
 bool tableGet(Table* table, Value key, Value* value) {
   if (table->count == 0) return false;
 
+  key = normalizeNumberKey(key);
+
+  uint32_t arrayIndex;
+  if (numberKeyToArrayIndex(key, &arrayIndex)) {
+    if (arrayIndex < (uint32_t)table->arrayCapacity) {
+      if (table->arrayPresent[arrayIndex]) {
+        *value = table->arrayValues[arrayIndex];
+        return true;
+      }
+      if (!table->hasIntKeysInHash) return false;
+    } else if (!table->hasIntKeysInHash) {
+      return false;
+    }
+  }
+
   uint32_t hash = hashValue(key);
   Entry* entry = findExisting(table, key, hash);
   if (entry == NULL) return false;
@@ -237,6 +368,43 @@ bool tableGet(Table* table, Value key, Value* value) {
 }
 
 bool tableSet(Table* table, Value key, Value value) {
+  key = normalizeNumberKey(key);
+
+  uint32_t arrayIndex;
+  if (numberKeyToArrayIndex(key, &arrayIndex)) {
+    if (arrayIndex < (uint32_t)table->arrayCapacity ||
+        shouldGrowArrayForIndex(table, arrayIndex)) {
+      bool existedInHash = false;
+      if (table->hasIntKeysInHash && table->bucketCount != 0) {
+        uint32_t hash = hashValue(key);
+        Entry* existing = findExisting(table, key, hash);
+        if (existing != NULL) {
+          int index = (int)(existing - table->entries);
+          table->control[index] = CTRL_TOMB;
+          existing->key = NIL_VAL;
+          existing->value = NIL_VAL;
+          table->count--;
+          table->tombstones++;
+          existedInHash = true;
+        }
+      }
+
+      if (arrayIndex >= (uint32_t)table->arrayCapacity) {
+        ensureArrayCapacity(table, arrayIndex + 1);
+      }
+
+      bool wasPresent = table->arrayPresent[arrayIndex];
+      if (!wasPresent) {
+        table->arrayPresent[arrayIndex] = 1;
+        table->arrayCount++;
+        table->count++;
+      }
+      table->arrayValues[arrayIndex] = value;
+      return !wasPresent && !existedInHash;
+    }
+    table->hasIntKeysInHash = true;
+  }
+
   if (tableShouldGrow(table)) {
     int newCapacity = table->capacity == 0 ? GROUP_WIDTH : GROW_CAPACITY(table->capacity);
     adjustCapacity(table, newCapacity);
@@ -263,6 +431,37 @@ bool tableSet(Table* table, Value key, Value value) {
 bool tableDelete(Table* table, Value key) {
   if (table->count == 0) return false;
 
+  key = normalizeNumberKey(key);
+
+  uint32_t arrayIndex;
+  if (numberKeyToArrayIndex(key, &arrayIndex)) {
+    bool deleted = false;
+    if (arrayIndex < (uint32_t)table->arrayCapacity) {
+      if (table->arrayPresent[arrayIndex]) {
+        table->arrayPresent[arrayIndex] = 0;
+        table->arrayValues[arrayIndex] = NIL_VAL;
+        table->arrayCount--;
+        table->count--;
+        deleted = true;
+      }
+      if (!table->hasIntKeysInHash) return deleted;
+    } else if (!table->hasIntKeysInHash) {
+      return false;
+    }
+
+    uint32_t hash = hashValue(key);
+    Entry* entry = findExisting(table, key, hash);
+    if (entry == NULL) return deleted;
+
+    int index = (int)(entry - table->entries);
+    table->control[index] = CTRL_TOMB;
+    entry->key = NIL_VAL;
+    entry->value = NIL_VAL;
+    table->count--;
+    table->tombstones++;
+    return true;
+  }
+
   uint32_t hash = hashValue(key);
   Entry* entry = findExisting(table, key, hash);
   if (entry == NULL) return false;
@@ -277,6 +476,11 @@ bool tableDelete(Table* table, Value key) {
 }
 
 void tableAddAll(Table* from, Table* to) {
+  for (int i = 0; i < from->arrayCapacity; i++) {
+    if (from->arrayPresent != NULL && from->arrayPresent[i]) {
+      tableSet(to, NUMBER_VAL((double)i), from->arrayValues[i]);
+    }
+  }
   for (int i = 0; i < from->capacity; i++) {
     if (from->control != NULL && (from->control[i] & CTRL_EMPTY) != 0) continue;
     Entry* entry = &from->entries[i];
@@ -287,7 +491,7 @@ void tableAddAll(Table* from, Table* to) {
 }
 
 ObjString* tableFindString(Table* table, const char* chars, int length, uint64_t hash) {
-  if (table->count == 0) return NULL;
+  if (table->bucketCount == 0) return NULL;
 
   uint32_t hash32 = (uint32_t)hash;
   uint8_t h2 = h2hash(hash32);
@@ -329,6 +533,11 @@ void tableRemoveWhite(Table* table) {
 }
 
 void markTable(Table* table) {
+  for (int i = 0; i < table->arrayCapacity; i++) {
+    if (table->arrayPresent != NULL && table->arrayPresent[i]) {
+      markValue(table->arrayValues[i]);
+    }
+  }
   for (int i = 0; i < table->capacity; i++) {
     if (table->control != NULL && (table->control[i] & CTRL_EMPTY) != 0) continue;
     Entry* entry = &table->entries[i];

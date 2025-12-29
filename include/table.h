@@ -13,7 +13,12 @@ typedef struct {
 #define CTRL_TOMB  0xFE
 
 typedef struct {
-  int count;
+  int count; // total entries (array + hash)
+  int arrayCount;
+  int arrayCapacity;
+  Value* arrayValues;
+  uint8_t* arrayPresent; // presence bit for each array index (value may be nil)
+  bool hasIntKeysInHash; // true if any non-negative int keys live in hash part
   int tombstones;
   int bucketCount;
   uint32_t bucketMask;

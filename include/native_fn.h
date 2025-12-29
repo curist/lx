@@ -211,6 +211,11 @@ static bool keysNative(int argCount, Value *args) {
     }
   } else {
     Table *table = &AS_HASHMAP(arg);
+    for (int i = table->arrayCapacity - 1; i >= 0; --i) {
+      if (table->arrayPresent != NULL && table->arrayPresent[i]) {
+        writeValueArray(&array->array, NUMBER_VAL((double)i));
+      }
+    }
     for (int i = table->capacity - 1; i >= 0; --i) {
       Entry *entry = &table->entries[i];
       if (!IS_NIL(entry->key)) {
@@ -250,6 +255,11 @@ static bool globalsNative(int argCount, Value *args) {
   ObjArray *array = newArray();
   args[-1] = OBJ_VAL(array);
 
+  for (int i = table->arrayCapacity - 1; i >= 0; --i) {
+    if (table->arrayPresent != NULL && table->arrayPresent[i]) {
+      writeValueArray(&array->array, NUMBER_VAL((double)i));
+    }
+  }
   for (int i = table->capacity - 1; i >= 0; --i) {
     Entry *entry = &table->entries[i];
     if (!IS_NIL(entry->key)) {

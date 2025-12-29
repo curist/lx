@@ -29,7 +29,7 @@ It is written as an implementation handoff: another LLM (or human) should be abl
   - `resolve.lx` mutates import nodes (`node.importResult`, `node.importType`, `node.importBindings`).
   - `anf-inline.lx` mutates the AST in-place (explicitly).
   - `lower.lx` and `anf.lx` currently copy forward `importResult` fields.
-  - `typecheck.lx` reads `node.importType` in `checkImport()` (see `lx/src/typecheck.lx`).
+  - `typecheck.lx` reads `node.importType` in `checkImport()` (see `lx/src/passes/frontend/typecheck.lx`).
 
 This spec aims to make new passes cheap to integrate *without* requiring a full immutability purge on day 1, while providing a path to re-commit to “semantic info lives in pass artifacts, not AST annotations”.
 

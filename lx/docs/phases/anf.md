@@ -1,4 +1,4 @@
-# ANF Phase (`src/anf.lx`)
+# ANF Phase (`src/passes/frontend/anf.lx`)
 
 Normalize expressions into A-normal form while preserving evaluation order.
 

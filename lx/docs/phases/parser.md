@@ -1,4 +1,4 @@
-# Parser Phase (`src/parser.lx`)
+# Parser Phase (`src/passes/frontend/parser.lx`)
 
 ## Responsibility
 
@@ -21,7 +21,7 @@ fn parse(src, filename) → {
 ## Usage
 
 ```lx
-let parse = import "src/parser.lx"
+let parse = import "src/passes/frontend/parser.lx"
 let result = parse(sourceCode, filename)
 ```
 
@@ -56,7 +56,7 @@ Statement separators:
 
 ## Operator Precedence & Associativity
 
-From low → high (see `PREC` in `src/parser.lx`):
+From low → high (see `PREC` in `src/passes/frontend/parser.lx`):
 1. Assignment: `=` (only valid for identifiers, dot, and index targets)
 2. `or`
 3. `and`

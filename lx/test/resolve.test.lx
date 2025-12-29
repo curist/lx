@@ -4,9 +4,9 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
-let parse = import "src/parser.lx"
-let lower = import "src/lower.lx"
-let resolve = import "src/resolve.lx"
+let parse = import "src/passes/frontend/parser.lx"
+let lower = import "src/passes/frontend/lower.lx"
+let resolve = import "src/passes/frontend/resolve.lx"
 let makeResolveHelpers = import "test/resolveTestHelpers.lx"
 
 // Helper to parse from fixture file
@@ -585,7 +585,7 @@ test("resolve - import used in expression", fn(assert) {
 })
 
 test("resolve - multiple imports", fn(assert) {
-  let source = "let parse = import \"src/parser.lx\"\nlet resolve = import \"src/resolve.lx\""
+  let source = "let parse = import \"src/passes/frontend/parser.lx\"\nlet resolve = import \"src/passes/frontend/resolve.lx\""
   let result = parseAndResolve(source)
   assert.truthy(result.success, "Should resolve multiple imports")
   assert.equal(len(result.errors), 0, "Should have no errors")

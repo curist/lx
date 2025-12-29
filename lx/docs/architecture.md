@@ -4,25 +4,29 @@
 
 ```
 Source
-  → parser.lx
+  → passes/frontend/parser.lx
   → AST
-  → lower.lx
+  → passes/frontend/lower.lx
   → Lowered AST
-  → anf.lx
+  → passes/frontend/anf.lx
   → ANF AST
-  → resolve.lx
+  → passes/frontend/resolve.lx
   → Resolved AST + Side Tables
-  → anf-inline.lx (optional, default on)
+  → passes/frontend/anf-inline.lx (optional, default on)
   → Optimized AST
-  → typecheck.lx (optional)
+  → passes/frontend/typecheck.lx (optional)
   → Type Information
-  → codegen.lx
+  → passes/backend/codegen.lx
   → Bytecode + Chunk
-  → verify-bytecode.lx
+  → passes/backend/verify-bytecode.lx
   → Verified Bytecode
   → (a) objbuilder.lx → Object File
   → (b) LSP / tooling outputs
 ```
+
+## Source Layout
+
+See `lx/docs/source-layout.md` for the intended long-term folder structure (passes/IR split, typed backend boundary, and entrypoint/tooling conventions).
 
 Each pass has a **single responsibility**.
 Most passes treat their inputs as immutable; a small number of optimization passes

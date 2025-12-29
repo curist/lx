@@ -1,9 +1,9 @@
 // Shared helpers for typecheck tests
 
-let parse = import "src/parser.lx"
-let lower = import "src/lower.lx"
-let resolve = import "src/resolve.lx"
-let typecheck = import "src/typecheck.lx"
+let parse = import "src/passes/frontend/parser.lx"
+let lower = import "src/passes/frontend/lower.lx"
+let resolve = import "src/passes/frontend/resolve.lx"
+let typecheck = import "src/passes/frontend/typecheck.lx"
 
 // Dereference through type variable bindings
 fn deref(result, t) {

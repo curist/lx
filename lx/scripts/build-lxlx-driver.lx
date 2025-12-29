@@ -1,7 +1,7 @@
 // Driver to compile cmd/mlx.lx with NEW PR3 codegen
 let driver = import "src/driver.lx"
-let codegen = import "src/codegen.lx"
-let verify = import "src/verify-bytecode.lx"
+let codegen = import "src/passes/backend/codegen.lx"
+let verify = import "src/passes/backend/verify-bytecode.lx"
 
 // Timing helper (using perl for low overhead and high precision)
 fn now() {

@@ -18,7 +18,7 @@ Use these scripts when:
 ## The Scripts
 
 ### `build-lxlx-driver.lx`
-Compiles `cmd/mlx.lx` (the lx compiler) using the NEW codegen from `src/codegen.lx`.
+Compiles `cmd/mlx.lx` (the lx compiler) using the NEW codegen from `src/passes/backend/codegen.lx`.
 
 - Uses `profile: "default"` (all passes including ANF inline optimization)
 - Recursively compiles all imported modules
@@ -27,7 +27,7 @@ Compiles `cmd/mlx.lx` (the lx compiler) using the NEW codegen from `src/codegen.
 - Codegen uses the most optimized AST available: anf-inline → anf → lower
 
 ### `build-globals-driver.lx`
-Compiles `globals.lx` (standard library) using the NEW codegen from `src/codegen.lx`.
+Compiles `globals.lx` (standard library) using the NEW codegen from `src/passes/backend/codegen.lx`.
 
 - Uses `profile: "default"` (all passes including ANF inline optimization)
 - Codegen uses the most optimized AST available: anf-inline → anf → lower
@@ -73,7 +73,7 @@ Edit `src/vm.c`:
 ### 3. Update supporting code
 
 - `src/debug.c` - Add disassembler cases for new opcodes
-- `lx/src/verify-bytecode.lx` - Update STACK_MIN, STACK_EFFECTS, OPERAND_SIZES tables
+- `lx/src/passes/backend/verify-bytecode.lx` - Update STACK_MIN, STACK_EFFECTS, OPERAND_SIZES tables
 - Update any tests that reference specific opcodes
 
 ### 4. Rebuild embedded bytecode using drivers

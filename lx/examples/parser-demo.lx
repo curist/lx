@@ -1,4 +1,4 @@
-let parse = import "src/parser.lx"
+let parse = import "src/passes/frontend/parser.lx"
 
 // Example 1: Simple expression
 let code1 = "let x = 1 + 2 * 3"

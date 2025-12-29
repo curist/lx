@@ -1,7 +1,7 @@
 // Debug-only ANF dumper (parse -> lower -> anf)
-let parse = import "src/parser.lx"
-let lower = import "src/lower.lx"
-let anf = import "src/anf.lx"
+let parse = import "src/passes/frontend/parser.lx"
+let lower = import "src/passes/frontend/lower.lx"
+let anf = import "src/passes/frontend/anf.lx"
 
 fn pad(n) {
   let s = ""

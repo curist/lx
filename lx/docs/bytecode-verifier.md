@@ -52,8 +52,8 @@ When migrating to single-stack VM:
 Call from `codegen()` after chunk generation:
 
 ```lx
-// In src/codegen.lx or cmd/mlx.lx
-let verify = import "src/verify-bytecode.lx"
+// In src/passes/backend/codegen.lx or cmd/mlx.lx
+let verify = import "src/passes/backend/verify-bytecode.lx"
 
 fn codegen(ast, resolveResult) {
   // ... existing codegen ...
@@ -78,7 +78,7 @@ if (!verifyChunk(&function->chunk, function->arity)) {
 }
 ```
 
-Requires implementing verifier in C (see `src/verify-bytecode.lx` for logic).
+Requires implementing verifier in C (see `src/passes/backend/verify-bytecode.lx` for logic).
 
 #### Option C: Debug Flag
 

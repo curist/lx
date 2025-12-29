@@ -1,4 +1,4 @@
-let helper = import "src/typecheck-helper.lx"
+let helper = import "src/passes/frontend/typecheck-helper.lx"
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 

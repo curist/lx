@@ -1,4 +1,4 @@
-# Typecheck Phase (`src/typecheck.lx`)
+# Typecheck Phase (`src/passes/frontend/typecheck.lx`)
 
 ## Responsibility
 
@@ -18,11 +18,11 @@ This phase does **not**:
 
 ```
 Source
-  → src/parser.lx
-  → src/lower.lx
-  → src/resolve.lx
-  → src/typecheck.lx
-  → (optional) src/codegen.lx
+  → src/passes/frontend/parser.lx
+  → src/passes/frontend/lower.lx
+  → src/passes/frontend/resolve.lx
+  → src/passes/frontend/typecheck.lx
+  → (optional) src/passes/backend/codegen.lx
 ```
 
 `typecheck` depends on `resolve` and runs on the **lowered** AST.
@@ -38,7 +38,7 @@ typecheck(ast, resolveResult) -> .{
 }
 ```
 
-`types` and `typeVarBindings` are returned **dereferenced/canonicalized** (see `derefAll` in `src/typecheck.lx`).
+`types` and `typeVarBindings` are returned **dereferenced/canonicalized** (see `derefAll` in `src/passes/frontend/typecheck.lx`).
 
 ## Type Forms
 
@@ -67,7 +67,7 @@ Indexable(elem: Type, key: Type)   // temporary “unknown container” for x[i]
 The typechecker is structured as:
 
 1. A traversal (`synthExpr`) that assigns types to nodes and emits constraints.
-2. A worklist solver (`src/typecheck-helper.lx`) that repeatedly tries to solve constraints until no **binding progress** is made.
+2. A worklist solver (`src/passes/frontend/typecheck-helper.lx`) that repeatedly tries to solve constraints until no **binding progress** is made.
 3. A second pass over function bodies (`refineFunctions`) to refine closure-captured types.
 4. Finalization:
    - resolve remaining `Indexable` bindings (default to `Map` with a diagnostic)
@@ -162,4 +162,3 @@ Typechecking assigns concrete types to many builtins via `builtinTypeByName`:
 - Prelude helpers from `globals.lx` (e.g. `_1/_2/_3`, `map`, `fold`, `sort`, …)
 
 Anything not recognized still defaults to `Any`.
-

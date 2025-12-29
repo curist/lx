@@ -1,7 +1,7 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
-let parse = import "src/parser.lx"
+let parse = import "src/passes/frontend/parser.lx"
 let types = import "src/types.lx"
 let TOKEN = types.TOKEN
 

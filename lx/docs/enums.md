@@ -103,7 +103,7 @@ The current enum feature is a foundation; likely future directions include:
 - **Exhaustiveness checking / switch lowering**
   - Use `enumInfo` from the compiler pipeline to drive static checking and/or jump-table style optimizations.
   - For enum-keyed record literals, the typechecker also records key origins in a side table:
-    - `recordEnumKeyOrigins` (returned by `lx/src/typecheck.lx`) maps `recordLiteralNodeId -> key -> { enumDeclId, enumName, member }`.
+    - `recordEnumKeyOrigins` (returned by `lx/src/passes/frontend/typecheck.lx`) maps `recordLiteralNodeId -> key -> { enumDeclId, enumName, member }`.
     - This is keyed by `enumDeclId` (resolver identity), so same-named enums across modules don’t collide.
     - This is intended as the hook for future “enum-keyed map/record” exhaustiveness checks, even though the record type itself uses numeric keys (what runtime sees).
 

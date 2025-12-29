@@ -8,12 +8,12 @@
 // - ANF runs after lower (optional, default on)
 // - ANF inline runs post-resolve (optional, default on)
 
-let parse = import "src/parser.lx"
-let lower = import "src/lower.lx"
-let anf = import "src/anf.lx"
-let anfInline = import "src/anf-inline.lx"
-let resolve = import "src/resolve.lx"
-let typecheck = import "src/typecheck.lx"
+let parse = import "src/passes/frontend/parser.lx"
+let lower = import "src/passes/frontend/lower.lx"
+let anf = import "src/passes/frontend/anf.lx"
+let anfInline = import "src/passes/frontend/anf-inline.lx"
+let resolve = import "src/passes/frontend/resolve.lx"
+let typecheck = import "src/passes/frontend/typecheck.lx"
 let pipeline = import "src/passes/pipeline.lx"
 
 // ========================================

@@ -16,7 +16,7 @@
 // - Solver: worklist runs to a fixed point on binding changes (`checker.changed`),
 //   then refines function bodies once and finalizes remaining constraints to Any.
 
-let helper = import "src/typecheck-helper.lx"
+let helper = import "src/passes/frontend/typecheck-helper.lx"
 let DEBUG = false
 
 // ========================================================

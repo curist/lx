@@ -1,5 +1,5 @@
 let types = import "src/types.lx"
-let initScanner = import "src/scanner.lx"
+let initScanner = import "src/passes/frontend/scanner.lx"
 
 let TOKEN = types.TOKEN
 

@@ -27,6 +27,25 @@ fn parseAndResolve(source) {
   resolve(parseResult.ast, .{})
 }
 
+fn parseLowerResolve(source) {
+  let parseResult = parse(source, "test.lx")
+  if !parseResult.success {
+    return .{ success: false, parseErrors: parseResult.errors }
+  }
+  let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
+  if !lowerResult.success {
+    return .{ success: false, lowerErrors: lowerResult.errors }
+  }
+  let resolveResult = resolve(lowerResult.ast, .{})
+  .{
+    success: resolveResult.success,
+    errors: resolveResult.errors,
+    parseResult: parseResult,
+    lowerResult: lowerResult,
+    resolveResult: resolveResult,
+  }
+}
+
 // Helper to parse, resolve, and create test helpers
 fn parseResolveWithHelpers(source) {
   let parseResult = parse(source, "test.lx")
@@ -618,6 +637,20 @@ test("resolve - import node in nodes map", fn(assert) {
   let nodeInfo = result.nodes[importNode.id]
   assert.truthy(nodeInfo, "Import node should be in nodes map")
   assert.equal(nodeInfo.type, NODE.Import, "Should track node type")
+})
+
+test("resolve - let destructure binds names in scope", fn(assert) {
+  let result = parseLowerResolve("let .{ A } = .{ A: 1 }\nA")
+  assert.truthy(result.success, "Should resolve successfully")
+  assert.equal(len(result.errors), 0, "Should have no errors")
+
+  let ast = result.lowerResult.ast
+  let last = ast.expressions[len(ast.expressions) - 1]
+  assert.truthy(last and last.type == NODE.Identifier and last.name == "A", "Last expr should be A identifier")
+
+  let binding = result.resolveResult.resolvedNames[last.id]
+  assert.truthy(binding, "Should have binding for A")
+  assert.equal(binding.kind, "local", "A should resolve as local")
 })
 
 test("resolve - named function expression binds name in its own body", fn(assert) {

@@ -183,11 +183,13 @@ fn lowerLet(lowerer, node) {
   newNode
 }
 
-fn lowerLetDestructure(lowerer, node) {
+fn lowerLetDestructureExprs(lowerer, node) {
   // Desugar:
   //   let .{ A, B: localB } = expr
-  // Into:
-  //   { let $destr_<id> = expr; let A = $destr_<id>.A; let localB = $destr_<id>.B }
+  // Into (in the *current* scope):
+  //   let $destr_<id> = expr
+  //   let A = $destr_<id>.A
+  //   let localB = $destr_<id>.B
 
   let loweredInit = node.init and lowerExpr(lowerer, node.init) or nil
   let tmpName = "$destr_" + str(node.id)
@@ -263,19 +265,7 @@ fn lowerLetDestructure(lowerer, node) {
     push(exprs, fieldLet)
   }
 
-  let outerBlock = .{
-    type: NODE.Block,
-    filename: node.filename,
-    id: allocNodeId(lowerer),
-    line: node.line,
-    col: node.col,
-    endLine: node.endLine,
-    endCol: node.endCol,
-    expressions: exprs,
-  }
-  lowerer.origin[outerBlock.id] = node.id
-
-  outerBlock
+  exprs
 }
 
 fn lowerBlock(lowerer, node) {
@@ -283,7 +273,15 @@ fn lowerBlock(lowerer, node) {
 
   let loweredExprs = []
   for let i = 0; i < len(node.expressions); i = i + 1 {
-    push(loweredExprs, lowerExpr(lowerer, node.expressions[i]))
+    let expr = node.expressions[i]
+    if expr and expr.type == NODE.LetDestructure {
+      let expanded = lowerLetDestructureExprs(lowerer, expr)
+      for let j = 0; j < len(expanded); j = j + 1 {
+        push(loweredExprs, expanded[j])
+      }
+    } else {
+      push(loweredExprs, lowerExpr(lowerer, expr))
+    }
   }
   newNode.expressions = loweredExprs
 
@@ -379,6 +377,44 @@ fn lowerIf(lowerer, node) {
 }
 
 fn lowerFor(lowerer, node) {
+  // Special case: allow destructuring in init position by hoisting it before the loop
+  // into a wrapping block:
+  //   for let .{ a, b } = expr; cond; upd { body }
+  // becomes:
+  //   { let $destr_<id> = expr; let a = $destr_<id>.a; let b = $destr_<id>.b; for ; cond; upd { body } }
+  if node.init and node.init.type == NODE.LetDestructure {
+    let initExprs = lowerLetDestructureExprs(lowerer, node.init)
+
+    let forNode = copyNodeShallow(lowerer, node)
+    forNode.init = nil
+    if node.condition {
+      forNode.condition = lowerExpr(lowerer, node.condition)
+    }
+    if node.update {
+      forNode.update = lowerExpr(lowerer, node.update)
+    }
+    forNode.body = lowerExpr(lowerer, node.body)
+
+    let exprs = []
+    for let i = 0; i < len(initExprs); i = i + 1 {
+      push(exprs, initExprs[i])
+    }
+    push(exprs, forNode)
+
+    let outerBlockNode = .{
+      type: NODE.Block,
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: node.endLine,
+      endCol: node.endCol,
+      expressions: exprs,
+    }
+    lowerer.origin[outerBlockNode.id] = node.id
+    return outerBlockNode
+  }
+
   let newNode = copyNodeShallow(lowerer, node)
 
   if node.init {
@@ -1155,10 +1191,6 @@ fn lowerImport(lowerer, node) {
 
 fn lowerExpr(lowerer, node) {
   if !node { return nil }
-
-  if node.type == NODE.LetDestructure {
-    return lowerLetDestructure(lowerer, node)
-  }
 
   if node.type == NODE.Arrow {
     return lowerArrow(lowerer, node)

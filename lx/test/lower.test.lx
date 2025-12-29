@@ -400,12 +400,11 @@ test("lower - let destructure", fn(assert) {
   let result = parseAndLower("let .{ a, B: b } = rec")
   assert.truthy(result.success)
 
-  // Destructuring lowers into a block of lets.
-  let node = first(result)
-  assert.equal(node.type, NODE.Block)
-  assert.equal(len(node.expressions), 3)
+  // Destructuring lowers into multiple lets in the current block.
+  let exprs = result.lowerResult.ast.expressions
+  assert.equal(len(exprs), 3)
 
-  let tmpLet = node.expressions[0]
+  let tmpLet = exprs[0]
   assert.equal(tmpLet.type, NODE.Let)
   let originId = result.lowerResult.origin[tmpLet.id]
   assert.truthy(originId != nil)
@@ -414,7 +413,7 @@ test("lower - let destructure", fn(assert) {
   assert.equal(tmpLet.init.type, NODE.Identifier)
   assert.equal(tmpLet.init.name, "rec")
 
-  let aLet = node.expressions[1]
+  let aLet = exprs[1]
   assert.equal(aLet.type, NODE.Let)
   assert.equal(aLet.name.name, "a")
   assert.equal(aLet.init.type, NODE.Dot)
@@ -423,7 +422,7 @@ test("lower - let destructure", fn(assert) {
   assert.equal(aLet.init.property.type, NODE.String)
   assert.equal(aLet.init.property.value, "a")
 
-  let bLet = node.expressions[2]
+  let bLet = exprs[2]
   assert.equal(bLet.type, NODE.Let)
   assert.equal(bLet.name.name, "b")
   assert.equal(bLet.init.type, NODE.Dot)

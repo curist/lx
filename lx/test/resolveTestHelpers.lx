@@ -1,6 +1,10 @@
 // Helper functions for resolve tests
 // Provides utilities to inspect parse and resolve results
 
+let types = import "src/types.lx"
+
+let NODE = types.NODE
+
 fn makeResolveHelpers(parseResult, resolveResult) {
   let ast = parseResult.ast
   let resolvedNames = resolveResult.resolvedNames or .{}
@@ -16,60 +20,60 @@ fn makeResolveHelpers(parseResult, resolveResult) {
         push(results, node)
       }
       // Visit children based on node type
-      if node.type == "Block" {
+      if node.type == NODE.Block {
         let exprs = node.expressions or []
         for let i = 0; i < len(exprs); i = i + 1 {
           visit(exprs[i])
         }
-      } else if node.type == "Let" {
+      } else if node.type == NODE.Let {
         // Don't visit node.name - it's a declaration, not a reference
         visit(node.init)
-      } else if node.type == "Function" {
+      } else if node.type == NODE.Function {
         // Don't visit node.name - it's a declaration, not a reference
         // Don't visit params - they're declarations, not references
         visit(node.body)
-      } else if node.type == "Binary" or node.type == "Logical" {
+      } else if node.type == NODE.Binary or node.type == NODE.Logical {
         visit(node.left)
         visit(node.right)
-      } else if node.type == "Unary" {
+      } else if node.type == NODE.Unary {
         visit(node.operand)
-      } else if node.type == "Call" {
+      } else if node.type == NODE.Call {
         visit(node.callee)
         let args = node.args or []
         for let i = 0; i < len(args); i = i + 1 {
           visit(args[i])
         }
-      } else if node.type == "If" {
+      } else if node.type == NODE.If {
         visit(node.condition)
         visit(node.then)
         visit(node.else)
-      } else if node.type == "For" {
+      } else if node.type == NODE.For {
         visit(node.init)
         visit(node.condition)
         visit(node.update)
         visit(node.body)
-      } else if node.type == "Assignment" {
+      } else if node.type == NODE.Assignment {
         visit(node.target)
         visit(node.value)
-      } else if node.type == "Return" or node.type == "Break" {
+      } else if node.type == NODE.Return or node.type == NODE.Break {
         visit(node.value)
-      } else if node.type == "Array" {
+      } else if node.type == NODE.Array {
         let elems = node.elements or []
         for let i = 0; i < len(elems); i = i + 1 {
           visit(elems[i])
         }
-      } else if node.type == "Hashmap" {
+      } else if node.type == NODE.Hashmap {
         let pairs = node.pairs or []
         for let i = 0; i < len(pairs); i = i + 1 {
           visit(pairs[i].key)
           visit(pairs[i].value)
         }
-      } else if node.type == "Index" {
+      } else if node.type == NODE.Index {
         visit(node.object)
         visit(node.index)
-      } else if node.type == "Dot" {
+      } else if node.type == NODE.Dot {
         visit(node.object)
-      } else if node.type == "Grouping" {
+      } else if node.type == NODE.Grouping {
         visit(node.expression)
       }
     }
@@ -79,7 +83,7 @@ fn makeResolveHelpers(parseResult, resolveResult) {
 
   // Find all identifiers with a specific name
   fn findIdentifiersByName(name) {
-    let allIds = findAllNodes("Identifier")
+    let allIds = findAllNodes(NODE.Identifier)
     let matches = []
     for let i = 0; i < len(allIds); i = i + 1 {
       if allIds[i].name == name {

@@ -6,6 +6,9 @@
 //
 // IMPORTANT: ANF MUST NOT mutate input AST nodes.
 
+let types = import "src/types.lx"
+let NODE = types.NODE
+
 // ========================================
 // Error handling
 // ========================================
@@ -44,76 +47,76 @@ fn copyNodeShallow(anf, node) {
   let t = node.type
 
   // Leaf payload
-  if t == "Number" or t == "String" or t == "Bool" {
+  if t == NODE.Number or t == NODE.String or t == NODE.Bool {
     // Note: Bool.value can be false, so we must not use truthiness checks.
     newNode.value = node.value
     newNode.lexeme = node.lexeme
-  } else if t == "Nil" {
+  } else if t == NODE.Nil {
     newNode.lexeme = node.lexeme
-  } else if t == "Identifier" {
+  } else if t == NODE.Identifier {
     newNode.name = node.name
     newNode.lexeme = node.lexeme
   }
 
   // Common expression shapes
-  else if t == "Binary" or t == "Logical" {
+  else if t == NODE.Binary or t == NODE.Logical {
     newNode.left = node.left
     newNode.operator = node.operator
     newNode.right = node.right
-  } else if t == "Unary" {
+  } else if t == NODE.Unary {
     newNode.operator = node.operator
     newNode.operand = node.operand
-  } else if t == "Grouping" {
+  } else if t == NODE.Grouping {
     newNode.expression = node.expression
-  } else if t == "Let" {
+  } else if t == NODE.Let {
     newNode.name = node.name
     newNode.init = node.init
-  } else if t == "Block" {
+  } else if t == NODE.Block {
     newNode.expressions = node.expressions
     if node.anfSynthetic != nil { newNode.anfSynthetic = node.anfSynthetic }
-  } else if t == "Function" {
+  } else if t == NODE.Function {
     newNode.name = node.name
     newNode.params = node.params
     newNode.body = node.body
-  } else if t == "Call" {
+  } else if t == NODE.Call {
     newNode.callee = node.callee
     newNode.args = node.args
-  } else if t == "Arrow" {
+  } else if t == NODE.Arrow {
     newNode.left = node.left
     newNode.operator = node.operator
     newNode.right = node.right
-  } else if t == "If" {
+  } else if t == NODE.If {
     newNode.condition = node.condition
     newNode.then = node.then
     newNode.else = node.else
-  } else if t == "For" or t == "Collect" {
+  } else if t == NODE.For or t == NODE.Collect {
     newNode.init = node.init
     newNode.condition = node.condition
     newNode.update = node.update
     newNode.body = node.body
-  } else if t == "ForIn" or t == "CollectIn" {
+  } else if t == NODE.ForIn or t == NODE.CollectIn {
     newNode.valueBinder = node.valueBinder
     newNode.indexBinder = node.indexBinder
     newNode.iterable = node.iterable
     newNode.body = node.body
-  } else if t == "Return" {
+  } else if t == NODE.Return {
     newNode.value = node.value
-  } else if t == "Array" {
+  } else if t == NODE.Array {
     newNode.elements = node.elements
-  } else if t == "Hashmap" {
+  } else if t == NODE.Hashmap {
     newNode.pairs = node.pairs
-  } else if t == "Index" {
+  } else if t == NODE.Index {
     newNode.object = node.object
     newNode.index = node.index
-  } else if t == "Dot" {
+  } else if t == NODE.Dot {
     newNode.object = node.object
     newNode.property = node.property
-  } else if t == "Assignment" {
+  } else if t == NODE.Assignment {
     newNode.target = node.target
     newNode.value = node.value
-  } else if t == "Import" {
+  } else if t == NODE.Import {
     newNode.path = node.path
-  } else if t == "IntrinsicCall" {
+  } else if t == NODE.IntrinsicCall {
     newNode.intrinsic = node.intrinsic
     newNode.args = node.args
   }
@@ -133,7 +136,7 @@ fn copyNodeShallow(anf, node) {
 
 fn makeIdentifier(anf, templateNode, name) {
   let node = .{
-    type: "Identifier",
+    type: NODE.Identifier,
     filename: templateNode.filename,
     id: allocNodeId(anf),
     line: templateNode.line,
@@ -148,7 +151,7 @@ fn makeIdentifier(anf, templateNode, name) {
 
 fn makeLet(anf, templateNode, nameNode, initNode) {
   let node = .{
-    type: "Let",
+    type: NODE.Let,
     filename: templateNode.filename,
     id: allocNodeId(anf),
     line: templateNode.line,
@@ -164,7 +167,7 @@ fn makeLet(anf, templateNode, nameNode, initNode) {
 
 fn makeBlock(anf, templateNode, expressions) {
   let node = .{
-    type: "Block",
+    type: NODE.Block,
     filename: templateNode.filename,
     id: allocNodeId(anf),
     line: templateNode.line,
@@ -211,9 +214,9 @@ fn collectBlockNames(node) {
   let exprs = node.expressions or []
   for let i = 0; i < len(exprs); i = i + 1 {
     let expr = exprs[i]
-    if expr.type == "Let" and expr.name {
+    if expr.type == NODE.Let and expr.name {
       push(names, expr.name.name)
-    } else if expr.type == "Function" and expr.name {
+    } else if expr.type == NODE.Function and expr.name {
       push(names, expr.name.name)
     }
   }
@@ -232,7 +235,7 @@ fn collectFunctionNames(node) {
 
 fn collectForNames(node) {
   let names = []
-  if node.init and node.init.type == "Let" and node.init.name {
+  if node.init and node.init.type == NODE.Let and node.init.name {
     push(names, node.init.name.name)
   }
   names
@@ -254,19 +257,19 @@ fn freshTempName(anf) {
 // ========================================
 
 fn isAtomic(node) {
-  if node.type == "Number" or node.type == "String" or node.type == "Bool" or
-     node.type == "Nil" or node.type == "Identifier" or node.type == "Function" {
+  if node.type == NODE.Number or node.type == NODE.String or node.type == NODE.Bool or
+     node.type == NODE.Nil or node.type == NODE.Identifier or node.type == NODE.Function {
     return true
   }
 
   // Treat simple property/index reads as atomic if their inputs are atomic.
   // This is safe because our stack machine evaluates these in order without
   // needing intermediate locals.
-  if node.type == "Dot" {
-    return isAtomic(node.object) and (node.property and node.property.type == "String")
+  if node.type == NODE.Dot {
+    return isAtomic(node.object) and (node.property and node.property.type == NODE.String)
   }
 
-  if node.type == "Index" {
+  if node.type == NODE.Index {
     return isAtomic(node.object) and isAtomic(node.index)
   }
 
@@ -283,7 +286,7 @@ fn appendAll(dst, src) {
 
 fn wrapWithPrelude(anf, templateNode, pre, expr) {
   if len(pre) == 0 { return expr }
-  if expr and expr.type == "Block" and expr.expressions {
+  if expr and expr.type == NODE.Block and expr.expressions {
     let exprs = []
     appendAll(exprs, pre)
     appendAll(exprs, expr.expressions)
@@ -305,7 +308,7 @@ fn anfToValue(anf, node) {
 
   // If anfExpr returned a Let, wrap it in a block to move it to statement position
   // Transform: let x = init  =>  { let x = init; x }
-  if expr.type == "Let" {
+  if expr.type == NODE.Let {
     return makeBlock(anf, node, [expr, makeIdentifier(anf, expr, expr.name.name)])
   }
 
@@ -317,7 +320,7 @@ fn anfToAtomic(anf, node) {
   // Enforces Invariant S by extracting Let to statement position
   // Transform: anfToAtomic(let x = init)
   //         => pre: [let x = <atomic-init>], expr: x
-  if node.type == "Let" {
+  if node.type == NODE.Let {
     let letNode = copyNodeShallow(anf, node)
     let letName = copyNodeShallow(anf, node.name)
     letNode.name = letName
@@ -331,7 +334,7 @@ fn anfToAtomic(anf, node) {
     } else {
       // Make default explicit
       letNode.init = .{
-        type: "Nil",
+        type: NODE.Nil,
         filename: node.filename,
         id: allocNodeId(anf),
         line: node.line, col: node.col,
@@ -374,7 +377,7 @@ fn anfAssignmentValue(anf, node) {
   }
 
   // Simple binary: both operands atomic
-  if node.type == "Binary" {
+  if node.type == NODE.Binary {
     let left = anfToAtomic(anf, node.left)
     let right = anfToAtomic(anf, node.right)
 
@@ -389,7 +392,7 @@ fn anfAssignmentValue(anf, node) {
   }
 
   // Simple unary: operand atomic
-  if node.type == "Unary" {
+  if node.type == NODE.Unary {
     let operand = anfToAtomic(anf, node.operand)
 
     if len(operand.pre) == 0 {
@@ -415,15 +418,15 @@ fn anfBinary(anf, node) {
     let left = node.left
     let right = node.right
     // Check if left is (something % 2)
-    if left.type == "Binary" and left.operator and left.operator.lexeme == "%" {
+    if left.type == NODE.Binary and left.operator and left.operator.lexeme == "%" {
       let modRight = left.right
       // Check if pattern matches: (x % 2) == 0
-      if modRight.type == "Number" and modRight.value == 2 and
-         right.type == "Number" and right.value == 0 {
+      if modRight.type == NODE.Number and modRight.value == 2 and
+         right.type == NODE.Number and right.value == 0 {
         // Create is_even intrinsic instead
         let arg = anfToAtomic(anf, left.left)
         let intrinsicNode = .{
-          type: "IntrinsicCall",
+          type: NODE.IntrinsicCall,
           intrinsic: "is_even",
           args: [arg.expr],
           filename: node.filename,
@@ -503,7 +506,7 @@ fn anfBlock(anf, node) {
   let newExprs = []
   for let i = 0; i < len(node.expressions); i = i + 1 {
     let expr = anfExpr(anf, node.expressions[i])
-    if expr and expr.type == "Block" and expr.anfSynthetic and expr.expressions {
+    if expr and expr.type == NODE.Block and expr.anfSynthetic and expr.expressions {
       appendAll(newExprs, expr.expressions)
     } else {
       push(newExprs, expr)
@@ -577,7 +580,7 @@ fn anfFor(anf, node) {
 
   let pre = []
 
-  if node.init and node.init.type == "Let" {
+  if node.init and node.init.type == NODE.Let {
     // Special case: preserve Let node kind for resolver
     // If init produces preludes, hoist them before the for
     let lowered = anfLetNoWrap(anf, node.init)
@@ -669,9 +672,9 @@ fn anfDot(anf, node) {
 fn anfAssignment(anf, node) {
   let targetPre = []
   let targetNode = nil
-  if node.target.type == "Identifier" {
+  if node.target.type == NODE.Identifier {
     targetNode = copyNodeShallow(anf, node.target)
-  } else if node.target.type == "Index" {
+  } else if node.target.type == NODE.Index {
     let object = anfToAtomic(anf, node.target.object)
     let index = anfToAtomic(anf, node.target.index)
     targetPre = []
@@ -681,7 +684,7 @@ fn anfAssignment(anf, node) {
     newTarget.object = object.expr
     newTarget.index = index.expr
     targetNode = newTarget
-  } else if node.target.type == "Dot" {
+  } else if node.target.type == NODE.Dot {
     let object = anfToAtomic(anf, node.target.object)
     targetPre = object.pre
     let newTarget = copyNodeShallow(anf, node.target)
@@ -721,52 +724,52 @@ fn anfImport(anf, node) {
 fn anfExpr(anf, node) {
   if !node { return nil }
 
-  if node.type == "If" {
+  if node.type == NODE.If {
     return anfIf(anf, node)
-  } else if node.type == "Binary" {
+  } else if node.type == NODE.Binary {
     return anfBinary(anf, node)
-  } else if node.type == "Unary" {
+  } else if node.type == NODE.Unary {
     return anfUnary(anf, node)
-  } else if node.type == "Logical" {
+  } else if node.type == NODE.Logical {
     return anfLogical(anf, node)
-  } else if node.type == "Grouping" {
+  } else if node.type == NODE.Grouping {
     return anfGrouping(anf, node)
-  } else if node.type == "Let" {
+  } else if node.type == NODE.Let {
     return anfLet(anf, node)
-  } else if node.type == "Block" {
+  } else if node.type == NODE.Block {
     return anfBlock(anf, node)
-  } else if node.type == "Function" {
+  } else if node.type == NODE.Function {
     return anfFunction(anf, node)
-  } else if node.type == "Call" {
+  } else if node.type == NODE.Call {
     return anfCall(anf, node)
-  } else if node.type == "For" {
+  } else if node.type == NODE.For {
     return anfFor(anf, node)
-  } else if node.type == "Return" {
+  } else if node.type == NODE.Return {
     return anfReturn(anf, node)
-  } else if node.type == "Break" {
+  } else if node.type == NODE.Break {
     return anfBreak(anf, node)
-  } else if node.type == "Continue" {
+  } else if node.type == NODE.Continue {
     return anfContinue(anf, node)
-  } else if node.type == "Array" {
+  } else if node.type == NODE.Array {
     return anfArray(anf, node)
-  } else if node.type == "Hashmap" {
+  } else if node.type == NODE.Hashmap {
     return anfHashmap(anf, node)
-  } else if node.type == "Index" {
+  } else if node.type == NODE.Index {
     return anfIndex(anf, node)
-  } else if node.type == "Dot" {
+  } else if node.type == NODE.Dot {
     return anfDot(anf, node)
-  } else if node.type == "Assignment" {
+  } else if node.type == NODE.Assignment {
     return anfAssignment(anf, node)
-  } else if node.type == "Import" {
+  } else if node.type == NODE.Import {
     return anfImport(anf, node)
-  } else if node.type == "IntrinsicCall" {
+  } else if node.type == NODE.IntrinsicCall {
     return anfIntrinsicCall(anf, node)
-  } else if node.type == "Number" or node.type == "String" or
-            node.type == "Bool" or node.type == "Nil" or
-            node.type == "Identifier" {
+  } else if node.type == NODE.Number or node.type == NODE.String or
+            node.type == NODE.Bool or node.type == NODE.Nil or
+            node.type == NODE.Identifier {
     return copyNodeShallow(anf, node)
   } else {
-    addError(anf, node.id, "Unknown node type in ANF: " + node.type)
+    addError(anf, node.id, "Unknown node type in ANF: " + (nameOf(NODE, node.type) or str(node.type)))
     return node
   }
 }

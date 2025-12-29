@@ -17,6 +17,7 @@
 //   then refines function bodies once and finalizes remaining constraints to Any.
 
 let helper = import "src/passes/frontend/typecheck-helper.lx"
+let NODE = (import "src/types.lx").NODE
 let DEBUG = false
 
 // ========================================================
@@ -1819,9 +1820,9 @@ fn checkExprStmt(checker, node) {
 
 fn checkLiteral(checker, node) {
   let t =
-    node.type == "Number" and typeNumber() or
-    node.type == "String" and typeString() or
-    node.type == "Bool"   and typeBool()   or
+    node.type == NODE.Number and typeNumber() or
+    node.type == NODE.String and typeString() or
+    node.type == NODE.Bool   and typeBool()   or
     typeNil()
 
   checker.types[node.id] = t
@@ -2151,9 +2152,9 @@ fn checkFunction(checker, node) {
 }
 
 fn dotPropertyName(node) {
-  if !node or node.type != "Dot" { return nil }
-  if node.property and node.property.type == "Identifier" { return node.property.name }
-  if node.property and node.property.type == "String" { return node.property.value }
+  if !node or node.type != NODE.Dot { return nil }
+  if node.property and node.property.type == NODE.Identifier { return node.property.name }
+  if node.property and node.property.type == NODE.String { return node.property.value }
   nil
 }
 
@@ -2176,25 +2177,25 @@ fn findEnumMemberMapInModuleResult(moduleResult, fieldName) {
 
   let enumInfo = parseResult.enumInfo or .{}
   let ast = parseResult.ast
-  if ast.type != "Block" or !ast.expressions { return nil }
+  if ast.type != NODE.Block or !ast.expressions { return nil }
 
   for let i = 0; i < len(ast.expressions); i = i + 1 {
     let n = ast.expressions[i]
 
     // Pattern A: `let X = enum {...}`
-    if n and n.type == "Let" and n.name and n.name.type == "Identifier" and n.name.name == fieldName {
+    if n and n.type == NODE.Let and n.name and n.name.type == NODE.Identifier and n.name.name == fieldName {
       let init = n.init
-      if init and init.type == "Hashmap" and enumInfo[init.id] {
+      if init and init.type == NODE.Hashmap and enumInfo[init.id] {
         return enumMembersMapFromInfo(enumInfo[init.id])
       }
     }
 
     // Pattern B: `something.FIELD = enum {...}` (common in `types.lx`)
-    if n and n.type == "Assignment" and n.target and n.target.type == "Dot" {
+    if n and n.type == NODE.Assignment and n.target and n.target.type == NODE.Dot {
       let prop = dotPropertyName(n.target)
       if prop == fieldName {
         let v = n.value
-        if v and v.type == "Hashmap" and enumInfo[v.id] {
+        if v and v.type == NODE.Hashmap and enumInfo[v.id] {
           return enumMembersMapFromInfo(enumInfo[v.id])
         }
       }
@@ -2214,7 +2215,7 @@ fn checkLet(checker, node) {
 
     // Record enum literal member values so we can treat `E.Member` as a literal
     // key in record/hashmap literals and record indexing.
-    if node.init.type == "Hashmap" and checker.enumInfo and checker.enumInfo[node.init.id] {
+    if node.init.type == NODE.Hashmap and checker.enumInfo and checker.enumInfo[node.init.id] {
       let info = checker.enumInfo[node.init.id]
       if info and info.members {
         checker.enumDeclValues[node.name.id] = enumMembersMapFromInfo(info)
@@ -2224,7 +2225,7 @@ fn checkLet(checker, node) {
     // Alias propagation:
     // - ANF may rewrite `let x = import ...` into `let t = import ...; let x = t`.
     // - Preserve import/enum metadata across simple identifier aliases.
-    if node.init.type == "Identifier" {
+    if node.init.type == NODE.Identifier {
       let src = checker.resolvedNames and checker.resolvedNames[node.init.id]
       let srcDeclId = src and src.declaredAt
       if srcDeclId {
@@ -2241,7 +2242,7 @@ fn checkLet(checker, node) {
 
     // If this let binds an import result, keep it around so later lets can pull
     // enum tables out of imported modules via `let X = imported.FIELD`.
-    if node.init.type == "Import" {
+    if node.init.type == NODE.Import {
       let info = checker.resolveResult and checker.resolveResult.importInfoByNodeId and
                  checker.resolveResult.importInfoByNodeId[node.init.id]
       let imported = info and info.importResult
@@ -2252,7 +2253,7 @@ fn checkLet(checker, node) {
 
     // Bridge: `let TOKEN = types.TOKEN` where `types` came from an import, and
     // the imported module assigns `*.TOKEN = enum {...}`.
-    if node.init.type == "Dot" and node.init.object and node.init.object.type == "Identifier" {
+    if node.init.type == NODE.Dot and node.init.object and node.init.object.type == NODE.Identifier {
       let baseBinding = checker.resolvedNames and checker.resolvedNames[node.init.object.id]
       let baseDeclId = baseBinding and baseBinding.declaredAt
       let imported = baseDeclId and checker.importResultsByDeclId and checker.importResultsByDeclId[baseDeclId]
@@ -2369,17 +2370,17 @@ fn joinTypes(checker, t1, t2) {
 
 fn definitelyTruthyNode(node) {
   if !node { return nil }
-  if node.type == "Grouping" { return definitelyTruthyNode(node.expression) }
+  if node.type == NODE.Grouping { return definitelyTruthyNode(node.expression) }
 
-  if node.type == "Nil" { return false }
-  if node.type == "Bool" { return node.value == true }
+  if node.type == NODE.Nil { return false }
+  if node.type == NODE.Bool { return node.value == true }
 
   // Literal-ish nodes are always truthy.
-  if node.type == "Number" { return true }
-  if node.type == "String" { return true }
-  if node.type == "Array" { return true }
-  if node.type == "Hashmap" { return true }
-  if node.type == "Function" { return true }
+  if node.type == NODE.Number { return true }
+  if node.type == NODE.String { return true }
+  if node.type == NODE.Array { return true }
+  if node.type == NODE.Hashmap { return true }
+  if node.type == NODE.Function { return true }
 
   nil
 }
@@ -2553,13 +2554,13 @@ fn checkHashmap(checker, node) {
 }
 
 fn literalKeyInfoFromEnumMemberExpr(checker, node) {
-  if !checker or !node or node.type != "Dot" { return nil }
-  if !node.object or node.object.type != "Identifier" { return nil }
+  if !checker or !node or node.type != NODE.Dot { return nil }
+  if !node.object or node.object.type != NODE.Identifier { return nil }
 
   let memberName = nil
-  if node.property and node.property.type == "Identifier" {
+  if node.property and node.property.type == NODE.Identifier {
     memberName = node.property.name
-  } else if node.property and node.property.type == "String" {
+  } else if node.property and node.property.type == NODE.String {
     memberName = node.property.value
   } else {
     return nil
@@ -2581,12 +2582,12 @@ fn literalKeyInfoFromEnumMemberExpr(checker, node) {
 
 fn literalKeyInfoFromIndexExpr(checker, node) {
   if !node { return nil }
-  if node.type == "Grouping" {
+  if node.type == NODE.Grouping {
     return literalKeyInfoFromIndexExpr(checker, node.expression)
   }
-  if node.type == "String" { return .{ key: node.value, origin: nil } }
-  if node.type == "Number" { return .{ key: node.value, origin: nil } }
-  if node.type == "Dot" { return literalKeyInfoFromEnumMemberExpr(checker, node) }
+  if node.type == NODE.String { return .{ key: node.value, origin: nil } }
+  if node.type == NODE.Number { return .{ key: node.value, origin: nil } }
+  if node.type == NODE.Dot { return literalKeyInfoFromEnumMemberExpr(checker, node) }
   nil
 }
 
@@ -2616,9 +2617,9 @@ fn checkDot(checker, node) {
   let objT = synthExpr(checker, node.object)
   // property is a Node (Identifier or StringKey)
   let propName = nil
-  if node.property and node.property.type == "Identifier" {
+  if node.property and node.property.type == NODE.Identifier {
     propName = node.property.name
-  } else if node.property and node.property.type == "String" {
+  } else if node.property and node.property.type == NODE.String {
     propName = node.property.value
   } else {
     if node.property { synthExpr(checker, node.property) }
@@ -2640,7 +2641,7 @@ fn checkAssignment(checker, node) {
   let vt = synthExpr(checker, node.value)
 
   // Minimal: only support assignment to Identifier in Phase 1
-  if node.target and node.target.type == "Identifier" {
+  if node.target and node.target.type == NODE.Identifier {
     let lt = synthExpr(checker, node.target)
     emitEq(checker, lt, vt, node.id, "Assignment mismatch")
     checker.types[node.id] = vt
@@ -2648,13 +2649,13 @@ fn checkAssignment(checker, node) {
   }
 
   // Property assignment: base.field = value
-  if node.target and node.target.type == "Dot" {
+  if node.target and node.target.type == NODE.Dot {
     let objT = synthExpr(checker, node.target.object)
 
     let propName = nil
-    if node.target.property and node.target.property.type == "Identifier" {
+    if node.target.property and node.target.property.type == NODE.Identifier {
       propName = node.target.property.name
-    } else if node.target.property and node.target.property.type == "String" {
+    } else if node.target.property and node.target.property.type == NODE.String {
       propName = node.target.property.value
     } else {
       if node.target.property { synthExpr(checker, node.target.property) }
@@ -2671,7 +2672,7 @@ fn checkAssignment(checker, node) {
   }
 
   // Index assignment: base[index] = value
-  if node.target and node.target.type == "Index" {
+  if node.target and node.target.type == NODE.Index {
     let objT = synthExpr(checker, node.target.object)
     let idxT = synthExpr(checker, node.target.index)
     push(checker.constraints, .{
@@ -2709,7 +2710,7 @@ fn checkImport(checker, node) {
   }
 
   // Whole-program mode: use the export type of the imported module (if available).
-  if checker.program and checker.program.exports and node.path and node.path.type == "String" {
+  if checker.program and checker.program.exports and node.path and node.path.type == NODE.String {
     let t = checker.program.exports[node.path.value]
     if t {
       checker.types[node.id] = t
@@ -2757,48 +2758,48 @@ synthExpr = fn(checker, node) {
   if !node { return typeNil() }
 
   // Literals
-  if node.type == "Number" or node.type == "String" or
-     node.type == "Bool" or node.type == "Nil" {
+  if node.type == NODE.Number or node.type == NODE.String or
+     node.type == NODE.Bool or node.type == NODE.Nil {
     return checkLiteral(checker, node)
   }
 
   // Names / bindings
-  if node.type == "Identifier" { return checkIdentifier(checker, node) }
+  if node.type == NODE.Identifier { return checkIdentifier(checker, node) }
 
   // Structural containers / wrappers
-  if node.type == "Block"    { return checkBlock(checker, node) }
-  if node.type == "Grouping" { return checkGrouping(checker, node) }
+  if node.type == NODE.Block    { return checkBlock(checker, node) }
+  if node.type == NODE.Grouping { return checkGrouping(checker, node) }
 
   // Operators
-  if node.type == "Unary"      { return checkUnary(checker, node) }
-  if node.type == "Binary"     { return checkBinary(checker, node) }
-  if node.type == "Logical"    { return checkLogical(checker, node) }
-  if node.type == "Assignment" { return checkAssignment(checker, node) }
+  if node.type == NODE.Unary      { return checkUnary(checker, node) }
+  if node.type == NODE.Binary     { return checkBinary(checker, node) }
+  if node.type == NODE.Logical    { return checkLogical(checker, node) }
+  if node.type == NODE.Assignment { return checkAssignment(checker, node) }
 
   // Calls / access
-  if node.type == "Call"  { return checkCall(checker, node) }
-  if node.type == "IntrinsicCall" { return checkIntrinsicCall(checker, node) }
-  if node.type == "Dot"   { return checkDot(checker, node) }
-  if node.type == "Index" { return checkIndex(checker, node) }
+  if node.type == NODE.Call  { return checkCall(checker, node) }
+  if node.type == NODE.IntrinsicCall { return checkIntrinsicCall(checker, node) }
+  if node.type == NODE.Dot   { return checkDot(checker, node) }
+  if node.type == NODE.Index { return checkIndex(checker, node) }
 
   // Collections
-  if node.type == "Array"   { return checkArray(checker, node) }
-  if node.type == "Hashmap" { return checkHashmap(checker, node) }
+  if node.type == NODE.Array   { return checkArray(checker, node) }
+  if node.type == NODE.Hashmap { return checkHashmap(checker, node) }
 
   // Declarations / definitions
-  if node.type == "Let"      { return checkLet(checker, node) }
-  if node.type == "Function" { return checkFunction(checker, node) }
-  if node.type == "Import"   { return checkImport(checker, node) }
+  if node.type == NODE.Let      { return checkLet(checker, node) }
+  if node.type == NODE.Function { return checkFunction(checker, node) }
+  if node.type == NODE.Import   { return checkImport(checker, node) }
 
   // Control flow
-  if node.type == "If"       { return checkIf(checker, node) }
-  if node.type == "For"      { return checkFor(checker, node) }
-  if node.type == "Return"   { return checkReturn(checker, node) }
-  if node.type == "Break"    { return checkBreak(checker, node) }
-  if node.type == "Continue" { return checkContinue(checker, node) }
+  if node.type == NODE.If       { return checkIf(checker, node) }
+  if node.type == NODE.For      { return checkFor(checker, node) }
+  if node.type == NODE.Return   { return checkReturn(checker, node) }
+  if node.type == NODE.Break    { return checkBreak(checker, node) }
+  if node.type == NODE.Continue { return checkContinue(checker, node) }
 
   // XXX: should be unreachable, can we catch this?
-  addError(checker, node.id, "Unsupported node: " + node.type)
+  addError(checker, node.id, "Unsupported node: " + (nameOf(NODE, node.type) or str(node.type)))
   let t = typeAny()
   checker.types[node.id] = t
   t
@@ -2840,15 +2841,15 @@ fn makeChecker(resolveResult, opts) {
 }
 
 fn predeclareTopLevel(checker, ast) {
-  if !ast or ast.type != "Block" or !ast.expressions { return }
+  if !ast or ast.type != NODE.Block or !ast.expressions { return }
 
   for let i = 0; i < len(ast.expressions); i = i + 1 {
     let node = ast.expressions[i]
-    if node.type == "Let" and node.name {
+    if node.type == NODE.Let and node.name {
       if !lookupDecl(checker, node.name.id) {
         bindDecl(checker, node.name.id)
       }
-    } else if node.type == "Function" and node.name {
+    } else if node.type == NODE.Function and node.name {
       if !lookupDecl(checker, node.id) {
         bindDecl(checker, node.id)
       }

@@ -5,6 +5,9 @@ let test = suite.defineTest
 
 let Driver = import "src/driver.lx"
 let query = import "services/query.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
 
 // Helper: compile source through full pipeline and create query context
 // Tests use lower-level APIs for flexibility (inline source, not filesystem)
@@ -91,7 +94,7 @@ test("query - hover resolves bound type variables via bindings", fn(assert) {
   // Manual context with a bound type variable to ensure hover formats binding
   let node = .{
     id: 1,
-    type: "Identifier",
+    type: NODE.Identifier,
     filename: "test.lx",
     line: 1, col: 0,
     endLine: 1, endCol: 1,
@@ -407,8 +410,8 @@ test("query - diagnostics typecheck error includes node location", fn(assert) {
 })
 
 test("query - hover reports candidates on ambiguous span", fn(assert) {
-  let nodeA = .{ id: 1, type: "Identifier", filename: "test.lx", line: 1, col: 0, endLine: 1, endCol: 1, name: "a" }
-  let nodeB = .{ id: 2, type: "Number", filename: "test.lx", line: 1, col: 0, endLine: 1, endCol: 1, value: 1 }
+  let nodeA = .{ id: 1, type: NODE.Identifier, filename: "test.lx", line: 1, col: 0, endLine: 1, endCol: 1, name: "a" }
+  let nodeB = .{ id: 2, type: NODE.Number, filename: "test.lx", line: 1, col: 0, endLine: 1, endCol: 1, value: 1 }
 
   let ctx = .{
     nodes: .{ [1]: nodeA, [2]: nodeB },

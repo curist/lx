@@ -1,6 +1,9 @@
 let parse = import "src/passes/frontend/parser.lx"
 let lower = import "src/passes/frontend/lower.lx"
 let anf = import "src/passes/frontend/anf.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
 
 fn parseLowerAnf(src) {
   let parseResult = parse(src, "test.lx")
@@ -56,19 +59,20 @@ fn formatString(s) {
 
 fn nodeHeader(node) {
   if !node { return "nil" }
-  if node.type == "Identifier" { return "Identifier name=" + node.name }
-  if node.type == "Number" { return "Number value=" + str(node.value) }
-  if node.type == "String" { return "String value=" + formatString(node.value) }
-  if node.type == "Bool" { return "Bool value=" + (node.value and "true" or "false") }
-  if node.type == "Nil" { return "Nil" }
-  if node.type == "Let" { return "Let name=" + node.name.name }
-  if node.type == "Function" {
+  let t = nameOf(NODE, node.type) or str(node.type)
+  if node.type == NODE.Identifier { return "Identifier name=" + node.name }
+  if node.type == NODE.Number { return "Number value=" + str(node.value) }
+  if node.type == NODE.String { return "String value=" + formatString(node.value) }
+  if node.type == NODE.Bool { return "Bool value=" + (node.value and "true" or "false") }
+  if node.type == NODE.Nil { return "Nil" }
+  if node.type == NODE.Let { return "Let name=" + node.name.name }
+  if node.type == NODE.Function {
     return "Function name=" + (node.name and node.name.name or "<anonymous>")
   }
-  if node.type == "Binary" or node.type == "Logical" or node.type == "Unary" {
-    return node.type + " op=" + (node.operator and node.operator.lexeme or "?")
+  if node.type == NODE.Binary or node.type == NODE.Logical or node.type == NODE.Unary {
+    return t + " op=" + (node.operator and node.operator.lexeme or "?")
   }
-  node.type or "Unknown"
+  t or "Unknown"
 }
 
 fn writeLine(lines, indent, text) {
@@ -105,19 +109,19 @@ fn serializeNode(node, lines, indent) {
   writeLine(lines, indent, nodeHeader(node))
   if !node { return }
 
-  if node.type == "Block" {
+  if node.type == NODE.Block {
     writeLine(lines, indent + 1, "expressions:")
     serializeList(node.expressions, lines, indent + 2)
     return
   }
 
-  if node.type == "Let" {
+  if node.type == NODE.Let {
     writeLine(lines, indent + 1, "init:")
     serializeNode(node.init, lines, indent + 2)
     return
   }
 
-  if node.type == "Binary" or node.type == "Logical" {
+  if node.type == NODE.Binary or node.type == NODE.Logical {
     writeLine(lines, indent + 1, "left:")
     serializeNode(node.left, lines, indent + 2)
     writeLine(lines, indent + 1, "right:")
@@ -125,19 +129,19 @@ fn serializeNode(node, lines, indent) {
     return
   }
 
-  if node.type == "Unary" {
+  if node.type == NODE.Unary {
     writeLine(lines, indent + 1, "operand:")
     serializeNode(node.operand, lines, indent + 2)
     return
   }
 
-  if node.type == "Grouping" {
+  if node.type == NODE.Grouping {
     writeLine(lines, indent + 1, "expression:")
     serializeNode(node.expression, lines, indent + 2)
     return
   }
 
-  if node.type == "Call" {
+  if node.type == NODE.Call {
     writeLine(lines, indent + 1, "callee:")
     serializeNode(node.callee, lines, indent + 2)
     writeLine(lines, indent + 1, "args:")
@@ -145,7 +149,7 @@ fn serializeNode(node, lines, indent) {
     return
   }
 
-  if node.type == "Function" {
+  if node.type == NODE.Function {
     writeLine(lines, indent + 1, "params:")
     serializeList(node.params, lines, indent + 2)
     writeLine(lines, indent + 1, "body:")
@@ -153,7 +157,7 @@ fn serializeNode(node, lines, indent) {
     return
   }
 
-  if node.type == "If" {
+  if node.type == NODE.If {
     writeLine(lines, indent + 1, "condition:")
     serializeNode(node.condition, lines, indent + 2)
     writeLine(lines, indent + 1, "then:")
@@ -163,7 +167,7 @@ fn serializeNode(node, lines, indent) {
     return
   }
 
-  if node.type == "For" {
+  if node.type == NODE.For {
     writeLine(lines, indent + 1, "init:")
     serializeNode(node.init, lines, indent + 2)
     writeLine(lines, indent + 1, "condition:")
@@ -175,29 +179,29 @@ fn serializeNode(node, lines, indent) {
     return
   }
 
-  if node.type == "Return" or node.type == "Break" {
+  if node.type == NODE.Return or node.type == NODE.Break {
     writeLine(lines, indent + 1, "value:")
     serializeNode(node.value, lines, indent + 2)
     return
   }
 
-  if node.type == "Continue" {
+  if node.type == NODE.Continue {
     return
   }
 
-  if node.type == "Array" {
+  if node.type == NODE.Array {
     writeLine(lines, indent + 1, "elements:")
     serializeList(node.elements, lines, indent + 2)
     return
   }
 
-  if node.type == "Hashmap" {
+  if node.type == NODE.Hashmap {
     writeLine(lines, indent + 1, "pairs:")
     serializePairs(node.pairs, lines, indent + 2)
     return
   }
 
-  if node.type == "Index" {
+  if node.type == NODE.Index {
     writeLine(lines, indent + 1, "object:")
     serializeNode(node.object, lines, indent + 2)
     writeLine(lines, indent + 1, "index:")
@@ -205,7 +209,7 @@ fn serializeNode(node, lines, indent) {
     return
   }
 
-  if node.type == "Dot" {
+  if node.type == NODE.Dot {
     writeLine(lines, indent + 1, "object:")
     serializeNode(node.object, lines, indent + 2)
     writeLine(lines, indent + 1, "property:")
@@ -213,7 +217,7 @@ fn serializeNode(node, lines, indent) {
     return
   }
 
-  if node.type == "Assignment" {
+  if node.type == NODE.Assignment {
     writeLine(lines, indent + 1, "target:")
     serializeNode(node.target, lines, indent + 2)
     writeLine(lines, indent + 1, "value:")
@@ -221,7 +225,7 @@ fn serializeNode(node, lines, indent) {
     return
   }
 
-  if node.type == "Import" {
+  if node.type == NODE.Import {
     writeLine(lines, indent + 1, "path:")
     serializeNode(node.path, lines, indent + 2)
     return

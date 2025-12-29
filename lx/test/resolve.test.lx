@@ -8,6 +8,9 @@ let parse = import "src/passes/frontend/parser.lx"
 let lower = import "src/passes/frontend/lower.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
 let makeResolveHelpers = import "test/resolveTestHelpers.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
 
 // Helper to parse from fixture file
 fn parseFixture(path) {
@@ -610,11 +613,11 @@ test("resolve - import node in nodes map", fn(assert) {
   let result = resolve(parseResult.ast, .{})
 
   let importNode = parseResult.ast.expressions[0].init
-  assert.equal(importNode.type, "Import", "Should be Import node")
+  assert.equal(importNode.type, NODE.Import, "Should be Import node")
 
   let nodeInfo = result.nodes[importNode.id]
   assert.truthy(nodeInfo, "Import node should be in nodes map")
-  assert.equal(nodeInfo.type, "Import", "Should track node type")
+  assert.equal(nodeInfo.type, NODE.Import, "Should track node type")
 })
 
 test("resolve - named function expression binds name in its own body", fn(assert) {
@@ -940,7 +943,7 @@ test("resolve - simple closure with direct upvalue", fn(assert) {
   // The function is the second expression in the inner block
   let innerBlock = result.parseResult.ast.expressions[0]
   let functionNode = innerBlock.expressions[1]
-  assert.equal(functionNode.type, "Function", "Should be a function node")
+  assert.equal(functionNode.type, NODE.Function, "Should be a function node")
 
   let upvalues = result.helpers.getUpvalues(functionNode)
   assert.truthy(upvalues, "Function should have upvalues")
@@ -971,10 +974,10 @@ test("resolve - closure with intermediate block scope", fn(assert) {
   // Navigate: ast -> outer block -> inner block -> fn
   let outerBlock = result.parseResult.ast.expressions[0]
   let innerBlock = outerBlock.expressions[1]
-  assert.equal(innerBlock.type, "Block", "Should be a block")
+  assert.equal(innerBlock.type, NODE.Block, "Should be a block")
 
   let functionNode = innerBlock.expressions[0]
-  assert.equal(functionNode.type, "Function", "Should be a function node")
+  assert.equal(functionNode.type, NODE.Function, "Should be a function node")
 
   let upvalues = result.helpers.getUpvalues(functionNode)
   assert.truthy(upvalues, "Function should have upvalues")
@@ -1005,10 +1008,10 @@ test("resolve - closure with intermediate loop scope", fn(assert) {
   // Navigate: ast -> outer block -> for loop -> fn
   let outerBlock = result.parseResult.ast.expressions[0]
   let loopNode = outerBlock.expressions[1]
-  assert.equal(loopNode.type, "For", "Should be a for loop")
+  assert.equal(loopNode.type, NODE.For, "Should be a for loop")
 
   let functionNode = loopNode.body.expressions[0]
-  assert.equal(functionNode.type, "Function", "Should be a function node")
+  assert.equal(functionNode.type, NODE.Function, "Should be a function node")
 
   let upvalues = result.helpers.getUpvalues(functionNode)
   assert.truthy(upvalues, "Function should have upvalues")

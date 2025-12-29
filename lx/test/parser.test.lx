@@ -4,6 +4,7 @@ let test = suite.defineTest
 let parse = import "src/passes/frontend/parser.lx"
 let types = import "src/types.lx"
 let TOKEN = types.TOKEN
+let NODE = types.NODE
 
 // Helper to get first statement from parsed program
 fn first(result) {
@@ -21,7 +22,7 @@ test("parser - number literal", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Number")
+  assert.equal(node.type, NODE.Number)
   assert.equal(node.value, 42)
   assert.equal(node.lexeme, "42")
   assert.equal(node.line, 1)
@@ -33,7 +34,7 @@ test("parser - string literal", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "String")
+  assert.equal(node.type, NODE.String)
   assert.equal(node.value, "hello")
   assert.equal(node.lexeme, "\"hello\"")
 })
@@ -42,13 +43,13 @@ test("parser - bool literals", fn(assert) {
   let result = parse("true", "test.lx")
   assert.truthy(result.success)
   let node = first(result)
-  assert.equal(node.type, "Bool")
+  assert.equal(node.type, NODE.Bool)
   assert.equal(node.value, true)
 
   result = parse("false", "test.lx")
   assert.truthy(result.success)
   node = first(result)
-  assert.equal(node.type, "Bool")
+  assert.equal(node.type, NODE.Bool)
   assert.equal(node.value, false)
 })
 
@@ -57,7 +58,7 @@ test("parser - nil literal", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Nil")
+  assert.equal(node.type, NODE.Nil)
   assert.equal(node.lexeme, "nil")
 })
 
@@ -66,7 +67,7 @@ test("parser - identifier", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Identifier")
+  assert.equal(node.type, NODE.Identifier)
   assert.equal(node.name, "foo")
   assert.equal(node.lexeme, "foo")
 })
@@ -76,12 +77,12 @@ test("parser - binary expression", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Binary")
-  assert.equal(node.left.type, "Number")
+  assert.equal(node.type, NODE.Binary)
+  assert.equal(node.left.type, NODE.Number)
   assert.equal(node.left.value, 1)
   assert.equal(node.operator.type, TOKEN.PLUS)
   assert.equal(node.operator.lexeme, "+")
-  assert.equal(node.right.type, "Number")
+  assert.equal(node.right.type, NODE.Number)
   assert.equal(node.right.value, 2)
 })
 
@@ -91,10 +92,10 @@ test("parser - binary precedence", fn(assert) {
 
   let node = first(result)
   // Should be: 1 + (2 * 3)
-  assert.equal(node.type, "Binary")
+  assert.equal(node.type, NODE.Binary)
   assert.equal(node.operator.type, TOKEN.PLUS)
   assert.equal(node.left.value, 1)
-  assert.equal(node.right.type, "Binary")
+  assert.equal(node.right.type, NODE.Binary)
   assert.equal(node.right.operator.type, TOKEN.STAR)
 })
 
@@ -103,9 +104,9 @@ test("parser - unary expression", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Unary")
+  assert.equal(node.type, NODE.Unary)
   assert.equal(node.operator.type, TOKEN.MINUS)
-  assert.equal(node.operand.type, "Number")
+  assert.equal(node.operand.type, NODE.Number)
   assert.equal(node.operand.value, 42)
 })
 
@@ -115,10 +116,10 @@ test("parser - grouping", fn(assert) {
 
   let node = first(result)
   // Should be: (1 + 2) * 3
-  assert.equal(node.type, "Binary")
+  assert.equal(node.type, NODE.Binary)
   assert.equal(node.operator.type, TOKEN.STAR)
-  assert.equal(node.left.type, "Grouping")
-  assert.equal(node.left.expression.type, "Binary")
+  assert.equal(node.left.type, NODE.Grouping)
+  assert.equal(node.left.expression.type, NODE.Binary)
 })
 
 test("parser - logical and", fn(assert) {
@@ -126,10 +127,10 @@ test("parser - logical and", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.AND)
-  assert.equal(node.left.type, "Bool")
-  assert.equal(node.right.type, "Bool")
+  assert.equal(node.left.type, NODE.Bool)
+  assert.equal(node.right.type, NODE.Bool)
 })
 
 test("parser - logical or", fn(assert) {
@@ -137,7 +138,7 @@ test("parser - logical or", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.OR)
 })
 
@@ -146,7 +147,7 @@ test("parser - let without init", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Let")
+  assert.equal(node.type, NODE.Let)
   assert.equal(node.name.name, "x")
   assert.equal(node.init, nil)
 })
@@ -156,9 +157,9 @@ test("parser - let with init", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Let")
+  assert.equal(node.type, NODE.Let)
   assert.equal(node.name.name, "x")
-  assert.equal(node.init.type, "Number")
+  assert.equal(node.init.type, NODE.Number)
   assert.equal(node.init.value, 42)
 })
 
@@ -167,10 +168,10 @@ test("parser - assignment", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Assignment")
-  assert.equal(node.target.type, "Identifier")
+  assert.equal(node.type, NODE.Assignment)
+  assert.equal(node.target.type, NODE.Identifier)
   assert.equal(node.target.name, "x")
-  assert.equal(node.value.type, "Number")
+  assert.equal(node.value.type, NODE.Number)
   assert.equal(node.value.value, 10)
 })
 
@@ -179,7 +180,7 @@ test("parser - array literal", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Array")
+  assert.equal(node.type, NODE.Array)
   assert.equal(len(node.elements), 3)
   assert.equal(node.elements[0].value, 1)
   assert.equal(node.elements[1].value, 2)
@@ -191,7 +192,7 @@ test("parser - empty array", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Array")
+  assert.equal(node.type, NODE.Array)
   assert.equal(len(node.elements), 0)
 })
 
@@ -200,7 +201,7 @@ test("parser - hashmap literal", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Hashmap")
+  assert.equal(node.type, NODE.Hashmap)
   assert.equal(len(node.pairs), 2)
   assert.equal(node.pairs[0].key.value, "a")
   assert.equal(node.pairs[0].value.value, 1)
@@ -213,9 +214,9 @@ test("parser - hashmap with computed key", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Hashmap")
+  assert.equal(node.type, NODE.Hashmap)
   assert.equal(len(node.pairs), 1)
-  assert.equal(node.pairs[0].key.type, "Identifier")
+  assert.equal(node.pairs[0].key.type, NODE.Identifier)
   assert.equal(node.pairs[0].key.name, "x")
 })
 
@@ -224,7 +225,7 @@ test("parser - enum basic", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Hashmap")
+  assert.equal(node.type, NODE.Hashmap)
   assert.equal(len(node.pairs), 3)
   assert.equal(node.pairs[0].key.value, "A")
   assert.equal(node.pairs[0].value.value, 0)
@@ -239,7 +240,7 @@ test("parser - enum start and explicit values", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Hashmap")
+  assert.equal(node.type, NODE.Hashmap)
   assert.equal(len(node.pairs), 4)
   assert.truthy(result.enumInfo[node.id])
   assert.equal(len(result.enumInfo[node.id].members), 4)
@@ -293,8 +294,8 @@ test("parser - function call", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Call")
-  assert.equal(node.callee.type, "Identifier")
+  assert.equal(node.type, NODE.Call)
+  assert.equal(node.callee.type, NODE.Identifier)
   assert.equal(node.callee.name, "foo")
   assert.equal(len(node.args), 2)
   assert.equal(node.args[0].value, 1)
@@ -306,10 +307,10 @@ test("parser - arrow operator", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Arrow")
-  assert.equal(node.left.type, "Identifier")
+  assert.equal(node.type, NODE.Arrow)
+  assert.equal(node.left.type, NODE.Identifier)
   assert.equal(node.left.name, "x")
-  assert.equal(node.right.type, "Call")
+  assert.equal(node.right.type, NODE.Call)
   assert.equal(node.right.callee.name, "foo")
 })
 
@@ -318,10 +319,10 @@ test("parser - dot access", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Dot")
-  assert.equal(node.object.type, "Identifier")
+  assert.equal(node.type, NODE.Dot)
+  assert.equal(node.object.type, NODE.Identifier)
   assert.equal(node.object.name, "obj")
-  assert.equal(node.property.type, "String")
+  assert.equal(node.property.type, NODE.String)
   assert.equal(node.property.value, "prop")
 })
 
@@ -330,10 +331,10 @@ test("parser - index access", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Index")
-  assert.equal(node.object.type, "Identifier")
+  assert.equal(node.type, NODE.Index)
+  assert.equal(node.object.type, NODE.Identifier)
   assert.equal(node.object.name, "arr")
-  assert.equal(node.index.type, "Number")
+  assert.equal(node.index.type, NODE.Number)
   assert.equal(node.index.value, 0)
 })
 
@@ -342,9 +343,9 @@ test("parser - dot assignment", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Assignment")
-  assert.equal(node.target.type, "Dot")
-  assert.equal(node.target.property.type, "String")
+  assert.equal(node.type, NODE.Assignment)
+  assert.equal(node.target.type, NODE.Dot)
+  assert.equal(node.target.property.type, NODE.String)
   assert.equal(node.target.property.value, "prop")
   assert.equal(node.value.value, 5)
 })
@@ -354,8 +355,8 @@ test("parser - index assignment", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Assignment")
-  assert.equal(node.target.type, "Index")
+  assert.equal(node.type, NODE.Assignment)
+  assert.equal(node.target.type, NODE.Index)
   assert.equal(node.value.value, 5)
 })
 
@@ -364,7 +365,7 @@ test("parser - block", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Block")
+  assert.equal(node.type, NODE.Block)
   assert.equal(len(node.expressions), 3)
   assert.equal(node.expressions[0].value, 1)
   assert.equal(node.expressions[2].value, 3)
@@ -375,9 +376,9 @@ test("parser - if expression", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "If")
-  assert.equal(node.condition.type, "Bool")
-  assert.equal(node.then.type, "Block")
+  assert.equal(node.type, NODE.If)
+  assert.equal(node.condition.type, NODE.Bool)
+  assert.equal(node.then.type, NODE.Block)
   assert.equal(node.else, nil)
 })
 
@@ -386,9 +387,9 @@ test("parser - if else expression", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "If")
-  assert.equal(node.then.type, "Block")
-  assert.equal(node.else.type, "Block")
+  assert.equal(node.type, NODE.If)
+  assert.equal(node.then.type, NODE.Block)
+  assert.equal(node.else.type, NODE.Block)
 })
 
 test("parser - if else if", fn(assert) {
@@ -396,8 +397,8 @@ test("parser - if else if", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "If")
-  assert.equal(node.else.type, "If")
+  assert.equal(node.type, NODE.If)
+  assert.equal(node.else.type, NODE.If)
 })
 
 test("parser - for while loop", fn(assert) {
@@ -405,11 +406,11 @@ test("parser - for while loop", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "For")
+  assert.equal(node.type, NODE.For)
   assert.equal(node.init, nil)
-  assert.equal(node.condition.type, "Binary")
+  assert.equal(node.condition.type, NODE.Binary)
   assert.equal(node.update, nil)
-  assert.equal(node.body.type, "Block")
+  assert.equal(node.body.type, NODE.Block)
 })
 
 test("parser - for c-style loop", fn(assert) {
@@ -417,11 +418,11 @@ test("parser - for c-style loop", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "For")
-  assert.equal(node.init.type, "Let")
-  assert.equal(node.condition.type, "Binary")
-  assert.equal(node.update.type, "Assignment")
-  assert.equal(node.body.type, "Block")
+  assert.equal(node.type, NODE.For)
+  assert.equal(node.init.type, NODE.Let)
+  assert.equal(node.condition.type, NODE.Binary)
+  assert.equal(node.update.type, NODE.Assignment)
+  assert.equal(node.body.type, NODE.Block)
 })
 
 test("parser - anonymous function", fn(assert) {
@@ -429,11 +430,11 @@ test("parser - anonymous function", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Function")
+  assert.equal(node.type, NODE.Function)
   assert.equal(node.name, nil)
   assert.equal(len(node.params), 1)
   assert.equal(node.params[0].name, "x")
-  assert.equal(node.body.type, "Block")
+  assert.equal(node.body.type, NODE.Block)
 })
 
 test("parser - named function", fn(assert) {
@@ -441,7 +442,7 @@ test("parser - named function", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Function")
+  assert.equal(node.type, NODE.Function)
   assert.equal(node.name.name, "add")
   assert.equal(len(node.params), 2)
   assert.equal(node.params[0].name, "a")
@@ -453,8 +454,8 @@ test("parser - return statement", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Return")
-  assert.equal(node.value.type, "Number")
+  assert.equal(node.type, NODE.Return)
+  assert.equal(node.value.type, NODE.Number)
   assert.equal(node.value.value, 42)
 })
 
@@ -463,7 +464,7 @@ test("parser - return without value", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Return")
+  assert.equal(node.type, NODE.Return)
   assert.equal(node.value, nil)
 })
 
@@ -472,7 +473,7 @@ test("parser - break in loop", fn(assert) {
   assert.truthy(result.success)
 
   let body = first(result).body
-  assert.equal(body.expressions[0].type, "Break")
+  assert.equal(body.expressions[0].type, NODE.Break)
   assert.equal(body.expressions[0].value, nil)
 })
 
@@ -481,7 +482,7 @@ test("parser - break in loop (no value)", fn(assert) {
   assert.truthy(result.success)
 
   let body = first(result).body
-  assert.equal(body.expressions[0].type, "Break")
+  assert.equal(body.expressions[0].type, NODE.Break)
 })
 
 test("parser - continue in loop", fn(assert) {
@@ -489,7 +490,7 @@ test("parser - continue in loop", fn(assert) {
   assert.truthy(result.success)
 
   let body = first(result).body
-  assert.equal(body.expressions[0].type, "Continue")
+  assert.equal(body.expressions[0].type, NODE.Continue)
 })
 
 test("parser - import", fn(assert) {
@@ -497,8 +498,8 @@ test("parser - import", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Import")
-  assert.equal(node.path.type, "String")
+  assert.equal(node.type, NODE.Import)
+  assert.equal(node.path.type, NODE.String)
   assert.equal(node.path.value, "foo.lx")
 })
 
@@ -507,8 +508,8 @@ test("parser - multiple statements", fn(assert) {
   assert.truthy(result.success)
 
   assert.equal(len(result.ast.expressions), 2)
-  assert.equal(result.ast.expressions[0].type, "Let")
-  assert.equal(result.ast.expressions[1].type, "Let")
+  assert.equal(result.ast.expressions[0].type, NODE.Let)
+  assert.equal(result.ast.expressions[1].type, NODE.Let)
 })
 
 test("parser - position tracking", fn(assert) {
@@ -540,22 +541,22 @@ test("parser - complex expression", fn(assert) {
 
   let node = first(result)
   // The top level should be Logical (and)
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.AND)
   // Left side should be Binary (1 + 2)
-  assert.equal(node.left.type, "Binary")
+  assert.equal(node.left.type, NODE.Binary)
 })
 
 test("parser - demo example 1: let with arithmetic", fn(assert) {
   let result = parse("let x = 1 + 2 * 3", "demo.lx")
   assert.truthy(result.success)
-  assert.equal(result.ast.type, "Block")
+  assert.equal(result.ast.type, NODE.Block)
   assert.equal(len(result.ast.expressions), 1)
 
   let stmt = first(result)
-  assert.equal(stmt.type, "Let")
+  assert.equal(stmt.type, NODE.Let)
   assert.equal(stmt.name.name, "x")
-  assert.equal(stmt.init.type, "Binary")
+  assert.equal(stmt.init.type, NODE.Binary)
   assert.equal(stmt.filename, "demo.lx")
 })
 
@@ -564,12 +565,12 @@ test("parser - demo example 2: function with body", fn(assert) {
   assert.truthy(result.success)
 
   let funcNode = first(result)
-  assert.equal(funcNode.type, "Function")
+  assert.equal(funcNode.type, NODE.Function)
   assert.equal(funcNode.name.name, "add")
   assert.equal(len(funcNode.params), 2)
   assert.equal(funcNode.params[0].name, "a")
   assert.equal(funcNode.params[1].name, "b")
-  assert.equal(funcNode.body.type, "Block")
+  assert.equal(funcNode.body.type, NODE.Block)
   assert.equal(len(funcNode.body.expressions), 1)
 })
 
@@ -578,12 +579,12 @@ test("parser - demo example 3: arrow with lambda", fn(assert) {
   assert.truthy(result.success)
 
   let expr = first(result)
-  assert.equal(expr.type, "Arrow")
-  assert.equal(expr.left.type, "Array")
-  assert.equal(expr.right.type, "Call")
+  assert.equal(expr.type, NODE.Arrow)
+  assert.equal(expr.left.type, NODE.Array)
+  assert.equal(expr.right.type, NODE.Call)
   assert.equal(expr.right.callee.name, "map")
   assert.equal(len(expr.right.args), 1)
-  assert.equal(expr.right.args[0].type, "Function")
+  assert.equal(expr.right.args[0].type, NODE.Function)
 })
 
 test("parser - demo example 4: error handling", fn(assert) {
@@ -615,10 +616,10 @@ test("parser - for loop empty init with condition and update", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "For")
+  assert.equal(node.type, NODE.For)
   assert.equal(node.init, nil)
-  assert.equal(node.condition.type, "Binary")
-  assert.equal(node.update.type, "Assignment")
+  assert.equal(node.condition.type, NODE.Binary)
+  assert.equal(node.update.type, NODE.Assignment)
 })
 
 test("parser - for loop variations from fixture", fn(assert) {
@@ -629,10 +630,10 @@ test("parser - for loop variations from fixture", fn(assert) {
   assert.equal(len(result.ast.expressions), 4)
 
   // All should be For nodes
-  assert.equal(result.ast.expressions[0].type, "For")
-  assert.equal(result.ast.expressions[1].type, "For")
-  assert.equal(result.ast.expressions[2].type, "For")
-  assert.equal(result.ast.expressions[3].type, "For")
+  assert.equal(result.ast.expressions[0].type, NODE.For)
+  assert.equal(result.ast.expressions[1].type, NODE.For)
+  assert.equal(result.ast.expressions[2].type, NODE.For)
+  assert.equal(result.ast.expressions[3].type, NODE.For)
 })
 
 // Issue #2: Token position accuracy
@@ -772,9 +773,9 @@ test("parser - and associativity should be left-to-right", fn(assert) {
   let node = first(result)
   // Top level should be: (a and b) and c
   // So the operator at top is 'and', left is Logical(a and b), right is 'c'
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.AND)
-  assert.equal(node.left.type, "Logical")  // (a and b)
+  assert.equal(node.left.type, NODE.Logical)  // (a and b)
   assert.equal(node.left.left.name, "a")
   assert.equal(node.left.right.name, "b")
   assert.equal(node.right.name, "c")
@@ -787,9 +788,9 @@ test("parser - or associativity should be left-to-right", fn(assert) {
 
   let node = first(result)
   // Top level should be: (a or b) or c
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.OR)
-  assert.equal(node.left.type, "Logical")  // (a or b)
+  assert.equal(node.left.type, NODE.Logical)  // (a or b)
   assert.equal(node.left.left.name, "a")
   assert.equal(node.left.right.name, "b")
   assert.equal(node.right.name, "c")
@@ -805,12 +806,12 @@ test("parser - arrow precedence vs addition", fn(assert) {
 
   // Expected for pipeline (higher precedence than +):
   // Binary { left: Identifier(a), operator: +, right: Arrow(b, foo()) }
-  assert.equal(node.type, "Binary")
+  assert.equal(node.type, NODE.Binary)
   assert.equal(node.operator.type, TOKEN.PLUS)
   assert.equal(node.left.name, "a")
-  assert.equal(node.right.type, "Arrow")
+  assert.equal(node.right.type, NODE.Arrow)
   assert.equal(node.right.left.name, "b")
-  assert.equal(node.right.right.type, "Call")
+  assert.equal(node.right.right.type, NODE.Call)
   assert.equal(node.right.right.callee.name, "foo")
 })
 
@@ -821,12 +822,12 @@ test("parser - arrow associativity", fn(assert) {
 
   let node = first(result)
   // Expected: Arrow { left: Arrow(a, f()), right: g() }
-  assert.equal(node.type, "Arrow")
-  assert.equal(node.left.type, "Arrow")
+  assert.equal(node.type, NODE.Arrow)
+  assert.equal(node.left.type, NODE.Arrow)
   assert.equal(node.left.left.name, "a")
-  assert.equal(node.left.right.type, "Call")
+  assert.equal(node.left.right.type, NODE.Call)
   assert.equal(node.left.right.callee.name, "f")
-  assert.equal(node.right.type, "Call")
+  assert.equal(node.right.type, NODE.Call)
   assert.equal(node.right.callee.name, "g")
 })
 
@@ -836,9 +837,9 @@ test("parser - subtraction is left-associative", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Binary")
+  assert.equal(node.type, NODE.Binary)
   assert.equal(node.operator.type, TOKEN.MINUS)
-  assert.equal(node.left.type, "Binary")  // (a - b)
+  assert.equal(node.left.type, NODE.Binary)  // (a - b)
   assert.equal(node.left.operator.type, TOKEN.MINUS)
   assert.equal(node.right.name, "c")
 })
@@ -849,9 +850,9 @@ test("parser - assignment is right-associative", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Assignment")
+  assert.equal(node.type, NODE.Assignment)
   assert.equal(node.target.name, "a")
-  assert.equal(node.value.type, "Assignment")  // (b = c)
+  assert.equal(node.value.type, NODE.Assignment)  // (b = c)
   assert.equal(node.value.target.name, "b")
   assert.equal(node.value.value.name, "c")
 })
@@ -877,9 +878,9 @@ test("parser - pipeline precedence vs or (pipeline tighter)", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.OR)
-  assert.equal(node.left.type, "Arrow")  // (a->f())
+  assert.equal(node.left.type, NODE.Arrow)  // (a->f())
   assert.equal(node.right.name, "c")
 })
 
@@ -889,10 +890,10 @@ test("parser - pipeline precedence vs or (right side)", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.OR)
   assert.equal(node.left.name, "a")
-  assert.equal(node.right.type, "Arrow")  // (b->f())
+  assert.equal(node.right.type, NODE.Arrow)  // (b->f())
 })
 
 test("parser - pipeline precedence vs and", fn(assert) {
@@ -901,9 +902,9 @@ test("parser - pipeline precedence vs and", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.AND)
-  assert.equal(node.left.type, "Arrow")  // (a->f())
+  assert.equal(node.left.type, NODE.Arrow)  // (a->f())
   assert.equal(node.right.name, "c")
 })
 
@@ -913,9 +914,9 @@ test("parser - pipeline precedence vs assignment", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Assignment")
+  assert.equal(node.type, NODE.Assignment)
   assert.equal(node.target.name, "a")
-  assert.equal(node.value.type, "Arrow")  // (b->f())
+  assert.equal(node.value.type, NODE.Arrow)  // (b->f())
 })
 
 test("parser - pipeline right of or", fn(assert) {
@@ -924,10 +925,10 @@ test("parser - pipeline right of or", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.OR)
   assert.equal(node.left.name, "a")
-  assert.equal(node.right.type, "Arrow")  // (b->f())
+  assert.equal(node.right.type, NODE.Arrow)  // (b->f())
   assert.equal(node.right.left.name, "b")
 })
 
@@ -937,9 +938,9 @@ test("parser - pipeline with and", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Logical")
+  assert.equal(node.type, NODE.Logical)
   assert.equal(node.operator.type, TOKEN.AND)
-  assert.equal(node.left.type, "Arrow")  // (a->f())
+  assert.equal(node.left.type, NODE.Arrow)  // (a->f())
   assert.equal(node.right.name, "c")
 })
 
@@ -949,10 +950,10 @@ test("parser - pipeline chain associativity", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Arrow")
-  assert.equal(node.left.type, "Arrow")  // (a->f())
+  assert.equal(node.type, NODE.Arrow)
+  assert.equal(node.left.type, NODE.Arrow)  // (a->f())
   assert.equal(node.left.left.name, "a")
-  assert.equal(node.right.type, "Call")
+  assert.equal(node.right.type, NODE.Call)
   assert.equal(node.right.callee.name, "g")
 })
 
@@ -962,7 +963,7 @@ test("parser - hashmap with keyword keys", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Hashmap")
+  assert.equal(node.type, NODE.Hashmap)
   assert.equal(len(node.pairs), 3)
   assert.equal(node.pairs[0].key.value, "if")
   assert.equal(node.pairs[1].key.value, "return")
@@ -974,10 +975,10 @@ test("parser - dot access with keyword property", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Dot")
+  assert.equal(node.type, NODE.Dot)
   assert.equal(node.object.name, "x")
   // Property should be String node (consistent with hashmap keys)
-  assert.equal(node.property.type, "String")
+  assert.equal(node.property.type, NODE.String)
   assert.equal(node.property.value, "if")
 })
 
@@ -986,12 +987,12 @@ test("parser - dot access with multiple keyword properties", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Dot")
+  assert.equal(node.type, NODE.Dot)
   // x.return.true.nil = ((x.return).true).nil
-  assert.equal(node.property.type, "String")
+  assert.equal(node.property.type, NODE.String)
   assert.equal(node.property.value, "nil")
-  assert.equal(node.object.type, "Dot")
-  assert.equal(node.object.property.type, "String")
+  assert.equal(node.object.type, NODE.Dot)
+  assert.equal(node.object.property.type, NODE.String)
   assert.equal(node.object.property.value, "true")
 })
 
@@ -1001,8 +1002,8 @@ test("parser - return with trailing semicolon", fn(assert) {
   assert.truthy(result.success)
 
   let funcNode = first(result)
-  assert.equal(funcNode.type, "Function")
-  assert.equal(funcNode.body.expressions[0].type, "Return")
+  assert.equal(funcNode.type, NODE.Function)
+  assert.equal(funcNode.body.expressions[0].type, NODE.Return)
 })
 
 test("parser - top level statements with semicolons", fn(assert) {
@@ -1010,8 +1011,8 @@ test("parser - top level statements with semicolons", fn(assert) {
   assert.truthy(result.success)
 
   assert.equal(len(result.ast.expressions), 2)
-  assert.equal(result.ast.expressions[0].type, "Let")
-  assert.equal(result.ast.expressions[1].type, "Let")
+  assert.equal(result.ast.expressions[0].type, NODE.Let)
+  assert.equal(result.ast.expressions[1].type, NODE.Let)
 })
 
 test("parser - block with semicolons", fn(assert) {
@@ -1019,7 +1020,7 @@ test("parser - block with semicolons", fn(assert) {
   assert.truthy(result.success)
 
   let block = first(result)
-  assert.equal(block.type, "Block")
+  assert.equal(block.type, NODE.Block)
   assert.equal(len(block.expressions), 2)
 })
 
@@ -1031,8 +1032,8 @@ test("parser - return with multiple trailing semicolons", fn(assert) {
   assert.truthy(result.success)
 
   let funcNode = first(result)
-  assert.equal(funcNode.type, "Function")
-  assert.equal(funcNode.body.expressions[0].type, "Return")
+  assert.equal(funcNode.type, NODE.Function)
+  assert.equal(funcNode.body.expressions[0].type, NODE.Return)
 })
 
 test("parser - with linebreak", fn(assert) {

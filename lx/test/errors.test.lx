@@ -5,6 +5,9 @@ let test = suite.defineTest
 
 let driver = import "src/driver.lx"
 let errors = import "src/errors.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
 
 // ========================================
 // Helper: Compile and get formatted errors
@@ -172,7 +175,7 @@ test("buildNodesIndex - includes identifier nodes", fn(assert) {
     let nodeIds = keys(index)
     for let i = 0; i < len(nodeIds); i = i + 1 {
       let node = index[nodeIds[i]]
-      if node.type == "Identifier" {
+      if node.type == NODE.Identifier {
         hasIdentifier = true
       }
     }

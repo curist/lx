@@ -2,6 +2,9 @@
 let parse = import "src/passes/frontend/parser.lx"
 let lower = import "src/passes/frontend/lower.lx"
 let anf = import "src/passes/frontend/anf.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
 
 fn pad(n) {
   let s = ""
@@ -38,18 +41,19 @@ fn dumpNode(node, indent) {
     return
   }
 
-  if !node.type {
+  if node.type == nil {
     println(pad(indent) + "<map>")
     return
   }
 
-  let header = pad(indent) + node.type
+  let typeName = nameOf(NODE, node.type) or str(node.type)
+  let header = pad(indent) + typeName
   if node.id != nil { header = header + " #" + str(node.id) }
   if node.line != nil { header = header + " (L" + str(node.line) + ")" }
   if node.anfSynthetic { header = header + " [synthetic]" }
   println(header)
 
-  if node.type == "Identifier" {
+  if node.type == NODE.Identifier {
     println(pad(indent + 2) + "name: " + node.name)
     return
   }

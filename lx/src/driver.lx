@@ -15,6 +15,9 @@ let anfInline = import "src/passes/frontend/anf-inline.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
 let typecheck = import "src/passes/frontend/typecheck.lx"
 let pipeline = import "src/passes/pipeline.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
 
 // ========================================
 // Profile Definitions
@@ -278,7 +281,7 @@ fn make(opts) {
       if r.passOrder { push(r.passOrder, "typecheck") }
 
       // Record module's export type (type of last expression) for downstream imports.
-      if ast.type == "Block" and ast.expressions and len(ast.expressions) > 0 {
+      if ast.type == NODE.Block and ast.expressions and len(ast.expressions) > 0 {
         let last = ast.expressions[len(ast.expressions) - 1]
         if last and tc.types and tc.types[last.id] {
           programExports[path] = tc.types[last.id]

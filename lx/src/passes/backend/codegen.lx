@@ -6,6 +6,7 @@ let object = import "src/object.lx"
 
 let OP = types.OP
 let ValueType = types.ValueType
+let NODE = types.NODE
 let ObjType = object.ObjType
 
 let UINT16_MAX = 256 * 256
@@ -309,18 +310,18 @@ fn compileValue(gen, node) { compileExpr(gen, node, MODE.VALUE) }
 fn compileStmt(gen, node) { compileExpr(gen, node, MODE.STMT) }
 
 fn compileLiteral(gen, node) {
-  if node.type == "Nil" {
+  if node.type == NODE.Nil {
     emitByte(gen, OP.NIL, node.line)
-  } else if node.type == "Bool" {
+  } else if node.type == NODE.Bool {
     emitByte(gen, node.value and OP.TRUE or OP.FALSE, node.line)
-  } else if node.type == "Number" {
+  } else if node.type == NODE.Number {
     let value = node.value
     if value >= 0 and value < 256 and int(value) == value {
       emitBytes(gen, OP.CONST_BYTE, value, node.line)
     } else {
       emitConstant(gen, NUMBER_VAL(value), node.line)
     }
-  } else if node.type == "String" {
+  } else if node.type == NODE.String {
     emitConstant(gen, ObjectString(node.value), node.line)
   }
 }
@@ -717,7 +718,7 @@ fn compileFunctionExpr(gen, node, mode) {
 }
 
 fn compileAssignment(gen, node, mode) {
-  if node.target.type == "Identifier" {
+  if node.target.type == NODE.Identifier {
     let info = gen.assignmentInfo[node.id]
     if !info {
       addError(gen, node, "Missing assignment info.")
@@ -725,11 +726,11 @@ fn compileAssignment(gen, node, mode) {
     }
 
     // Try to emit ADD_LOCAL_IMM superinstruction for i = i + n pattern
-    if info.kind == "local" and node.value.type == "Binary" {
+    if info.kind == "local" and node.value.type == NODE.Binary {
       let binOp = node.value.operator and node.value.operator.lexeme or ""
       if binOp == "+" and
-         node.value.left.type == "Identifier" and
-         node.value.right.type == "Number" {
+         node.value.left.type == NODE.Identifier and
+         node.value.right.type == NODE.Number {
         // Check if left is the same identifier as target
         if node.value.left.name == node.target.name {
           let imm = node.value.right.value
@@ -771,11 +772,11 @@ fn compileAssignment(gen, node, mode) {
     return
   }
 
-  if node.target.type == "Index" {
+  if node.target.type == NODE.Index {
     // Try to emit STORE_BY_IDX for arr[i] = val where all are locals
-    if node.target.object.type == "Identifier" and
-       node.target.index.type == "Identifier" and
-       node.value.type == "Identifier" {
+    if node.target.object.type == NODE.Identifier and
+       node.target.index.type == NODE.Identifier and
+       node.value.type == NODE.Identifier {
       let objBinding = gen.resolvedNames[node.target.object.id]
       let idxBinding = gen.resolvedNames[node.target.index.id]
       let valBinding = gen.resolvedNames[node.value.id]
@@ -811,7 +812,7 @@ fn compileAssignment(gen, node, mode) {
     return
   }
 
-  if node.target.type == "Dot" {
+  if node.target.type == NODE.Dot {
     compileValue(gen, node.target.object)
     emitConstant(gen, ObjectString(node.target.property.value), node.line)
     compileValue(gen, node.value)
@@ -822,7 +823,7 @@ fn compileAssignment(gen, node, mode) {
     return
   }
 
-  addError(gen, node, "Unsupported assignment target: " + node.target.type)
+  addError(gen, node, "Unsupported assignment target: " + (nameOf(NODE, node.target.type) or str(node.target.type)))
 }
 
 fn compileIndex(gen, node) {
@@ -983,41 +984,41 @@ fn compileValueExpr(gen, node) {
   gen.currentNode = node
   gen.currentLine = node.line
 
-  if node.type == "Block" {
+  if node.type == NODE.Block {
     compileBlock(gen, node, MODE.VALUE)
-  } else if node.type == "Call" {
+  } else if node.type == NODE.Call {
     compileCall(gen, node)
-  } else if node.type == "If" {
+  } else if node.type == NODE.If {
     compileIf(gen, node)
-  } else if node.type == "For" {
+  } else if node.type == NODE.For {
     compileFor(gen, node)
-  } else if node.type == "Binary" {
+  } else if node.type == NODE.Binary {
     compileBinary(gen, node)
-  } else if node.type == "Logical" {
+  } else if node.type == NODE.Logical {
     compileLogical(gen, node)
-  } else if node.type == "Unary" {
+  } else if node.type == NODE.Unary {
     compileUnary(gen, node)
-  } else if node.type == "Grouping" {
+  } else if node.type == NODE.Grouping {
     compileValue(gen, node.expression)
-  } else if node.type == "Identifier" {
+  } else if node.type == NODE.Identifier {
     compileIdentifier(gen, node)
-  } else if node.type == "Number" or node.type == "String" or
-            node.type == "Bool" or node.type == "Nil" {
+  } else if node.type == NODE.Number or node.type == NODE.String or
+            node.type == NODE.Bool or node.type == NODE.Nil {
     compileLiteral(gen, node)
-  } else if node.type == "Array" {
+  } else if node.type == NODE.Array {
     compileArray(gen, node)
-  } else if node.type == "Hashmap" {
+  } else if node.type == NODE.Hashmap {
     compileHashmap(gen, node)
-  } else if node.type == "Index" {
+  } else if node.type == NODE.Index {
     compileIndex(gen, node)
-  } else if node.type == "Dot" {
+  } else if node.type == NODE.Dot {
     compileDot(gen, node)
-  } else if node.type == "Import" {
+  } else if node.type == NODE.Import {
     compileImport(gen, node)
-  } else if node.type == "IntrinsicCall" {
+  } else if node.type == NODE.IntrinsicCall {
     compileIntrinsicCall(gen, node)
   } else {
-    addError(gen, node, "Codegen not implemented for: " + node.type)
+    addError(gen, node, "Codegen not implemented for: " + (nameOf(NODE, node.type) or str(node.type)))
   }
 }
 
@@ -1027,35 +1028,35 @@ fn compileExpr(gen, node, mode) {
   gen.currentLine = node.line
 
   // Control-flow nodes that don't produce values
-  if node.type == "Return" {
+  if node.type == NODE.Return {
     compileReturn(gen, node)
     return
   }
-  if node.type == "Break" {
+  if node.type == NODE.Break {
     compileBreak(gen, node)
     return
   }
-  if node.type == "Continue" {
+  if node.type == NODE.Continue {
     compileContinue(gen, node)
     return
   }
 
   // Nodes that handle mode internally
-  if node.type == "Let" {
+  if node.type == NODE.Let {
     compileLet(gen, node, mode)
     return
   }
-  if node.type == "Assignment" {
+  if node.type == NODE.Assignment {
     compileAssignment(gen, node, mode)
     return
   }
-  if node.type == "Function" {
+  if node.type == NODE.Function {
     compileFunctionExpr(gen, node, mode)
     return
   }
 
   // Block handles mode internally to avoid value/POP overhead
-  if node.type == "Block" {
+  if node.type == NODE.Block {
     compileBlock(gen, node, mode)
     return
   }

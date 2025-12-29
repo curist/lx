@@ -2,6 +2,7 @@ let types = import "src/types.lx"
 let initScanner = import "src/passes/frontend/scanner.lx"
 
 let TOKEN = types.TOKEN
+let NODE = types.NODE
 
 let PREC = enum {
   NONE,        // 0
@@ -48,34 +49,34 @@ fn Node(type, filename, token) {
 }
 
 fn NumberNode(filename, token) {
-  let node = Node("Number", filename, token)
+  let node = Node(NODE.Number, filename, token)
   node.value = token.literal
   node.lexeme = token.lexeme
   node
 }
 
 fn StringNode(filename, token) {
-  let node = Node("String", filename, token)
+  let node = Node(NODE.String, filename, token)
   node.value = token.literal
   node.lexeme = token.lexeme
   node
 }
 
 fn BoolNode(filename, token) {
-  let node = Node("Bool", filename, token)
+  let node = Node(NODE.Bool, filename, token)
   node.value = token.type == TOKEN.TRUE
   node.lexeme = token.lexeme
   node
 }
 
 fn NilNode(filename, token) {
-  let node = Node("Nil", filename, token)
+  let node = Node(NODE.Nil, filename, token)
   node.lexeme = token.lexeme
   node
 }
 
 fn IdentifierNode(filename, token) {
-  let node = Node("Identifier", filename, token)
+  let node = Node(NODE.Identifier, filename, token)
   node.name = token.lexeme
   node.lexeme = token.lexeme
   node
@@ -91,7 +92,7 @@ fn BinaryNode(filename, left, operator, right) {
 
   .{
     id: nodeIdCounter,
-    type: "Binary",
+    type: NODE.Binary,
     filename: filename,
     line: left.line,
     col: left.col,  // Start from left operand
@@ -118,7 +119,7 @@ fn UnaryNode(filename, operator, operand) {
 
   .{
     id: nodeIdCounter,
-    type: "Unary",
+    type: NODE.Unary,
     filename: filename,
     line: operator.line,
     col: opStartCol,  // Start from operator
@@ -144,7 +145,7 @@ fn LogicalNode(filename, left, operator, right) {
 
   .{
     id: nodeIdCounter,
-    type: "Logical",
+    type: NODE.Logical,
     filename: filename,
     line: left.line,
     col: left.col,  // Start from left operand
@@ -162,7 +163,7 @@ fn LogicalNode(filename, left, operator, right) {
 }
 
 fn GroupingNode(filename, expr, startToken, endToken) {
-  let node = Node("Grouping", filename, startToken)
+  let node = Node(NODE.Grouping, filename, startToken)
   node.expression = expr
   node.endLine = endToken.line
   node.endCol = endToken.col
@@ -170,7 +171,7 @@ fn GroupingNode(filename, expr, startToken, endToken) {
 }
 
 fn LetNode(filename, startToken, nameToken, init) {
-  let node = Node("Let", filename, startToken)
+  let node = Node(NODE.Let, filename, startToken)
   node.name = IdentifierNode(filename, nameToken)
   node.init = init
   if init {
@@ -184,7 +185,7 @@ fn LetNode(filename, startToken, nameToken, init) {
 }
 
 fn BlockNode(filename, startToken, expressions, endToken) {
-  let node = Node("Block", filename, startToken)
+  let node = Node(NODE.Block, filename, startToken)
   node.expressions = expressions
   node.endLine = endToken.line
   node.endCol = endToken.col
@@ -192,7 +193,7 @@ fn BlockNode(filename, startToken, expressions, endToken) {
 }
 
 fn FunctionNode(filename, startToken, name, params, body, endToken) {
-  let node = Node("Function", filename, startToken)
+  let node = Node(NODE.Function, filename, startToken)
   node.name = name
   node.params = params
   node.body = body
@@ -208,7 +209,7 @@ fn CallNode(filename, callee, args, endToken) {
 
   .{
     id: nodeIdCounter,
-    type: "Call",
+    type: NODE.Call,
     filename: filename,
     line: callee.line,
     col: callee.col,
@@ -230,7 +231,7 @@ fn ArrowNode(filename, left, right, arrowToken) {
 
   .{
     id: nodeIdCounter,
-    type: "Arrow",
+    type: NODE.Arrow,
     filename: filename,
     line: left.line,
     col: left.col,
@@ -248,7 +249,7 @@ fn ArrowNode(filename, left, right, arrowToken) {
 }
 
 fn IfNode(filename, startToken, condition, thenBranch, elseBranch) {
-  let node = Node("If", filename, startToken)
+  let node = Node(NODE.If, filename, startToken)
   node.condition = condition
   node.then = thenBranch
   node.else = elseBranch
@@ -263,7 +264,7 @@ fn IfNode(filename, startToken, condition, thenBranch, elseBranch) {
 }
 
 fn ForNode(filename, startToken, init, condition, update, body, endToken) {
-  let node = Node("For", filename, startToken)
+  let node = Node(NODE.For, filename, startToken)
   node.init = init
   node.condition = condition
   node.update = update
@@ -274,7 +275,7 @@ fn ForNode(filename, startToken, init, condition, update, body, endToken) {
 }
 
 fn ForInNode(filename, startToken, valueBinder, indexBinder, iterable, body, endToken) {
-  let node = Node("ForIn", filename, startToken)
+  let node = Node(NODE.ForIn, filename, startToken)
   node.valueBinder = valueBinder
   node.indexBinder = indexBinder
   node.iterable = iterable
@@ -285,7 +286,7 @@ fn ForInNode(filename, startToken, valueBinder, indexBinder, iterable, body, end
 }
 
 fn CollectNode(filename, startToken, init, condition, update, body, endToken) {
-  let node = Node("Collect", filename, startToken)
+  let node = Node(NODE.Collect, filename, startToken)
   node.init = init
   node.condition = condition
   node.update = update
@@ -296,7 +297,7 @@ fn CollectNode(filename, startToken, init, condition, update, body, endToken) {
 }
 
 fn CollectInNode(filename, startToken, valueBinder, indexBinder, iterable, body, endToken) {
-  let node = Node("CollectIn", filename, startToken)
+  let node = Node(NODE.CollectIn, filename, startToken)
   node.valueBinder = valueBinder
   node.indexBinder = indexBinder
   node.iterable = iterable
@@ -307,7 +308,7 @@ fn CollectInNode(filename, startToken, valueBinder, indexBinder, iterable, body,
 }
 
 fn ReturnNode(filename, startToken, value) {
-  let node = Node("Return", filename, startToken)
+  let node = Node(NODE.Return, filename, startToken)
   node.value = value
   if value {
     node.endLine = value.endLine
@@ -317,15 +318,15 @@ fn ReturnNode(filename, startToken, value) {
 }
 
 fn BreakNode(filename, startToken) {
-  Node("Break", filename, startToken)
+  Node(NODE.Break, filename, startToken)
 }
 
 fn ContinueNode(filename, token) {
-  Node("Continue", filename, token)
+  Node(NODE.Continue, filename, token)
 }
 
 fn ArrayNode(filename, startToken, elements, endToken) {
-  let node = Node("Array", filename, startToken)
+  let node = Node(NODE.Array, filename, startToken)
   node.elements = elements
   node.endLine = endToken.line
   node.endCol = endToken.col
@@ -333,7 +334,7 @@ fn ArrayNode(filename, startToken, elements, endToken) {
 }
 
 fn HashmapNode(filename, startToken, pairs, endToken) {
-  let node = Node("Hashmap", filename, startToken)
+  let node = Node(NODE.Hashmap, filename, startToken)
   node.pairs = pairs
   node.endLine = endToken.line
   node.endCol = endToken.col
@@ -347,7 +348,7 @@ fn IndexNode(filename, object, index, endToken) {
 
   .{
     id: nodeIdCounter,
-    type: "Index",
+    type: NODE.Index,
     filename: filename,
     line: object.line,
     col: object.col,
@@ -364,7 +365,7 @@ fn DotNode(filename, object, property, endToken) {
 
   .{
     id: nodeIdCounter,
-    type: "Dot",
+    type: NODE.Dot,
     filename: filename,
     line: object.line,
     col: object.col,
@@ -380,7 +381,7 @@ fn AssignmentNode(filename, target, value, equalToken) {
 
   .{
     id: nodeIdCounter,
-    type: "Assignment",
+    type: NODE.Assignment,
     filename: filename,
     line: target.line,
     col: target.col,
@@ -392,7 +393,7 @@ fn AssignmentNode(filename, target, value, equalToken) {
 }
 
 fn ImportNode(filename, startToken, path) {
-  let node = Node("Import", filename, startToken)
+  let node = Node(NODE.Import, filename, startToken)
   node.path = path
   node.endLine = path.endLine
   node.endCol = path.endCol
@@ -409,7 +410,7 @@ fn StringKeyNodeFromToken(filename, token) {
 
   .{
     id: nodeIdCounter,
-    type: "String",
+    type: NODE.String,
     filename: filename,
     line: token.line,
     col: startCol,
@@ -925,7 +926,7 @@ fn parse(src, filename) {
     if match(TOKEN.EQUAL) {
       init = expression()
       // Disallow "let in let" pattern: let x = let y = ...
-      if init and init.type == "Let" {
+      if init and init.type == NODE.Let {
         error("'let' cannot be used directly as an initializer (use a block: { let y = ...; y })")
       }
     }

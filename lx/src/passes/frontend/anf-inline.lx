@@ -28,6 +28,8 @@
 //   - Every removed let had a remembered single-use site
 //   - Replacement succeeded
 
+let NODE = (import "src/types.lx").NODE
+
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
@@ -58,33 +60,33 @@ fn isInlineSafeExprImpl(node, depth) {
   let t = node.type
 
   // Conservative whitelist
-  if t == "Nil" or t == "Bool" or t == "Number" or t == "String" or t == "Identifier" {
+  if t == NODE.Nil or t == NODE.Bool or t == NODE.Number or t == NODE.String or t == NODE.Identifier {
     return true
   }
 
   let d = depth + 1
 
-  if t == "Binary" {
+  if t == NODE.Binary {
     return isInlineSafeExprImpl(node.left, d) and isInlineSafeExprImpl(node.right, d)
   }
 
-  if t == "Unary" {
+  if t == NODE.Unary {
     return isInlineSafeExprImpl(node.operand, d)
   }
 
-  if t == "Logical" {
+  if t == NODE.Logical {
     return isInlineSafeExprImpl(node.left, d) and isInlineSafeExprImpl(node.right, d)
   }
 
-  if t == "Dot" {
-    return isInlineSafeExprImpl(node.object, d) and node.property and node.property.type == "String"
+  if t == NODE.Dot {
+    return isInlineSafeExprImpl(node.object, d) and node.property and node.property.type == NODE.String
   }
 
-  if t == "Index" {
+  if t == NODE.Index {
     return isInlineSafeExprImpl(node.object, d) and isInlineSafeExprImpl(node.index, d)
   }
 
-  if t == "IntrinsicCall" {
+  if t == NODE.IntrinsicCall {
     let args = node.args or []
     for let i = 0; i < len(args); i = i + 1 {
       if !isInlineSafeExprImpl(args[i], d) { return false }
@@ -93,7 +95,7 @@ fn isInlineSafeExprImpl(node, depth) {
   }
 
   // Synthetic blocks with single safe expression
-  if t == "Block" and node.anfSynthetic {
+  if t == NODE.Block and node.anfSynthetic {
     let exprs = node.expressions or []
     if len(exprs) == 1 {
       return isInlineSafeExprImpl(exprs[0], d)
@@ -122,7 +124,7 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
   if t != "map" { return }
 
   // Remember blocks by id for later compaction
-  if node.type == "Block" and node.id != nil {
+  if node.type == NODE.Block and node.id != nil {
     state.blockById[node.id] = node
     // Traverse expressions with precise parent info
     let exprs = node.expressions or []
@@ -133,10 +135,10 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
   }
 
   // Track ANF temp lets and their position in Block.expressions
-  if node.type == "Let" and node.name and isAnfTempName(node.name.name) and node.name.id {
+  if node.type == NODE.Let and node.name and isAnfTempName(node.name.name) and node.name.id {
     let declId = node.name.id
     // Record where the let lives (only deletable when it's a direct element of Block.expressions)
-    if parent and parent.type == "Block" and parentField == "expressions" and parentIndex != nil and parent.id != nil {
+    if parent and parent.type == NODE.Block and parentField == "expressions" and parentIndex != nil and parent.id != nil {
       state.letByDeclId[declId] = .{
         letNode: node,
         blockId: parent.id,
@@ -157,7 +159,7 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
   }
 
   // Count identifier uses by binding identity + remember unique use-site
-  if node.type == "Identifier" and node.id {
+  if node.type == NODE.Identifier and node.id {
     let resolved = resolvedNames[node.id]
     if resolved and resolved.declaredAt {
       let declId = resolved.declaredAt
@@ -179,7 +181,7 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
   }
 
   // Specialized traversal for Let (non-temp or non-ANF let): init only
-  if node.type == "Let" {
+  if node.type == NODE.Let {
     walk(node.init, resolvedNames, state, node, "init", nil)
     return
   }
@@ -188,31 +190,31 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
   // Only specialize node types where we're certain of the field structure
   let nt = node.type
 
-  if nt == "Binary" or nt == "Logical" {
+  if nt == NODE.Binary or nt == NODE.Logical {
     walk(node.left, resolvedNames, state, node, "left", nil)
     walk(node.right, resolvedNames, state, node, "right", nil)
     return
   }
 
-  if nt == "Unary" {
+  if nt == NODE.Unary {
     walk(node.operand, resolvedNames, state, node, "operand", nil)
     return
   }
 
-  if nt == "Dot" {
+  if nt == NODE.Dot {
     walk(node.object, resolvedNames, state, node, "object", nil)
     walk(node.property, resolvedNames, state, node, "property", nil)
     return
   }
 
-  if nt == "Index" {
+  if nt == NODE.Index {
     walk(node.object, resolvedNames, state, node, "object", nil)
     walk(node.index, resolvedNames, state, node, "index", nil)
     return
   }
 
   // Literals and other leaf nodes - no traversal needed
-  if nt == "Nil" or nt == "Bool" or nt == "Number" or nt == "String" or nt == "Import" {
+  if nt == NODE.Nil or nt == NODE.Bool or nt == NODE.Number or nt == NODE.String or nt == NODE.Import {
     return
   }
 

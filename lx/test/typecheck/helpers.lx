@@ -4,6 +4,9 @@ let parse = import "src/passes/frontend/parser.lx"
 let lower = import "src/passes/frontend/lower.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
 let typecheck = import "src/passes/frontend/typecheck.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
 
 // Dereference through type variable bindings
 fn deref(result, t) {
@@ -71,15 +74,15 @@ fn normalizeExprList(ast) {
   if !ast { return nil }
 
   // Block → expressions
-  if ast.type == "Block" and ast.expressions {
+  if ast.type == NODE.Block and ast.expressions {
     // Root implicit block often wraps a single `{...}` block in tests.
-    if len(ast.expressions) == 1 and ast.expressions[0].type == "Block" and ast.expressions[0].expressions {
+    if len(ast.expressions) == 1 and ast.expressions[0].type == NODE.Block and ast.expressions[0].expressions {
       return ast.expressions[0].expressions
     }
     return ast.expressions
   }
 
-  if ast.type {
+  if ast.type != nil {
     return [ast]
   }
 
@@ -94,8 +97,8 @@ fn getExprType(result, exprIndex) {
   if !exprs or exprIndex >= len(exprs) { return nil }
 
   let node = exprs[exprIndex]
-  if node.type == "ExprStmt" and node.expr { node = node.expr }
-  if node.type == "Let" and node.name {
+  if node.type == NODE.ExprStmt and node.expr { node = node.expr }
+  if node.type == NODE.Let and node.name {
     return result.types[node.name.id]
   }
 
@@ -110,19 +113,19 @@ fn getExprNode(result, exprIndex) {
   if !exprs or exprIndex >= len(exprs) { return nil }
 
   let node = exprs[exprIndex]
-  if node.type == "ExprStmt" and node.expr { return node.expr }
+  if node.type == NODE.ExprStmt and node.expr { return node.expr }
   node
 }
 
 fn findFirstImport(ast) {
-  if !ast or ast.type != "Block" or !ast.expressions { return nil }
+  if !ast or ast.type != NODE.Block or !ast.expressions { return nil }
 
   for let i = 0; i < len(ast.expressions); i = i + 1 {
     let expr = ast.expressions[i]
-    if expr.type == "Import" {
+    if expr.type == NODE.Import {
       return expr
     }
-    if expr.type == "Let" and expr.init and expr.init.type == "Import" {
+    if expr.type == NODE.Let and expr.init and expr.init.type == NODE.Import {
       return expr.init
     }
   }

@@ -10,6 +10,7 @@
 
 let types = import "src/types.lx"
 let OP = types.OP
+let NODE = types.NODE
 
 // ========================================
 // Data Structures
@@ -435,7 +436,7 @@ fn isInFunction(scope) {
   }
 
   // Import path must be a string literal
-  if !node.path or node.path.type != "String" {
+  if !node.path or node.path.type != NODE.String {
     addError(resolver, node.id, "Import path must be a string literal")
     return nil
   }
@@ -522,7 +523,7 @@ fn resolveFunction(resolver, node, context) {
 
   // Named function expressions bind their name inside their own body
   // (enables recursion without introducing an outer-scope binding).
-  if node.name and node.name.type == "Identifier" {
+  if node.name and node.name.type == NODE.Identifier {
     let local = declareLocal(resolver, node.name.name, "fn", node.id)
     // Mark initialized immediately so the name is usable within the body.
     markInitialized(resolver, local)
@@ -554,7 +555,7 @@ fn resolveBlockWithHoisting(resolver, node, context) {
   let lastHoistedIndex = -1
   for let i = 0; i < len(node.expressions); i = i + 1 {
     let expr = node.expressions[i]
-    if expr.type == "Function" and expr.name {
+    if expr.type == NODE.Function and expr.name {
       // Named function declaration - hoist it
       let fnName = expr.name.name
       // Declare at function node id, not name node id - the function type belongs to the function
@@ -606,22 +607,22 @@ fn resolveExpr(resolver, node, context) {
   }
 
   // Dispatch based on type
-  if node.type == "Identifier" {
+  if node.type == NODE.Identifier {
     resolveIdentifier(resolver, node, context)
-  } else if node.type == "Number" or node.type == "String" or
-            node.type == "Bool" or node.type == "Nil" {
+  } else if node.type == NODE.Number or node.type == NODE.String or
+            node.type == NODE.Bool or node.type == NODE.Nil {
     // Literals - nothing to resolve
-  } else if node.type == "Binary" or node.type == "Logical" {
+  } else if node.type == NODE.Binary or node.type == NODE.Logical {
     // Binary/Logical: resolve both operands
     resolveExpr(resolver, node.left, context)
     resolveExpr(resolver, node.right, context)
-  } else if node.type == "Unary" {
+  } else if node.type == NODE.Unary {
     // Unary: resolve operand
     resolveExpr(resolver, node.operand, context)
-  } else if node.type == "Grouping" {
+  } else if node.type == NODE.Grouping {
     // Grouping: resolve inner expression
     resolveExpr(resolver, node.expression, context)
-  } else if node.type == "Let" {
+  } else if node.type == NODE.Let {
     // Let declaration
     let name = node.name.name
 
@@ -635,35 +636,35 @@ fn resolveExpr(resolver, node, context) {
 
     // Mark as initialized
     markInitialized(resolver, local)
-  } else if node.type == "Block" {
+  } else if node.type == NODE.Block {
     // Block - create new scope and use hoisting-aware resolution
     beginScope(resolver, "block")
     resolveBlockWithHoisting(resolver, node, context)
     endScope(resolver, node.id)
-  } else if node.type == "Call" {
+  } else if node.type == NODE.Call {
     // Call: resolve callee and all arguments
     resolveExpr(resolver, node.callee, context)
     for let i = 0; i < len(node.args); i = i + 1 {
       resolveExpr(resolver, node.args[i], context)
     }
-  } else if node.type == "IntrinsicCall" {
+  } else if node.type == NODE.IntrinsicCall {
     // IntrinsicCall: resolve arguments only (no callee)
     for let i = 0; i < len(node.args or []); i = i + 1 {
       resolveExpr(resolver, node.args[i], context)
     }
-  } else if node.type == "If" {
+  } else if node.type == NODE.If {
     // If: resolve condition, then, and else branches
     resolveExpr(resolver, node.condition, context)
     resolveExpr(resolver, node.then, context)
     if node.else {
       resolveExpr(resolver, node.else, context)
     }
-  } else if node.type == "Assignment" {
+  } else if node.type == NODE.Assignment {
     // Assignment: validate target and resolve binding
     let target = node.target
 
     // Validate target type
-    if target.type == "Identifier" {
+    if target.type == NODE.Identifier {
       // Resolve the identifier to get binding info
       resolveExpr(resolver, target, context)
 
@@ -688,7 +689,7 @@ fn resolveExpr(resolver, node, context) {
       } else {
         addError(resolver, node.id, "Cannot assign to identifier (no setOp)")
       }
-    } else if target.type == "Index" {
+    } else if target.type == NODE.Index {
       // Index assignment: arr[idx] = value
       // Codegen reads object/index from node.target AST
       resolveExpr(resolver, target.object, context)
@@ -696,7 +697,7 @@ fn resolveExpr(resolver, node, context) {
       resolver.assignmentInfo[node.id] = .{
         kind: "index",
       }
-    } else if target.type == "Dot" {
+    } else if target.type == NODE.Dot {
       // Dot assignment: obj.prop = value
       // Codegen reads property from node.target.property AST
       resolveExpr(resolver, target.object, context)
@@ -709,28 +710,28 @@ fn resolveExpr(resolver, node, context) {
 
     // Resolve value
     resolveExpr(resolver, node.value, context)
-  } else if node.type == "Array" {
+  } else if node.type == NODE.Array {
     // Array: resolve all elements
     for let i = 0; i < len(node.elements); i = i + 1 {
       resolveExpr(resolver, node.elements[i], context)
     }
-  } else if node.type == "Hashmap" {
+  } else if node.type == NODE.Hashmap {
     // Hashmap: resolve all keys and values
     for let i = 0; i < len(node.pairs); i = i + 1 {
       resolveExpr(resolver, node.pairs[i].key, context)
       resolveExpr(resolver, node.pairs[i].value, context)
     }
-  } else if node.type == "Index" {
+  } else if node.type == NODE.Index {
     // Index: resolve object and index
     resolveExpr(resolver, node.object, context)
     resolveExpr(resolver, node.index, context)
-  } else if node.type == "Dot" {
+  } else if node.type == NODE.Dot {
     // Dot: resolve object (property is just an identifier, not resolved)
     resolveExpr(resolver, node.object, context)
-  } else if node.type == "Function" {
+  } else if node.type == NODE.Function {
     // Function: create scope, declare params, resolve body
     resolveFunction(resolver, node, context)
-  } else if node.type == "For" {
+  } else if node.type == NODE.For {
     // For loop: create loop scope, resolve init/condition/update/body
     beginScope(resolver, "loop")
 
@@ -753,7 +754,7 @@ fn resolveExpr(resolver, node, context) {
     resolveExpr(resolver, node.body, context)
 
     endScope(resolver, node.id)
-  } else if node.type == "Return" {
+  } else if node.type == NODE.Return {
     // Return: validate placement
     let scope = resolver.currentScope
 
@@ -776,7 +777,7 @@ fn resolveExpr(resolver, node, context) {
     if node.value {
       resolveExpr(resolver, node.value, context)
     }
-  } else if node.type == "Break" {
+  } else if node.type == NODE.Break {
     // Break: must be inside loop and at end of block
     if !isInLoop(resolver.currentScope) {
       addError(resolver, node.id, "Can only break inside a loop")
@@ -785,7 +786,7 @@ fn resolveExpr(resolver, node, context) {
     if context and !context.isLastExpr {
       addError(resolver, node.id, "Break must be at end of block")
     }
-  } else if node.type == "Continue" {
+  } else if node.type == NODE.Continue {
     // Continue: must be inside loop
     if !isInLoop(resolver.currentScope) {
       addError(resolver, node.id, "Can only continue inside a loop")
@@ -794,12 +795,12 @@ fn resolveExpr(resolver, node, context) {
     if context and !context.isLastExpr {
       addError(resolver, node.id, "Continue must be at end of block")
     }
-  } else if node.type == "Import" {
+  } else if node.type == NODE.Import {
     // Import: resolve path and compile module via callback
     resolveImport(resolver, node)
   } else {
     // TODO: Implement other node types
-    addError(resolver, node.id, "Resolution not yet implemented for: " + node.type)
+    addError(resolver, node.id, "Resolution not yet implemented for: " + (nameOf(NODE, node.type) or str(node.type)))
   }
 }
 

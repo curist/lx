@@ -146,9 +146,49 @@ let OP = enum {
 
 let ValueType = enum { BOOL, NIL, NUMBER, OBJ }
 
+// AST Node kinds (stored on AST nodes as `node.type`)
+let NODE = enum {
+  // Literals / leaf
+  Number,
+  String,
+  Bool,
+  Nil,
+  Identifier,
+
+  // Expressions / statements
+  Binary,
+  Unary,
+  Logical,
+  Grouping,
+  Let,
+  Block,
+  Function,
+  Call,
+  Arrow,
+  If,
+  For,
+  ForIn,
+  Collect,
+  CollectIn,
+  Return,
+  Break,
+  Continue,
+  Array,
+  Hashmap,
+  Index,
+  Dot,
+  Assignment,
+  Import,
+  IntrinsicCall,
+
+  // Historical / optional wrapper
+  ExprStmt,
+}
+
 .{
   TOKEN: TOKEN,
   KEYWORDS: KEYWORDS,
   OP: OP,
   ValueType: ValueType,
+  NODE: NODE,
 }

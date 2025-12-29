@@ -8,6 +8,7 @@
 
 let types = import "src/types.lx"
 let TOKEN = types.TOKEN
+let NODE = types.NODE
 
 // ========================================
 // Error handling
@@ -47,76 +48,76 @@ fn copyNodeShallow(lowerer, node) {
   let t = node.type
 
   // Leaf payload
-  if t == "Number" or t == "String" or t == "Bool" {
+  if t == NODE.Number or t == NODE.String or t == NODE.Bool {
     // Note: Bool.value can be false, so we must not use truthiness checks.
     newNode.value = node.value
     newNode.lexeme = node.lexeme
-  } else if t == "Nil" {
+  } else if t == NODE.Nil {
     newNode.lexeme = node.lexeme
-  } else if t == "Identifier" {
+  } else if t == NODE.Identifier {
     newNode.name = node.name
     newNode.lexeme = node.lexeme
   }
 
   // Common expression shapes
-  else if t == "Binary" or t == "Logical" {
+  else if t == NODE.Binary or t == NODE.Logical {
     newNode.left = node.left
     newNode.operator = node.operator
     newNode.right = node.right
-  } else if t == "Unary" {
+  } else if t == NODE.Unary {
     newNode.operator = node.operator
     newNode.operand = node.operand
-  } else if t == "Grouping" {
+  } else if t == NODE.Grouping {
     newNode.expression = node.expression
-  } else if t == "Let" {
+  } else if t == NODE.Let {
     newNode.name = node.name
     newNode.init = node.init
-  } else if t == "Block" {
+  } else if t == NODE.Block {
     newNode.expressions = node.expressions
     if node.anfSynthetic != nil { newNode.anfSynthetic = node.anfSynthetic }
-  } else if t == "Function" {
+  } else if t == NODE.Function {
     newNode.name = node.name
     newNode.params = node.params
     newNode.body = node.body
-  } else if t == "Call" {
+  } else if t == NODE.Call {
     newNode.callee = node.callee
     newNode.args = node.args
-  } else if t == "Arrow" {
+  } else if t == NODE.Arrow {
     newNode.left = node.left
     newNode.operator = node.operator
     newNode.right = node.right
-  } else if t == "If" {
+  } else if t == NODE.If {
     newNode.condition = node.condition
     newNode.then = node.then
     newNode.else = node.else
-  } else if t == "For" or t == "Collect" {
+  } else if t == NODE.For or t == NODE.Collect {
     newNode.init = node.init
     newNode.condition = node.condition
     newNode.update = node.update
     newNode.body = node.body
-  } else if t == "ForIn" or t == "CollectIn" {
+  } else if t == NODE.ForIn or t == NODE.CollectIn {
     newNode.valueBinder = node.valueBinder
     newNode.indexBinder = node.indexBinder
     newNode.iterable = node.iterable
     newNode.body = node.body
-  } else if t == "Return" {
+  } else if t == NODE.Return {
     newNode.value = node.value
-  } else if t == "Array" {
+  } else if t == NODE.Array {
     newNode.elements = node.elements
-  } else if t == "Hashmap" {
+  } else if t == NODE.Hashmap {
     newNode.pairs = node.pairs
-  } else if t == "Index" {
+  } else if t == NODE.Index {
     newNode.object = node.object
     newNode.index = node.index
-  } else if t == "Dot" {
+  } else if t == NODE.Dot {
     newNode.object = node.object
     newNode.property = node.property
-  } else if t == "Assignment" {
+  } else if t == NODE.Assignment {
     newNode.target = node.target
     newNode.value = node.value
-  } else if t == "Import" {
+  } else if t == NODE.Import {
     newNode.path = node.path
-  } else if t == "IntrinsicCall" {
+  } else if t == NODE.IntrinsicCall {
     newNode.intrinsic = node.intrinsic
     newNode.args = node.args
   }
@@ -237,7 +238,7 @@ fn lowerArrow(lowerer, node) {
   let right = lowerExpr(lowerer, node.right)
 
   // Validate RHS is Call
-  if right.type != "Call" {
+  if right.type != NODE.Call {
     addError(lowerer, node.id, "Arrow operator requires function call on right side")
     return left  // Error recovery: return left side
   }
@@ -250,7 +251,7 @@ fn lowerArrow(lowerer, node) {
   }
 
   let newCall = .{
-    type: "Call",
+    type: NODE.Call,
     filename: right.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -323,7 +324,7 @@ fn lowerForIn(lowerer, node) {
   // Helper to create an Identifier node
   fn makeIdent(name) {
     .{
-      type: "Identifier",
+      type: NODE.Identifier,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -338,7 +339,7 @@ fn lowerForIn(lowerer, node) {
   // Helper to create a Number node
   fn makeNumber(value) {
     .{
-      type: "Number",
+      type: NODE.Number,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -352,7 +353,7 @@ fn lowerForIn(lowerer, node) {
 
   // Create: let __arr = arrExpr
   let arrLetNode = .{
-    type: "Let",
+    type: NODE.Let,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -366,7 +367,7 @@ fn lowerForIn(lowerer, node) {
 
   // Create: len(__arr)
   let lenCallNode = .{
-    type: "Call",
+    type: NODE.Call,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -380,7 +381,7 @@ fn lowerForIn(lowerer, node) {
 
   // Create: let __len = len(__arr)
   let lenLetNode = .{
-    type: "Let",
+    type: NODE.Let,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -394,7 +395,7 @@ fn lowerForIn(lowerer, node) {
 
   // Create: let __i = 0
   let initNode = .{
-    type: "Let",
+    type: NODE.Let,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -408,7 +409,7 @@ fn lowerForIn(lowerer, node) {
 
   // Create: __i < __len
   let conditionNode = .{
-    type: "Binary",
+    type: NODE.Binary,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -428,7 +429,7 @@ fn lowerForIn(lowerer, node) {
 
   // Create: __i = __i + 1
   let updateNode = .{
-    type: "Assignment",
+    type: NODE.Assignment,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -437,7 +438,7 @@ fn lowerForIn(lowerer, node) {
     endCol: node.col,
     target: makeIdent(idxName),
     value: .{
-      type: "Binary",
+      type: NODE.Binary,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -462,7 +463,7 @@ fn lowerForIn(lowerer, node) {
   // Add: let x = __arr[__i] (if valueBinder is not "_")
   if node.valueBinder != "_" {
     let indexExpr = .{
-      type: "Index",
+      type: NODE.Index,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -475,7 +476,7 @@ fn lowerForIn(lowerer, node) {
     lowerer.origin[indexExpr.id] = node.id
 
     let valueLetNode = .{
-      type: "Let",
+      type: NODE.Let,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -492,7 +493,7 @@ fn lowerForIn(lowerer, node) {
   // Add: let i = __i (if indexBinder is present and not "_")
   if node.indexBinder and node.indexBinder != "_" {
     let indexLetNode = .{
-      type: "Let",
+      type: NODE.Let,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -507,7 +508,7 @@ fn lowerForIn(lowerer, node) {
   }
 
   // Add original body expressions to inner body
-  if loweredBody.type == "Block" {
+  if loweredBody.type == NODE.Block {
     for let i = 0; i < len(loweredBody.expressions); i = i + 1 {
       push(innerBodyExprs, loweredBody.expressions[i])
     }
@@ -517,7 +518,7 @@ fn lowerForIn(lowerer, node) {
 
   // Create the inner block for the for loop body
   let innerBlockNode = .{
-    type: "Block",
+    type: NODE.Block,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -530,7 +531,7 @@ fn lowerForIn(lowerer, node) {
 
   // Create the for loop
   let forNode = .{
-    type: "For",
+    type: NODE.For,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -546,7 +547,7 @@ fn lowerForIn(lowerer, node) {
 
   // Wrap everything in a block
   let outerBlockNode = .{
-    type: "Block",
+    type: NODE.Block,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -576,7 +577,7 @@ fn lowerCollect(lowerer, node) {
   // Helper to create an Identifier node
   fn makeIdent(name) {
     .{
-      type: "Identifier",
+      type: NODE.Identifier,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -590,7 +591,7 @@ fn lowerCollect(lowerer, node) {
 
   // Create: let $result = [] (using array_new intrinsic)
   let arrayNewNode = .{
-    type: "IntrinsicCall",
+    type: NODE.IntrinsicCall,
     intrinsic: "array_new",
     filename: node.filename,
     id: allocNodeId(lowerer),
@@ -603,7 +604,7 @@ fn lowerCollect(lowerer, node) {
   lowerer.origin[arrayNewNode.id] = node.id
 
   let resultLetNode = .{
-    type: "Let",
+    type: NODE.Let,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -617,7 +618,7 @@ fn lowerCollect(lowerer, node) {
 
   // Create: array_append($result, body) intrinsic
   let arrayAppendNode = .{
-    type: "IntrinsicCall",
+    type: NODE.IntrinsicCall,
     intrinsic: "array_append",
     filename: node.filename,
     id: allocNodeId(lowerer),
@@ -636,7 +637,7 @@ fn lowerCollect(lowerer, node) {
 
   // Create the for loop
   let forNode = .{
-    type: "For",
+    type: NODE.For,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -652,7 +653,7 @@ fn lowerCollect(lowerer, node) {
 
   // Create the outer block: { let $result = []; for ...; $result }
   let outerBlockNode = .{
-    type: "Block",
+    type: NODE.Block,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -680,7 +681,7 @@ fn lowerCollectIn(lowerer, node) {
 
   fn makeIdent(name) {
     .{
-      type: "Identifier",
+      type: NODE.Identifier,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -694,7 +695,7 @@ fn lowerCollectIn(lowerer, node) {
 
   fn makeEmptyArray() {
     .{
-      type: "Array",
+      type: NODE.Array,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -707,7 +708,7 @@ fn lowerCollectIn(lowerer, node) {
 
   fn makeNil() {
     .{
-      type: "Nil",
+      type: NODE.Nil,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -720,7 +721,7 @@ fn lowerCollectIn(lowerer, node) {
 
   fn makeNumber(val) {
     .{
-      type: "Number",
+      type: NODE.Number,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -734,7 +735,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create: let $result = [] (using array_new intrinsic)
   let arrayNewNode = .{
-    type: "IntrinsicCall",
+    type: NODE.IntrinsicCall,
     intrinsic: "array_new",
     filename: node.filename,
     id: allocNodeId(lowerer),
@@ -747,7 +748,7 @@ fn lowerCollectIn(lowerer, node) {
   lowerer.origin[arrayNewNode.id] = node.id
 
   let resultLetNode = .{
-    type: "Let",
+    type: NODE.Let,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -761,7 +762,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create: let $arr = iterable
   let arrLetNode = .{
-    type: "Let",
+    type: NODE.Let,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -775,7 +776,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create: len($arr)
   let lenCallNode = .{
-    type: "Call",
+    type: NODE.Call,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -789,7 +790,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create: let $len = len($arr)
   let lenLetNode = .{
-    type: "Let",
+    type: NODE.Let,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -807,7 +808,7 @@ fn lowerCollectIn(lowerer, node) {
   // Add: let valueBinder = $arr[$i] (if valueBinder is not "_")
   if node.valueBinder != "_" {
     let indexExpr = .{
-      type: "Index",
+      type: NODE.Index,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -820,7 +821,7 @@ fn lowerCollectIn(lowerer, node) {
     lowerer.origin[indexExpr.id] = node.id
 
     let valueLetNode = .{
-      type: "Let",
+      type: NODE.Let,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -837,7 +838,7 @@ fn lowerCollectIn(lowerer, node) {
   // Add: let indexBinder = $i (if indexBinder is present and not "_")
   if node.indexBinder and node.indexBinder != "_" {
     let indexLetNode = .{
-      type: "Let",
+      type: NODE.Let,
       filename: node.filename,
       id: allocNodeId(lowerer),
       line: node.line,
@@ -853,7 +854,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create: array_append($result, body) intrinsic
   let arrayAppendNode = .{
-    type: "IntrinsicCall",
+    type: NODE.IntrinsicCall,
     intrinsic: "array_append",
     filename: node.filename,
     id: allocNodeId(lowerer),
@@ -868,7 +869,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create the inner block for the for loop body
   let innerBlockNode = .{
-    type: "Block",
+    type: NODE.Block,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -881,7 +882,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create: let $i = 0
   let initNode = .{
-    type: "Let",
+    type: NODE.Let,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -895,7 +896,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create: $i < $len
   let conditionNode = .{
-    type: "Binary",
+    type: NODE.Binary,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -915,7 +916,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create: $i = $i + 1
   let addNode = .{
-    type: "Binary",
+    type: NODE.Binary,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -934,7 +935,7 @@ fn lowerCollectIn(lowerer, node) {
   lowerer.origin[addNode.id] = node.id
 
   let updateNode = .{
-    type: "Assignment",
+    type: NODE.Assignment,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -948,7 +949,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create the for loop
   let forNode = .{
-    type: "For",
+    type: NODE.For,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -964,7 +965,7 @@ fn lowerCollectIn(lowerer, node) {
 
   // Create the outer block: { let $result = []; let $arr = ...; let $len = ...; for ...; $result }
   let outerBlockNode = .{
-    type: "Block",
+    type: NODE.Block,
     filename: node.filename,
     id: allocNodeId(lowerer),
     line: node.line,
@@ -1060,59 +1061,59 @@ fn lowerImport(lowerer, node) {
 fn lowerExpr(lowerer, node) {
   if !node { return nil }
 
-  if node.type == "Arrow" {
+  if node.type == NODE.Arrow {
     return lowerArrow(lowerer, node)
-  } else if node.type == "If" {
+  } else if node.type == NODE.If {
     return lowerIf(lowerer, node)
-  } else if node.type == "Binary" {
+  } else if node.type == NODE.Binary {
     return lowerBinary(lowerer, node)
-  } else if node.type == "Unary" {
+  } else if node.type == NODE.Unary {
     return lowerUnary(lowerer, node)
-  } else if node.type == "Logical" {
+  } else if node.type == NODE.Logical {
     return lowerLogical(lowerer, node)
-  } else if node.type == "Grouping" {
+  } else if node.type == NODE.Grouping {
     return lowerGrouping(lowerer, node)
-  } else if node.type == "Let" {
+  } else if node.type == NODE.Let {
     return lowerLet(lowerer, node)
-  } else if node.type == "Block" {
+  } else if node.type == NODE.Block {
     return lowerBlock(lowerer, node)
-  } else if node.type == "Function" {
+  } else if node.type == NODE.Function {
     return lowerFunction(lowerer, node)
-  } else if node.type == "Call" {
+  } else if node.type == NODE.Call {
     return lowerCall(lowerer, node)
-  } else if node.type == "For" {
+  } else if node.type == NODE.For {
     return lowerFor(lowerer, node)
-  } else if node.type == "ForIn" {
+  } else if node.type == NODE.ForIn {
     return lowerForIn(lowerer, node)
-  } else if node.type == "Collect" {
+  } else if node.type == NODE.Collect {
     return lowerCollect(lowerer, node)
-  } else if node.type == "CollectIn" {
+  } else if node.type == NODE.CollectIn {
     return lowerCollectIn(lowerer, node)
-  } else if node.type == "Return" {
+  } else if node.type == NODE.Return {
     return lowerReturn(lowerer, node)
-  } else if node.type == "Break" {
+  } else if node.type == NODE.Break {
     return lowerBreak(lowerer, node)
-  } else if node.type == "Continue" {
+  } else if node.type == NODE.Continue {
     return lowerContinue(lowerer, node)
-  } else if node.type == "Array" {
+  } else if node.type == NODE.Array {
     return lowerArray(lowerer, node)
-  } else if node.type == "Hashmap" {
+  } else if node.type == NODE.Hashmap {
     return lowerHashmap(lowerer, node)
-  } else if node.type == "Index" {
+  } else if node.type == NODE.Index {
     return lowerIndex(lowerer, node)
-  } else if node.type == "Dot" {
+  } else if node.type == NODE.Dot {
     return lowerDot(lowerer, node)
-  } else if node.type == "Assignment" {
+  } else if node.type == NODE.Assignment {
     return lowerAssignment(lowerer, node)
-  } else if node.type == "Import" {
+  } else if node.type == NODE.Import {
     return lowerImport(lowerer, node)
-  } else if node.type == "Number" or node.type == "String" or
-            node.type == "Bool" or node.type == "Nil" or
-            node.type == "Identifier" {
+  } else if node.type == NODE.Number or node.type == NODE.String or
+            node.type == NODE.Bool or node.type == NODE.Nil or
+            node.type == NODE.Identifier {
     return lowerLeaf(lowerer, node)
   } else {
     // Unknown node type - this should never happen if parser is correct
-    addError(lowerer, node.id, "Unknown node type in lowering: " + node.type)
+    addError(lowerer, node.id, "Unknown node type in lowering: " + (nameOf(NODE, node.type) or str(node.type)))
     return node
   }
 }

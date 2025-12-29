@@ -5,6 +5,10 @@
 //
 // Read-only: no inference, no unification, just table lookups + span selection.
 
+let types = import "src/types.lx"
+
+let NODE = types.NODE
+
 // ========================================
 // Helpers
 // ========================================
@@ -137,8 +141,8 @@ fn collectAllNodes(node, nodes) {
 
 fn propNameFromNode(n) {
   if !n { return nil }
-  if n.type == "Identifier" { return n.name }
-  if n.type == "String" { return n.value }
+  if n.type == NODE.Identifier { return n.name }
+  if n.type == NODE.String { return n.value }
   nil
 }
 
@@ -178,32 +182,32 @@ fn buildFileIndex(ctx) {
     }
     push(ctx.fileNodeIds[fname], id)
 
-    if n.type == "Let" and n.name {
+    if n.type == NODE.Let and n.name {
       let key = spanKeyFromNode(n.name)
       if key {
         ctx.letsByNameSpan[key] = n
       }
     }
 
-    if n.type == "Dot" and n.property {
+    if n.type == NODE.Dot and n.property {
       let key = spanKeyFromNode(n.property)
       if key and !ctx.dotsByPropertySpan[key] {
         ctx.dotsByPropertySpan[key] = n
       }
     }
 
-    if n.type == "Hashmap" {
+    if n.type == NODE.Hashmap {
       if !ctx.hashmapsByFilename[fname] {
         ctx.hashmapsByFilename[fname] = []
       }
       push(ctx.hashmapsByFilename[fname], n)
     }
 
-    if n.type == "Assignment" and n.target and n.target.type == "Dot" {
+    if n.type == NODE.Assignment and n.target and n.target.type == NODE.Dot {
       let target = n.target
       let obj = target.object
       let prop = target.property
-      if obj and obj.type == "Identifier" and prop {
+      if obj and obj.type == NODE.Identifier and prop {
         let propName = propNameFromNode(prop)
         if propName {
           let key = obj.name + "." + propName
@@ -359,7 +363,7 @@ fn findLetByNameNode(ctx, nameNode) {
   let ids = keys(ctx.nodes)
   for let i = 0; i < len(ids); i = i + 1 {
     let n = ctx.nodes[ids[i]]
-    if n and n.type == "Let" and n.name and nameNode and spanKeyFromNode(n.name) == key {
+    if n and n.type == NODE.Let and n.name and nameNode and spanKeyFromNode(n.name) == key {
       if ctx {
         let cacheKey = key or (nameNode and nameNode.id and str(nameNode.id)) or nil
         if cacheKey {
@@ -405,7 +409,7 @@ fn findDotByPropertyNode(ctx, propNode) {
   let ids = keys(ctx.nodes)
   for let i = 0; i < len(ids); i = i + 1 {
     let n = ctx.nodes[ids[i]]
-    if n and n.type == "Dot" and n.property {
+    if n and n.type == NODE.Dot and n.property {
       let p = n.property
       if p.filename == propNode.filename and
          p.line == propNode.line and p.col == propNode.col and
@@ -426,13 +430,13 @@ fn findDotByPropertyNode(ctx, propNode) {
 }
 
 fn findRecordField(recordNode, fieldName) {
-  if !recordNode or recordNode.type != "Hashmap" or !recordNode.pairs {
+  if !recordNode or recordNode.type != NODE.Hashmap or !recordNode.pairs {
     return nil
   }
   for let i = 0; i < len(recordNode.pairs); i = i + 1 {
     let pair = recordNode.pairs[i]
     let key = pair and pair.key
-    if key and key.type == "String" and key.value == fieldName {
+    if key and key.type == NODE.String and key.value == fieldName {
       return .{ key: key, value: pair.value }
     }
   }
@@ -450,11 +454,11 @@ fn findDotAssignmentValue(ctx, filename, objectName, propName) {
   let ids = ctx.fileNodeIds and ctx.fileNodeIds[filename] or keys(ctx.nodes)
   for let i = 0; i < len(ids); i = i + 1 {
     let n = ctx.nodes[ids[i]]
-    if n and n.type == "Assignment" and n.target and n.target.type == "Dot" {
+    if n and n.type == NODE.Assignment and n.target and n.target.type == NODE.Dot {
       let target = n.target
       let obj = target.object
       let prop = target.property
-      if obj and obj.type == "Identifier" and obj.name == objectName {
+      if obj and obj.type == NODE.Identifier and obj.name == objectName {
         let tProp = propNameFromNode(prop)
         if tProp == propName {
           return n.value
@@ -487,14 +491,14 @@ fn resolveExprToRecord(ctx, expr, seen) {
     seen[expr.id] = true
   }
 
-  if expr.type == "Hashmap" {
+  if expr.type == NODE.Hashmap {
     if ctx and expr.id {
       ctx._queryCache.recordByNodeId[expr.id] = expr
     }
     return expr
   }
 
-  if expr.type == "Block" {
+  if expr.type == NODE.Block {
     let last = lastExprFromAst(expr)
     let rec = resolveExprToRecord(ctx, last, seen)
     if ctx and expr.id {
@@ -504,7 +508,7 @@ fn resolveExprToRecord(ctx, expr, seen) {
     return rec
   }
 
-  if expr.type == "Grouping" {
+  if expr.type == NODE.Grouping {
     let rec = resolveExprToRecord(ctx, expr.expression, seen)
     if ctx and expr.id {
       if rec { ctx._queryCache.recordByNodeId[expr.id] = rec }
@@ -513,7 +517,7 @@ fn resolveExprToRecord(ctx, expr, seen) {
     return rec
   }
 
-  if expr.type == "Identifier" {
+  if expr.type == NODE.Identifier {
     let r = ctx.resolvedNames[nodeKeyFor(ctx, expr)]
     if !r or !r.declaredAt {
       return nil
@@ -527,7 +531,7 @@ fn resolveExprToRecord(ctx, expr, seen) {
     if !letNode or !letNode.init {
       return nil
     }
-    if letNode.init.type == "Import" and letNode.init.path {
+    if letNode.init.type == NODE.Import and letNode.init.path {
       let modulePath = letNode.init.path.value
       let moduleAst = ctx.moduleAsts and ctx.moduleAsts[modulePath]
       let moduleReturn = moduleAst and lastExprFromAst(moduleAst)
@@ -548,24 +552,24 @@ fn resolveExprToRecord(ctx, expr, seen) {
     return rec
   }
 
-  if expr.type == "Dot" {
+  if expr.type == NODE.Dot {
     let propName = propNameFromNode(expr.property)
     if !propName {
       return nil
     }
 
     // If base is an imported module, look for assignments in the module file.
-    if expr.object and expr.object.type == "Identifier" {
+    if expr.object and expr.object.type == NODE.Identifier {
       let r = ctx.resolvedNames[nodeKeyFor(ctx, expr.object)]
       if r and r.declaredAt {
         let declKey = r.declaredAtKey or r.declaredAt
         let decl = ctx.nodes[declKey]
         let letNode = decl and findLetByNameNode(ctx, decl)
-        if letNode and letNode.init and letNode.init.type == "Import" and letNode.init.path {
+        if letNode and letNode.init and letNode.init.type == NODE.Import and letNode.init.path {
           let modulePath = letNode.init.path.value
           let moduleAst = ctx.moduleAsts and ctx.moduleAsts[modulePath]
           let moduleReturn = moduleAst and lastExprFromAst(moduleAst)
-          if moduleReturn and moduleReturn.type == "Identifier" {
+          if moduleReturn and moduleReturn.type == NODE.Identifier {
             let rootName = moduleReturn.name
             let assignedValue = findDotAssignmentValue(ctx, modulePath, rootName, propName)
             if assignedValue {
@@ -634,7 +638,7 @@ fn candidatesForNodes(nodes) {
     if n {
       push(out, .{
         range: rangeOf(n),
-        nodeType: n.type,
+        nodeType: nameOf(NODE, n.type) or str(n.type),
         nodeId: n.id,
       })
     }
@@ -737,7 +741,7 @@ fn normalizeDeclTarget(ctx, declNodeId) {
 
   // If resolver stored the Function node id for named functions,
   // prefer jumping to the name identifier span when available.
-  if decl.type == "Function" and decl.name and decl.name.id {
+  if decl.type == NODE.Function and decl.name and decl.name.id {
     let nameNode = ctx.nodes[decl.name.id]
     if nameNode {
       return nameNode
@@ -933,7 +937,7 @@ fn valueTypeForRecordKey(ctx, keyNode) {
 
   for let i = 0; i < len(ids); i = i + 1 {
     let cand = hashmaps and ids[i] or ctx.nodes[ids[i]]
-    if !cand or cand.type != "Hashmap" or cand.filename != fname {
+    if !cand or cand.type != NODE.Hashmap or cand.filename != fname {
       continue
     }
 
@@ -957,7 +961,7 @@ fn valueTypeForRecordKey(ctx, keyNode) {
 // Build richer hover payload: always include formatted type, and when possible,
 // attach symbol resolution + declaration info for identifiers.
 fn buildSymbolInfo(ctx, n) {
-  if !n or n.type != "Identifier" {
+  if !n or n.type != NODE.Identifier {
     return nil
   }
 
@@ -980,7 +984,7 @@ fn buildSymbolInfo(ctx, n) {
     let declNode = ctx.nodes[declKey]
     if declNode {
       info.declaration = rangeOf(declNode)
-      info.declarationNodeType = declNode.type
+      info.declarationNodeType = nameOf(NODE, declNode.type) or str(declNode.type)
 
       let declType = ctx.types[nodeKeyFor(ctx, declNode)]
       if declType {
@@ -994,7 +998,7 @@ fn buildSymbolInfo(ctx, n) {
 
 fn buildHoverContents(ctx, n, ty) {
   // If hovering a record key, prefer the field's value type over the literal String type.
-  if n.type == "String" {
+  if n.type == NODE.String {
     let fieldType = valueTypeForRecordKey(ctx, n)
     if fieldType {
       ty = fieldType
@@ -1039,7 +1043,7 @@ fn queryHover(ctx, filename, line, col) {
   validateCtxOnce(ctx)
   let sel = nodeAtPosWithTies(ctx, filename, line, col)
   let n = sel.node
-  if n and n.type == "String" {
+  if n and n.type == NODE.String {
     let dotNode = findDotByPropertyNode(ctx, n)
     if dotNode {
       n = dotNode
@@ -1047,11 +1051,11 @@ fn queryHover(ctx, filename, line, col) {
   }
   // If we landed on a Let node but the cursor is within the name span,
   // prefer the identifier (some resolvers omit name nodes from the index).
-  if n and n.type == "Let" and n.name and contains(n.name, line, col) {
+  if n and n.type == NODE.Let and n.name and contains(n.name, line, col) {
     n = n.name
   }
   // If cursor is on a named function's identifier, prefer the name node.
-  if n and n.type == "Function" and n.name and contains(n.name, line, col) {
+  if n and n.type == NODE.Function and n.name and contains(n.name, line, col) {
     n = n.name
   }
   if !n {
@@ -1060,7 +1064,7 @@ fn queryHover(ctx, filename, line, col) {
 
   let ty = ctx.types[nodeKeyFor(ctx, n)]
   let contents = buildHoverContents(ctx, n, ty)
-  if n.type == "Dot" {
+  if n.type == NODE.Dot {
     let propName = propNameFromNode(n.property)
     if propName {
       let record = resolveExprToRecord(ctx, n.object, .{})
@@ -1076,9 +1080,9 @@ fn queryHover(ctx, filename, line, col) {
     }
   }
 
-  let details = .{ nodeType: n.type, nodeId: n.id }
+  let details = .{ nodeType: (nameOf(NODE, n.type) or str(n.type)), nodeId: n.id }
 
-  if n.type == "Identifier" {
+  if n.type == NODE.Identifier {
     let r = ctx.resolvedNames[nodeKeyFor(ctx, n)]
     if r {
       details.resolved = r
@@ -1105,7 +1109,7 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     return .{ success: false, kind: "goto", message: "No node at position: " + posLabel(filename, line, col) }
   }
 
-  if n.type == "String" {
+  if n.type == NODE.String {
     let dotNode = findDotByPropertyNode(ctx, n)
     let propName = propNameFromNode(n)
     if dotNode and propName {
@@ -1124,7 +1128,7 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     }
   }
 
-  if n.type == "Dot" {
+  if n.type == NODE.Dot {
     let propName = propNameFromNode(n.property)
     if propName {
       let record = resolveExprToRecord(ctx, n.object, .{})
@@ -1142,7 +1146,7 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     }
   }
 
-  if n.type != "Identifier" {
+  if n.type != NODE.Identifier {
     return .{ success: false, kind: "goto", message: "Not an identifier at " + posLabel(filename, line, col) }
   }
 

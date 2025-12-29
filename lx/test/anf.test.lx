@@ -1,6 +1,9 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 let helpers = import "test/anf/helpers.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
 
 fn first(result) {
   result.anfResult.ast
@@ -11,24 +14,24 @@ test("anf - binary preserves left-to-right evaluation", fn(assert) {
   assert.truthy(result.success)
 
   let expr = first(result)
-  assert.equal(expr.type, "Block")
+  assert.equal(expr.type, NODE.Block)
   assert.equal(len(expr.expressions), 3)
 
   let leftLet = expr.expressions[0]
   let rightLet = expr.expressions[1]
   let bin = expr.expressions[2]
 
-  assert.equal(leftLet.type, "Let")
-  assert.equal(leftLet.init.type, "Call")
+  assert.equal(leftLet.type, NODE.Let)
+  assert.equal(leftLet.init.type, NODE.Call)
   assert.equal(leftLet.init.callee.name, "doA")
 
-  assert.equal(rightLet.type, "Let")
-  assert.equal(rightLet.init.type, "Call")
+  assert.equal(rightLet.type, NODE.Let)
+  assert.equal(rightLet.init.type, NODE.Call)
   assert.equal(rightLet.init.callee.name, "doB")
 
-  assert.equal(bin.type, "Binary")
-  assert.equal(bin.left.type, "Identifier")
-  assert.equal(bin.right.type, "Identifier")
+  assert.equal(bin.type, NODE.Binary)
+  assert.equal(bin.left.type, NODE.Identifier)
+  assert.equal(bin.right.type, NODE.Identifier)
   assert.equal(bin.left.name, leftLet.name.name)
   assert.equal(bin.right.name, rightLet.name.name)
 })
@@ -38,21 +41,21 @@ test("anf - block expression is sequenced in binary", fn(assert) {
   assert.truthy(result.success)
 
   let expr = first(result)
-  assert.equal(expr.type, "Block")
+  assert.equal(expr.type, NODE.Block)
   assert.equal(len(expr.expressions), 3)
 
   let leftLet = expr.expressions[0]
   let rightLet = expr.expressions[1]
   let bin = expr.expressions[2]
 
-  assert.equal(leftLet.init.type, "Call")
+  assert.equal(leftLet.init.type, NODE.Call)
   assert.equal(leftLet.init.callee.name, "doA")
 
-  assert.equal(rightLet.init.type, "Block")
+  assert.equal(rightLet.init.type, NODE.Block)
   let innerBlock = rightLet.init
-  assert.equal(innerBlock.expressions[0].type, "Let")
+  assert.equal(innerBlock.expressions[0].type, NODE.Let)
 
-  assert.equal(bin.type, "Binary")
+  assert.equal(bin.type, NODE.Binary)
   assert.equal(bin.left.name, leftLet.name.name)
   assert.equal(bin.right.name, rightLet.name.name)
 })
@@ -62,19 +65,19 @@ test("anf - call args evaluated left-to-right", fn(assert) {
   assert.truthy(result.success)
 
   let expr = first(result)
-  assert.equal(expr.type, "Block")
+  assert.equal(expr.type, NODE.Block)
   assert.equal(len(expr.expressions), 3)
 
   let arg1 = expr.expressions[0]
   let arg2 = expr.expressions[1]
   let call = expr.expressions[2]
 
-  assert.equal(arg1.type, "Let")
+  assert.equal(arg1.type, NODE.Let)
   assert.equal(arg1.init.callee.name, "g")
-  assert.equal(arg2.type, "Let")
+  assert.equal(arg2.type, NODE.Let)
   assert.equal(arg2.init.callee.name, "h")
 
-  assert.equal(call.type, "Call")
+  assert.equal(call.type, NODE.Call)
   assert.equal(call.callee.name, "f")
   assert.equal(call.args[0].name, arg1.name.name)
   assert.equal(call.args[1].name, arg2.name.name)

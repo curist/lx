@@ -3,6 +3,9 @@ let test = suite.defineTest
 
 let parse = import "src/passes/frontend/parser.lx"
 let lower = import "src/passes/frontend/lower.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
 
 // Helper to parse and lower
 fn parseAndLower(src) {
@@ -32,11 +35,11 @@ test("lower - simple arrow to call", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Call")
-  assert.equal(node.callee.type, "Identifier")
+  assert.equal(node.type, NODE.Call)
+  assert.equal(node.callee.type, NODE.Identifier)
   assert.equal(node.callee.name, "f")
   assert.equal(len(node.args), 1)
-  assert.equal(node.args[0].type, "Identifier")
+  assert.equal(node.args[0].type, NODE.Identifier)
   assert.equal(node.args[0].name, "x")
 })
 
@@ -45,7 +48,7 @@ test("lower - arrow with existing args", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Call")
+  assert.equal(node.type, NODE.Call)
   assert.equal(node.callee.name, "f")
   assert.equal(len(node.args), 3)
   assert.equal(node.args[0].name, "x")
@@ -59,12 +62,12 @@ test("lower - chained arrows", fn(assert) {
 
   let node = first(result)
   // x->a()->b() should become b(a(x))
-  assert.equal(node.type, "Call")
+  assert.equal(node.type, NODE.Call)
   assert.equal(node.callee.name, "b")
   assert.equal(len(node.args), 1)
 
   let innerCall = node.args[0]
-  assert.equal(innerCall.type, "Call")
+  assert.equal(innerCall.type, NODE.Call)
   assert.equal(innerCall.callee.name, "a")
   assert.equal(len(innerCall.args), 1)
   assert.equal(innerCall.args[0].name, "x")
@@ -101,11 +104,11 @@ test("lower - if with else unchanged", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "If")
+  assert.equal(node.type, NODE.If)
   assert.truthy(node.condition)
   assert.truthy(node.then)
   assert.truthy(node.else)
-  assert.equal(node.else.type, "Block")
+  assert.equal(node.else.type, NODE.Block)
   assert.equal(node.else.expressions[0].value, 2)
 })
 
@@ -116,7 +119,7 @@ test("lower - if without else stays nil", fn(assert) {
   let parsedIf = result.parseResult.ast.expressions[0]
   let loweredIf = first(result)
 
-  assert.equal(loweredIf.type, "If")
+  assert.equal(loweredIf.type, NODE.If)
   assert.truthy(loweredIf.condition)
   assert.truthy(loweredIf.then)
 
@@ -130,11 +133,11 @@ test("lower - nested if without else", fn(assert) {
   assert.truthy(result.success)
 
   let outerIf = first(result)
-  assert.equal(outerIf.type, "If")
+  assert.equal(outerIf.type, NODE.If)
 
   // Inner if should also have nil else
   let innerIf = outerIf.then.expressions[0]
-  assert.equal(innerIf.type, "If")
+  assert.equal(innerIf.type, NODE.If)
   assert.equal(innerIf.else, nil)
 })
 
@@ -185,7 +188,7 @@ test("lower - binary expression", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Binary")
+  assert.equal(node.type, NODE.Binary)
   assert.equal(node.left.value, 1)
   assert.equal(node.right.value, 2)
 })
@@ -195,11 +198,11 @@ test("lower - function declaration", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Function")
+  assert.equal(node.type, NODE.Function)
   // Function name is an Identifier node, not a string
-  assert.equal(node.name.type, "Identifier")
+  assert.equal(node.name.type, NODE.Identifier)
   assert.equal(node.name.name, "foo")
-  assert.equal(node.body.type, "Block")
+  assert.equal(node.body.type, NODE.Block)
 })
 
 test("lower - function with arrow in body", fn(assert) {
@@ -208,7 +211,7 @@ test("lower - function with arrow in body", fn(assert) {
 
   let node = first(result)
   let bodyExpr = node.body.expressions[0]
-  assert.equal(bodyExpr.type, "Call")
+  assert.equal(bodyExpr.type, NODE.Call)
   assert.equal(bodyExpr.callee.name, "f")
   assert.equal(bodyExpr.args[0].name, "x")
 })
@@ -218,10 +221,10 @@ test("lower - array with arrow elements", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Array")
+  assert.equal(node.type, NODE.Array)
   assert.equal(len(node.elements), 2)
-  assert.equal(node.elements[0].type, "Call")
-  assert.equal(node.elements[1].type, "Call")
+  assert.equal(node.elements[0].type, NODE.Call)
+  assert.equal(node.elements[1].type, NODE.Call)
 })
 
 test("lower - hashmap with arrow values", fn(assert) {
@@ -229,9 +232,9 @@ test("lower - hashmap with arrow values", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Hashmap")
+  assert.equal(node.type, NODE.Hashmap)
   assert.equal(len(node.pairs), 1)
-  assert.equal(node.pairs[0].value.type, "Call")
+  assert.equal(node.pairs[0].value.type, NODE.Call)
 })
 
 test("lower - block with mixed expressions", fn(assert) {
@@ -239,10 +242,10 @@ test("lower - block with mixed expressions", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Block")
+  assert.equal(node.type, NODE.Block)
   assert.equal(len(node.expressions), 2)
-  assert.equal(node.expressions[0].type, "Let")
-  assert.equal(node.expressions[1].type, "Call")
+  assert.equal(node.expressions[0].type, NODE.Let)
+  assert.equal(node.expressions[1].type, NODE.Call)
 })
 
 test("lower - for loop with arrow", fn(assert) {
@@ -250,8 +253,8 @@ test("lower - for loop with arrow", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "For")
-  assert.equal(node.body.expressions[0].type, "Call")
+  assert.equal(node.type, NODE.For)
+  assert.equal(node.body.expressions[0].type, NODE.Call)
 })
 
 // ========================================
@@ -270,7 +273,7 @@ test("lower - preserves literals", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Number")
+  assert.equal(node.type, NODE.Number)
   assert.equal(node.value, 42)
 })
 
@@ -279,7 +282,7 @@ test("lower - preserves import", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Import")
+  assert.equal(node.type, NODE.Import)
 })
 
 test("lower - return with arrow", fn(assert) {
@@ -287,8 +290,8 @@ test("lower - return with arrow", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Return")
-  assert.equal(node.value.type, "Call")
+  assert.equal(node.type, NODE.Return)
+  assert.equal(node.value.type, NODE.Call)
 })
 
 test("lower - assignment with arrow", fn(assert) {
@@ -296,8 +299,8 @@ test("lower - assignment with arrow", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Assignment")
-  assert.equal(node.value.type, "Call")
+  assert.equal(node.type, NODE.Assignment)
+  assert.equal(node.value.type, NODE.Call)
 })
 
 test("lower - dot access with arrow", fn(assert) {
@@ -305,10 +308,10 @@ test("lower - dot access with arrow", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Call")
+  assert.equal(node.type, NODE.Call)
   assert.equal(node.callee.name, "process")
-  assert.equal(node.args[0].type, "Call")
-  assert.equal(node.args[0].callee.type, "Dot")
+  assert.equal(node.args[0].type, NODE.Call)
+  assert.equal(node.args[0].callee.type, NODE.Dot)
 })
 
 test("lower - index with arrow", fn(assert) {
@@ -316,9 +319,9 @@ test("lower - index with arrow", fn(assert) {
   assert.truthy(result.success)
 
   let node = first(result)
-  assert.equal(node.type, "Call")
+  assert.equal(node.type, NODE.Call)
   assert.equal(node.callee.name, "process")
-  assert.equal(node.args[0].type, "Index")
+  assert.equal(node.args[0].type, NODE.Index)
 })
 
 // ========================================
@@ -334,11 +337,11 @@ test("lower - grouping with arrow gets fresh IDs", fn(assert) {
   let loweredCall = first(result)
 
   // The lowered result should be a Call (arrow was lowered)
-  assert.equal(loweredCall.type, "Call")
+  assert.equal(loweredCall.type, NODE.Call)
 
   // The argument should be the lowered grouping
   let loweredGrouping = loweredCall.args[0]
-  assert.equal(loweredGrouping.type, "Grouping")
+  assert.equal(loweredGrouping.type, NODE.Grouping)
 
   // Lowered grouping should have fresh ID
   assert.truthy(loweredGrouping.id > parsedGrouping.id)

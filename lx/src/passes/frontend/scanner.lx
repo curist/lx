@@ -16,12 +16,16 @@ fn initScanner(src) {
   fn isAtEnd() { srcLen == state.current }
 
   fn getLexeme() {
-    let lexeme = ""
+    let n = state.current - state.start
+    if n <= 0 { return "" }
+    if n == 1 { return src[state.start] }
+    if n == 2 { return src[state.start] + src[state.start + 1] }
 
+    let parts = []
     for let i = state.start; i < state.current; i = i + 1 {
-      lexeme = lexeme + src[i]
+      push(parts, src[i])
     }
-    lexeme
+    join(parts, "")
   }
 
   fn Token(type) {.{
@@ -58,6 +62,7 @@ fn initScanner(src) {
   }}
 
   fn peekAtIndex(index) {
+    if index >= srcLen { return .{ length: 1, s: "" } }
     let charLength = {
       let val = ord(src[index])
       if val < 128 {
@@ -70,11 +75,17 @@ fn initScanner(src) {
         4
       }
     }
+    let s = src[index]
+    if charLength == 2 {
+      s = s + src[index + 1]
+    } else if charLength == 3 {
+      s = s + src[index + 1] + src[index + 2]
+    } else if charLength == 4 {
+      s = s + src[index + 1] + src[index + 2] + src[index + 3]
+    }
     return .{
       length: charLength,
-      s: range(charLength)->fold("", fn(s, i) {
-        s + src[index + i]
-      }),
+      s: s,
     }
   }
 
@@ -100,7 +111,7 @@ fn initScanner(src) {
   }
 
   fn peekNext() {
-    if isAtEnd() { nil } else { peekAtIndex(state.current + 1).s }
+    if state.current + 1 >= srcLen { nil } else { peekAtIndex(state.current + 1).s }
   }
 
   fn skipWhitespace() {
@@ -164,7 +175,7 @@ fn initScanner(src) {
       })
     },
     ["\""]: fn() {
-      let string = ""
+      let parts = []
       for peek() != "\"" and !isAtEnd() {
         let c = peek()
         if c == "\n" {
@@ -172,7 +183,7 @@ fn initScanner(src) {
           state.col = 0
         }
         if c != "\\" {
-          string = string + c
+          push(parts, c)
         } else {
           // handle escape sequences
           let escapeSequences = .{
@@ -185,7 +196,7 @@ fn initScanner(src) {
           }
           advance()
           c = peek()
-          string = string + (escapeSequences[c] or c)
+          push(parts, escapeSequences[c] or c)
         }
 
         advance()
@@ -195,7 +206,7 @@ fn initScanner(src) {
 
       // closing quote.
       advance()
-      StringToken(string)
+      StringToken(join(parts, ""))
     },
   }
 
@@ -276,4 +287,3 @@ fn initScanner(src) {
     },
   }
 }
-

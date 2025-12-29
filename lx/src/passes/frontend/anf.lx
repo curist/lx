@@ -29,15 +29,105 @@ fn allocNodeId(anf) {
 }
 
 fn copyNodeShallow(anf, node) {
-  let newNode = .{}
-  let node_keys = keys(node)
-  for let i = 0; i < len(node_keys); i = i + 1 {
-    let key = node_keys[i]
-    newNode[key] = node[key]
-  }
   let newId = allocNodeId(anf)
   anf.origin[newId] = node.id
-  newNode.id = newId
+  let newNode = .{
+    id: newId,
+    type: node.type,
+    filename: node.filename,
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+  }
+
+  let t = node.type
+
+  // Leaf payload
+  if t == "Number" or t == "String" or t == "Bool" {
+    // Note: Bool.value can be false, so we must not use truthiness checks.
+    newNode.value = node.value
+    newNode.lexeme = node.lexeme
+  } else if t == "Nil" {
+    newNode.lexeme = node.lexeme
+  } else if t == "Identifier" {
+    newNode.name = node.name
+    newNode.lexeme = node.lexeme
+  }
+
+  // Common expression shapes
+  else if t == "Binary" or t == "Logical" {
+    newNode.left = node.left
+    newNode.operator = node.operator
+    newNode.right = node.right
+  } else if t == "Unary" {
+    newNode.operator = node.operator
+    newNode.operand = node.operand
+  } else if t == "Grouping" {
+    newNode.expression = node.expression
+  } else if t == "Let" {
+    newNode.name = node.name
+    newNode.init = node.init
+  } else if t == "Block" {
+    newNode.expressions = node.expressions
+    if node.anfSynthetic != nil { newNode.anfSynthetic = node.anfSynthetic }
+  } else if t == "Function" {
+    newNode.name = node.name
+    newNode.params = node.params
+    newNode.body = node.body
+  } else if t == "Call" {
+    newNode.callee = node.callee
+    newNode.args = node.args
+  } else if t == "Arrow" {
+    newNode.left = node.left
+    newNode.operator = node.operator
+    newNode.right = node.right
+  } else if t == "If" {
+    newNode.condition = node.condition
+    newNode.then = node.then
+    newNode.else = node.else
+  } else if t == "For" or t == "Collect" {
+    newNode.init = node.init
+    newNode.condition = node.condition
+    newNode.update = node.update
+    newNode.body = node.body
+  } else if t == "ForIn" or t == "CollectIn" {
+    newNode.valueBinder = node.valueBinder
+    newNode.indexBinder = node.indexBinder
+    newNode.iterable = node.iterable
+    newNode.body = node.body
+  } else if t == "Return" {
+    newNode.value = node.value
+  } else if t == "Array" {
+    newNode.elements = node.elements
+  } else if t == "Hashmap" {
+    newNode.pairs = node.pairs
+  } else if t == "Index" {
+    newNode.object = node.object
+    newNode.index = node.index
+  } else if t == "Dot" {
+    newNode.object = node.object
+    newNode.property = node.property
+  } else if t == "Assignment" {
+    newNode.target = node.target
+    newNode.value = node.value
+  } else if t == "Import" {
+    newNode.path = node.path
+  } else if t == "IntrinsicCall" {
+    newNode.intrinsic = node.intrinsic
+    newNode.args = node.args
+  }
+
+  // Slow path: preserve any additional fields on unknown node types.
+  else if type(node) == "map" {
+    let node_keys = keys(node)
+    for let i = 0; i < len(node_keys); i = i + 1 {
+      let key = node_keys[i]
+      if key == "id" { continue }
+      newNode[key] = node[key]
+    }
+  }
+
   newNode
 }
 
@@ -183,12 +273,26 @@ fn isAtomic(node) {
   false
 }
 
+fn appendAll(dst, src) {
+  if !src { return dst }
+  for let i = 0; i < len(src); i = i + 1 {
+    push(dst, src[i])
+  }
+  dst
+}
+
 fn wrapWithPrelude(anf, templateNode, pre, expr) {
   if len(pre) == 0 { return expr }
   if expr and expr.type == "Block" and expr.expressions {
-    return makeBlock(anf, templateNode, concat(pre, expr.expressions))
+    let exprs = []
+    appendAll(exprs, pre)
+    appendAll(exprs, expr.expressions)
+    return makeBlock(anf, templateNode, exprs)
   }
-  makeBlock(anf, templateNode, concat(pre, [expr]))
+  let exprs = []
+  appendAll(exprs, pre)
+  push(exprs, expr)
+  makeBlock(anf, templateNode, exprs)
 }
 
 
@@ -238,8 +342,11 @@ fn anfToAtomic(anf, node) {
 
     addName(anf, letName.name)
 
+    let outPre = []
+    appendAll(outPre, pre)
+    push(outPre, letNode)
     return .{
-      pre: concat(pre, [letNode]),
+      pre: outPre,
       expr: makeIdentifier(anf, node, letName.name),
     }
   }
@@ -338,7 +445,10 @@ fn anfBinary(anf, node) {
   let newNode = copyNodeShallow(anf, node)
   newNode.left = left.expr
   newNode.right = right.expr
-  wrapWithPrelude(anf, node, concat(left.pre, right.pre), newNode)
+  let pre = []
+  appendAll(pre, left.pre)
+  appendAll(pre, right.pre)
+  wrapWithPrelude(anf, node, pre, newNode)
 }
 
 fn anfUnary(anf, node) {
@@ -394,7 +504,7 @@ fn anfBlock(anf, node) {
   for let i = 0; i < len(node.expressions); i = i + 1 {
     let expr = anfExpr(anf, node.expressions[i])
     if expr and expr.type == "Block" and expr.anfSynthetic and expr.expressions {
-      newExprs = concat(newExprs, expr.expressions)
+      appendAll(newExprs, expr.expressions)
     } else {
       push(newExprs, expr)
     }
@@ -422,11 +532,12 @@ fn anfFunction(anf, node) {
 
 fn anfCall(anf, node) {
   let callee = anfToAtomic(anf, node.callee)
-  let pre = callee.pre
+  let pre = []
+  appendAll(pre, callee.pre)
   let args = []
   for let i = 0; i < len(node.args); i = i + 1 {
     let arg = anfToAtomic(anf, node.args[i])
-    pre = concat(pre, arg.pre)
+    appendAll(pre, arg.pre)
     push(args, arg.expr)
   }
   let newNode = copyNodeShallow(anf, node)
@@ -441,7 +552,7 @@ fn anfIntrinsicCall(anf, node) {
   let args = []
   for let i = 0; i < len(node.args or []); i = i + 1 {
     let arg = anfToAtomic(anf, node.args[i])
-    pre = concat(pre, arg.pre)
+    appendAll(pre, arg.pre)
     push(args, arg.expr)
   }
   let newNode = copyNodeShallow(anf, node)
@@ -470,7 +581,7 @@ fn anfFor(anf, node) {
     // Special case: preserve Let node kind for resolver
     // If init produces preludes, hoist them before the for
     let lowered = anfLetNoWrap(anf, node.init)
-    pre = concat(pre, lowered.pre)
+    appendAll(pre, lowered.pre)
     newNode.init = lowered.letNode
   } else if node.init {
     newNode.init = anfToValue(anf, node.init)
@@ -511,7 +622,7 @@ fn anfArray(anf, node) {
   let elements = []
   for let i = 0; i < len(node.elements); i = i + 1 {
     let elem = anfToAtomic(anf, node.elements[i])
-    pre = concat(pre, elem.pre)
+    appendAll(pre, elem.pre)
     push(elements, elem.expr)
   }
   let newNode = copyNodeShallow(anf, node)
@@ -525,9 +636,9 @@ fn anfHashmap(anf, node) {
   for let i = 0; i < len(node.pairs); i = i + 1 {
     let pair = node.pairs[i]
     let key = anfToAtomic(anf, pair.key)
-    pre = concat(pre, key.pre)
+    appendAll(pre, key.pre)
     let value = anfToAtomic(anf, pair.value)
-    pre = concat(pre, value.pre)
+    appendAll(pre, value.pre)
     push(pairs, .{ key: key.expr, value: value.expr })
   }
   let newNode = copyNodeShallow(anf, node)
@@ -541,7 +652,10 @@ fn anfIndex(anf, node) {
   let newNode = copyNodeShallow(anf, node)
   newNode.object = object.expr
   newNode.index = index.expr
-  wrapWithPrelude(anf, node, concat(object.pre, index.pre), newNode)
+  let pre = []
+  appendAll(pre, object.pre)
+  appendAll(pre, index.pre)
+  wrapWithPrelude(anf, node, pre, newNode)
 }
 
 fn anfDot(anf, node) {
@@ -560,7 +674,9 @@ fn anfAssignment(anf, node) {
   } else if node.target.type == "Index" {
     let object = anfToAtomic(anf, node.target.object)
     let index = anfToAtomic(anf, node.target.index)
-    targetPre = concat(object.pre, index.pre)
+    targetPre = []
+    appendAll(targetPre, object.pre)
+    appendAll(targetPre, index.pre)
     let newTarget = copyNodeShallow(anf, node.target)
     newTarget.object = object.expr
     newTarget.index = index.expr
@@ -581,7 +697,9 @@ fn anfAssignment(anf, node) {
   let newNode = copyNodeShallow(anf, node)
   newNode.target = targetNode
   newNode.value = value.expr
-  let pre = concat(targetPre, value.pre)
+  let pre = []
+  appendAll(pre, targetPre)
+  appendAll(pre, value.pre)
 
   // Only wrap in block if there's actually prelude
   if len(pre) == 0 {

@@ -566,7 +566,7 @@ fn parse(src, filename) {
 
   fn parsePrecedence(precedence) {
     advance()
-    let prefixRule = getRule(parser.previous.type).prefix
+    let prefixRule = getRule(parser.previous.type)[0]
     if !prefixRule {
       error("Expect expression.")
       return nil
@@ -575,9 +575,9 @@ fn parse(src, filename) {
     let canAssign = precedence <= PREC.ASSIGNMENT
     let left = prefixRule(canAssign)
 
-    for precedence <= getRule(parser.current.type).precedence {
+    for precedence <= getRule(parser.current.type)[2] {
       advance()
-      let infixRule = getRule(parser.previous.type).infix
+      let infixRule = getRule(parser.previous.type)[1]
       if !infixRule {
         error("Expect expression.")
         return nil
@@ -642,7 +642,7 @@ fn parse(src, filename) {
   fn binary(left, canAssign) {
     let operator = parser.previous
     let rule = getRule(operator.type)
-    let right = parsePrecedence(rule.precedence + 1)
+    let right = parsePrecedence(rule[2] + 1)
     if !right {
       return left
     }
@@ -1222,12 +1222,7 @@ fn parse(src, filename) {
   }
 
   fn getRule(type) {
-    let rule = parseRules[type]
-    return .{
-      prefix: rule[0],
-      infix: rule[1],
-      precedence: rule[2],
-    }
+    parseRules[type] or [nil, nil, PREC.NONE]
   }
 
   // Main parsing loop

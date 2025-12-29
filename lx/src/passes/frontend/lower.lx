@@ -32,19 +32,104 @@ fn allocNodeId(lowerer) {
 }
 
 fn copyNodeShallow(lowerer, node) {
-  // Copy all fields from node (shallow copy)
-  let newNode = .{}
-  // Copy all properties
-  let node_keys = keys(node)
-  for let i = 0; i < len(node_keys); i = i + 1 {
-    let key = node_keys[i]
-    newNode[key] = node[key]
-  }
-
-  // Assign new ID and track provenance
   let newId = allocNodeId(lowerer)
   lowerer.origin[newId] = node.id
-  newNode.id = newId
+  let newNode = .{
+    id: newId,
+    type: node.type,
+    filename: node.filename,
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+  }
+
+  let t = node.type
+
+  // Leaf payload
+  if t == "Number" or t == "String" or t == "Bool" {
+    // Note: Bool.value can be false, so we must not use truthiness checks.
+    newNode.value = node.value
+    newNode.lexeme = node.lexeme
+  } else if t == "Nil" {
+    newNode.lexeme = node.lexeme
+  } else if t == "Identifier" {
+    newNode.name = node.name
+    newNode.lexeme = node.lexeme
+  }
+
+  // Common expression shapes
+  else if t == "Binary" or t == "Logical" {
+    newNode.left = node.left
+    newNode.operator = node.operator
+    newNode.right = node.right
+  } else if t == "Unary" {
+    newNode.operator = node.operator
+    newNode.operand = node.operand
+  } else if t == "Grouping" {
+    newNode.expression = node.expression
+  } else if t == "Let" {
+    newNode.name = node.name
+    newNode.init = node.init
+  } else if t == "Block" {
+    newNode.expressions = node.expressions
+    if node.anfSynthetic != nil { newNode.anfSynthetic = node.anfSynthetic }
+  } else if t == "Function" {
+    newNode.name = node.name
+    newNode.params = node.params
+    newNode.body = node.body
+  } else if t == "Call" {
+    newNode.callee = node.callee
+    newNode.args = node.args
+  } else if t == "Arrow" {
+    newNode.left = node.left
+    newNode.operator = node.operator
+    newNode.right = node.right
+  } else if t == "If" {
+    newNode.condition = node.condition
+    newNode.then = node.then
+    newNode.else = node.else
+  } else if t == "For" or t == "Collect" {
+    newNode.init = node.init
+    newNode.condition = node.condition
+    newNode.update = node.update
+    newNode.body = node.body
+  } else if t == "ForIn" or t == "CollectIn" {
+    newNode.valueBinder = node.valueBinder
+    newNode.indexBinder = node.indexBinder
+    newNode.iterable = node.iterable
+    newNode.body = node.body
+  } else if t == "Return" {
+    newNode.value = node.value
+  } else if t == "Array" {
+    newNode.elements = node.elements
+  } else if t == "Hashmap" {
+    newNode.pairs = node.pairs
+  } else if t == "Index" {
+    newNode.object = node.object
+    newNode.index = node.index
+  } else if t == "Dot" {
+    newNode.object = node.object
+    newNode.property = node.property
+  } else if t == "Assignment" {
+    newNode.target = node.target
+    newNode.value = node.value
+  } else if t == "Import" {
+    newNode.path = node.path
+  } else if t == "IntrinsicCall" {
+    newNode.intrinsic = node.intrinsic
+    newNode.args = node.args
+  }
+
+  // Slow path: preserve any additional fields on unknown node types.
+  else if type(node) == "map" {
+    let node_keys = keys(node)
+    for let i = 0; i < len(node_keys); i = i + 1 {
+      let key = node_keys[i]
+      if key == "id" { continue }
+      newNode[key] = node[key]
+    }
+  }
 
   newNode
 }

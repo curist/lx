@@ -34,6 +34,7 @@ fn Scope(enclosing, type) {
     hoistedFns: .{},         // name → HoistedFunction
     lastHoistedFunctionIndex: -1,
     upvalues: [],            // [Upvalue]
+    upvalueIndexByKey: .{},  // "L:<captured>" | "U:<captured>" -> index (perf: avoid O(n) scans)
     baseSlot: initialSlot,   // NEW: restore point for block/loop scopes
     nextSlot: initialSlot,   // Start from function's current slot for blocks/loops
   }
@@ -206,18 +207,17 @@ fn markInitialized(resolver, local) {
 // ========================================
 
 fn addUpvalue(resolver, scope, isLocal, captured, slot) {
-  // Check if upvalue already exists
   // For isLocal captures: captured is nodeId, for indirect: captured is upvalue index
-  for let i = 0; i < len(scope.upvalues); i = i + 1 {
-    let uv = scope.upvalues[i]
-    if uv.isLocal == isLocal and uv.captured == captured {
-      return i  // Already have this upvalue
-    }
+  let key = (isLocal and "L:" or "U:") + str(captured)
+  let existing = scope.upvalueIndexByKey[key]
+  if existing != nil {
+    return existing
   }
 
   // Add new upvalue
   let index = len(scope.upvalues)
   push(scope.upvalues, Upvalue(index, isLocal, captured, slot))
+  scope.upvalueIndexByKey[key] = index
   index
 }
 
@@ -231,12 +231,18 @@ fn resolveUpvalue(resolver, scope, name, nodeId) {
   if !scope or !scope.enclosing { return }  // At root scope
 
   // Walk scopes iteratively to avoid deep recursion.
-  let chain = []
+  // Track only function scopes (blocks/loops don't carry upvalues at runtime).
+  let functionScopes = []  // innermost -> outermost (closest to definition at end)
+  let functionCount = 0
+
   let current = scope
   for current and current.enclosing {
-    push(chain, current)
-    let enclosing = current.enclosing
+    if current.type == "function" {
+      push(functionScopes, current)
+      functionCount = functionCount + 1
+    }
 
+    let enclosing = current.enclosing
     let local = enclosing.localsByName[name]
     if local {
       if local.depth == -1 {
@@ -245,42 +251,18 @@ fn resolveUpvalue(resolver, scope, name, nodeId) {
       }
       markCaptured(local)
 
-      // FIX: Find the first FUNCTION scope in the chain
-      // Block/loop scopes don't have upvalues at runtime
-      let firstFunctionIdx = -1
-      for let i = len(chain) - 1; i >= 0; i = i - 1 {
-        if chain[i].type == "function" {
-          firstFunctionIdx = i
-          break
-        }
-      }
-
-      // If no function scope in chain, this is a local reference (shouldn't happen in upvalue resolution)
-      if firstFunctionIdx == -1 {
+      // If there is no intervening function scope, this is a local reference.
+      if len(functionScopes) == 0 {
         return nil
       }
 
-      // Add upvalue to the first function scope with isLocal=true
+      // The outermost function scope in the chain captures the local directly.
       // CRITICAL FIX: Pass nodeId instead of slot for robust slot mapping in codegen
-      let firstFunctionScope = chain[firstFunctionIdx]
-      let index = addUpvalue(resolver, firstFunctionScope, true, local.nodeId, local.slot)
+      let index = addUpvalue(resolver, functionScopes[len(functionScopes) - 1], true, local.nodeId, local.slot)
 
-      // Walk backwards from firstFunctionIdx-1 to 0, adding indirect upvalues to function scopes
-      for let i = firstFunctionIdx - 1; i >= 0; i = i - 1 {
-        let scopeInChain = chain[i]
-
-        if scopeInChain.type == "function" {
-          // For indirect captures, slot is the upvalue index from parent
-          index = addUpvalue(resolver, scopeInChain, false, index, index)
-        }
-      }
-
-      // FIX: Count function scopes in the chain to determine isLocal
-      let functionCount = 0
-      for let i = 0; i < len(chain); i = i + 1 {
-        if chain[i].type == "function" {
-          functionCount = functionCount + 1
-        }
+      // Inner function scopes capture indirectly via their parent's upvalue index.
+      for let i = len(functionScopes) - 2; i >= 0; i = i - 1 {
+        index = addUpvalue(resolver, functionScopes[i], false, index, index)
       }
 
       return .{
@@ -288,6 +270,7 @@ fn resolveUpvalue(resolver, scope, name, nodeId) {
         isLocal: functionCount == 1,
       }
     }
+
     current = enclosing
   }
 

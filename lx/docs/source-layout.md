@@ -27,6 +27,7 @@ lx/
 User-facing programs you run directly, e.g.:
 - `lx/cmd/mlx.lx`: the compiler command surface
 - `lx/cmd/anf_debug.lx`: debugging / introspection commands
+- `lx/cmd/lxcheck.lx`: developer-facing CLI to typecheck an entry module (run as `./cmd/lxcheck.lx typecheck <entry>` from `lx/`)
 
 Guideline: `cmd/` should be thin wrappers around `src/` libraries.
 
@@ -92,4 +93,3 @@ Proposed components:
 
 Pragmatic migration rule: keep the existing AST codegen working until `typed-backend`
 is stable; avoid breaking `default` while the typed IR is under construction.
-

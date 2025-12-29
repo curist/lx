@@ -2112,6 +2112,60 @@ fn checkFunction(checker, node) {
   fnT
 }
 
+fn dotPropertyName(node) {
+  if !node or node.type != "Dot" { return nil }
+  if node.property and node.property.type == "Identifier" { return node.property.name }
+  if node.property and node.property.type == "String" { return node.property.value }
+  nil
+}
+
+fn enumMembersMapFromInfo(info) {
+  if !info or !info.members { return nil }
+  let m = .{}
+  for let i = 0; i < len(info.members); i = i + 1 {
+    let mem = info.members[i]
+    if mem and mem.name != nil and mem.value != nil {
+      m[mem.name] = mem.value
+    }
+  }
+  m
+}
+
+fn findEnumMemberMapInModuleResult(moduleResult, fieldName) {
+  if !moduleResult or !fieldName { return nil }
+  let parseResult = moduleResult.passes and moduleResult.passes.parse
+  if !parseResult or !parseResult.ast { return nil }
+
+  let enumInfo = parseResult.enumInfo or .{}
+  let ast = parseResult.ast
+  if ast.type != "Block" or !ast.expressions { return nil }
+
+  for let i = 0; i < len(ast.expressions); i = i + 1 {
+    let n = ast.expressions[i]
+
+    // Pattern A: `let X = enum {...}`
+    if n and n.type == "Let" and n.name and n.name.type == "Identifier" and n.name.name == fieldName {
+      let init = n.init
+      if init and init.type == "Hashmap" and enumInfo[init.id] {
+        return enumMembersMapFromInfo(enumInfo[init.id])
+      }
+    }
+
+    // Pattern B: `something.FIELD = enum {...}` (common in `types.lx`)
+    if n and n.type == "Assignment" and n.target and n.target.type == "Dot" {
+      let prop = dotPropertyName(n.target)
+      if prop == fieldName {
+        let v = n.value
+        if v and v.type == "Hashmap" and enumInfo[v.id] {
+          return enumMembersMapFromInfo(enumInfo[v.id])
+        }
+      }
+    }
+  }
+
+  nil
+}
+
 fn checkLet(checker, node) {
   let tv = bindDecl(checker, node.name.id)
   checker.types[node.name.id] = tv
@@ -2125,14 +2179,51 @@ fn checkLet(checker, node) {
     if node.init.type == "Hashmap" and checker.enumInfo and checker.enumInfo[node.init.id] {
       let info = checker.enumInfo[node.init.id]
       if info and info.members {
-        let m = .{}
-        for let i = 0; i < len(info.members); i = i + 1 {
-          let mem = info.members[i]
-          if mem and mem.name != nil and mem.value != nil {
-            m[mem.name] = mem.value
-          }
+        checker.enumDeclValues[node.name.id] = enumMembersMapFromInfo(info)
+      }
+    }
+
+    // Alias propagation:
+    // - ANF may rewrite `let x = import ...` into `let t = import ...; let x = t`.
+    // - Preserve import/enum metadata across simple identifier aliases.
+    if node.init.type == "Identifier" {
+      let src = checker.resolvedNames and checker.resolvedNames[node.init.id]
+      let srcDeclId = src and src.declaredAt
+      if srcDeclId {
+        let imported = checker.importResultsByDeclId and checker.importResultsByDeclId[srcDeclId]
+        if imported {
+          checker.importResultsByDeclId[node.name.id] = imported
         }
-        checker.enumDeclValues[node.name.id] = m
+        let em = checker.enumDeclValues and checker.enumDeclValues[srcDeclId]
+        if em {
+          checker.enumDeclValues[node.name.id] = em
+        }
+      }
+    }
+
+    // If this let binds an import result, keep it around so later lets can pull
+    // enum tables out of imported modules via `let X = imported.FIELD`.
+    if node.init.type == "Import" {
+      let info = checker.resolveResult and checker.resolveResult.importInfoByNodeId and
+                 checker.resolveResult.importInfoByNodeId[node.init.id]
+      let imported = info and info.importResult
+      if imported {
+        checker.importResultsByDeclId[node.name.id] = imported
+      }
+    }
+
+    // Bridge: `let TOKEN = types.TOKEN` where `types` came from an import, and
+    // the imported module assigns `*.TOKEN = enum {...}`.
+    if node.init.type == "Dot" and node.init.object and node.init.object.type == "Identifier" {
+      let baseBinding = checker.resolvedNames and checker.resolvedNames[node.init.object.id]
+      let baseDeclId = baseBinding and baseBinding.declaredAt
+      let imported = baseDeclId and checker.importResultsByDeclId and checker.importResultsByDeclId[baseDeclId]
+      let fieldName = dotPropertyName(node.init)
+      if imported and fieldName {
+        let m = findEnumMemberMapInModuleResult(imported, fieldName)
+        if m {
+          checker.enumDeclValues[node.name.id] = m
+        }
       }
     }
   }
@@ -2693,6 +2784,7 @@ fn makeChecker(resolveResult, opts) {
     enumInfo: (opts and opts.enumInfo) or .{},
     enumDeclValues: .{}, // let declNodeId -> { memberName -> number }
     recordEnumKeyOrigins: .{}, // recordLiteralNodeId -> { key -> { enumDeclId, enumName, member } }
+    importResultsByDeclId: .{}, // let declNodeId -> moduleResult (for imported modules)
 
     changed: false,
     solverHitMaxRounds: nil,

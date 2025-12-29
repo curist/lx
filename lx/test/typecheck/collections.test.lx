@@ -123,11 +123,13 @@ fn register(test) {
     assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
   })
 
-  test("typecheck - record index must be literal", fn(assert) {
+  test("typecheck - record index supports variable key", fn(assert) {
     let result = parseAndTypecheck("{ let k = \"a\"\nlet r = .{ a: 1 }\nr[k] }")
-    assert.truthy(!result.success)
-    assert.truthy(hasError(result, "Record index must be a literal string or number key"))
-    assert.truthy(!hasError(result, "Unresolved index"))
+    assert.truthy(result.success)
+    if !result.success { return }
+    let t = deref(result, getExprType(result, 2))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "Number")
   })
 
   test("typecheck - record index set requires existing key", fn(assert) {

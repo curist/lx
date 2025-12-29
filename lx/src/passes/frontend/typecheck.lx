@@ -1394,9 +1394,46 @@ fn trySolveConstraint(checker, c) {
 
     if base.kind == "Record" or base.kind == "Enum" {
       if c.literalKey == nil {
-        addError(checker, c.nodeId, (base.kind == "Enum" and "Enum" or "Record") + " index must be a literal string or number key")
-        markConstraintError(c)
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        // Dynamic record/enum indexing is allowed (runtime returns nil if missing).
+        // Enforce key-like index type, then approximate result as Option[join(fields)].
+        if !c.emittedKeyLike {
+          emitKeyLike(checker, c.index, c.nodeId)
+          c.emittedKeyLike = true
+        }
+
+        // If index is still unknown, defer to allow KeyLike to refine.
+        if idx.kind == "TypeVar" {
+          let idxInfo = derefWithRootVar(checker, c.index)
+          if idxInfo and idxInfo.root and idxInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, idxInfo.root.id) {
+            return false
+          }
+        }
+
+        // Join all field value types; fall back to Any if heterogeneous.
+        let keysList = keys(base.fields)
+        let joined = nil
+        if len(keysList) == 0 {
+          joined = typeAny()
+        } else {
+          let tv = freshTypeVar(checker)
+          for let i = 0; i < len(keysList); i = i + 1 {
+            let k = keysList[i]
+            let ft = base.fields[k]
+            if !unify(checker, tv, ft) {
+              bindTypeVar(checker, tv.id, typeAny())
+              break
+            }
+          }
+          joined = deref(checker, tv)
+        }
+
+        let outT = typeOption(joined)
+        if !unify(checker, c.out, outT) {
+          addError(checker, c.nodeId, "Index result mismatch")
+          markConstraintError(c)
+          containEqFailure(checker, deref(checker, c.out), deref(checker, outT))
+          if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
+        }
         return true
       }
       let ft = base.fields[c.literalKey]
@@ -1882,7 +1919,7 @@ fn checkBinary(checker, node) {
     return t
   }
 
-  if op == "-" or op == "*" or op == "/" {
+  if op == "-" or op == "*" or op == "/" or op == "%" {
     let lt = synthExpr(checker, node.left)
     let rt = synthExpr(checker, node.right)
     checkExprWithActual(checker, node.left, lt, typeNumber(), node.left.id, "Expected number")

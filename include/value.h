@@ -97,5 +97,6 @@ void initValueArray(ValueArray* array);
 void writeValueArray(ValueArray* array, Value value);
 void freeValueArray(ValueArray* array);
 void printValue(FILE* fd, Value value);
+int valueToString(Value value, char** out);
 
 #endif

@@ -3,6 +3,7 @@
 
 #include "memory.h"
 #include "object.h"
+#include "print.h"
 #include "table.h"
 #include "value.h"
 #include "vm.h"
@@ -187,54 +188,69 @@ ObjArray* newArray() {
   return array;
 }
 
-static void printFunction(FILE* fd, ObjFunction* function) {
-  if (function->name == NULL) {
-    fprintf(fd, "<script>");
-    return;
-  }
-  fprintf(fd, "<fn %s>", function->name->chars);
+void printObject(FILE* fd, Value value) {
+  Writer writer = writerForFile(fd);
+  writeObject(&writer, value);
 }
 
-void printObject(FILE* fd, Value value) {
+static void writeFunction(Writer* writer, ObjFunction* function) {
+  if (function->name == NULL) {
+    writerWrite(writer, "<script>", 8);
+    return;
+  }
+  writerPrintf(writer, "<fn %s>", function->name->chars);
+}
+
+void writeObject(Writer* writer, Value value) {
   switch (OBJ_TYPE(value)) {
     case OBJ_CLOSURE:
-      printFunction(fd, AS_CLOSURE(value)->function);
+      writeFunction(writer, AS_CLOSURE(value)->function);
       break;
     case OBJ_FUNCTION:
-      printFunction(fd, AS_FUNCTION(value));
+      writeFunction(writer, AS_FUNCTION(value));
       break;
     case OBJ_NATIVE:
-      fprintf(fd, "<native fn: %s>", AS_NATIVE(value)->name->chars);
+      writerPrintf(writer, "<native fn: %s>", AS_NATIVE(value)->name->chars);
       break;
     case OBJ_STRING:
-      fprintf(fd, "%s", AS_CSTRING(value));
+      writerPrintf(writer, "%s", AS_CSTRING(value));
       break;
     case OBJ_UPVALUE:
-      fprintf(fd, "upvalue");
+      writerWrite(writer, "upvalue", 7);
       break;
     case OBJ_HASHMAP:
       {
-        fprintf(fd, ".{");
+        writerWrite(writer, ".{", 2);
         Table* hashmap = &AS_HASHMAP(value);
 
         bool printed = false;
 
+        for (int i = hashmap->arrayCapacity - 1; i >= 0; --i) {
+          if (hashmap->arrayPresent != NULL && hashmap->arrayPresent[i]) {
+            if (printed) writerWrite(writer, ",", 1);
+            else printed = true;
+            writeValue(writer, NUMBER_VAL((double)i));
+            writerWrite(writer, ":", 1);
+            writeValue(writer, hashmap->arrayValues[i]);
+          }
+        }
+
         for (int i = hashmap->capacity - 1; i >= 0; --i) {
           Entry* entry = &hashmap->entries[i];
           if (!IS_NIL(entry->key)) {
-            if (printed) fprintf(fd, ",");
+            if (printed) writerWrite(writer, ",", 1);
             else printed = true;
-            printValue(fd, entry->key);
-            fprintf(fd, ":");
-            printValue(fd, entry->value);
+            writeValue(writer, entry->key);
+            writerWrite(writer, ":", 1);
+            writeValue(writer, entry->value);
           }
         }
-        fprintf(fd, "}");
+        writerWrite(writer, "}", 1);
         break;
       }
     case OBJ_ENUM:
       {
-        fprintf(fd, "enum{");
+        writerWrite(writer, "enum{", 5);
         ObjEnum* e = AS_ENUM(value);
 
         bool printed = false;
@@ -243,24 +259,24 @@ void printObject(FILE* fd, Value value) {
           Value key = e->names.values[i];
           Value val = NIL_VAL;
           (void)tableGet(&e->forward, key, &val);
-          if (printed) fprintf(fd, ",");
+          if (printed) writerWrite(writer, ",", 1);
           else printed = true;
-          printValue(fd, key);
-          fprintf(fd, ":");
-          printValue(fd, val);
+          writeValue(writer, key);
+          writerWrite(writer, ":", 1);
+          writeValue(writer, val);
         }
-        fprintf(fd, "}");
+        writerWrite(writer, "}", 1);
         break;
       }
     case OBJ_ARRAY:
       {
         ValueArray* values = &AS_ARRAY(value);
-        fprintf(fd, "[");
+        writerWrite(writer, "[", 1);
         for (int i = 0; i < values->count; ++i) {
-          if (i > 0) fprintf(fd, ",");
-          printValue(fd, values->values[i]);
+          if (i > 0) writerWrite(writer, ",", 1);
+          writeValue(writer, values->values[i]);
         }
-        fprintf(fd, "]");
+        writerWrite(writer, "]", 1);
         break;
       }
   }

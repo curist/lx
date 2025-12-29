@@ -482,38 +482,7 @@ static bool linesNative(int argCount, Value *args) {
 }
 
 static int tostring(char **s, Value v) {
-  size_t size = 50;
-  *s = (char *)malloc(size);
-  if (IS_NUMBER(v)) {
-    double num = AS_NUMBER(v);
-    int64_t val_i = num;
-    if (num == val_i) {
-      return snprintf(*s, size, "%" PRId64, val_i);
-    }
-    return snprintf(*s, size, "%lf", num);
-  } else if (IS_BOOL(v)) {
-    return snprintf(*s, size, "%s", AS_BOOL(v) ? "true" : "false");
-  } else if (IS_NIL(v)) {
-    return snprintf(*s, size, "nil");
-  } else if (IS_STRING(v)) {
-    ObjString *str = AS_STRING(v);
-    *s = realloc(*s, str->length + 1);
-    snprintf(*s, str->length + 1, "%s", str->chars);
-    return str->length;
-  } else if (IS_NATIVE(v)) {
-    return snprintf(*s, size, "<native fn>");
-  } else if (IS_FUNCTION(v)) {
-    // XXX: compose fn name as part of return value
-    return snprintf(*s, size, "<fn>");
-  } else if (IS_CLOSURE(v)) {
-    // XXX: compose fn name as part of return value
-    return snprintf(*s, size, "<fn>");
-  } else if (IS_HASHMAP(v)) {
-    return snprintf(*s, size, "<map>");
-  } else if (IS_ARRAY(v)) {
-    return snprintf(*s, size, "<array>");
-  }
-  return snprintf(*s, size, "<unknown>");
+  return valueToString(v, s);
 }
 
 static bool strNative(int argCount, Value *args) {

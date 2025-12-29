@@ -6,6 +6,8 @@
 #include "value.h"
 #include "table.h"
 
+typedef struct Writer Writer;
+
 #define OBJ_TYPE(value)        (AS_OBJ(value)->type)
 
 #define IS_CLOSURE(value)      isObjType(value, OBJ_CLOSURE)
@@ -112,6 +114,7 @@ ObjHashmap* newHashmap();
 ObjEnum* newEnum();
 ObjArray* newArray();
 void printObject(FILE* fd, Value value);
+void writeObject(Writer* writer, Value value);
 
 static inline bool isObjType(Value value, ObjType type) {
   return IS_OBJ(value) && AS_OBJ(value)->type == type;

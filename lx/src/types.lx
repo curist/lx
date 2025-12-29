@@ -1,9 +1,7 @@
 // let globals = import "globals.lx"
 // let fold = globals.fold
 
-let types = .{}
-
-types.TOKEN = enum(100) {
+let TOKEN = enum(100) {
   LEFT_PAREN,
   RIGHT_PAREN,
   LEFT_BRACE,
@@ -66,16 +64,31 @@ types.TOKEN = enum(100) {
   EOF = 999,
 }
 
-types.KEYWORDS = fold(keys(types.TOKEN), .{}, fn(acc, k) {
-  let tokenValue = types.TOKEN[k]
-  if tokenValue >= 400 and tokenValue < 500 {
-    acc[tolower(k)] = true
-  }
+let KEYWORDS = fold([
+  "and",
+  "or",
+  "if",
+  "else",
+  "fn",
+  "for",
+  "nil",
+  "return",
+  "true",
+  "false",
+  "let",
+  "enum",
+  "break",
+  "continue",
+  "import",
+  "in",
+  "collect",
+], .{}, fn(acc, kw) {
+  acc[kw] = true
   acc
 })
 
 // XXX: need to keep this in sync with clox
-types.OP = enum {
+let OP = enum {
   NOP, // might be useful in the future if we want to do op patching
   CONSTANT,
   CONST_BYTE,
@@ -131,6 +144,11 @@ types.OP = enum {
   RETURN = 255,     // 0xff - fixed to allow adding opcodes without breaking RETURN
 }
 
-types.ValueType = enum { BOOL, NIL, NUMBER, OBJ }
+let ValueType = enum { BOOL, NIL, NUMBER, OBJ }
 
-types
+.{
+  TOKEN: TOKEN,
+  KEYWORDS: KEYWORDS,
+  OP: OP,
+  ValueType: ValueType,
+}

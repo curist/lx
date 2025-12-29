@@ -189,44 +189,6 @@ fn buildPassList(ctx) {
         anfInline(state.ast, resolveResult)
       },
     },
-
-    // PASS 6: Typecheck (optional, non-fatal)
-    .{
-      name: "typecheck",
-      mutatesAst: false,
-      fatal: false,  // Non-fatal: don't stop pipeline on typecheck errors
-      requires: ["resolution"],
-      provides: ["typeInfo"],
-      enabled: fn(ctx, state) {
-        // Explicit boolean: default to true if opts missing
-        if !ctx.opts { return true }
-        if ctx.opts.withTypecheck == false { return false }
-        true
-      },
-      run: fn(ctx, state) {
-        let resolveResult = state.passes.resolve
-        // Pass enum info through opts for future special handling.
-        let enumInfo =
-          (state.passes and state.passes.anf and state.passes.anf.enumInfo) or
-          (state.passes and state.passes.lower and state.passes.lower.enumInfo) or
-          (state.passes and state.passes.parse and state.passes.parse.enumInfo)
-        let result = typecheck(state.ast, resolveResult, .{ enumInfo: enumInfo })
-
-        // Defensive: handle nil return (shouldn't happen, but be safe)
-        if !result {
-          return .{
-            success: false,
-            errors: [.{
-              pass: "typecheck",
-              message: "typecheck returned nil",
-              severity: "error",
-            }],
-          }
-        }
-
-        result
-      },
-    },
   ]
 }
 
@@ -235,13 +197,13 @@ fn buildPassList(ctx) {
 // ========================================
 
 fn make(opts) {
-  let driver = .{}
-  driver.cache = .{}
-  driver.compiledModules = []  // Track compilation order
-  driver.loadSource = opts.loadSource
+  let cache = .{}
+  let compiledModules = []  // Track compilation order
+  let loadSource = opts["loadSource"]
 
   // Profile support: profile sets defaults, explicit flags override
-  let profileName = opts.profile or "default"
+  // Use `opts["..."]` for optional keys so callers can omit them.
+  let profileName = opts["profile"] or "default"
   let profileDefaults = getProfile(profileName)
 
   if !profileDefaults {
@@ -253,47 +215,103 @@ fn make(opts) {
 
   // Apply profile defaults, then override with explicit flags
   // Check if flag is explicitly set (not nil), if so use it, else use profile default
-  if opts.withTypecheck != nil {
-    driver.withTypecheck = opts.withTypecheck
+  let withTypecheck = nil
+  let explicitWithTypecheck = opts["withTypecheck"]
+  if explicitWithTypecheck != nil {
+    withTypecheck = explicitWithTypecheck
   } else {
-    driver.withTypecheck = profileDefaults.withTypecheck
+    withTypecheck = profileDefaults.withTypecheck
   }
 
-  if opts.withAnf != nil {
-    driver.withAnf = opts.withAnf
+  let withAnf = nil
+  let explicitWithAnf = opts["withAnf"]
+  if explicitWithAnf != nil {
+    withAnf = explicitWithAnf
   } else {
-    driver.withAnf = profileDefaults.withAnf
+    withAnf = profileDefaults.withAnf
   }
 
-  if opts.withAnfInline != nil {
-    driver.withAnfInline = opts.withAnfInline
+  let withAnfInline = nil
+  let explicitWithAnfInline = opts["withAnfInline"]
+  if explicitWithAnfInline != nil {
+    withAnfInline = explicitWithAnfInline
   } else {
-    driver.withAnfInline = profileDefaults.withAnfInline
+    withAnfInline = profileDefaults.withAnfInline
   }
 
   // Debug flags (optional)
-  driver.debug = opts.debug
+  let debug = opts["debug"]
+  let wholeProgramTypecheckDone = false
+  let compileDepth = 0
 
-  driver.compileModule = fn(path) {
+  let runWholeProgramTypecheck = fn(entryResult) {
+    // Typecheck in reverse discovery order so imports are processed first.
+    let programExports = .{}
+
+    for let i = len(compiledModules) - 1; i >= 0; i = i - 1 {
+      let path = compiledModules[i]
+      let r = cache[path]
+      if !r or r.status != "done" { continue }
+      let passes = r.passes or .{}
+      let resolveResult = passes.resolve
+      if !resolveResult or resolveResult.success != true { continue }
+
+      let ast = (passes["anf-inline"] and passes["anf-inline"].ast) or
+                (passes.anf and passes.anf.ast) or
+                (passes.lower and passes.lower.ast) or
+                (passes.parse and passes.parse.ast)
+      if !ast { continue }
+
+      let enumInfo =
+        (passes.anf and passes.anf.enumInfo) or
+        (passes.lower and passes.lower.enumInfo) or
+        (passes.parse and passes.parse.enumInfo)
+
+      let tc = typecheck(ast, resolveResult, .{
+        enumInfo: enumInfo,
+        program: .{ exports: programExports },
+      }) or .{ success: false, errors: ["typecheck returned nil"], types: .{}, typeVarBindings: .{} }
+
+      // Attach as a non-fatal pass result for tooling to inspect.
+      passes.typecheck = tc
+      r.passes = passes
+      if r.passOrder { push(r.passOrder, "typecheck") }
+
+      // Record module's export type (type of last expression) for downstream imports.
+      if ast.type == "Block" and ast.expressions and len(ast.expressions) > 0 {
+        let last = ast.expressions[len(ast.expressions) - 1]
+        if last and tc.types and tc.types[last.id] {
+          programExports[path] = tc.types[last.id]
+        }
+      }
+    }
+
+    wholeProgramTypecheckDone = true
+    entryResult
+  }
+
+  let compileModuleInternal = fn compileModuleInternal(path) {
     // Check cache first
-    let cached = driver.cache[path]
+    let cached = cache[path]
     if cached {
       return cached
     }
 
     // Track compilation (first time only)
-    push(driver.compiledModules, path)
+    push(compiledModules, path)
+    // Graph changed; any previous whole-program typecheck results are stale.
+    wholeProgramTypecheckDone = false
 
     // Mark as compiling (for circular import detection)
-    driver.cache[path] = .{
+    cache[path] = .{
       status: "compiling",
       path: path,
     }
 
     // Load source via callback
     let source = nil
-    if driver.loadSource {
-      source = driver.loadSource(path)
+    if loadSource {
+      source = loadSource(path)
     }
 
     if !source {
@@ -311,7 +329,7 @@ fn make(opts) {
           },
         },
       }
-      driver.cache[path] = result
+      cache[path] = result
       return result
     }
 
@@ -321,14 +339,14 @@ fn make(opts) {
 
     // Build context for passes
     let ctx = .{
-      importCache: driver.cache,
-      compileModule: driver.compileModule,
+      importCache: cache,
+      compileModule: compileModuleInternal,
       opts: .{
-        withAnf: driver.withAnf,
-        withAnfInline: driver.withAnfInline,
-        withTypecheck: driver.withTypecheck,
+        withAnf: withAnf,
+        withAnfInline: withAnfInline,
+        withTypecheck: withTypecheck,
       },
-      debug: driver.debug,
+      debug: debug,
     }
 
     // Build initial state
@@ -357,11 +375,33 @@ fn make(opts) {
       passes: pipelineResult.passes,
     }
 
-    driver.cache[path] = result
+    cache[path] = result
     return result
   }
 
-  driver
+  let compileModule = fn compileModule(path) {
+    compileDepth = compileDepth + 1
+    let isTop = compileDepth == 1
+    let result = compileModuleInternal(path)
+    compileDepth = compileDepth - 1
+
+    if isTop and withTypecheck != false and !wholeProgramTypecheckDone {
+      return runWholeProgramTypecheck(result)
+    }
+
+    result
+  }
+
+  .{
+    cache: cache,
+    compiledModules: compiledModules,
+    loadSource: loadSource,
+    withTypecheck: withTypecheck,
+    withAnf: withAnf,
+    withAnfInline: withAnfInline,
+    debug: debug,
+    compileModule: compileModule,
+  }
 }
 
 // ========================================

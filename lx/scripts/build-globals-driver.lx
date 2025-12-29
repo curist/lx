@@ -10,7 +10,7 @@ println("")
 let d = driver.make(.{
   profile: "default",
   withTypecheck: false,
-  loadSource: fn(path) { slurp(path) }
+  loadSource: fn(path) { slurp(path) },
 })
 
 // Codegen with recursive module compilation

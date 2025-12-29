@@ -2670,6 +2670,15 @@ fn checkImport(checker, node) {
     return importInfo.importType
   }
 
+  // Whole-program mode: use the export type of the imported module (if available).
+  if checker.program and checker.program.exports and node.path and node.path.type == "String" {
+    let t = checker.program.exports[node.path.value]
+    if t {
+      checker.types[node.id] = t
+      return t
+    }
+  }
+
   let t = typeAny()
   checker.types[node.id] = t
   t
@@ -2781,6 +2790,7 @@ fn makeChecker(resolveResult, opts) {
 
     currentReturn: nil,
 
+    program: (opts and opts.program) or nil,
     enumInfo: (opts and opts.enumInfo) or .{},
     enumDeclValues: .{}, // let declNodeId -> { memberName -> number }
     recordEnumKeyOrigins: .{}, // recordLiteralNodeId -> { key -> { enumDeclId, enumName, member } }

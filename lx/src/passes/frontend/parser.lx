@@ -184,6 +184,17 @@ fn LetNode(filename, startToken, nameToken, init) {
   node
 }
 
+fn LetDestructureNode(filename, startToken, bindings, init) {
+  let node = Node(NODE.LetDestructure, filename, startToken)
+  node.bindings = bindings
+  node.init = init
+  if init {
+    node.endLine = init.endLine
+    node.endCol = init.endCol
+  }
+  node
+}
+
 fn BlockNode(filename, startToken, expressions, endToken) {
   let node = Node(NODE.Block, filename, startToken)
   node.expressions = expressions
@@ -934,6 +945,49 @@ fn parse(src, filename) {
 
   fn letExpr() {
     let startToken = parser.previous
+    if match(TOKEN.DOT_BRACE) {
+      // Destructuring let:
+      //   let .{ OP, NODE } = expr
+      //   let .{ OP: op, NODE: node } = expr
+      let bindings = []
+
+      fn hasNextBinding() {
+        !check(TOKEN.RIGHT_BRACE) and !check(TOKEN.EOF)
+      }
+
+      if hasNextBinding() {
+        fn binding() {
+          consumeIdentifier("Expect identifier in destructuring pattern.")
+          let keyToken = parser.previous
+          let key = StringKeyNodeFromToken(filename, keyToken)
+
+          let name = IdentifierNode(filename, keyToken)
+          if match(TOKEN.COLON) {
+            consumeIdentifier("Expect binding name after ':'.")
+            name = IdentifierNode(filename, parser.previous)
+          }
+
+          push(bindings, .{ key: key, name: name })
+        }
+
+        binding()
+        for match(TOKEN.COMMA) and hasNextBinding() {
+          binding()
+        }
+      }
+
+      consume(TOKEN.RIGHT_BRACE, "Expect '}' after destructuring pattern.")
+
+      consume(TOKEN.EQUAL, "Expect '=' after destructuring pattern.")
+      let init = expression()
+
+      if init and init.type == NODE.Let {
+        error("'let' cannot be used directly as an initializer (use a block: { let y = ...; y })")
+      }
+
+      return LetDestructureNode(filename, startToken, bindings, init)
+    }
+
     consumeIdentifier("Expect variable name.")
     let nameToken = parser.previous
 

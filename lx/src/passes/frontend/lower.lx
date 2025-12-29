@@ -183,6 +183,101 @@ fn lowerLet(lowerer, node) {
   newNode
 }
 
+fn lowerLetDestructure(lowerer, node) {
+  // Desugar:
+  //   let .{ A, B: localB } = expr
+  // Into:
+  //   { let $destr_<id> = expr; let A = $destr_<id>.A; let localB = $destr_<id>.B }
+
+  let loweredInit = node.init and lowerExpr(lowerer, node.init) or nil
+  let tmpName = "$destr_" + str(node.id)
+
+  fn makeIdent(name) {
+    .{
+      type: NODE.Identifier,
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: node.line,
+      endCol: node.col,
+      name: name,
+      lexeme: name,
+    }
+  }
+
+  // let $destr = <init>
+  let tmpLet = .{
+    type: NODE.Let,
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+    name: makeIdent(tmpName),
+    init: loweredInit,
+  }
+  lowerer.origin[tmpLet.id] = node.id
+
+  let exprs = [tmpLet]
+
+  // For each binding, emit: let <name> = $destr.<key>
+  let bindings = node.bindings or []
+  for let i = 0; i < len(bindings); i = i + 1 {
+    let b = bindings[i]
+    let bindName = b and b.name
+    let bindKey = b and b.key
+    if !bindName or !bindKey {
+      continue
+    }
+
+    let loweredName = lowerExpr(lowerer, bindName)
+    let loweredKey = lowerExpr(lowerer, bindKey)
+
+    let dotExpr = .{
+      type: NODE.Dot,
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: loweredKey and loweredKey.endLine or node.endLine,
+      endCol: loweredKey and loweredKey.endCol or node.endCol,
+      object: makeIdent(tmpName),
+      property: loweredKey,
+    }
+    lowerer.origin[dotExpr.id] = node.id
+
+    let fieldLet = .{
+      type: NODE.Let,
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: bindName.line,
+      col: bindName.col,
+      endLine: bindName.endLine,
+      endCol: bindName.endCol,
+      name: loweredName,
+      init: dotExpr,
+    }
+    lowerer.origin[fieldLet.id] = node.id
+    push(exprs, fieldLet)
+  }
+
+  let outerBlock = .{
+    type: NODE.Block,
+    filename: node.filename,
+    id: allocNodeId(lowerer),
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+    expressions: exprs,
+  }
+  lowerer.origin[outerBlock.id] = node.id
+
+  outerBlock
+}
+
 fn lowerBlock(lowerer, node) {
   let newNode = copyNodeShallow(lowerer, node)
 
@@ -1060,6 +1155,10 @@ fn lowerImport(lowerer, node) {
 
 fn lowerExpr(lowerer, node) {
   if !node { return nil }
+
+  if node.type == NODE.LetDestructure {
+    return lowerLetDestructure(lowerer, node)
+  }
 
   if node.type == NODE.Arrow {
     return lowerArrow(lowerer, node)

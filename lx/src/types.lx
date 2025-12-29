@@ -181,8 +181,11 @@ let NODE = enum {
   Import,
   IntrinsicCall,
 
-  // Historical / optional wrapper
-  ExprStmt,
+	// Historical / optional wrapper
+	ExprStmt,
+
+	// Parser-only forms (should be lowered away)
+	LetDestructure,
 }
 
 .{

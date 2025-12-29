@@ -152,6 +152,21 @@ test("parser - let without init", fn(assert) {
   assert.equal(node.init, nil)
 })
 
+test("parser - let destructure", fn(assert) {
+  let result = parse("let .{ OP, NODE: node } = types", "test.lx")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.LetDestructure)
+  assert.equal(len(node.bindings), 2)
+  assert.equal(node.bindings[0].key.value, "OP")
+  assert.equal(node.bindings[0].name.name, "OP")
+  assert.equal(node.bindings[1].key.value, "NODE")
+  assert.equal(node.bindings[1].name.name, "node")
+  assert.equal(node.init.type, NODE.Identifier)
+  assert.equal(node.init.name, "types")
+})
+
 test("parser - let with init", fn(assert) {
   let result = parse("let x = 42", "test.lx")
   assert.truthy(result.success)

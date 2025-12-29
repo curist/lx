@@ -396,6 +396,42 @@ test("lower - dot property gets fresh ID", fn(assert) {
   assert.truthy(loweredDot.property.id > parsedDot.property.id)
 })
 
+test("lower - let destructure", fn(assert) {
+  let result = parseAndLower("let .{ a, B: b } = rec")
+  assert.truthy(result.success)
+
+  // Destructuring lowers into a block of lets.
+  let node = first(result)
+  assert.equal(node.type, NODE.Block)
+  assert.equal(len(node.expressions), 3)
+
+  let tmpLet = node.expressions[0]
+  assert.equal(tmpLet.type, NODE.Let)
+  let originId = result.lowerResult.origin[tmpLet.id]
+  assert.truthy(originId != nil)
+  assert.equal(tmpLet.name.type, NODE.Identifier)
+  assert.equal(tmpLet.name.name, "$destr_" + str(originId))
+  assert.equal(tmpLet.init.type, NODE.Identifier)
+  assert.equal(tmpLet.init.name, "rec")
+
+  let aLet = node.expressions[1]
+  assert.equal(aLet.type, NODE.Let)
+  assert.equal(aLet.name.name, "a")
+  assert.equal(aLet.init.type, NODE.Dot)
+  assert.equal(aLet.init.object.type, NODE.Identifier)
+  assert.equal(aLet.init.object.name, tmpLet.name.name)
+  assert.equal(aLet.init.property.type, NODE.String)
+  assert.equal(aLet.init.property.value, "a")
+
+  let bLet = node.expressions[2]
+  assert.equal(bLet.type, NODE.Let)
+  assert.equal(bLet.name.name, "b")
+  assert.equal(bLet.init.type, NODE.Dot)
+  assert.equal(bLet.init.object.name, tmpLet.name.name)
+  assert.equal(bLet.init.property.type, NODE.String)
+  assert.equal(bLet.init.property.value, "B")
+})
+
 test("lower - import path gets fresh ID", fn(assert) {
   let result = parseAndLower("import \"foo.lx\"")
   assert.truthy(result.success)

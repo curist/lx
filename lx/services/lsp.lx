@@ -1,4 +1,5 @@
 let query = import "services/query.lx"
+let Driver = import "src/driver.lx"
 let ModuleResolution = import "src/module_resolution.lx"
 
 fn stringLess(a, b) {
@@ -169,6 +170,111 @@ fn pathToSpecifier(path) {
 
 fn specifierToUri(specifier) {
   pathToUri(ModuleResolution.resolvePath(specifier))
+}
+
+// ------------------------------------------------------------
+// Caching + invalidation
+// ------------------------------------------------------------
+
+fn depsFromCompileResult(result) {
+  let passes = result and result.passes or nil
+  let resolve = passes and passes.resolve or nil
+  let importInfo = resolve and resolve.importInfoByNodeId or nil
+  if !importInfo or type(importInfo) != "map" {
+    return []
+  }
+
+  let seen = .{}
+  let out = []
+  let ks = keys(importInfo)
+  for let i = 0; i < len(ks); i = i + 1 {
+    let k = ks[i]
+    let info = importInfo[k]
+    let r = info and info.importResult or nil
+    let dep = r and r.path or nil
+    if dep and !seen[dep] {
+      seen[dep] = true
+      push(out, dep)
+    }
+  }
+  out
+}
+
+fn rebuildDepGraph(state) {
+  state.deps = .{}
+  state.rdeps = .{}
+
+  let cache = state.driver and state.driver.cache or nil
+  if !cache { return }
+
+  let mods = keys(cache)
+  mods->sort(stringLess)
+  for let i = 0; i < len(mods); i = i + 1 {
+    let path = mods[i]
+    let r = cache[path]
+    if !r or r.status != "done" { continue }
+
+    let deps = depsFromCompileResult(r)
+    state.deps[path] = deps
+
+    for let j = 0; j < len(deps); j = j + 1 {
+      let dep = deps[j]
+      if !state.rdeps[dep] { state.rdeps[dep] = .{} }
+      state.rdeps[dep][path] = true
+    }
+  }
+}
+
+fn invalidate(state, path) {
+  // Invalidate path + all reverse-deps (modules that import it), transitively.
+  let work = [path]
+  let seen = .{}
+
+  for len(work) > 0 {
+    let p = pop(work)
+    if !p or seen[p] { continue }
+    seen[p] = true
+
+    let parents = state.rdeps and state.rdeps[p] or nil
+    if parents {
+      let ks = keys(parents)
+      for let i = 0; i < len(ks); i = i + 1 {
+        push(work, ks[i])
+      }
+    }
+  }
+
+  let ks = keys(seen)
+  for let i = 0; i < len(ks); i = i + 1 {
+    let p = ks[i]
+
+    // Remove outgoing edges p -> dep
+    let deps = state.deps and state.deps[p] or nil
+    if deps and type(deps) == "array" {
+      for let j = 0; j < len(deps); j = j + 1 {
+        let dep = deps[j]
+        if state.rdeps and state.rdeps[dep] {
+          state.rdeps[dep][p] = nil
+        }
+      }
+    }
+
+    // Remove incoming edges (parents) for p
+    if state.rdeps and state.rdeps[p] {
+      state.rdeps[p] = nil
+    }
+    if state.deps and state.deps[p] {
+      state.deps[p] = nil
+    }
+
+    // Drop compiled module cache entry
+    if state.driver and state.driver.cache and state.driver.cache[p] {
+      state.driver.cache[p] = nil
+    }
+  }
+
+  state.epoch = (state.epoch or 0) + 1
+  state.ctxCache = .{}
 }
 
 // ------------------------------------------------------------
@@ -455,15 +561,6 @@ fn sendError(id, code, message) {
   })
 }
 
-fn makeLoadSource(openDocs) {
-  fn(path) {
-    if openDocs and openDocs[path] != nil {
-      return openDocs[path]
-    }
-    ModuleResolution.slurpPath(path)
-  }
-}
-
 fn handleDefinition(state, msg) {
   let params = msg.params or .{}
   let td = params.textDocument or .{}
@@ -476,12 +573,16 @@ fn handleDefinition(state, msg) {
   }
 
   let spec = pathToSpecifier(absPath)
-  let ctxResult = query.compileWithOpts(spec, .{
-    withTypecheck: false,
-    loadSource: makeLoadSource(state.openDocs),
-  })
-  if !ctxResult.success {
-    return nil
+
+  let cached = state.ctxCache and state.ctxCache[spec] or nil
+  let ctxResult = cached and cached.epoch == state.epoch and cached.result or nil
+  if !ctxResult {
+    ctxResult = query.compileWithDriver(state.driver, spec, .{ withTypecheck: false })
+    if !ctxResult.success {
+      return nil
+    }
+    state.ctxCache[spec] = .{ epoch: state.epoch, result: ctxResult }
+    rebuildDepGraph(state)
   }
 
   let ln = (pos.line or 0) + 1
@@ -508,9 +609,26 @@ fn handleDefinition(state, msg) {
 }
 
 fn serve() {
+  let openDocs = .{}
+  let loadSource = fn(path) {
+    if openDocs[path] != nil {
+      return openDocs[path]
+    }
+    ModuleResolution.slurpPath(path)
+  }
+
   let state = .{
-    openDocs: .{},
+    openDocs: openDocs,
     shutdown: false,
+    epoch: 0,
+    ctxCache: .{},
+    deps: .{},
+    rdeps: .{},
+    driver: Driver.make(.{
+      profile: "query",
+      loadSource: loadSource,
+      withTypecheck: false,
+    }),
   }
 
   for true {
@@ -560,6 +678,7 @@ fn serve() {
       let spec = abs and pathToSpecifier(abs) or nil
       if spec and td.text != nil {
         state.openDocs[spec] = td.text
+        invalidate(state, spec)
       }
       continue
     }
@@ -571,6 +690,7 @@ fn serve() {
       let changes = (msg.params and msg.params.contentChanges) or []
       if spec and len(changes) > 0 and changes[0].text != nil {
         state.openDocs[spec] = changes[0].text
+        invalidate(state, spec)
       }
       continue
     }
@@ -581,6 +701,7 @@ fn serve() {
       let spec = abs and pathToSpecifier(abs) or nil
       if spec {
         state.openDocs[spec] = nil
+        invalidate(state, spec)
       }
       continue
     }

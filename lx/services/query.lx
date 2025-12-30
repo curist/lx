@@ -1407,16 +1407,9 @@ fn remapType(t, typeVarMap, nextTypeVarIdRef) {
 
 // Compile file and create query context in one step
 // This is the recommended API for IDE/LSP tooling
-fn compileWithOpts(filepath, opts) {
+fn compileWithDriver(driver, filepath, opts) {
   let withTypecheck = !(opts and opts.withTypecheck == false)
-  let loadSource = (opts and opts.loadSource) or fn(path) { ModuleResolution.slurpPath(path) }
-
-  // Create driver that loads from filesystem
-  let driver = Driver.make(.{
-    profile: "query",
-    loadSource: loadSource,
-    withTypecheck: withTypecheck,
-  })
+  let effectiveWithTypecheck = withTypecheck and driver and driver.withTypecheck != false
 
   // Compile module through full pipeline
   let result = driver.compileModule(filepath)
@@ -1436,7 +1429,7 @@ fn compileWithOpts(filepath, opts) {
     } else if passes.resolve and !passes.resolve.success {
       phase = "resolve"
       errors = passes.resolve.errors
-    } else if withTypecheck and passes.typecheck and !passes.typecheck.success {
+    } else if effectiveWithTypecheck and passes.typecheck and !passes.typecheck.success {
       phase = "typecheck"
       errors = passes.typecheck.errors
     }
@@ -1519,7 +1512,7 @@ fn compileWithOpts(filepath, opts) {
       }
 
       // Remap and merge types + bindings (optional)
-      if withTypecheck and mod.passes.typecheck {
+      if effectiveWithTypecheck and mod.passes.typecheck {
         let typeVarMap = .{}
         let typeKeys = keys(mod.passes.typecheck.types or .{})
         typeKeys->sort(keyLess)
@@ -1567,6 +1560,20 @@ fn compileWithOpts(filepath, opts) {
   }
 }
 
+fn compileWithOpts(filepath, opts) {
+  let withTypecheck = !(opts and opts.withTypecheck == false)
+  let loadSource = (opts and opts.loadSource) or fn(path) { ModuleResolution.slurpPath(path) }
+
+  // Create driver that loads from filesystem
+  let driver = Driver.make(.{
+    profile: "query",
+    loadSource: loadSource,
+    withTypecheck: withTypecheck,
+  })
+
+  compileWithDriver(driver, filepath, opts)
+}
+
 fn compile(filepath) {
   compileWithOpts(filepath, nil)
 }
@@ -1584,6 +1591,7 @@ fn compileFast(filepath) {
   compile,
   compileFast,
   compileWithOpts,
+  compileWithDriver,
 
   // Low-level API (for advanced use cases)
   queryInit,

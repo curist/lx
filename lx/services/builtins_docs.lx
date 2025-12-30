@@ -198,6 +198,28 @@ fn parseNativeFnBuiltins(text) {
 
 let _cache = .{ ok: false, docs: nil, nativeNames: nil }
 
+fn safeSlurpPath(path) {
+  if !path {
+    return nil
+  }
+  if Lx and Lx.pcall {
+    let r = Lx.pcall(ModuleResolution.slurpPath, path)
+    return (r and r.ok) and r.value or nil
+  }
+  ModuleResolution.slurpPath(path)
+}
+
+fn safeSlurpAbs(path) {
+  if !path {
+    return nil
+  }
+  if Lx and Lx.pcall {
+    let r = Lx.pcall(slurp, path)
+    return (r and r.ok) and r.value or nil
+  }
+  slurp(path)
+}
+
 fn ensureLoaded() {
   if _cache.ok {
     return
@@ -207,8 +229,7 @@ fn ensureLoaded() {
   _cache.nativeNames = .{}
 
   // Docs source of truth: lx/README.md
-  let readme = nil
-  try { readme = ModuleResolution.slurpPath("README.md") } catch { readme = nil }
+  let readme = safeSlurpPath("README.md")
   if readme {
     _cache.docs = parseReadmeDocs(readme)
   }
@@ -217,8 +238,7 @@ fn ensureLoaded() {
   let roots = ModuleResolution.roots()
   if roots and roots.ok and roots.projectRoot and Lx and Lx.path {
     let headerPath = Lx.path.join(roots.projectRoot, "include", "native_fn.h")
-    let header = nil
-    try { header = slurp(headerPath) } catch { header = nil }
+    let header = safeSlurpAbs(headerPath)
     if header {
       _cache.nativeNames = parseNativeFnBuiltins(header)
     }
@@ -252,4 +272,3 @@ fn docFor(name) {
 .{
   docFor,
 }
-

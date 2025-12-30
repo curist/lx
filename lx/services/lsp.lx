@@ -822,13 +822,28 @@ fn handleHover(state, msg) {
 
   let lines = []
   let sym = r.contents and r.contents.symbol or nil
+  let dot = r.contents and r.contents.dot or nil
+  let header = nil
   if sym and sym.name {
     let kind = sym.kind and (" (" + sym.kind + ")") or ""
-    push(lines, "**" + sym.name + "**" + kind)
+    header = "**" + sym.name + "**" + kind
+  } else if dot and dot.propertyName {
+    if dot.objectName {
+      header = "**" + dot.objectName + "." + dot.propertyName + "**"
+    } else {
+      header = "**." + dot.propertyName + "**"
+    }
+  }
+  if header {
+    push(lines, header)
   }
   let ty = r.contents and r.contents.type or nil
   if ty {
     push(lines, "`" + ty + "`")
+  }
+  let prop = r.contents and r.contents.property or nil
+  if prop and prop.valueText {
+    push(lines, "Value: `" + prop.valueText + "`")
   }
   if sym and sym.declaration and sym.declaration.filename {
     let decl = sym.declaration

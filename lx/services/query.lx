@@ -1099,6 +1099,12 @@ fn queryHover(ctx, filename, line, col) {
       n = dotNode
     }
   }
+  if n and n.type == NODE.Identifier {
+    let dotNode = findDotByPropertyNode(ctx, n)
+    if dotNode {
+      n = dotNode
+    }
+  }
   // If we landed on a Let node but the cursor is within the name span,
   // prefer the identifier (some resolvers omit name nodes from the index).
   if n and n.type == NODE.Let and n.name and contains(n.name, line, col) {
@@ -1116,6 +1122,11 @@ fn queryHover(ctx, filename, line, col) {
   let contents = buildHoverContents(ctx, n, ty)
   if n.type == NODE.Dot {
     let propName = propNameFromNode(n.property)
+    contents.dot = .{
+      objectName: (n.object and n.object.type == NODE.Identifier and n.object.name) or nil,
+      propertyName: propName,
+    }
+
     if propName {
       let record = resolveExprToRecord(ctx, n.object, .{})
       if record {
@@ -1124,6 +1135,20 @@ fn queryHover(ctx, filename, line, col) {
           contents.property = .{
             name: propName,
             definedAt: rangeOf(field.key),
+          }
+          if field.value {
+            let v = field.value
+            if v.type == NODE.Number {
+              contents.property.valueText = join([v.value], "")
+            } else if v.type == NODE.String {
+              contents.property.valueText = "\"" + (v.value or "") + "\""
+            } else if v.type == NODE.Bool {
+              contents.property.valueText = v.value and "true" or "false"
+            } else if v.type == NODE.Nil {
+              contents.property.valueText = "nil"
+            } else if v.type == NODE.Identifier {
+              contents.property.valueText = v.name
+            }
           }
         }
       }

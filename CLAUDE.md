@@ -365,26 +365,19 @@ suite.run()
 
 ### Running Tests with Makefile
 
-The directory contains a Makefile for running tests. The default compiler is `../out/lx`, but you can override it using the `LX` variable:
+Run from repo root:
 
 ```bash
-# Run with default compiler (../out/lx)
+# Run with the in-repo compiler (./out/lx)
 make test
 
-# Run with specific compiler version
-LX=../out/lx make test
-
-# Other useful targets
-LX=../out/lx make runall      # Run all stub tests
+# Or run an individual test
+./out/lx run lx/test/parser.test.lx
 ```
 
 **Common workflow:**
 ```bash
-# Build a specific compiler version and run tests
-cd /path/to/lx
-# ... make changes to compiler ...
-make  # builds ../out/lx
-
-cd lx
-LX=../out/lx make test  # Run tests with the newly built compiler
+# Build + test from repo root
+make
+make test
 ```

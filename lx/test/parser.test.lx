@@ -3,6 +3,7 @@ let test = suite.defineTest
 
 let parse = import "src/passes/frontend/parser.lx"
 let .{ TOKEN, NODE } = import "src/types.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 
 // Helper to get first statement from parsed program
 fn first(result) {
@@ -11,7 +12,7 @@ fn first(result) {
 
 // Helper to parse from fixture file
 fn parseFixture(path) {
-  let src = slurp(path)
+  let src = ModuleResolution.slurpPath(path)
   parse(src, path)
 }
 

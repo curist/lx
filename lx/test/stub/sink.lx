@@ -1,8 +1,9 @@
 let initScanner = import "src/passes/frontend/scanner.lx"
 let types = import "src/types.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 let TOKEN = types.TOKEN
 
-let scanner = initScanner(slurp("test/stub/sink.lx"))
+let scanner = initScanner(ModuleResolution.slurpPath("test/stub/sink.lx"))
 
 for true {
   let tok = scanner.scanToken()

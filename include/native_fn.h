@@ -2,17 +2,16 @@
 #define clox_native_fn_h
 
 #include <ctype.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
-
-#ifndef WASM
-#include <wordexp.h>
-#endif
+#include <unistd.h>
 
 #include "memory.h"
 #include "object.h"
@@ -373,6 +372,140 @@ static bool concatNative(int argCount, Value *args) {
   return true;
 }
 
+static bool pathJoinNative(int argCount, Value *args) {
+  // join("a", "b", "c") => "a/b/c"
+  // If a later segment is absolute (starts with '/'), it replaces the previous result.
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("");
+    return true;
+  }
+
+  size_t cap = 1;
+  for (int i = 0; i < argCount; i++) {
+    if (!IS_STRING(args[i])) {
+      args[-1] = CSTRING_VAL("Error: Lx.path.join takes string args.");
+      return false;
+    }
+    cap += AS_STRING(args[i])->length + 1;
+  }
+
+  char* out = (char*)malloc(cap);
+  if (out == NULL) {
+    args[-1] = CSTRING_VAL("Error: out of memory.");
+    return false;
+  }
+
+  size_t outLen = 0;
+  for (int i = 0; i < argCount; i++) {
+    ObjString* segStr = AS_STRING(args[i]);
+    const char* seg = segStr->chars;
+    size_t segLen = segStr->length;
+    if (segLen == 0) continue;
+
+    if (seg[0] == '/') {
+      // Absolute segment replaces the entire path.
+      outLen = 0;
+      memcpy(out + outLen, seg, segLen);
+      outLen += segLen;
+      continue;
+    }
+
+    // Trim trailing slashes on current output (but keep "/" intact).
+    while (outLen > 1 && out[outLen - 1] == '/') {
+      outLen--;
+    }
+
+    // Trim leading slashes on segment.
+    size_t start = 0;
+    while (start < segLen && seg[start] == '/') {
+      start++;
+    }
+
+    // Add separator if needed.
+    if (outLen > 0 && out[outLen - 1] != '/' && start < segLen) {
+      out[outLen++] = '/';
+    }
+
+    if (start < segLen) {
+      memcpy(out + outLen, seg + start, segLen - start);
+      outLen += segLen - start;
+    }
+  }
+
+  out[outLen] = '\0';
+  args[-1] = OBJ_VAL(takeString(out, (int)outLen));
+  return true;
+}
+
+static bool pathDirnameNative(int argCount, Value *args) {
+  // Roughly matches POSIX dirname semantics:
+  // dirname("") => "."
+  // dirname("a") => "."
+  // dirname("a/b") => "a"
+  // dirname("/a") => "/"
+  // dirname("/") => "/"
+  if (argCount < 1 || !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.path.dirname takes 1 string arg.");
+    return false;
+  }
+
+  ObjString* inStr = AS_STRING(args[0]);
+  const char* in = inStr->chars;
+  size_t len = inStr->length;
+
+  if (len == 0) {
+    args[-1] = CSTRING_VAL(".");
+    return true;
+  }
+
+  // Strip trailing slashes (but keep a single leading slash).
+  size_t end = len;
+  while (end > 1 && in[end - 1] == '/') {
+    end--;
+  }
+
+  // If the path is all slashes, dirname is "/".
+  if (end == 1 && in[0] == '/') {
+    args[-1] = CSTRING_VAL("/");
+    return true;
+  }
+
+  // Find last '/' before end.
+  ssize_t lastSlash = -1;
+  for (ssize_t i = (ssize_t)end - 1; i >= 0; i--) {
+    if (in[i] == '/') {
+      lastSlash = i;
+      break;
+    }
+  }
+
+  if (lastSlash < 0) {
+    args[-1] = CSTRING_VAL(".");
+    return true;
+  }
+
+  if (lastSlash == 0) {
+    args[-1] = CSTRING_VAL("/");
+    return true;
+  }
+
+  // Strip any trailing slashes from the result (e.g. "a/b/" -> "a").
+  size_t outLen = (size_t)lastSlash;
+  while (outLen > 1 && in[outLen - 1] == '/') {
+    outLen--;
+  }
+
+  char* out = (char*)malloc(outLen + 1);
+  if (out == NULL) {
+    args[-1] = CSTRING_VAL("Error: out of memory.");
+    return false;
+  }
+  memcpy(out, in, outLen);
+  out[outLen] = '\0';
+  args[-1] = OBJ_VAL(takeString(out, (int)outLen));
+  return true;
+}
+
 static uint8_t utf8CharLength(uint8_t val) {
   if (val < 128) {
     return 1;
@@ -724,21 +857,50 @@ static bool exitNative(int argCount, Value *args) {
   return true;
 }
 
+static bool resolvePathFromCwd(const char* in, char* out, size_t outSize) {
+  if (in == NULL) return false;
+  if (out == NULL || outSize == 0) return false;
+
+  // Absolute paths are used as-is.
+  if (in[0] == '/') {
+    size_t n = strlen(in);
+    if (n + 1 > outSize) return false;
+    memcpy(out, in, n + 1);
+    return true;
+  }
+
+  char cwd[PATH_MAX + 1];
+  if (getcwd(cwd, sizeof(cwd)) == NULL) return false;
+
+  size_t cwdLen = strlen(cwd);
+  size_t inLen = strlen(in);
+
+  // Need: cwd + "/" + in + "\0"
+  if (cwdLen + 1 + inLen + 1 > outSize) return false;
+
+  memcpy(out, cwd, cwdLen);
+  if (cwdLen > 0 && cwd[cwdLen - 1] != '/') {
+    out[cwdLen] = '/';
+    memcpy(out + cwdLen + 1, in, inLen + 1);
+  } else {
+    memcpy(out + cwdLen, in, inLen + 1);
+  }
+
+  return true;
+}
+
 static bool slurpNative(int argCount, Value *args) {
   if (argCount < 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: slurp takes a string arg.");
     return false;
   }
 
-#ifndef WASM
+  const char* inPath = AS_STRING(args[0])->chars;
   char path[PATH_MAX + 1] = "";
-  wordexp_t exp_result;
-  wordexp(AS_STRING(args[0])->chars, &exp_result, 0);
-  strncpy(path, exp_result.we_wordv[0], sizeof(path));
-  wordfree(&exp_result);
-#else
-  char *path = AS_STRING(args[0])->chars;
-#endif
+  if (!resolvePathFromCwd(inPath, path, sizeof(path))) {
+    args[-1] = CSTRING_VAL("Error: invalid path.");
+    return false;
+  }
 
   FILE *file = fopen(path, "rb");
   if (file == NULL) {
@@ -782,15 +944,12 @@ static bool spitNative(int argCount, Value *args) {
     return false;
   }
 
-#ifndef WASM
+  const char* inPath = AS_STRING(args[0])->chars;
   char path[PATH_MAX + 1] = "";
-  wordexp_t exp_result;
-  wordexp(AS_STRING(args[0])->chars, &exp_result, 0);
-  strncpy(path, exp_result.we_wordv[0], sizeof(path));
-  wordfree(&exp_result);
-#else
-  char *path = AS_STRING(args[0])->chars;
-#endif
+  if (!resolvePathFromCwd(inPath, path, sizeof(path))) {
+    args[-1] = CSTRING_VAL("Error: invalid path.");
+    return false;
+  }
 
   FILE *file = fopen(path, "wb");
   if (file == NULL) {
@@ -810,6 +969,123 @@ static bool spitNative(int argCount, Value *args) {
 
   fclose(file);
   args[-1] = BOOL_VAL(true);
+  return true;
+}
+
+static bool fsCwdNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.fs.cwd takes 0 args.");
+    return false;
+  }
+
+  char buf[PATH_MAX + 1];
+  if (getcwd(buf, sizeof(buf)) == NULL) {
+    args[-1] = CSTRING_VAL("Error: failed to getcwd.");
+    return false;
+  }
+
+  args[-1] = CSTRING_VAL(buf);
+  return true;
+}
+
+static bool fsExistsNative(int argCount, Value *args) {
+  if (argCount < 1 || !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.fs.exists takes a string path.");
+    return false;
+  }
+
+  const char* inPath = AS_STRING(args[0])->chars;
+  char path[PATH_MAX + 1] = "";
+  if (!resolvePathFromCwd(inPath, path, sizeof(path))) {
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+
+  struct stat st;
+  int ok = stat(path, &st) == 0;
+
+  args[-1] = BOOL_VAL(ok);
+  return true;
+}
+
+static bool fsStatNative(int argCount, Value *args) {
+  if (argCount < 1 || !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.fs.stat takes a string path.");
+    return false;
+  }
+
+  const char* inPath = AS_STRING(args[0])->chars;
+  char path[PATH_MAX + 1] = "";
+  if (!resolvePathFromCwd(inPath, path, sizeof(path))) {
+    args[-1] = NIL_VAL;
+    return true;
+  }
+
+  struct stat st;
+  if (stat(path, &st) != 0) {
+    args[-1] = NIL_VAL;
+    return true;
+  }
+
+  ObjHashmap* out = newHashmap();
+  args[-1] = OBJ_VAL(out);
+  push(OBJ_VAL(out));
+
+  const char* type = "other";
+  if (S_ISREG(st.st_mode)) type = "file";
+  else if (S_ISDIR(st.st_mode)) type = "dir";
+#ifdef S_ISLNK
+  else if (S_ISLNK(st.st_mode)) type = "symlink";
+#endif
+
+  push(CSTRING_VAL("type"));
+  push(CSTRING_VAL(type));
+  tableSet(&out->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  push(CSTRING_VAL("size"));
+  push(NUMBER_VAL((double)st.st_size));
+  tableSet(&out->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  push(CSTRING_VAL("mtime"));
+  push(NUMBER_VAL((double)st.st_mtime));
+  tableSet(&out->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  push(CSTRING_VAL("mode"));
+  push(NUMBER_VAL((double)st.st_mode));
+  tableSet(&out->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  pop(); // out
+  return true;
+}
+
+static bool fsRealpathNative(int argCount, Value *args) {
+  if (argCount < 1 || !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.fs.realpath takes a string path.");
+    return false;
+  }
+
+  const char* inPath = AS_STRING(args[0])->chars;
+  char path[PATH_MAX + 1] = "";
+  if (!resolvePathFromCwd(inPath, path, sizeof(path))) {
+    args[-1] = NIL_VAL;
+    return true;
+  }
+
+  char resolved[PATH_MAX + 1];
+  if (realpath(path, resolved) == NULL) {
+    args[-1] = NIL_VAL;
+    return true;
+  }
+
+  args[-1] = CSTRING_VAL(resolved);
   return true;
 }
 #endif
@@ -941,6 +1217,34 @@ static void defineLxNatives() {
 #endif
   pop();
   pop();
+
+  // Lx.fs
+  ObjHashmap* fs = newHashmap();
+  push(OBJ_VAL(fs)); // root
+  push(CSTRING_VAL("fs"));
+  push(OBJ_VAL(fs));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+#ifndef __EMSCRIPTEN__
+  defineTableFunction(&fs->table, "cwd", fsCwdNative);
+  defineTableFunction(&fs->table, "exists", fsExistsNative);
+  defineTableFunction(&fs->table, "stat", fsStatNative);
+  defineTableFunction(&fs->table, "realpath", fsRealpathNative);
+#endif
+  pop(); // fs
+
+  // Lx.path
+  ObjHashmap* path = newHashmap();
+  push(OBJ_VAL(path)); // root
+  push(CSTRING_VAL("path"));
+  push(OBJ_VAL(path));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+  defineTableFunction(&path->table, "join", pathJoinNative);
+  defineTableFunction(&path->table, "dirname", pathDirnameNative);
+  pop(); // path
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array",

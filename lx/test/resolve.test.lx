@@ -9,12 +9,13 @@ let lower = import "src/passes/frontend/lower.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
 let makeResolveHelpers = import "test/resolveTestHelpers.lx"
 let types = import "src/types.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 
 let NODE = types.NODE
 
 // Helper to parse from fixture file
 fn parseFixture(path) {
-  let src = slurp(path)
+  let src = ModuleResolution.slurpPath(path)
   parse(src, path)
 }
 
@@ -683,7 +684,7 @@ fn makeDriver() {
       } else {
         // Default: read from file system
         // Any new fixture file in test/fixtures/imports/ will be automatically loaded
-        return slurp(path)
+        return ModuleResolution.slurpPath(path)
       }
     },
     withTypecheck: false,  // Resolve tests don't need typecheck

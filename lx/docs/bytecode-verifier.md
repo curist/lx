@@ -104,7 +104,7 @@ lx run --verify-bytecode program.lx
 ### Testing
 
 ```bash
-LX=../out/lx make test  # includes test/verify-bytecode.test.lx
+make test  # includes lx/test/verify-bytecode.test.lx
 ```
 
 Unit tests validate stack effect calculations. Integration tests will come from running on real compiled code.

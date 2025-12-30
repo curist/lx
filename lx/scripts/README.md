@@ -81,7 +81,7 @@ Edit `src/vm.c`:
 Run the drivers with your **system lx** (the old version):
 
 ```bash
-# From lx/ directory
+# From lx-lang/ directory
 lx run scripts/build-lxlx-driver.lx
 lx run scripts/build-globals-driver.lx
 ```
@@ -93,7 +93,7 @@ lx run scripts/build-globals-driver.lx
 Convert the .lxobj files to C headers and install them (or just run `make prepare` from repo root):
 
 ```bash
-# From lx/ directory (parent of lx/)
+# From lx-lang/ directory (parent of lx/)
 xxd -i lxlx-new.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxlx.h
 
 xxd -i lxglobals-new.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxglobals.h
@@ -106,7 +106,7 @@ xxd -i lxglobals-new.lxobj | sed 's/unsigned char/static const unsigned char/; s
 The normal build uses `make prepare` which runs the old system lx to compile lx code. Skip this since the old lx can't understand the new opcodes:
 
 ```bash
-# From lx/ directory
+# From lx-lang/ directory
 cc src/*.c -o out/lx -Iinclude -O2 -std=c11
 ```
 
@@ -117,8 +117,8 @@ This builds the VM with:
 ### 7. Test the new compiler
 
 ```bash
-# From lx/ directory
-../out/lx run test/some-test.lx
+# From lx-lang/ directory
+./out/lx run lx/test/some-test.lx
 
 # Or run the full test suite
 make test

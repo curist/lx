@@ -2,6 +2,7 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 let helpers = import "test/typecheck/helpers.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 
 // Helper to format type for snapshot comparison
 fn formatType(result, t, depth) {
@@ -52,11 +53,11 @@ fn formatType(result, t, depth) {
 }
 
 test("snapshot - demo_compiler.lx types", fn(assert) {
-  let source = slurp("test/fixtures/demo_compiler.lx")
+  let source = ModuleResolution.slurpPath("test/fixtures/demo_compiler.lx")
   let result = helpers.parseAndTypecheck(source)
 
   // Load expected snapshot
-  let snapshot = slurp("test/snapshots/demo_compiler.types.txt")
+  let snapshot = ModuleResolution.slurpPath("test/snapshots/demo_compiler.types.txt")
 
   // Build actual output
   let lines = []

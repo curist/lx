@@ -6,6 +6,7 @@ let test = suite.defineTest
 let Driver = import "src/driver.lx"
 let query = import "services/query.lx"
 let types = import "src/types.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 
 let NODE = types.NODE
 
@@ -15,7 +16,7 @@ fn compileAndQuery(source, filename) {
   let driver = Driver.make(.{
     loadSource: fn(path) {
       if path == filename { return source }
-      return slurp(path)
+      return ModuleResolution.slurpPath(path)
     },
     withTypecheck: true,
     withAnf: false,  // Query tests need non-ANF AST (imports not hoisted, etc.)

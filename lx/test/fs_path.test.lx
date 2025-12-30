@@ -1,0 +1,34 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+test("Lx.fs.exists", fn(assert) {
+  assert.equal(type(Lx.fs), "map")
+  assert.equal(type(Lx.fs.exists), "fn")
+  assert.equal(Lx.fs.exists("test/fixtures/demo_compiler.lx"), true)
+  assert.equal(Lx.fs.exists("test/fixtures/does_not_exist___hopefully.lx"), false)
+})
+
+test("Lx.fs.cwd", fn(assert) {
+  assert.equal(type(Lx.fs.cwd()), "string")
+})
+
+test("Lx.fs.stat", fn(assert) {
+  let st = Lx.fs.stat("test/fixtures/demo_compiler.lx")
+  assert.equal(type(st), "map")
+  assert.equal(st.type, "file")
+  assert.truthy(st.size > 0)
+})
+
+test("Lx.path.join + dirname", fn(assert) {
+  assert.equal(type(Lx.path), "map")
+  assert.equal(Lx.path.join("a", "b"), "a/b")
+  assert.equal(Lx.path.join("a/", "b"), "a/b")
+  assert.equal(Lx.path.join("a", "/b"), "/b")
+
+  assert.equal(Lx.path.dirname("a/b/c.lx"), "a/b")
+  assert.equal(Lx.path.dirname("a"), ".")
+  assert.equal(Lx.path.dirname("/"), "/")
+})
+
+suite.run()
+

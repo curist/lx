@@ -1,20 +1,118 @@
 // Module resolution helpers.
 //
-// Today, the compiler driver passes import specifiers through unchanged and
-// ultimately loads source via `slurp(...)`, so relative paths resolve against
-// the process CWD. Centralize any path mapping here so we can evolve resolution
-// semantics in one place.
+// The compiler driver passes import specifiers through unchanged; this module
+// maps those specifiers to concrete filesystem paths.
+//
+// Resolution strategy:
+// - If a `.lxroot` marker file exists in the current directory or any parent,
+//   treat that directory as the *project root*.
+// - Otherwise, if `Lx.env["LX_ROOT"]` is set, use it as the project root.
+// - Otherwise, the current CWD is the project root.
+// - If `<projectRoot>/lx` exists and is a directory, treat it as the *module
+//   base* so existing imports like "src/..." and "test/..." keep working when
+//   invoked from the repo root (without `cd lx`).
+//
+// Paths are kept simple:
+// - No tilde expansion, no shell expansion.
+// - Non-absolute paths are joined against either the module base or project root.
+
+let _cached = .{
+  ok: false,
+  projectRoot: nil,
+  moduleBase: nil,
+}
+
+fn _startsWithLxSlash(path) {
+  len(path) >= 3 and path[0] == "l" and path[1] == "x" and path[2] == "/"
+}
+
+fn _isAbs(path) {
+  path and len(path) > 0 and path[0] == "/"
+}
+
+fn _computeRoots() {
+  if _cached.ok {
+    return _cached
+  }
+
+  // If fs/path APIs aren't available (e.g. in restricted runtimes),
+  // leave paths untouched.
+  if !Lx or !Lx.fs or !Lx.path or !Lx.fs.cwd or !Lx.fs.exists {
+    _cached.ok = true
+    _cached.projectRoot = nil
+    _cached.moduleBase = nil
+    return _cached
+  }
+
+  let cwd = Lx.fs.cwd()
+  let dir = cwd
+  let found = nil
+  for true {
+    if Lx.fs.exists(Lx.path.join(dir, ".lxroot")) {
+      found = dir
+      break
+    }
+    let parent = Lx.path.dirname(dir)
+    if parent == dir { break }
+    dir = parent
+  }
+
+  if !found and Lx.env and Lx.env["LX_ROOT"] {
+    let envRoot = Lx.env["LX_ROOT"]
+    if envRoot and envRoot != "" {
+      if !_isAbs(envRoot) {
+        envRoot = Lx.path.join(cwd, envRoot)
+      }
+
+      // Only accept if it looks like an existing directory (when stat is available).
+      if Lx.fs.stat {
+        let st = Lx.fs.stat(envRoot)
+        if st and st.type == "dir" {
+          found = envRoot
+        }
+      } else if Lx.fs.exists(envRoot) {
+        found = envRoot
+      }
+    }
+  }
+
+  let projectRoot = found or cwd
+  let moduleBase = projectRoot
+
+  if Lx.fs.stat {
+    let lxDir = Lx.path.join(projectRoot, "lx")
+    let st = Lx.fs.stat(lxDir)
+    if st and st.type == "dir" {
+      moduleBase = lxDir
+    }
+  }
+
+  _cached.ok = true
+  _cached.projectRoot = projectRoot
+  _cached.moduleBase = moduleBase
+  _cached
+}
 
 fn resolvePath(path) {
-  if path and path[0] == "@" {
-    let s = "~/lx/"
-    let length = len(path)
-    for let i = 1; i < length; i = i + 1 {
-      s = s + path[i]
-    }
-    return s
+  if !path {
+    return path
   }
-  path
+  if _isAbs(path) {
+    return path
+  }
+
+  let roots = _computeRoots()
+  if !roots or !roots.ok or !roots.projectRoot or !roots.moduleBase {
+    return path
+  }
+
+  // If the caller explicitly passes a "lx/..." path, resolve from project root.
+  if _startsWithLxSlash(path) {
+    return Lx.path.join(roots.projectRoot, path)
+  }
+
+  // Otherwise, resolve from module base (usually <projectRoot>/lx).
+  Lx.path.join(roots.moduleBase, path)
 }
 
 fn slurpPath(path) {
@@ -35,4 +133,3 @@ fn makeLoadSource(sourceOverride, overridePath) {
   slurpPath: slurpPath,
   makeLoadSource: makeLoadSource,
 }
-

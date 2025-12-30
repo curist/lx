@@ -1,16 +1,14 @@
-#!/usr/bin/env -S ../out/lx run
-
 let driver = import "src/driver.lx"
 let errors = import "src/errors.lx"
 let ModuleResolution = import "src/module_resolution.lx"
 
 fn usage() {
   groanln("Usage:")
-  groanln("  ./cmd/lxcheck.lx <entry>")
-  groanln("  # e.g. from lx/: ./cmd/lxcheck.lx cmd/mlx.lx")
+  groanln("  ./out/lx run lx/cmd/lxcheck.lx <entry>")
+  groanln("  # e.g. ./out/lx run lx/cmd/lxcheck.lx cmd/mlx.lx")
   groanln("")
   groanln("Notes:")
-  groanln("  - Run from the `lx/` directory so imports like \"src/...\" resolve.")
+  groanln("  - Uses `.lxroot` (or `LX_ROOT`) for project root detection.")
   groanln("  - `<entry>` should be the module you want to typecheck (plus transitive imports).")
 }
 

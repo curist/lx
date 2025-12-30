@@ -138,5 +138,5 @@ Error behavior:
 
 ## Testing
 
-- Parser tests: `../out/lx run test/parser.test.lx`
+- Parser tests: `./out/lx run lx/test/parser.test.lx`
 - All tests: `make test`

@@ -1,6 +1,7 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 let helpers = import "test/anf/helpers.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 
 fn buildSnapshot(cases) {
   let out = "# anf ast snapshots\n"
@@ -29,7 +30,7 @@ test("snapshot - anf ast", fn(assert) {
   let result = buildSnapshot(cases)
   assert.truthy(result.success)
 
-  let snapshot = slurp("test/snapshots/anf.ast.txt")
+  let snapshot = ModuleResolution.slurpPath("test/snapshots/anf.ast.txt")
   if snapshot != result.text {
     println("Snapshot mismatch for anf ast")
     println("Expected:")

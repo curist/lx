@@ -1409,11 +1409,12 @@ fn remapType(t, typeVarMap, nextTypeVarIdRef) {
 // This is the recommended API for IDE/LSP tooling
 fn compileWithOpts(filepath, opts) {
   let withTypecheck = !(opts and opts.withTypecheck == false)
+  let loadSource = (opts and opts.loadSource) or fn(path) { ModuleResolution.slurpPath(path) }
 
   // Create driver that loads from filesystem
   let driver = Driver.make(.{
     profile: "query",
-    loadSource: fn(path) { ModuleResolution.slurpPath(path) },
+    loadSource: loadSource,
     withTypecheck: withTypecheck,
   })
 

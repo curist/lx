@@ -162,9 +162,13 @@ fn builtinTypeByName(checker, name) {
         error: typeAny(),
       })),
       error: typeFunction([typeAny()], typeNil()),
+      stdout: typeRecord(.{
+        flush: typeFunction([], typeNil()),
+      }),
       stdin: typeRecord(.{
         readAll: typeFunction([], typeString()),
         readLine: typeFunction([], typeOption(typeString())),
+        readBytes: typeFunction([typeNumber()], typeOption(typeString())),
       }),
       // exit(code?) -> Nil; model as 0-arg fn so `Lx.exit()` works, and extra args are allowed.
       exit: typeFunction([], typeNil()),

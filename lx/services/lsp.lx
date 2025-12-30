@@ -1,0 +1,611 @@
+let query = import "services/query.lx"
+let ModuleResolution = import "src/module_resolution.lx"
+
+fn stringLess(a, b) {
+  if !a and b { return true }
+  if a and !b { return false }
+  if !a and !b { return false }
+
+  let alen = len(a)
+  let blen = len(b)
+  let n = alen < blen and alen or blen
+  for let i = 0; i < n; i = i + 1 {
+    let ca = ord(a[i])
+    let cb = ord(b[i])
+    if ca < cb { return true }
+    if ca > cb { return false }
+  }
+  alen < blen
+}
+
+fn startsWith(s, prefix) {
+  if !s or !prefix { return false }
+  if len(prefix) > len(s) { return false }
+  for let i = 0; i < len(prefix); i = i + 1 {
+    if s[i] != prefix[i] { return false }
+  }
+  true
+}
+
+fn sliceFrom(s, start) {
+  if !s { return s }
+  let n = len(s)
+  if start <= 0 { return s }
+  if start >= n { return "" }
+  let chars = []
+  for let i = start; i < n; i = i + 1 {
+    push(chars, s[i])
+  }
+  join(chars, "")
+}
+
+fn dropLastChar(s) {
+  if !s { return s }
+  let n = len(s)
+  if n <= 0 { return s }
+  let chars = []
+  for let i = 0; i < n - 1; i = i + 1 {
+    push(chars, s[i])
+  }
+  join(chars, "")
+}
+
+fn trimLineEnd(s) {
+  if !s { return s }
+  let out = s
+  if len(out) > 0 and out[len(out) - 1] == "\n" {
+    out = dropLastChar(out)
+  }
+  if len(out) > 0 and out[len(out) - 1] == "\r" {
+    out = dropLastChar(out)
+  }
+  out
+}
+
+fn trimSpaces(s) {
+  if !s { return s }
+  let n = len(s)
+  let i = 0
+  for i < n and (s[i] == " " or s[i] == "\t") { i = i + 1 }
+  let j = n
+  for j > i and (s[j - 1] == " " or s[j - 1] == "\t") { j = j - 1 }
+  let chars = []
+  for let k = i; k < j; k = k + 1 {
+    push(chars, s[k])
+  }
+  join(chars, "")
+}
+
+// ------------------------------------------------------------
+// URI helpers (file://)
+// ------------------------------------------------------------
+
+fn hexVal(ch) {
+  let c = ord(ch)
+  if c >= ord("0") and c <= ord("9") { return c - ord("0") }
+  if c >= ord("a") and c <= ord("f") { return c - ord("a") + 10 }
+  if c >= ord("A") and c <= ord("F") { return c - ord("A") + 10 }
+  nil
+}
+
+fn uriDecode(s) {
+  if !s { return s }
+  let out = []
+  let i = 0
+  for i < len(s) {
+    if s[i] == "%" and i + 2 < len(s) {
+      let a = hexVal(s[i + 1])
+      let b = hexVal(s[i + 2])
+      if a != nil and b != nil {
+        push(out, chr(a * 16 + b))
+        i = i + 3
+        continue
+      }
+    }
+    push(out, s[i])
+    i = i + 1
+  }
+  join(out, "")
+}
+
+fn uriEncodePath(path) {
+  if !path { return path }
+  fn hexDigit(n) {
+    n < 10 and chr(ord("0") + n) or chr(ord("A") + (n - 10))
+  }
+  let out = []
+  for let i = 0; i < len(path); i = i + 1 {
+    let ch = path[i]
+    let c = ord(ch)
+    let isSafe = (c >= ord("a") and c <= ord("z")) or
+      (c >= ord("A") and c <= ord("Z")) or
+      (c >= ord("0") and c <= ord("9")) or
+      ch == "-" or ch == "_" or ch == "." or ch == "~" or ch == "/" // path separator
+
+    if isSafe {
+      push(out, ch)
+    } else {
+      let hi = int(c / 16)
+      let lo = c - hi * 16
+      push(out, "%")
+      push(out, hexDigit(hi))
+      push(out, hexDigit(lo))
+    }
+  }
+  join(out, "")
+}
+
+fn uriToPath(uri) {
+  if !uri { return uri }
+  if !startsWith(uri, "file://") {
+    return uri
+  }
+
+  let rest = sliceFrom(uri, len("file://"))
+  if startsWith(rest, "localhost") {
+    rest = sliceFrom(rest, len("localhost"))
+  }
+  uriDecode(rest)
+}
+
+fn pathToUri(path) {
+  if !path { return path }
+  startsWith(path, "file://") and path or ("file://" + uriEncodePath(path))
+}
+
+fn pathToSpecifier(path) {
+  let roots = ModuleResolution.roots()
+  let base = roots and roots.moduleBase or nil
+  if !base {
+    return path
+  }
+
+  let prefix = base + "/"
+  if startsWith(path, prefix) {
+    return sliceFrom(path, len(prefix))
+  }
+  path
+}
+
+fn specifierToUri(specifier) {
+  pathToUri(ModuleResolution.resolvePath(specifier))
+}
+
+// ------------------------------------------------------------
+// Minimal JSON (enough for LSP)
+// ------------------------------------------------------------
+
+fn jsonStringEscape(s) {
+  let out = []
+  for let i = 0; i < len(s); i = i + 1 {
+    let ch = s[i]
+    if ch == "\"" { push(out, "\\\""); continue }
+    if ch == "\\" { push(out, "\\\\"); continue }
+    if ch == "\n" { push(out, "\\n"); continue }
+    if ch == "\r" { push(out, "\\r"); continue }
+    if ch == "\t" { push(out, "\\t"); continue }
+    push(out, ch)
+  }
+  join(out, "")
+}
+
+fn jsonStringify(v) {
+  let t = type(v)
+  if t == "nil" { return "null" }
+  if t == "boolean" { return v and "true" or "false" }
+  if t == "number" { return str(v) }
+  if t == "string" { return "\"" + jsonStringEscape(v) + "\"" }
+
+  if t == "array" {
+    let parts = []
+    for let i = 0; i < len(v); i = i + 1 {
+      push(parts, jsonStringify(v[i]))
+    }
+    return "[" + join(parts, ",") + "]"
+  }
+
+  if t == "map" {
+    let ks = keys(v)
+    ks->sort(stringLess)
+    let parts = []
+    for let i = 0; i < len(ks); i = i + 1 {
+      let k = ks[i]
+      let keyStr = type(k) == "string" and k or str(k)
+      push(parts, jsonStringify(keyStr) + ":" + jsonStringify(v[k]))
+    }
+    return "{" + join(parts, ",") + "}"
+  }
+
+  // Fallback: stringify as string.
+  jsonStringify(str(v))
+}
+
+fn jsonParse(s) {
+  let st = .{ s: s, i: 0, n: len(s) }
+
+  fn isWs(ch) { ch == " " or ch == "\n" or ch == "\r" or ch == "\t" }
+  fn skipWs() { for st.i < st.n and isWs(st.s[st.i]) { st.i = st.i + 1 } }
+  fn peek() { st.i < st.n and st.s[st.i] or nil }
+  fn take() { let ch = peek(); st.i = st.i + 1; ch }
+
+  fn fail(msg) { .{ ok: false, message: msg, index: st.i } }
+
+  fn parseString() {
+    if take() != "\"" { return fail("expected string") }
+    let out = []
+    for st.i < st.n {
+      let ch = take()
+      if ch == "\"" {
+        return .{ ok: true, value: join(out, "") }
+      }
+      if ch == "\\" {
+        if st.i >= st.n { return fail("unterminated escape") }
+        let esc = take()
+        if esc == "\"" { push(out, "\""); continue }
+        if esc == "\\" { push(out, "\\"); continue }
+        if esc == "/" { push(out, "/"); continue }
+        if esc == "b" { push(out, chr(8)); continue }
+        if esc == "f" { push(out, chr(12)); continue }
+        if esc == "n" { push(out, "\n"); continue }
+        if esc == "r" { push(out, "\r"); continue }
+        if esc == "t" { push(out, "\t"); continue }
+        if esc == "u" {
+          if st.i + 3 >= st.n { return fail("bad \\u escape") }
+          let a = hexVal(take())
+          let b = hexVal(take())
+          let c = hexVal(take())
+          let d = hexVal(take())
+          if a == nil or b == nil or c == nil or d == nil { return fail("bad \\u escape") }
+          let code = a * 4096 + b * 256 + c * 16 + d
+          // Best-effort: only map BMP values we can represent.
+          push(out, code <= 255 and chr(code) or "?")
+          continue
+        }
+        return fail("unknown escape")
+      }
+      push(out, ch)
+    }
+    fail("unterminated string")
+  }
+
+  fn parseNumber() {
+    let out = []
+    let ch = peek()
+    if ch == "-" { push(out, take()) }
+    for st.i < st.n {
+      let c = peek()
+      let o = ord(c)
+      if o >= ord("0") and o <= ord("9") { push(out, take()); continue }
+      break
+    }
+    if peek() == "." {
+      push(out, take())
+      for st.i < st.n {
+        let c = peek()
+        let o = ord(c)
+        if o >= ord("0") and o <= ord("9") { push(out, take()); continue }
+        break
+      }
+    }
+    let e = peek()
+    if e == "e" or e == "E" {
+      push(out, take())
+      let sgn = peek()
+      if sgn == "+" or sgn == "-" { push(out, take()) }
+      for st.i < st.n {
+        let c = peek()
+        let o = ord(c)
+        if o >= ord("0") and o <= ord("9") { push(out, take()); continue }
+        break
+      }
+    }
+    let numStr = join(out, "")
+    let n = tonumber(numStr)
+    n == nil and fail("invalid number") or .{ ok: true, value: n }
+  }
+
+  fn parseLiteral(lit, value) {
+    for let j = 0; j < len(lit); j = j + 1 {
+      if st.i + j >= st.n or st.s[st.i + j] != lit[j] {
+        return fail("expected " + lit)
+      }
+    }
+    st.i = st.i + len(lit)
+    .{ ok: true, value: value }
+  }
+
+  fn parseArray() {
+    if take() != "[" { return fail("expected [") }
+    skipWs()
+    let arr = []
+    if peek() == "]" { take(); return .{ ok: true, value: arr } }
+    for true {
+      skipWs()
+      let v = parseValue()
+      if !v.ok { return v }
+      push(arr, v.value)
+      skipWs()
+      let ch = peek()
+      if ch == "," { take(); continue }
+      if ch == "]" { take(); break }
+      return fail("expected , or ]")
+    }
+    .{ ok: true, value: arr }
+  }
+
+  fn parseObject() {
+    if take() != "{" { return fail("expected {") }
+    skipWs()
+    let obj = .{}
+    if peek() == "}" { take(); return .{ ok: true, value: obj } }
+    for true {
+      skipWs()
+      if peek() != "\"" { return fail("expected object key string") }
+      let k = parseString()
+      if !k.ok { return k }
+      skipWs()
+      if take() != ":" { return fail("expected :") }
+      skipWs()
+      let v = parseValue()
+      if !v.ok { return v }
+      obj[k.value] = v.value
+      skipWs()
+      let ch = peek()
+      if ch == "," { take(); continue }
+      if ch == "}" { take(); break }
+      return fail("expected , or }")
+    }
+    .{ ok: true, value: obj }
+  }
+
+  fn parseValue() {
+    skipWs()
+    let ch = peek()
+    if ch == nil { return fail("unexpected eof") }
+    if ch == "\"" { return parseString() }
+    if ch == "[" { return parseArray() }
+    if ch == "{" { return parseObject() }
+    if ch == "t" { return parseLiteral("true", true) }
+    if ch == "f" { return parseLiteral("false", false) }
+    if ch == "n" { return parseLiteral("null", nil) }
+    let o = ord(ch)
+    if ch == "-" or (o >= ord("0") and o <= ord("9")) {
+      return parseNumber()
+    }
+    fail("unexpected token")
+  }
+
+  let v = parseValue()
+  if !v.ok { return v }
+  skipWs()
+  if st.i != st.n { return .{ ok: false, message: "trailing input", index: st.i } }
+  v
+}
+
+// ------------------------------------------------------------
+// LSP framing + server loop
+// ------------------------------------------------------------
+
+fn readExact(n) {
+  if n <= 0 { return "" }
+  let chunks = []
+  let remaining = n
+  for remaining > 0 {
+    let chunk = Lx.stdin.readBytes(remaining)
+    if !chunk { return nil }
+    if len(chunk) == 0 { return nil }
+    push(chunks, chunk)
+    remaining = remaining - len(chunk)
+  }
+  join(chunks, "")
+}
+
+fn readMessage() {
+  let contentLength = nil
+  for true {
+    let line = Lx.stdin.readLine()
+    if !line { return nil }
+    line = trimLineEnd(line)
+    if line == "" {
+      break
+    }
+    let parts = split(line, ":")
+    if len(parts) >= 2 {
+      let k = tolower(trimSpaces(parts[0]))
+      if k == "content-length" {
+        let n = tonumber(trimSpaces(parts[1]))
+        if n != nil {
+          contentLength = int(n)
+        }
+      }
+    }
+  }
+
+  if contentLength == nil {
+    return nil
+  }
+
+  readExact(contentLength)
+}
+
+fn sendJson(obj) {
+  let body = jsonStringify(obj)
+  let header = "Content-Length: " + str(len(body)) + "\r\n\r\n"
+  print(header)
+  print(body)
+  if Lx and Lx.stdout and Lx.stdout.flush { Lx.stdout.flush() }
+}
+
+fn sendResponse(id, result) {
+  sendJson(.{
+    jsonrpc: "2.0",
+    id: id,
+    result: result,
+  })
+}
+
+fn sendError(id, code, message) {
+  sendJson(.{
+    jsonrpc: "2.0",
+    id: id,
+    error: .{
+      code: code,
+      message: message,
+    },
+  })
+}
+
+fn makeLoadSource(openDocs) {
+  fn(path) {
+    if openDocs and openDocs[path] != nil {
+      return openDocs[path]
+    }
+    ModuleResolution.slurpPath(path)
+  }
+}
+
+fn handleDefinition(state, msg) {
+  let params = msg.params or .{}
+  let td = params.textDocument or .{}
+  let uri = td.uri
+  let pos = params.position or .{}
+
+  let absPath = uriToPath(uri)
+  if !absPath {
+    return nil
+  }
+
+  let spec = pathToSpecifier(absPath)
+  let ctxResult = query.compileWithOpts(spec, .{
+    withTypecheck: false,
+    loadSource: makeLoadSource(state.openDocs),
+  })
+  if !ctxResult.success {
+    return nil
+  }
+
+  let ln = (pos.line or 0) + 1
+  let col = (pos.character or 0)
+  let r = query.queryGotoDefinition(ctxResult.ctx, spec, ln, col)
+  if !r or !r.success or !r.target {
+    return nil
+  }
+
+  let target = r.target
+  .{
+    uri: specifierToUri(target.filename),
+    range: .{
+      start: .{
+        line: (target.line or 1) - 1,
+        character: target.col or 0,
+      },
+      end: .{
+        line: (target.endLine or target.line or 1) - 1,
+        character: target.endCol or target.col or 0,
+      },
+    },
+  }
+}
+
+fn serve() {
+  let state = .{
+    openDocs: .{},
+    shutdown: false,
+  }
+
+  for true {
+    let body = readMessage()
+    if !body { break }
+
+    let parsed = jsonParse(body)
+    if !parsed.ok {
+      // No request id available; best-effort log.
+      groanln("lsp: json parse error:", parsed.message, "at", parsed.index)
+      continue
+    }
+
+    let msg = parsed.value
+    let method = msg.method
+    let id = msg.id
+
+    // Requests
+    if method == "initialize" {
+      sendResponse(id, .{
+        capabilities: .{
+          definitionProvider: true,
+          textDocumentSync: .{ openClose: true, change: 1 },
+        },
+        serverInfo: .{ name: "lx", version: (Lx and Lx.version) or "dev" },
+      })
+      continue
+    }
+
+    if method == "shutdown" {
+      state.shutdown = true
+      if id != nil { sendResponse(id, nil) }
+      continue
+    }
+
+    // Notifications
+    if method == "exit" {
+      Lx.exit(state.shutdown and 0 or 1)
+    }
+    if method == "initialized" {
+      continue
+    }
+
+    if method == "textDocument/didOpen" {
+      let td = (msg.params and msg.params.textDocument) or .{}
+      let abs = uriToPath(td.uri)
+      let spec = abs and pathToSpecifier(abs) or nil
+      if spec and td.text != nil {
+        state.openDocs[spec] = td.text
+      }
+      continue
+    }
+
+    if method == "textDocument/didChange" {
+      let td = (msg.params and msg.params.textDocument) or .{}
+      let abs = uriToPath(td.uri)
+      let spec = abs and pathToSpecifier(abs) or nil
+      let changes = (msg.params and msg.params.contentChanges) or []
+      if spec and len(changes) > 0 and changes[0].text != nil {
+        state.openDocs[spec] = changes[0].text
+      }
+      continue
+    }
+
+    if method == "textDocument/didClose" {
+      let td = (msg.params and msg.params.textDocument) or .{}
+      let abs = uriToPath(td.uri)
+      let spec = abs and pathToSpecifier(abs) or nil
+      if spec {
+        state.openDocs[spec] = nil
+      }
+      continue
+    }
+
+    if method == "textDocument/definition" {
+      let loc = handleDefinition(state, msg)
+      if id != nil {
+        sendResponse(id, loc)
+      }
+      continue
+    }
+
+    // Unknown request: respond with Method not found.
+    if id != nil {
+      sendError(id, -32601, "Method not found: " + str(method))
+    }
+  }
+}
+
+.{
+  serve,
+  jsonParse,
+  jsonStringify,
+  uriToPath,
+  pathToUri,
+  pathToSpecifier,
+  specifierToUri,
+}

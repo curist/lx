@@ -129,6 +129,7 @@ fn makeLoadSource(sourceOverride, overridePath) {
 }
 
 .{
+  roots: _computeRoots,
   resolvePath: resolvePath,
   slurpPath: slurpPath,
   makeLoadSource: makeLoadSource,

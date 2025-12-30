@@ -7,12 +7,13 @@ let replCmd = import "commands/repl.lx"
 let disasmCmd = import "commands/disasm.lx"
 let anfCmd = import "commands/anf.lx"
 let checkCmd = import "commands/check.lx"
+let lspCmd = import "commands/lsp.lx"
 
 fn isHelpArg(arg) {
   arg == "-h" or arg == "--help" or arg == "help"
 }
 
-let commands = [runCmd, evalCmd, replCmd, compileCmd, disasmCmd, anfCmd, checkCmd, versionCmd, helpCmd]
+let commands = [runCmd, evalCmd, replCmd, compileCmd, disasmCmd, anfCmd, checkCmd, lspCmd, versionCmd, helpCmd]
 let commandsByName = .{}
 for let i = 0; i < len(commands); i = i + 1 {
   let c = commands[i]
@@ -55,4 +56,3 @@ if len(ctx.argv) < 2 {
 
 let cmd = ctx.commandsByName[cmdName]
 {cmd and cmd.run or fn() { handleUnknown(ctx, cmdName) }}(ctx)
-

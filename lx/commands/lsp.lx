@@ -1,0 +1,19 @@
+let lsp = import "services/lsp.lx"
+
+fn run(ctx) {
+  if !Lx or !Lx.stdin or !Lx.stdin.readLine or !Lx.stdin.readBytes or !Lx.stdout or !Lx.stdout.flush {
+    groanln("lsp: missing required runtime APIs (Lx.stdin.readLine, Lx.stdin.readBytes, Lx.stdout.flush)")
+    Lx.exit(70)
+  }
+
+  lsp.serve()
+}
+
+.{
+  name: "lsp",
+  aliases: [],
+  usage: "lsp",
+  summary: "Start LSP server on stdio",
+  run: run,
+}
+

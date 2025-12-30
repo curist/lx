@@ -57,6 +57,9 @@ Global builtins:
 - `Lx.stdin`: stdin helpers (native builds):
   - `Lx.stdin.readAll() -> string`
   - `Lx.stdin.readLine(prompt?: string) -> string | nil`
+  - `Lx.stdin.readBytes(n: number) -> string | nil`
+- `Lx.stdout`: stdout helpers (native builds):
+  - `Lx.stdout.flush() -> nil`
 - `Lx.isLxObj(bytes: string | array[number]) -> bool` checks whether a byte buffer looks like an lxobj.
 - `Lx.loadObj(bytes: string | array[number], printCode?: bool) -> fn` loads an lxobj and returns a callable closure.
 - `Lx.pcall(fn: fn, ...args) -> {ok,value,error}` calls a function and captures runtime errors instead of aborting.

@@ -103,6 +103,16 @@ static bool printlnNative(int argCount, Value *args) {
   return true;
 }
 
+static bool stdoutFlushNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdout.flush takes 0 args.");
+    return false;
+  }
+  fflush(stdout);
+  args[-1] = NIL_VAL;
+  return true;
+}
+
 static bool putcNative(int argCount, Value *args) {
   for (int i = 0; i < argCount; i++) {
     printf("%c", (int)AS_NUMBER(args[i]));
@@ -768,14 +778,34 @@ static bool readNative(int argCount, Value *args) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
     return false;
   }
-  size_t n = AS_NUMBER(args[0]);
-  char chars[n];
-  size_t read;
-  if (!(read = fread(chars, 1, n, stdin))) {
-    args[-1] = NIL_VAL;
-  } else {
-    args[-1] = OBJ_VAL(copyString(chars, read));
+
+  double raw = AS_NUMBER(args[0]);
+  if (raw < 0) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a non-negative number.");
+    return false;
   }
+
+  size_t n = (size_t)raw;
+  if (n == 0) {
+    args[-1] = OBJ_VAL(copyString("", 0));
+    return true;
+  }
+
+  char* buffer = (char*)malloc(n + 1);
+  if (buffer == NULL) {
+    args[-1] = CSTRING_VAL("Error: out of memory.");
+    return false;
+  }
+
+  size_t read = fread(buffer, 1, n, stdin);
+  if (read == 0 && feof(stdin)) {
+    free(buffer);
+    args[-1] = NIL_VAL;
+    return true;
+  }
+
+  buffer[read] = '\0';
+  args[-1] = OBJ_VAL(takeString(buffer, (int)read));
   return true;
 }
 
@@ -1487,7 +1517,19 @@ static void defineLxNatives() {
   pop();
   defineTableFunction(&stdinTable->table, "readAll", stdinReadAllNative);
   defineTableFunction(&stdinTable->table, "readLine", stdinReadLineNative);
+  defineTableFunction(&stdinTable->table, "readBytes", readNative);
   pop(); // stdin
+
+  // Lx.stdout
+  ObjHashmap* stdoutTable = newHashmap();
+  push(OBJ_VAL(stdoutTable)); // root
+  push(CSTRING_VAL("stdout"));
+  push(OBJ_VAL(stdoutTable));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+  defineTableFunction(&stdoutTable->table, "flush", stdoutFlushNative);
+  pop(); // stdout
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array",

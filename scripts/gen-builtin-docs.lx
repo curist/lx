@@ -1,0 +1,295 @@
+// Generate bundled builtin hover docs from repo docs + native header.
+//
+// Source of truth:
+// - `lx/README.md` section: "## Builtin Native Functions"
+// - `include/native_fn.h` for builtin names that exist (undocumented placeholders)
+//
+// Output:
+// - `lx/services/builtins_docs_data.lx` (checked into repo, embedded into lxlx bytecode)
+
+fn stringLess(a, b) {
+  if !a and b { return true }
+  if a and !b { return false }
+  if !a and !b { return false }
+
+  let alen = len(a)
+  let blen = len(b)
+  let n = alen < blen and alen or blen
+  for let i = 0; i < n; i = i + 1 {
+    let ca = ord(a[i])
+    let cb = ord(b[i])
+    if ca < cb { return true }
+    if ca > cb { return false }
+  }
+  alen < blen
+}
+
+fn startsWith(s, prefix) {
+  if !s or !prefix { return false }
+  if len(prefix) > len(s) { return false }
+  for let i = 0; i < len(prefix); i = i + 1 {
+    if s[i] != prefix[i] { return false }
+  }
+  true
+}
+
+fn trimSpaces(s) {
+  if !s { return s }
+  let n = len(s)
+  let i = 0
+  for i < n and (s[i] == " " or s[i] == "\t") { i = i + 1 }
+  let j = n
+  for j > i and (s[j - 1] == " " or s[j - 1] == "\t") { j = j - 1 }
+  let chars = []
+  for let k = i; k < j; k = k + 1 {
+    push(chars, s[k])
+  }
+  join(chars, "")
+}
+
+fn indexOfChar(s, ch, start) {
+  if !s { return nil }
+  let i = start or 0
+  for i < len(s) {
+    if s[i] == ch { return i }
+    i = i + 1
+  }
+  nil
+}
+
+fn slice(s, start, endExclusive) {
+  if !s { return s }
+  let n = len(s)
+  let a = start or 0
+  let b = endExclusive or n
+  if a < 0 { a = 0 }
+  if b < a { b = a }
+  if a > n { a = n }
+  if b > n { b = n }
+  let out = []
+  for let i = a; i < b; i = i + 1 {
+    push(out, s[i])
+  }
+  join(out, "")
+}
+
+fn parseSigToName(sig) {
+  if !sig { return nil }
+  let s = trimSpaces(sig)
+  let i = 0
+  for i < len(s) {
+    let ch = s[i]
+    if ch == "(" or ch == ":" or ch == " " {
+      break
+    }
+    i = i + 1
+  }
+  i == 0 and nil or slice(s, 0, i)
+}
+
+fn parseReadmeDocs(md) {
+  let docs = .{}
+  if !md {
+    return docs
+  }
+
+  let lines = split(md, "\n")
+  let inSection = false
+
+  for let i = 0; i < len(lines); i = i + 1 {
+    let line = lines[i]
+
+    if startsWith(line, "## ") {
+      if startsWith(line, "## Builtin Native Functions") {
+        inSection = true
+        continue
+      }
+      if inSection {
+        break
+      }
+    }
+
+    if !inSection {
+      continue
+    }
+
+    let bt0 = indexOfChar(line, "`", 0)
+    if bt0 == nil { continue }
+    let bt1 = indexOfChar(line, "`", bt0 + 1)
+    if bt1 == nil { continue }
+
+    let sig = slice(line, bt0 + 1, bt1)
+    let name = parseSigToName(sig)
+    if !name or docs[name] {
+      continue
+    }
+
+    let desc = trimSpaces(slice(line, bt1 + 1, len(line)))
+    if desc and startsWith(desc, "-") {
+      desc = trimSpaces(slice(desc, 1, len(desc)))
+    }
+
+    let markdown = "`" + sig + "`"
+    if desc and desc != "" {
+      markdown = markdown + "\n" + desc
+    }
+
+    docs[name] = .{
+      name: name,
+      signature: sig,
+      description: (desc and desc != "" and desc) or nil,
+      markdown: markdown,
+      source: "lx/README.md",
+    }
+  }
+
+  docs
+}
+
+fn parseNativeFnBuiltins(text) {
+  let names = .{}
+  if !text {
+    return names
+  }
+
+  let lines = split(text, "\n")
+  let scope = nil  // "Lx" | "Date" | nil
+  let prefix = nil // e.g. "Lx.fs"
+
+  for let i = 0; i < len(lines); i = i + 1 {
+    let raw = lines[i]
+    let line = trimSpaces(raw)
+
+    if startsWith(line, "static void defineLxNatives") {
+      scope = "Lx"
+      prefix = "Lx"
+      continue
+    }
+    if startsWith(line, "static void defineDateNatives") {
+      scope = "Date"
+      prefix = "Date"
+      continue
+    }
+    if startsWith(line, "void defineBuiltinNatives") {
+      scope = nil
+      prefix = nil
+      continue
+    }
+
+    if startsWith(line, "// Lx.fs") { prefix = "Lx.fs"; continue }
+    if startsWith(line, "// Lx.path") { prefix = "Lx.path"; continue }
+    if startsWith(line, "// Lx.stdin") { prefix = "Lx.stdin"; continue }
+    if startsWith(line, "// Lx.stdout") { prefix = "Lx.stdout"; continue }
+
+    // Global builtins: defineNative("print", ...)
+    if startsWith(line, "defineNative(") {
+      let q0 = indexOfChar(line, "\"", 0)
+      let q1 = q0 != nil and indexOfChar(line, "\"", q0 + 1) or nil
+      if q0 != nil and q1 != nil {
+        let name = slice(line, q0 + 1, q1)
+        if name and name != "" { names[name] = true }
+      }
+      continue
+    }
+
+    // Namespaced builtins: defineTableFunction(..., "cwd", ...)
+    if startsWith(line, "defineTableFunction(") {
+      if !scope { continue }
+      let q0 = indexOfChar(line, "\"", 0)
+      let q1 = q0 != nil and indexOfChar(line, "\"", q0 + 1) or nil
+      if q0 == nil or q1 == nil { continue }
+      let member = slice(line, q0 + 1, q1)
+      if !member or member == "" { continue }
+
+      // Root `Lx.*` functions use defineTableFunction(&AS_HASHMAP(vm.stack[1]), "...", ...)
+      if scope == "Lx" and startsWith(line, "defineTableFunction(&AS_HASHMAP(vm.stack[1])") {
+        names["Lx." + member] = true
+        continue
+      }
+
+      if prefix and prefix != "" {
+        names[prefix + "." + member] = true
+      } else if scope == "Date" {
+        names["Date." + member] = true
+      } else if scope == "Lx" {
+        names["Lx." + member] = true
+      }
+      continue
+    }
+  }
+
+  names
+}
+
+fn lxStringEscape(s) {
+  let out = []
+  for let i = 0; i < len(s); i = i + 1 {
+    let ch = s[i]
+    if ch == "\"" { push(out, "\\\""); continue }
+    if ch == "\\" { push(out, "\\\\"); continue }
+    if ch == "\n" { push(out, "\\n"); continue }
+    if ch == "\r" { push(out, "\\r"); continue }
+    if ch == "\t" { push(out, "\\t"); continue }
+    push(out, ch)
+  }
+  join(out, "")
+}
+
+fn lxString(s) {
+  s == nil and "nil" or ("\"" + lxStringEscape(s) + "\"")
+}
+
+fn writeBuiltinsDocs(docs, nativeNames) {
+  let out = []
+  push(out, "// Generated by scripts/gen-builtin-docs.lx. Do not edit by hand.")
+  push(out, "")
+  push(out, "let DOCS = .{")
+
+  let docKeys = keys(docs)
+  docKeys->sort(stringLess)
+  for let i = 0; i < len(docKeys); i = i + 1 {
+    let k = docKeys[i]
+    let d = docs[k]
+    push(out, "  [" + lxString(k) + "]: .{")
+    push(out, "    name: " + lxString(d and d.name) + ",")
+    push(out, "    signature: " + lxString(d and d.signature) + ",")
+    push(out, "    description: " + lxString(d and d.description) + ",")
+    push(out, "    markdown: " + lxString(d and d.markdown) + ",")
+    push(out, "    source: " + lxString(d and d.source) + ",")
+    push(out, "  },")
+  }
+  push(out, "}")
+  push(out, "")
+
+  push(out, "let NATIVE_NAMES = .{")
+  let nativeKeys = keys(nativeNames)
+  nativeKeys->sort(stringLess)
+  for let i = 0; i < len(nativeKeys); i = i + 1 {
+    let k = nativeKeys[i]
+    push(out, "  [" + lxString(k) + "]: true,")
+  }
+  push(out, "}")
+  push(out, "")
+
+  push(out, ".{")
+  push(out, "  DOCS,")
+  push(out, "  NATIVE_NAMES,")
+  push(out, "}")
+  push(out, "")
+
+  let content = join(out, "\n")
+  spit("lx/services/builtins_docs_data.lx", content)
+}
+
+fn main() {
+  let readme = slurp("lx/README.md")
+  let header = slurp("include/native_fn.h")
+
+  let docs = parseReadmeDocs(readme)
+  let nativeNames = parseNativeFnBuiltins(header)
+
+  writeBuiltinsDocs(docs, nativeNames)
+}
+
+main()
+

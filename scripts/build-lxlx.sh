@@ -21,6 +21,9 @@ if ! command -v "$LX" >/dev/null 2>&1 && ! [ -x "$LX" ]; then
   exit 0
 fi
 
+# Keep builtin hover docs bundled into the compiler bytecode.
+"$LX" run scripts/gen-builtin-docs.lx > /dev/null
+
 TARGET=./include/lx/lxlx.h
 OBJ="$ROOT/out/lxlx-new.lxobj"
 

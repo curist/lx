@@ -1,8 +1,5 @@
 fn _1(cb) { fn(x) { cb(x) } }
 fn _2(cb) { fn(x, y) { cb(x, y) } }
-fn _3(cb) { fn(x, y, z) { cb(x, y, z) } }
-
-fn do(x, cb) { cb(x) }
 
 fn first(coll) { coll[0] }
 fn last(coll) { coll[len(coll) - 1] }
@@ -169,23 +166,21 @@ fn sort(arr, compare) {
 }
 
 return .{
-  _1: _1,
-  _2: _2,
-  _3: _3,
-  do: do,
-  first: first,
-  last: last,
-  each: each,
-  fold: fold,
-  foldr: foldr,
-  map: map,
-  filter: filter,
-  contains: contains,
-  take: take,
-  drop: drop,
-  startsWith: startsWith,
-  endsWith: endsWith,
-  max: max,
-  min: min,
-  sort: sort,
+  _1,
+  _2,
+  first,
+  last,
+  each,
+  fold,
+  foldr,
+  map,
+  filter,
+  contains,
+  take,
+  drop,
+  startsWith,
+  endsWith,
+  max,
+  min,
+  sort,
 }

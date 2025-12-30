@@ -44,9 +44,6 @@ prepare: out lxlx lxglobals lxversion
 build: prepare
 	$(CC) src/*.c -o out/lx $(CFLAGS)
 
-wasm: prepare
-	zig cc $(CFLAGS) -DWASM -target wasm32-wasi src/*.c -o out/lx.wasm
-
 benchmark: build
 	@cd benchmarks && LX="$(PWD)/out/lx" ./run.sh
 

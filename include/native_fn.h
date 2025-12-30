@@ -779,7 +779,6 @@ static bool readNative(int argCount, Value *args) {
   return true;
 }
 
-#ifndef WASM
 static bool execNative(int argCount, Value *args) {
   if (argCount < 1 || !IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a string.");
@@ -846,7 +845,6 @@ static bool systemNative(int argCount, Value *args) {
 
   return true;
 }
-#endif
 
 static bool exitNative(int argCount, Value *args) {
   int exitCode = 0;
@@ -1428,7 +1426,6 @@ static void defineLxNatives() {
   push(CSTRING_VAL("env"));
   push(OBJ_VAL(newHashmap()));
   tableSet(&AS_HASHMAP(vm.stack[1]), vm.stack[2], vm.stack[3]);
-#ifndef WASM
   extern char** environ;
   if (environ != NULL) {
     for (int i = 0; environ[i] != NULL; i++) {
@@ -1445,7 +1442,6 @@ static void defineLxNatives() {
       pop();
     }
   }
-#endif
   pop();
   pop();
 
@@ -1557,10 +1553,8 @@ void defineBuiltinNatives() {
   defineNative("getline", getlineNative);
   defineNative("read", readNative);
 
-#ifndef WASM
   defineNative("exec", execNative);
   defineNative("system", systemNative);
-#endif
   defineNative("slurp", slurpNative);
   defineNative("spit", spitNative);
 }

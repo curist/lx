@@ -1,0 +1,35 @@
+let common = import "cmd/mlx/common.lx"
+
+fn run(ctx) {
+  let src = nil
+  if len(ctx.argv) >= 3 {
+    src = ctx.argv[2]
+  } else if Lx and Lx.stdin and Lx.stdin.readAll {
+    src = Lx.stdin.readAll()
+  }
+
+  if !src or src == "" {
+    groanln("Usage: " + ctx.prog + " eval <expression>")
+    groanln("  or pipe input via stdin: echo 'println(42)' | " + ctx.prog + " eval")
+    Lx.exit(64)
+  }
+
+  let path = "[LX EVAL]"
+  let d = common.makeDriverWithSource(src, path)
+  let func = common.compileWithDriver(d, path)
+  if !func { Lx.exit(65) }
+
+  let bytes = common.objbuilder(func, false).bytes()
+  let program = Lx.loadObj(bytes, false)
+  let result = program()
+  println(result)
+}
+
+.{
+  name: "eval",
+  aliases: [],
+  usage: "eval <expression>",
+  summary: "Evaluate expression (arg or stdin)",
+  run: run,
+}
+

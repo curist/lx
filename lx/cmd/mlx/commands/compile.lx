@@ -1,0 +1,55 @@
+let common = import "cmd/mlx/common.lx"
+
+fn run(ctx) {
+  let argsLength = len(ctx.argv)
+  let usageMessage = "Usage: " + ctx.prog + " compile <path> [-o|--output <output>]"
+  if argsLength < 3 {
+    groanln(usageMessage)
+    Lx.exit(28)
+  }
+
+  let path = nil
+  let outputPath = nil
+  let i = 2
+  for i < argsLength {
+    let arg = ctx.argv[i]
+    if arg == "-o" or arg == "--output" {
+      if i + 1 >= argsLength {
+        groanln(usageMessage)
+        Lx.exit(28)
+      }
+      outputPath = ctx.argv[i + 1]
+      i = i + 2
+      continue
+    }
+    if !path { path = arg }
+    i = i + 1
+  }
+  if !path {
+    groanln(usageMessage)
+    Lx.exit(28)
+  }
+
+  let func = common.compilePathToFunction(path, nil)
+  if !func { Lx.exit(65) }
+
+  if outputPath {
+    let bytes = common.objbuilder(func, common.DEBUG_BUILD).bytes()
+    let ok = spit(outputPath, common.bytesToString(bytes))
+    if ok != true {
+      groanln(ok or "Failed to write output.")
+      Lx.exit(74)
+    }
+  } else {
+    common.objbuilder(func, common.DEBUG_BUILD).dump()
+  }
+}
+
+.{
+  name: "compile",
+  aliases: ["c"],
+  usage: "compile <path> [-o|--output <output>]",
+  summary: "Compile source to lxobj (-o/--output <output>)",
+  run: run,
+}
+

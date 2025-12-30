@@ -1,0 +1,32 @@
+let common = import "cmd/mlx/common.lx"
+
+fn run(ctx) {
+  if len(ctx.argv) < 3 {
+    groanln("Usage: " + ctx.prog + " run <lxfile|lxobj>")
+    Lx.exit(28)
+  }
+
+  let path = ctx.argv[2]
+  let data = common.slurpUserPath(path)
+
+  if Lx and Lx.isLxObj and Lx.isLxObj(data) {
+    let program = Lx.loadObj(data, false)
+    return program()
+  }
+
+  let func = common.compilePathToFunction(path, data)
+  if !func { Lx.exit(65) }
+
+  let bytes = common.objbuilder(func, common.DEBUG_BUILD).bytes()
+  let program = Lx.loadObj(bytes, false)
+  program()
+}
+
+.{
+  name: "run",
+  aliases: ["r"],
+  usage: "run <lxfile|lxobj>",
+  summary: "Run source or lxobj",
+  run: run,
+}
+

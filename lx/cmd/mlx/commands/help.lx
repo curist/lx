@@ -1,0 +1,70 @@
+fn isHelpArg(arg) {
+  arg == "-h" or arg == "--help" or arg == "help"
+}
+
+fn padRight(s, width) {
+  let out = s
+  let n = width - len(out)
+  if n <= 0 { return out }
+  for let i = 0; i < n; i = i + 1 {
+    out = out + " "
+  }
+  out
+}
+
+fn printGeneralHelp(ctx) {
+  groanln("Usage:")
+  groanln("")
+  groanln("  " + ctx.prog + " <command> [arguments]")
+  groanln("")
+  groanln("Commands:")
+
+  let cmds = ctx.commands or []
+  let maxLen = 0
+  for let i = 0; i < len(cmds); i = i + 1 {
+    let n = len(cmds[i].name or "")
+    if n > maxLen { maxLen = n }
+  }
+  // Keep it readable even if a command name is long.
+  let colWidth = maxLen > 18 and 20 or (maxLen + 2)
+
+  for let i = 0; i < len(cmds); i = i + 1 {
+    let c = cmds[i]
+    let summary = c.summary or ""
+    let left = padRight(c.name, colWidth)
+    if len(c.name) >= colWidth { left = c.name + "  " }
+    groanln("  " + left + summary)
+  }
+}
+
+fn printCommandHelp(ctx, cmdName) {
+  let cmd = ctx.commandsByName and ctx.commandsByName[cmdName]
+  if !cmd {
+    groanln(ctx.prog + " help " + cmdName + ": unknown command")
+    groanln("Run '" + ctx.prog + " help' for usage.")
+    Lx.exit(28)
+  }
+
+  groanln("Usage:")
+  groanln("")
+  groanln("  " + ctx.prog + " " + (cmd.usage or cmd.name))
+  if cmd.summary {
+    groanln("")
+    groanln(cmd.summary)
+  }
+}
+
+fn run(ctx) {
+  if len(ctx.argv) >= 3 and ctx.argv[2] and !isHelpArg(ctx.argv[2]) {
+    return printCommandHelp(ctx, ctx.argv[2])
+  }
+  printGeneralHelp(ctx)
+}
+
+.{
+  name: "help",
+  aliases: ["h", "-h", "--help"],
+  usage: "help [command]",
+  summary: "Print this helpful page",
+  run: run,
+}

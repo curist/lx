@@ -22,7 +22,9 @@ if ! command -v "$LX" >/dev/null 2>&1 && ! [ -x "$LX" ]; then
 fi
 
 TARGET=./include/lx/lxlx.h
-OBJ=/tmp/lxlx-new.lxobj
+OBJ="$ROOT/out/lxlx-new.lxobj"
+
+mkdir -p "$ROOT/out"
 
 echo "#include <stdint.h>" > $TARGET
 echo "const uint8_t lxlx_bytecode[] = {" >> $TARGET

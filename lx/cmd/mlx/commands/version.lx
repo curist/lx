@@ -1,0 +1,12 @@
+fn run(ctx) {
+  println("lx version " + (Lx and Lx.version or "?"))
+}
+
+.{
+  name: "version",
+  aliases: [],
+  usage: "version",
+  summary: "Print version",
+  run: run,
+}
+

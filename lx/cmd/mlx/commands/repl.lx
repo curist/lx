@@ -1,0 +1,49 @@
+let common = import "cmd/mlx/common.lx"
+
+fn run(ctx) {
+  if !Lx or !Lx.stdin or !Lx.stdin.readLine or !Lx.pcall or !Lx.loadObj {
+    groanln("repl: missing required runtime APIs (Lx.stdin.readLine, Lx.pcall, Lx.loadObj)")
+    Lx.exit(70)
+  }
+
+  let iter = 0
+  for true {
+    let line = Lx.stdin.readLine("> ")
+    if !line { break }
+    if line == "\n" or line == "" { continue }
+    if line == ":q\n" or line == ":q" or line == ":quit\n" or line == ":quit" { break }
+
+    iter = iter + 1
+    let path = "[LX REPL " + str(iter) + "]"
+
+    let d = common.makeDriverWithSource(line, path)
+    let func = common.compileWithDriver(d, path)
+    if !func {
+      continue
+    }
+
+    if len(func.chunk.bytecode) == 1 {
+      func.chunk.bytecode = [common.OP.NIL, common.OP.RETURN]
+    }
+
+    let bytes = common.objbuilder(func, false).bytes()
+    let program = Lx.loadObj(bytes, false)
+
+    let r = Lx.pcall(program)
+    if r.ok {
+      print("=> ")
+      println(r.value)
+    } else {
+      common.printRuntimeError(r.error)
+    }
+  }
+}
+
+.{
+  name: "repl",
+  aliases: [],
+  usage: "repl",
+  summary: "Start REPL (use :q to quit)",
+  run: run,
+}
+

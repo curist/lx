@@ -22,7 +22,9 @@ if ! command -v "$LX" >/dev/null 2>&1 && ! [ -x "$LX" ]; then
 fi
 
 TARGET=./include/lx/lxglobals.h
-OBJ=/tmp/lxglobals-new.lxobj
+OBJ="$ROOT/out/lxglobals-new.lxobj"
+
+mkdir -p "$ROOT/out"
 
 echo "#include <stdint.h>" > $TARGET
 echo "const uint8_t lxglobals_bytecode[] = {" >> $TARGET

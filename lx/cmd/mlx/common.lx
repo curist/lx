@@ -1,0 +1,126 @@
+let driver = import "src/driver.lx"
+let codegen = import "src/passes/backend/codegen.lx"
+let verify = import "src/passes/backend/verify-bytecode.lx"
+let objbuilder = import "src/objbuilder.lx"
+let errors = import "src/errors.lx"
+let ModuleResolution = import "src/module_resolution.lx"
+let OP = (import "src/types.lx").OP
+
+let DEBUG_BUILD = true
+
+fn loadSource(path, sourceOverride, overridePath) {
+  if sourceOverride and path == overridePath { return sourceOverride }
+  ModuleResolution.slurpPath(path)
+}
+
+fn makeDriverWithSource(sourceOverride, overridePath) {
+  driver.make(.{
+    withTypecheck: false,
+    loadSource: fn(p) { loadSource(p, sourceOverride, overridePath) },
+  })
+}
+
+fn compileWithDriver(driverInstance, path) {
+  let moduleCache = .{}
+
+  fn codegenModule(modulePath) {
+    let cached = moduleCache[modulePath]
+    if cached { return cached }
+
+    let result = driverInstance.compileModule(modulePath)
+    if !result or result.status != "done" {
+      errors.printErrors(errors.collectErrors(result or .{}), result)
+      return nil
+    }
+
+    let passes = result.passes or .{}
+    let ast = (passes["anf-inline"] and passes["anf-inline"].ast) or
+              (passes.anf and passes.anf.ast) or
+              (passes.lower and passes.lower.ast)
+    let enumInfo =
+      (passes.anf and passes.anf.enumInfo) or
+      (passes.lower and passes.lower.enumInfo) or
+      (passes.parse and passes.parse.enumInfo) or
+      .{}
+    let cg = codegen(ast, result.passes.resolve, .{
+      codegenModule: codegenModule,
+      enumInfo: enumInfo,
+    })
+    result.codegenResult = cg
+    if !cg.success {
+      errors.printErrors(cg.errors, result)
+      return nil
+    }
+
+    let verifyResult = verify.verifyFunction(cg.function)
+    result.verifyResult = verifyResult
+    if !verifyResult.success {
+      errors.printErrors(verifyResult.errors, result)
+      return nil
+    }
+
+    moduleCache[modulePath] = cg.function
+    cg.function
+  }
+
+  codegenModule(path)
+}
+
+fn compilePathToFunction(path, sourceOverride) {
+  let d = makeDriverWithSource(sourceOverride, path)
+  compileWithDriver(d, path)
+}
+
+fn bytesToString(bytes) {
+  let byteString = ""
+  for let i = 0; i < len(bytes); i = i + 1 {
+    byteString = byteString + chr(bytes[i])
+  }
+  byteString
+}
+
+fn slurpUserPath(path) {
+  // Prefer reading literal filesystem paths when they exist relative to CWD
+  // (e.g. `out/foo.lxobj`), otherwise fall back to module resolution (`cmd/...`).
+  if Lx and Lx.fs and Lx.fs.exists and Lx.fs.exists(path) {
+    return slurp(path)
+  }
+  ModuleResolution.slurpPath(path)
+}
+
+fn printRuntimeError(err) {
+  if !err {
+    groanln("Runtime error.")
+    return
+  }
+  if err.message {
+    groanln(err.message)
+  } else {
+    groanln(err)
+    return
+  }
+
+  let stack = err.stack
+  if !stack { return }
+  for let i = 0; i < len(stack); i = i + 1 {
+    let f = stack[i] or .{}
+    let file = f.file or "[unknown]"
+    let line = int(f.line or 0)
+    let name = f.name or "script"
+    groanln("[" + file + " L" + str(line) + "] in " + name + "()")
+  }
+}
+
+.{
+  DEBUG_BUILD,
+  OP,
+  ModuleResolution,
+  compilePathToFunction,
+  compileWithDriver,
+  makeDriverWithSource,
+  bytesToString,
+  slurpUserPath,
+  objbuilder,
+  printRuntimeError,
+}
+

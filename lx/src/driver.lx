@@ -58,6 +58,17 @@ fn getProfile(name) {
     }
   }
 
+  if name == "query" {
+    // Fast, tooling-oriented pipeline for IDE queries that don't require type inference:
+    // parse → lower → resolve
+    // (Query service prefers non-ANF AST so imports/structure stay intact.)
+    return .{
+      withAnf: false,
+      withAnfInline: false,
+      withTypecheck: false,
+    }
+  }
+
   // Unknown profile - return nil to signal error
   nil
 }
@@ -212,7 +223,7 @@ fn make(opts) {
   if !profileDefaults {
     // Unknown profile - error
     groanln("Error: Unknown profile '" + profileName + "'")
-    groanln("Available profiles: default, tooling, O0")
+    groanln("Available profiles: default, tooling, O0, query")
     return nil
   }
 

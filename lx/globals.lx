@@ -119,22 +119,53 @@ fn max(a, b) { if a > b { a } else { b } }
 fn min(a, b) { if a < b { a } else { b } }
 
 fn sort(arr, compare) {
-  // qsort
+  // Merge sort (avoid quicksort recursion worst-case stack overflow).
   let length = len(arr)
   if length <= 1 { return arr }
-  let pivot = arr[0]
-  let less = []
-  let greater = []
-  for let i = 1; i < length; i = i + 1 {
-    if compare(arr[i], pivot) {
-      push(less, arr[i])
+
+  // Insertion sort for small arrays (less allocation overhead).
+  if length <= 16 {
+    let out = []
+    for let i = 0; i < length; i = i + 1 {
+      let x = arr[i]
+      // Insert x into out
+      let j = len(out)
+      push(out, x)
+      for j > 0 and compare(out[j], out[j - 1]) {
+        let tmp = out[j - 1]
+        out[j - 1] = out[j]
+        out[j] = tmp
+        j = j - 1
+      }
+    }
+    return out
+  }
+
+  let mid = int(length / 2)
+  let left = []
+  let right = []
+  for let i = 0; i < mid; i = i + 1 { push(left, arr[i]) }
+  for let i = mid; i < length; i = i + 1 { push(right, arr[i]) }
+
+  let a = sort(left, compare)
+  let b = sort(right, compare)
+
+  // Merge
+  let out = []
+  let i = 0
+  let j = 0
+  for i < len(a) and j < len(b) {
+    if compare(a[i], b[j]) {
+      push(out, a[i])
+      i = i + 1
     } else {
-      push(greater, arr[i])
+      push(out, b[j])
+      j = j + 1
     }
   }
-  sort(less, compare)
-    -> concat([pivot])
-    -> concat(sort(greater, compare))
+  for i < len(a) { push(out, a[i]); i = i + 1 }
+  for j < len(b) { push(out, b[j]); j = j + 1 }
+  out
 }
 
 return .{

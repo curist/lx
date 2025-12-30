@@ -469,4 +469,150 @@ test("query - compile twice yields stable goto targets", fn(assert) {
   assert.equal(goto1.target.col, goto2.target.col, "Goto col should match")
 })
 
+test("query - compileFast skips typecheck but supports goto", fn(assert) {
+  let result = query.compileFast("test/fixtures/imports/test-goto.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'config' usage (line 7, col 0)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test/fixtures/imports/test-goto.lx", 7, 0)
+  assert.truthy(gotoResult.success, "Goto should succeed without typecheck")
+  assert.equal(gotoResult.target.filename, "test/fixtures/imports/test-goto.lx", "Should point to declaration")
+  assert.equal(gotoResult.target.line, 2, "Should point to line 2 (let config = ...)")
+
+  // Hover works but has no types.
+  let hoverResult = query.queryHover(result.ctx, "test/fixtures/imports/test-goto.lx", 7, 0)
+  assert.truthy(hoverResult.success, "Hover should succeed without typecheck")
+  assert.equal(hoverResult.contents.type, "Unknown", "Type should be Unknown without typecheck")
+})
+
+test("query - goto enum member across import", fn(assert) {
+  let useFile = "test/fixtures/query/token-else.lx"
+  let typesFile = "src/types.lx"
+
+  fn indexOf(haystack, needle) {
+    if type(haystack) != "string" or type(needle) != "string" { return nil }
+    let n = len(needle)
+    if n == 0 { return 0 }
+    let h = len(haystack)
+    if n > h { return nil }
+
+    for let i = 0; i <= h - n; i = i + 1 {
+      let ok = true
+      for let j = 0; j < n; j = j + 1 {
+        if haystack[i + j] != needle[j] { ok = false; break }
+      }
+      if ok { return i }
+    }
+    nil
+  }
+
+  // Find the `ELSE` position in `TOKEN.ELSE` in the use file.
+  let src = ModuleResolution.slurpPath(useFile)
+  let lines = split(src, "\n")
+  let line = nil
+  let col = nil
+  for let i = 0; i < len(lines); i = i + 1 {
+    let idx = indexOf(lines[i], "TOKEN.ELSE")
+    if idx != nil {
+      line = i + 1
+      col = idx + len("TOKEN.")
+      break
+    }
+  }
+  assert.truthy(line != nil and col != nil, "Should find TOKEN.ELSE span in fixture")
+
+  // Find the enum member definition span in src/types.lx.
+  let typesSrc = ModuleResolution.slurpPath(typesFile)
+  let tlines = split(typesSrc, "\n")
+  let defLine = nil
+  let defCol = nil
+  for let i = 0; i < len(tlines); i = i + 1 {
+    // Prefer the enum member line `  ELSE,` over other incidental mentions.
+    let idx = indexOf(tlines[i], "ELSE,")
+    if idx != nil {
+      defLine = i + 1
+      defCol = idx
+      break
+    }
+  }
+  assert.truthy(defLine != nil and defCol != nil, "Should find ELSE member in src/types.lx")
+
+  let result = query.compileFast(useFile)
+  assert.truthy(result.success, "Should compile successfully")
+
+  let gotoResult = query.queryGotoDefinition(result.ctx, useFile, line, col)
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.filename, typesFile, "Goto should land in src/types.lx")
+  assert.equal(gotoResult.target.line, defLine, "Goto line should match enum member definition")
+  assert.equal(gotoResult.target.col, defCol, "Goto col should match enum member definition")
+
+  let hoverResult = query.queryHover(result.ctx, useFile, line, col)
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.truthy(hoverResult.contents and hoverResult.contents.property, "Hover should include property definition")
+  assert.equal(hoverResult.contents.property.definedAt.filename, typesFile, "Hover definedAt should land in src/types.lx")
+  assert.equal(hoverResult.contents.property.definedAt.line, defLine, "Hover definedAt line should match")
+  assert.equal(hoverResult.contents.property.definedAt.col, defCol, "Hover definedAt col should match")
+})
+
+test("query - goto through module export record to function decl", fn(assert) {
+  let useFile = "test/fixtures/query/use-export-fns.lx"
+  let modFile = "test/fixtures/query/export-fns.lx"
+
+  fn indexOf(haystack, needle) {
+    if type(haystack) != "string" or type(needle) != "string" { return nil }
+    let n = len(needle)
+    if n == 0 { return 0 }
+    let h = len(haystack)
+    if n > h { return nil }
+
+    for let i = 0; i <= h - n; i = i + 1 {
+      let ok = true
+      for let j = 0; j < n; j = j + 1 {
+        if haystack[i + j] != needle[j] { ok = false; break }
+      }
+      if ok { return i }
+    }
+    nil
+  }
+
+  // Find the `foo` position in `A.foo()` in the use file.
+  let src = ModuleResolution.slurpPath(useFile)
+  let lines = split(src, "\n")
+  let line = nil
+  let col = nil
+  for let i = 0; i < len(lines); i = i + 1 {
+    let idx = indexOf(lines[i], "A.foo")
+    if idx != nil {
+      line = i + 1
+      col = idx + len("A.")
+      break
+    }
+  }
+  assert.truthy(line != nil and col != nil, "Should find A.foo span in fixture")
+
+  // Find the function name span in the exported module file.
+  let modSrc = ModuleResolution.slurpPath(modFile)
+  let mlines = split(modSrc, "\n")
+  let defLine = nil
+  let defCol = nil
+  for let i = 0; i < len(mlines); i = i + 1 {
+    let idx = indexOf(mlines[i], "fn foo")
+    if idx != nil {
+      defLine = i + 1
+      defCol = idx + len("fn ")
+      break
+    }
+  }
+  assert.truthy(defLine != nil and defCol != nil, "Should find fn foo in module fixture")
+
+  let result = query.compileFast(useFile)
+  assert.truthy(result.success, "Should compile successfully")
+
+  let gotoResult = query.queryGotoDefinition(result.ctx, useFile, line, col)
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.filename, modFile, "Goto should land in module file")
+  assert.equal(gotoResult.target.line, defLine, "Goto line should match fn foo")
+  assert.equal(gotoResult.target.col, defCol, "Goto col should match fn foo identifier")
+})
+
 suite.run()

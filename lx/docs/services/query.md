@@ -12,7 +12,7 @@ Provide **position-based IDE queries** over the compiler’s existing artifacts:
 * No inference, no unification, no name resolution.
 * Only table lookups + span selection.
 
-**Input**: `ast` + `resolveResult` + `typecheckResult`
+**Input**: `ast` + `resolveResult` (+ optional `typecheckResult`)
 **Output**: query responses for editor tooling
 
 ---
@@ -49,10 +49,12 @@ Every AST node includes:
 You can always obtain spans via:
 `resolveResult.nodes[declaredAt]`
 
-### Typechecker tables (`typecheckResult`)
+### Typechecker tables (`typecheckResult`, optional)
 
 * `types: { [nodeId]: Type }`
 * `typeVarBindings: { [typeVarId]: Type }` (deref’d) for resolving type variables in hover payloads
+
+If `typecheckResult` is omitted, hover still works but returns `Unknown` types.
 
 ---
 
@@ -67,6 +69,11 @@ fn queryInit(ast, resolveResult, typecheckResult, opts) -> {
 fn queryHover(ctx, filename, line, col) -> HoverResult
 fn queryGotoDefinition(ctx, filename, line, col) -> GotoResult
 fn queryDiagnostics(resultOrCompileResult) -> [Diagnostic]
+
+// Convenience helpers (compile + merge imports into a single ctx):
+fn compile(filepath) -> { success, ctx, compileResult, phase?, errors? }
+fn compileFast(filepath) -> { success, ctx, compileResult, phase?, errors? }
+fn compileWithOpts(filepath, opts) -> { success, ctx, compileResult, phase?, errors? }
 
 // opts
 .{
@@ -83,8 +90,8 @@ type QueryCtx = .{
   ast,
   nodes,         // resolveResult.nodes
   resolvedNames, // resolveResult.resolvedNames
-  types,         // typecheckResult.types
-  typeVarBindings, // typecheckResult.typeVarBindings
+  types,         // typecheckResult.types (or empty)
+  typeVarBindings, // typecheckResult.typeVarBindings (or empty)
 
   // optional acceleration:
   fileNodeIds,   // { [filename]: [nodeId...] }

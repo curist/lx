@@ -1,0 +1,4 @@
+let A = import "test/fixtures/query/export-fns.lx"
+
+A.foo()
+

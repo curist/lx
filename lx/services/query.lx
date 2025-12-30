@@ -443,6 +443,34 @@ fn findRecordField(recordNode, fieldName) {
   nil
 }
 
+fn gotoTargetForRecordField(ctx, field) {
+  if !field {
+    return nil
+  }
+
+  // Default: jump to the field key in the record literal.
+  let target = field.key
+
+  // If the field value is a named identifier, prefer jumping to the identifier's declaration.
+  // This makes `A.foo()` land on `fn foo` (or `let foo`) rather than on the export record key.
+  let value = field.value
+  if value and value.type == NODE.Identifier {
+    let r = ctx.resolvedNames and ctx.resolvedNames[nodeKeyFor(ctx, value)]
+    if r and r.kind != "builtin" and r.declaredAt {
+      let declKey = r.declaredAtKey or r.declaredAt
+      let declNode = normalizeDeclTarget(ctx, declKey)
+      if declNode {
+        target = declNode
+      }
+    }
+  } else if value and value.type == NODE.Function {
+    // Inline function literal in record: jump to its name when available.
+    if value.name { target = value.name } else { target = value }
+  }
+
+  target
+}
+
 fn findDotAssignmentValue(ctx, filename, objectName, propName) {
   if ctx and ctx.assignmentsByObjectProp and ctx.assignmentsByObjectProp[filename] {
     let key = objectName + "." + propName
@@ -742,7 +770,9 @@ fn normalizeDeclTarget(ctx, declNodeId) {
   // If resolver stored the Function node id for named functions,
   // prefer jumping to the name identifier span when available.
   if decl.type == NODE.Function and decl.name and decl.name.id {
-    let nameNode = ctx.nodes[decl.name.id]
+    // `ctx.nodes` may be keyed by either raw node ids (single-module)
+    // or composite keys `filename:id` (merged multi-module query ctx).
+    let nameNode = ctx.nodes[decl.name.id] or ctx.nodes[nodeKeyFromParts(decl.filename, decl.name.id)]
     if nameNode {
       return nameNode
     }
@@ -1022,12 +1052,13 @@ fn queryInit(ast, resolveResult, typecheckResult, opts) {
   let nodes = resolveResult.nodes
   collectAllNodes(ast, nodes)
 
+  let tc = typecheckResult or .{}
   let ctx = .{
     ast: ast,
     nodes: nodes,
     resolvedNames: resolveResult.resolvedNames,
-    types: typecheckResult.types,
-    typeVarBindings: typecheckResult.typeVarBindings,
+    types: tc.types or .{},
+    typeVarBindings: tc.typeVarBindings or .{},
     fileNodeIds: .{},
   }
 
@@ -1117,10 +1148,11 @@ fn queryGotoDefinition(ctx, filename, line, col) {
       if record {
         let field = findRecordField(record, propName)
         if field and field.key {
+          let targetNode = gotoTargetForRecordField(ctx, field) or field.key
           return .{
             success: true,
             kind: "goto",
-            target: rangeOf(field.key),
+            target: rangeOf(targetNode),
             candidates: candidatesForNodes(sel.ties),
           }
         }
@@ -1135,10 +1167,11 @@ fn queryGotoDefinition(ctx, filename, line, col) {
       if record {
         let field = findRecordField(record, propName)
         if field and field.key {
+          let targetNode = gotoTargetForRecordField(ctx, field) or field.key
           return .{
             success: true,
             kind: "goto",
-            target: rangeOf(field.key),
+            target: rangeOf(targetNode),
             candidates: candidatesForNodes(sel.ties),
           }
         }
@@ -1374,12 +1407,14 @@ fn remapType(t, typeVarMap, nextTypeVarIdRef) {
 
 // Compile file and create query context in one step
 // This is the recommended API for IDE/LSP tooling
-fn compile(filepath) {
+fn compileWithOpts(filepath, opts) {
+  let withTypecheck = !(opts and opts.withTypecheck == false)
+
   // Create driver that loads from filesystem
   let driver = Driver.make(.{
+    profile: "query",
     loadSource: fn(path) { ModuleResolution.slurpPath(path) },
-    withTypecheck: true,
-    withAnf: false,  // Query service needs non-ANF AST (imports not hoisted, etc.)
+    withTypecheck: withTypecheck,
   })
 
   // Compile module through full pipeline
@@ -1400,7 +1435,7 @@ fn compile(filepath) {
     } else if passes.resolve and !passes.resolve.success {
       phase = "resolve"
       errors = passes.resolve.errors
-    } else if passes.typecheck and !passes.typecheck.success {
+    } else if withTypecheck and passes.typecheck and !passes.typecheck.success {
       phase = "typecheck"
       errors = passes.typecheck.errors
     }
@@ -1430,7 +1465,7 @@ fn compile(filepath) {
   for let i = 0; i < len(cacheKeys); i = i + 1 {
     let k = cacheKeys[i]
     let mod = driver.cache[k]
-    if mod and mod.status == "done" and mod.passes.resolve and mod.passes.typecheck {
+    if mod and mod.status == "done" and mod.passes.resolve {
       let moduleNodes = .{}
       let baseNodeKeys = keys(mod.passes.resolve.nodes)
       for let j = 0; j < len(baseNodeKeys); j = j + 1 {
@@ -1482,39 +1517,41 @@ fn compile(filepath) {
         }
       }
 
-      // Remap and merge types + bindings
-      let typeVarMap = .{}
-      let typeKeys = keys(mod.passes.typecheck.types)
-      typeKeys->sort(keyLess)
-      for let j = 0; j < len(typeKeys); j = j + 1 {
-        let oldId = typeKeys[j]
-        let node = moduleNodes[oldId]
-        let newId = node and node.filename and nodeKeyFromParts(node.filename, oldId) or nil
-        if newId {
-          merged.types[newId] = remapType(
-            mod.passes.typecheck.types[oldId],
+      // Remap and merge types + bindings (optional)
+      if withTypecheck and mod.passes.typecheck {
+        let typeVarMap = .{}
+        let typeKeys = keys(mod.passes.typecheck.types or .{})
+        typeKeys->sort(keyLess)
+        for let j = 0; j < len(typeKeys); j = j + 1 {
+          let oldId = typeKeys[j]
+          let node = moduleNodes[oldId]
+          let newId = node and node.filename and nodeKeyFromParts(node.filename, oldId) or nil
+          if newId {
+            merged.types[newId] = remapType(
+              mod.passes.typecheck.types[oldId],
+              typeVarMap,
+              nextTypeVarId
+            )
+          }
+        }
+
+        let bindKeys = keys(mod.passes.typecheck.typeVarBindings or .{})
+        bindKeys->sort(keyLess)
+        for let j = 0; j < len(bindKeys); j = j + 1 {
+          let oldTid = bindKeys[j]
+          let newTid = idMapGet(typeVarMap, oldTid)
+          if !newTid {
+            newTid = nextTypeVarId.value
+            nextTypeVarId.value = newTid + 1
+            typeVarMap[oldTid] = newTid
+            typeVarMap[str(oldTid)] = newTid
+          }
+          merged.typeVarBindings[newTid] = remapType(
+            mod.passes.typecheck.typeVarBindings[oldTid],
             typeVarMap,
             nextTypeVarId
           )
         }
-      }
-
-      let bindKeys = keys(mod.passes.typecheck.typeVarBindings)
-      bindKeys->sort(keyLess)
-      for let j = 0; j < len(bindKeys); j = j + 1 {
-        let oldTid = bindKeys[j]
-        let newTid = idMapGet(typeVarMap, oldTid)
-        if !newTid {
-          newTid = nextTypeVarId.value
-          nextTypeVarId.value = newTid + 1
-          typeVarMap[oldTid] = newTid
-          typeVarMap[str(oldTid)] = newTid
-        }
-        merged.typeVarBindings[newTid] = remapType(
-          mod.passes.typecheck.typeVarBindings[oldTid],
-          typeVarMap,
-          nextTypeVarId
-        )
       }
     }
   }
@@ -1529,6 +1566,14 @@ fn compile(filepath) {
   }
 }
 
+fn compile(filepath) {
+  compileWithOpts(filepath, nil)
+}
+
+fn compileFast(filepath) {
+  compileWithOpts(filepath, .{ withTypecheck: false })
+}
+
 // ========================================
 // Module Exports
 // ========================================
@@ -1536,6 +1581,8 @@ fn compile(filepath) {
 .{
   // High-level API (recommended)
   compile,
+  compileFast,
+  compileWithOpts,
 
   // Low-level API (for advanced use cases)
   queryInit,

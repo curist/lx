@@ -24,13 +24,14 @@ let NODE = types.NODE
 // ========================================
 
 fn getProfile(name) {
-  // Returns .{ withAnf, withAnfInline, withTypecheck } for the given profile
+  // Returns .{ withLower, withAnf, withAnfInline, withTypecheck } for the given profile
   // Profiles define curated pass combinations for specific use cases
 
   if name == "default" {
     // Current compiler semantics: all passes enabled
     // parse → lower → anf → resolve → anf-inline → typecheck (non-fatal)
     return .{
+      withLower: true,
       withAnf: true,
       withAnfInline: true,
       withTypecheck: true,
@@ -41,6 +42,7 @@ fn getProfile(name) {
     // Best AST/tables for IDE/LSP
     // Same as default: parse → lower → anf → resolve → anf-inline → typecheck (non-fatal)
     return .{
+      withLower: true,
       withAnf: true,
       withAnfInline: true,
       withTypecheck: true,
@@ -52,6 +54,7 @@ fn getProfile(name) {
     // parse → lower → anf → resolve → typecheck (non-fatal)
     // Skip anf-inline optimization
     return .{
+      withLower: true,
       withAnf: true,
       withAnfInline: false,
       withTypecheck: true,
@@ -63,6 +66,19 @@ fn getProfile(name) {
     // parse → lower → resolve
     // (Query service prefers non-ANF AST so imports/structure stay intact.)
     return .{
+      withLower: true,
+      withAnf: false,
+      withAnfInline: false,
+      withTypecheck: false,
+    }
+  }
+
+  if name == "resolve" {
+    // Fastest name-resolution pipeline for IDE queries:
+    // parse → resolve
+    // Skips lowering/ANF/typecheck entirely.
+    return .{
+      withLower: false,
       withAnf: false,
       withAnfInline: false,
       withTypecheck: false,
@@ -98,6 +114,11 @@ fn buildPassList(ctx) {
       mutatesAst: false,
       requires: ["ast"],
       provides: ["loweredAst"],
+      enabled: fn(ctx, state) {
+        if !ctx.opts { return true }
+        if ctx.opts.withLower == false { return false }
+        true
+      },
       run: fn(ctx, state) {
         let result = lower(state.ast, .{ startNodeId: state.nextNodeId })
 
@@ -174,7 +195,7 @@ fn buildPassList(ctx) {
     .{
       name: "resolve",
       mutatesAst: false,  // Phase 2: import metadata moved to side tables
-      requires: ["loweredAst"],  // Requires lowered form (works with lowered or ANF)
+      requires: ["ast"],  // Works on parse, lowered, or ANF AST
       provides: ["resolution", "scopeInfo"],
       run: fn(ctx, state) {
         let opts = .{
@@ -223,12 +244,20 @@ fn make(opts) {
   if !profileDefaults {
     // Unknown profile - error
     groanln("Error: Unknown profile '" + profileName + "'")
-    groanln("Available profiles: default, tooling, O0, query")
+    groanln("Available profiles: default, tooling, O0, query, resolve")
     return nil
   }
 
   // Apply profile defaults, then override with explicit flags
   // Check if flag is explicitly set (not nil), if so use it, else use profile default
+  let withLower = nil
+  let explicitWithLower = opts["withLower"]
+  if explicitWithLower != nil {
+    withLower = explicitWithLower
+  } else {
+    withLower = profileDefaults.withLower
+  }
+
   let withTypecheck = nil
   let explicitWithTypecheck = opts["withTypecheck"]
   if explicitWithTypecheck != nil {
@@ -253,10 +282,41 @@ fn make(opts) {
     withAnfInline = profileDefaults.withAnfInline
   }
 
+  // Optional import overrides (used when compiling transitive imports).
+  // Defaults to top-level behavior unless overridden.
+  let withImportLower = opts["withImportLower"]
+  if withImportLower == nil { withImportLower = withLower }
+
   // Debug flags (optional)
   let debug = opts["debug"]
   let wholeProgramTypecheckDone = false
   let compileDepth = 0
+
+  fn inferCaps(result) {
+    let passes = result and result.passes or .{}
+    .{
+      withLower: passes.lower != nil,
+      withAnf: passes.anf != nil,
+      withAnfInline: passes["anf-inline"] != nil,
+      withTypecheck: passes.typecheck != nil,
+    }
+  }
+
+  fn meetsNeeds(result, needs) {
+    if !result { return false }
+    let caps = (result.buildOpts and .{
+      withLower: result.buildOpts.withLower == true,
+      withAnf: result.buildOpts.withAnf == true,
+      withAnfInline: result.buildOpts.withAnfInline == true,
+      withTypecheck: result.buildOpts.withTypecheck == true,
+    }) or inferCaps(result)
+
+    if needs.withLower == true and caps.withLower != true { return false }
+    if needs.withAnf == true and caps.withAnf != true { return false }
+    if needs.withAnfInline == true and caps.withAnfInline != true { return false }
+    if needs.withTypecheck == true and caps.withTypecheck != true { return false }
+    true
+  }
 
   let runWholeProgramTypecheck = fn(entryResult) {
     // Typecheck in reverse discovery order so imports are processed first.
@@ -305,10 +365,36 @@ fn make(opts) {
   }
 
   let compileModuleInternal = fn compileModuleInternal(path) {
+    let isImport = compileDepth > 1
+    let effectiveWithLower = isImport and withImportLower or withLower
+    let effectiveWithAnf = withAnf
+    let effectiveWithAnfInline = withAnfInline
+    let effectiveWithTypecheck = withTypecheck
+    // If lower is disabled, downstream passes depending on lowered AST must be disabled.
+    if effectiveWithLower == false {
+      effectiveWithAnf = false
+      effectiveWithAnfInline = false
+      effectiveWithTypecheck = false
+    }
+
+    let needs = .{
+      withLower: effectiveWithLower == true,
+      withAnf: effectiveWithAnf == true,
+      withAnfInline: effectiveWithAnfInline == true,
+      withTypecheck: effectiveWithTypecheck == true,
+    }
+
     // Check cache first
     let cached = cache[path]
     if cached {
-      return cached
+      // Respect "compiling" sentinel for circular import detection.
+      if cached.status != "done" and cached.status != "failed" {
+        return cached
+      }
+      if meetsNeeds(cached, needs) {
+        return cached
+      }
+      // Otherwise: upgrade/downgrade by recompiling with current needs.
     }
 
     // Track compilation (first time only)
@@ -356,9 +442,10 @@ fn make(opts) {
       importCache: cache,
       compileModule: compileModuleInternal,
       opts: .{
-        withAnf: withAnf,
-        withAnfInline: withAnfInline,
-        withTypecheck: withTypecheck,
+        withLower: effectiveWithLower,
+        withAnf: effectiveWithAnf,
+        withAnfInline: effectiveWithAnfInline,
+        withTypecheck: effectiveWithTypecheck,
       },
       debug: debug,
     }
@@ -383,6 +470,7 @@ fn make(opts) {
       success: pipelineResult.success,
       path: path,
       failedPass: pipelineResult.failedPass,
+      buildOpts: needs,
 
       // Pipeline fields
       passOrder: pipelineResult.passOrder,
@@ -410,6 +498,7 @@ fn make(opts) {
     cache: cache,
     compiledModules: compiledModules,
     loadSource: loadSource,
+    withLower: withLower,
     withTypecheck: withTypecheck,
     withAnf: withAnf,
     withAnfInline: withAnfInline,

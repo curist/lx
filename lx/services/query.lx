@@ -1286,7 +1286,7 @@ fn queryDiagnostics(result) {
   }
 
   if passes.lower and passes.lower.errors {
-    let nodes = buildNodeIndexFromAst(passes.lower.ast)
+    let nodes = buildNodeIndexFromAst((passes.lower and passes.lower.ast) or (passes.parse and passes.parse.ast))
     for let i = 0; i < len(passes.lower.errors); i = i + 1 {
       let err = passes.lower.errors[i]
       let nodeId = err.nodeId
@@ -1311,8 +1311,9 @@ fn queryDiagnostics(result) {
     }
     // Always merge in nodes from lowered AST to ensure completeness
     // (resolver.nodes may be incomplete, missing some AST nodes)
-    if passes.lower and passes.lower.ast {
-      collectAllNodes(passes.lower.ast, nodes)
+    let ast = (passes.lower and passes.lower.ast) or (passes.parse and passes.parse.ast)
+    if ast {
+      collectAllNodes(ast, nodes)
     }
     for let i = 0; i < len(passes.typecheck.errors); i = i + 1 {
       let err = passes.typecheck.errors[i]
@@ -1444,7 +1445,7 @@ fn compileWithDriver(driver, filepath, opts) {
 
   // Merge all compiled modules into a single query context with global IDs.
   let merged = .{
-    ast: result.passes.lower and result.passes.lower.ast,
+    ast: (result.passes.lower and result.passes.lower.ast) or (result.passes.parse and result.passes.parse.ast),
     nodes: .{},
     resolvedNames: .{},
     types: .{},
@@ -1466,9 +1467,9 @@ fn compileWithDriver(driver, filepath, opts) {
         let id = baseNodeKeys[j]
         moduleNodes[id] = mod.passes.resolve.nodes[id]
       }
-      if mod.passes.lower and mod.passes.lower.ast {
-        collectAllNodes(mod.passes.lower.ast, moduleNodes)
-      }
+      // Always merge in nodes from AST to ensure completeness (resolver.nodes may be incomplete).
+      let ast = (mod.passes.lower and mod.passes.lower.ast) or (mod.passes.parse and mod.passes.parse.ast)
+      if ast { collectAllNodes(ast, moduleNodes) }
 
       let nodeKeys = keys(moduleNodes)
       nodeKeys->sort(keyLess)
@@ -1481,8 +1482,11 @@ fn compileWithDriver(driver, filepath, opts) {
         }
       }
 
-      if mod.passes.lower and mod.passes.lower.ast and mod.path {
-        merged.moduleAsts[mod.path] = mod.passes.lower.ast
+      if mod.path {
+        let ast = (mod.passes.lower and mod.passes.lower.ast) or (mod.passes.parse and mod.passes.parse.ast)
+        if ast {
+          merged.moduleAsts[mod.path] = ast
+        }
       }
 
       // Remap and merge resolved names

@@ -628,6 +628,7 @@ fn serve() {
       profile: "query",
       loadSource: loadSource,
       withTypecheck: false,
+      withImportLower: false,
     }),
   }
 

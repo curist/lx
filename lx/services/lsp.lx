@@ -247,25 +247,7 @@ fn updateDepGraphFromDriver(state) {
 // Warmup queue (best-effort background work)
 // ------------------------------------------------------------
 
-fn warmupEnabled() {
-  if !Lx or !Lx.env { return true }
-  let v = Lx.env["LX_LSP_WARMUP"]
-  if !v { return true }
-  v != "0" and v != "false"
-}
-
-fn warmupStepsPerTick() {
-  if !Lx or !Lx.env { return 1 }
-  let raw = Lx.env["LX_LSP_WARMUP_STEPS"]
-  let n = raw and tonumber(raw) or nil
-  let i = n and int(n) or 1
-  if i < 0 { return 0 }
-  if i > 8 { return 8 }
-  i
-}
-
 fn enqueueWarmup(state, spec) {
-  if !warmupEnabled() { return }
   if !spec or !state or !state.warmupQueue or !state.warmupSeen { return }
   if state.warmupSeen[spec] { return }
   state.warmupSeen[spec] = true
@@ -273,7 +255,6 @@ fn enqueueWarmup(state, spec) {
 }
 
 fn runWarmupStep(state) {
-  if !warmupEnabled() { return }
   if !state or !state.warmupQueue or len(state.warmupQueue) == 0 { return }
 
   let spec = pop(state.warmupQueue)
@@ -296,11 +277,9 @@ fn runWarmupStep(state) {
 }
 
 fn runWarmupSlice(state) {
-  let steps = warmupStepsPerTick()
-  for let i = 0; i < steps; i = i + 1 {
-    if !state.warmupQueue or len(state.warmupQueue) == 0 { break }
-    runWarmupStep(state)
-  }
+  // Keep this small so the server remains responsive; warmup accumulates across
+  // messages and will fully populate the cache quickly during normal editing.
+  runWarmupStep(state)
 }
 
 fn invalidate(state, path) {

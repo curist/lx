@@ -258,12 +258,12 @@ fn runWarmupStep(state) {
   if !state or !state.warmupQueue or len(state.warmupQueue) == 0 { return }
 
   let spec = pop(state.warmupQueue)
-  if !spec { return }
+  if !spec { return nil }
   state.warmupSeen[spec] = nil
 
   let cached = state.ctxCache and state.ctxCache[spec] or nil
   if cached and cached.epoch == state.epoch {
-    return
+    return spec
   }
 
   let r = query.compileWithDriver(state.driver, spec, .{
@@ -274,6 +274,7 @@ fn runWarmupStep(state) {
     state.ctxCache[spec] = .{ epoch: state.epoch, result: r }
     updateDepGraphFromDriver(state)
   }
+  spec
 }
 
 fn runWarmupSlice(state) {
@@ -599,6 +600,14 @@ fn sendJson(obj) {
   if Lx and Lx.stdout and Lx.stdout.flush { Lx.stdout.flush() }
 }
 
+fn sendNotification(method, params) {
+  sendJson(.{
+    jsonrpc: "2.0",
+    method: method,
+    params: params,
+  })
+}
+
 fn sendResponse(id, result) {
   sendJson(.{
     jsonrpc: "2.0",
@@ -616,6 +625,25 @@ fn sendError(id, code, message) {
       message: message,
     },
   })
+}
+
+fn sendRequest(state, method, params) {
+  let id = state.nextRequestId or 1
+  state.nextRequestId = id + 1
+  if !state.pendingRequests { state.pendingRequests = .{} }
+  state.pendingRequests[id] = .{ method: method }
+  sendJson(.{
+    jsonrpc: "2.0",
+    id: id,
+    method: method,
+    params: params,
+  })
+  id
+}
+
+fn noteResponse(state, msg) {
+  if !state or !state.pendingRequests or msg.id == nil { return }
+  state.pendingRequests[msg.id] = nil
 }
 
 fn handleDefinition(state, msg) {
@@ -687,12 +715,79 @@ fn serve() {
     graphIndex: 0,
     warmupQueue: [],
     warmupSeen: .{},
+    supportsWorkDoneProgress: false,
+    warmupProgressToken: nil,
+    nextProgressTokenId: 1,
+    pendingRequests: .{},
+    nextRequestId: 1,
     driver: Driver.make(.{
       profile: "query",
       loadSource: loadSource,
       withTypecheck: false,
       withImportLower: false,
     }),
+  }
+
+  fn startWarmupProgressIfNeeded() {
+    if !state.supportsWorkDoneProgress { return }
+    if state.warmupProgressToken { return }
+    if !state.warmupQueue or len(state.warmupQueue) == 0 { return }
+
+    let token = "lx-warmup-" + str(state.nextProgressTokenId)
+    state.nextProgressTokenId = state.nextProgressTokenId + 1
+    state.warmupProgressToken = token
+
+    sendRequest(state, "window/workDoneProgress/create", .{ token: token })
+    sendNotification("$/progress", .{
+      token: token,
+      value: .{
+        kind: "begin",
+        title: "Indexing lx",
+        cancellable: false,
+        message: "Warming caches…",
+      },
+    })
+  }
+
+  fn reportWarmupProgress(message) {
+    let token = state.warmupProgressToken
+    if !token { return }
+    sendNotification("$/progress", .{
+      token: token,
+      value: .{
+        kind: "report",
+        cancellable: false,
+        message: message,
+      },
+    })
+  }
+
+  fn endWarmupProgress() {
+    let token = state.warmupProgressToken
+    if !token { return }
+    state.warmupProgressToken = nil
+    sendNotification("$/progress", .{
+      token: token,
+      value: .{
+        kind: "end",
+        message: "Warmup complete",
+      },
+    })
+  }
+
+  fn warmupTick() {
+    if state.warmupQueue and len(state.warmupQueue) > 0 {
+      startWarmupProgressIfNeeded()
+      let before = len(state.warmupQueue)
+      let warmed = runWarmupStep(state)
+      let after = len(state.warmupQueue)
+      if warmed and before >= after {
+        reportWarmupProgress("Warmed " + warmed + " (" + str(after) + " remaining)")
+      }
+    }
+    if state.warmupQueue and len(state.warmupQueue) == 0 {
+      endWarmupProgress()
+    }
   }
 
   for true {
@@ -710,12 +805,24 @@ fn serve() {
     let method = msg.method
     let id = msg.id
 
+    // Responses to server->client requests (e.g. workDoneProgress/create)
+    if method == nil and id != nil {
+      noteResponse(state, msg)
+      warmupTick()
+      continue
+    }
+
     // Requests
     if method == "initialize" {
+      // Capture client capabilities
+      let caps = msg.params and msg.params.capabilities or .{}
+      let win = caps and caps.window or .{}
+      state.supportsWorkDoneProgress = win and win.workDoneProgress == true
+
       sendResponse(id, .{
         capabilities: .{
           definitionProvider: true,
-          textDocumentSync: .{ openClose: true, change: 1 },
+          textDocumentSync: .{ openClose: true, change: 1, save: .{ includeText: true } },
         },
         serverInfo: .{ name: "lx", version: (Lx and Lx.version) or "dev" },
       })
@@ -733,7 +840,7 @@ fn serve() {
       Lx.exit(state.shutdown and 0 or 1)
     }
     if method == "initialized" {
-      runWarmupSlice(state)
+      warmupTick()
       continue
     }
 
@@ -745,8 +852,12 @@ fn serve() {
         state.openDocs[spec] = td.text
         invalidate(state, spec)
         enqueueWarmup(state, spec)
+        if state.supportsWorkDoneProgress {
+          startWarmupProgressIfNeeded()
+          reportWarmupProgress("Queued " + spec)
+        }
       }
-      runWarmupSlice(state)
+      warmupTick()
       continue
     }
 
@@ -774,8 +885,12 @@ fn serve() {
         }
         invalidate(state, spec)
         enqueueWarmup(state, spec)
+        if state.supportsWorkDoneProgress {
+          startWarmupProgressIfNeeded()
+          reportWarmupProgress("Queued " + spec)
+        }
       }
-      runWarmupSlice(state)
+      warmupTick()
       continue
     }
 
@@ -795,7 +910,13 @@ fn serve() {
       if id != nil {
         sendResponse(id, loc)
       }
-      runWarmupSlice(state)
+      warmupTick()
+      continue
+    }
+
+    if method == "window/workDoneProgress/cancel" {
+      // We don't currently support cancel; ignore.
+      warmupTick()
       continue
     }
 
@@ -804,7 +925,7 @@ fn serve() {
       sendError(id, -32601, "Method not found: " + str(method))
     }
 
-    runWarmupSlice(state)
+    warmupTick()
   }
 }
 

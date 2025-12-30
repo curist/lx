@@ -146,6 +146,24 @@ fn propNameFromNode(n) {
   nil
 }
 
+fn dotPathFromNode(n) {
+  if !n { return nil }
+  if n.type == NODE.Identifier {
+    return n.name
+  }
+  if n.type == NODE.Dot {
+    let base = dotPathFromNode(n.object)
+    let prop = propNameFromNode(n.property)
+    if base and prop {
+      return base + "." + prop
+    }
+    if prop {
+      return "." + prop
+    }
+  }
+  nil
+}
+
 fn spanKeyFromNode(n) {
   if !n {
     return nil
@@ -1124,6 +1142,8 @@ fn queryHover(ctx, filename, line, col) {
     let propName = propNameFromNode(n.property)
     contents.dot = .{
       objectName: (n.object and n.object.type == NODE.Identifier and n.object.name) or nil,
+      objectPath: dotPathFromNode(n.object),
+      path: dotPathFromNode(n),
       propertyName: propName,
     }
 

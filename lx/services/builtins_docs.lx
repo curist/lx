@@ -1,0 +1,255 @@
+let ModuleResolution = import "src/module_resolution.lx"
+
+fn startsWith(s, prefix) {
+  if !s or !prefix { return false }
+  if len(prefix) > len(s) { return false }
+  for let i = 0; i < len(prefix); i = i + 1 {
+    if s[i] != prefix[i] { return false }
+  }
+  true
+}
+
+fn trimSpaces(s) {
+  if !s { return s }
+  let n = len(s)
+  let i = 0
+  for i < n and (s[i] == " " or s[i] == "\t") { i = i + 1 }
+  let j = n
+  for j > i and (s[j - 1] == " " or s[j - 1] == "\t") { j = j - 1 }
+  let chars = []
+  for let k = i; k < j; k = k + 1 {
+    push(chars, s[k])
+  }
+  join(chars, "")
+}
+
+fn indexOfChar(s, ch, start) {
+  if !s { return nil }
+  let i = start or 0
+  for i < len(s) {
+    if s[i] == ch { return i }
+    i = i + 1
+  }
+  nil
+}
+
+fn slice(s, start, endExclusive) {
+  if !s { return s }
+  let n = len(s)
+  let a = start or 0
+  let b = endExclusive or n
+  if a < 0 { a = 0 }
+  if b < a { b = a }
+  if a > n { a = n }
+  if b > n { b = n }
+  let out = []
+  for let i = a; i < b; i = i + 1 {
+    push(out, s[i])
+  }
+  join(out, "")
+}
+
+fn parseSigToName(sig) {
+  if !sig { return nil }
+  let i = 0
+  for i < len(sig) {
+    let ch = sig[i]
+    if ch == "(" or ch == ":" or ch == " " {
+      break
+    }
+    i = i + 1
+  }
+  i == 0 and nil or slice(sig, 0, i)
+}
+
+fn parseReadmeDocs(md) {
+  let docs = .{}
+  if !md {
+    return docs
+  }
+
+  let lines = split(md, "\n")
+  let inSection = false
+
+  for let i = 0; i < len(lines); i = i + 1 {
+    let line = lines[i]
+
+    if startsWith(line, "## ") {
+      if startsWith(line, "## Builtin Native Functions") {
+        inSection = true
+        continue
+      }
+      if inSection {
+        break
+      }
+    }
+
+    if !inSection {
+      continue
+    }
+
+    let bt0 = indexOfChar(line, "`", 0)
+    if bt0 == nil { continue }
+    let bt1 = indexOfChar(line, "`", bt0 + 1)
+    if bt1 == nil { continue }
+
+    let sig = slice(line, bt0 + 1, bt1)
+    let name = parseSigToName(sig)
+    if !name or docs[name] {
+      continue
+    }
+
+    let desc = trimSpaces(slice(line, bt1 + 1, len(line)))
+    if desc and startsWith(desc, "-") {
+      desc = trimSpaces(slice(desc, 1, len(desc)))
+    }
+
+    let markdown = "`" + sig + "`"
+    if desc and desc != "" {
+      markdown = markdown + "\n" + desc
+    }
+
+    docs[name] = .{
+      name: name,
+      signature: sig,
+      description: desc,
+      markdown: markdown,
+      source: "lx/README.md",
+    }
+  }
+
+  docs
+}
+
+fn parseNativeFnBuiltins(text) {
+  let names = .{}
+  if !text {
+    return names
+  }
+
+  let lines = split(text, "\n")
+  let scope = nil  // "Lx" | "Date" | nil
+  let prefix = nil // e.g. "Lx.fs"
+
+  for let i = 0; i < len(lines); i = i + 1 {
+    let raw = lines[i]
+    let line = trimSpaces(raw)
+
+    if startsWith(line, "static void defineLxNatives") {
+      scope = "Lx"
+      prefix = "Lx"
+      continue
+    }
+    if startsWith(line, "static void defineDateNatives") {
+      scope = "Date"
+      prefix = "Date"
+      continue
+    }
+    if startsWith(line, "void defineBuiltinNatives") {
+      scope = nil
+      prefix = nil
+      continue
+    }
+
+    if startsWith(line, "// Lx.fs") { prefix = "Lx.fs"; continue }
+    if startsWith(line, "// Lx.path") { prefix = "Lx.path"; continue }
+    if startsWith(line, "// Lx.stdin") { prefix = "Lx.stdin"; continue }
+    if startsWith(line, "// Lx.stdout") { prefix = "Lx.stdout"; continue }
+
+    // Global builtins: defineNative("print", ...)
+    let k0 = indexOfChar(line, "\"", 0)
+    if startsWith(line, "defineNative(") and k0 != nil {
+      let k1 = indexOfChar(line, "\"", k0 + 1)
+      if k1 != nil {
+        let name = slice(line, k0 + 1, k1)
+        if name and name != "" { names[name] = true }
+      }
+      continue
+    }
+
+    // Namespaced builtins: defineTableFunction(&fs->table, "cwd", ...)
+    if startsWith(line, "defineTableFunction(") {
+      if !scope { continue }
+      let q0 = indexOfChar(line, "\"", 0)
+      if q0 == nil { continue }
+      let q1 = indexOfChar(line, "\"", q0 + 1)
+      if q1 == nil { continue }
+      let member = slice(line, q0 + 1, q1)
+      if !member or member == "" { continue }
+
+      // Root `Lx.*` functions use defineTableFunction(&AS_HASHMAP(vm.stack[1]), "...", ...)
+      if scope == "Lx" and startsWith(line, "defineTableFunction(&AS_HASHMAP(vm.stack[1])") {
+        names["Lx." + member] = true
+        continue
+      }
+
+      if prefix and prefix != "" {
+        names[prefix + "." + member] = true
+      } else if scope == "Date" {
+        names["Date." + member] = true
+      } else if scope == "Lx" {
+        names["Lx." + member] = true
+      }
+    }
+  }
+
+  names
+}
+
+let _cache = .{ ok: false, docs: nil, nativeNames: nil }
+
+fn ensureLoaded() {
+  if _cache.ok {
+    return
+  }
+  _cache.ok = true
+  _cache.docs = .{}
+  _cache.nativeNames = .{}
+
+  // Docs source of truth: lx/README.md
+  let readme = nil
+  try { readme = ModuleResolution.slurpPath("README.md") } catch { readme = nil }
+  if readme {
+    _cache.docs = parseReadmeDocs(readme)
+  }
+
+  // Builtin names source of truth: include/native_fn.h
+  let roots = ModuleResolution.roots()
+  if roots and roots.ok and roots.projectRoot and Lx and Lx.path {
+    let headerPath = Lx.path.join(roots.projectRoot, "include", "native_fn.h")
+    let header = nil
+    try { header = slurp(headerPath) } catch { header = nil }
+    if header {
+      _cache.nativeNames = parseNativeFnBuiltins(header)
+    }
+  }
+}
+
+fn docFor(name) {
+  ensureLoaded()
+  if !name {
+    return nil
+  }
+  let doc = _cache.docs and _cache.docs[name]
+  if doc {
+    return doc
+  }
+
+  // If it's a known builtin but undocumented, return a placeholder.
+  if _cache.nativeNames and _cache.nativeNames[name] {
+    return .{
+      name: name,
+      signature: nil,
+      description: nil,
+      markdown: "`" + name + "` (undocumented)",
+      source: "include/native_fn.h",
+    }
+  }
+
+  nil
+}
+
+.{
+  docFor,
+}
+

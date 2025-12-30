@@ -2,6 +2,7 @@
 
 let driver = import "src/driver.lx"
 let errors = import "src/errors.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 
 fn usage() {
   groanln("Usage:")
@@ -17,7 +18,7 @@ fn typecheckEntry(entry) {
   let d = driver.make(.{
     profile: "tooling",
     withTypecheck: true,
-    loadSource: fn(p) { slurp(p) },
+    loadSource: fn(p) { ModuleResolution.slurpPath(p) },
   })
 
   if !d {

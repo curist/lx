@@ -7,26 +7,14 @@ let verify = import "src/passes/backend/verify-bytecode.lx"
 let objbuilder = import "src/objbuilder.lx"
 let errors = import "src/errors.lx"
 let tohex = (import "src/lib.lx").tohex
+let ModuleResolution = import "src/module_resolution.lx"
 let OP = (import "src/types.lx").OP
-
-fn resolvePath(path) {
-  if path and path[0] == "@" {
-    let s = "~/lx/"
-    let length = len(path)
-    for let i = 1; i < length; i = i + 1 {
-      s = s + path[i]
-    }
-    return s
-  }
-  path
-}
 
 fn loadSource(path, sourceOverride, overridePath) {
   if sourceOverride and path == overridePath {
     return sourceOverride
   }
-  let realPath = resolvePath(path)
-  slurp(realPath)
+  ModuleResolution.slurpPath(path)
 }
 
 

@@ -2,6 +2,7 @@
 let driver = import "src/driver.lx"
 let codegen = import "src/passes/backend/codegen.lx"
 let verify = import "src/passes/backend/verify-bytecode.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 
 println("=== Building lxglobals.h with NEW codegen (PR3) ===")
 println("")
@@ -10,7 +11,7 @@ println("")
 let d = driver.make(.{
   profile: "default",
   withTypecheck: false,
-  loadSource: fn(path) { slurp(path) },
+  loadSource: fn(path) { ModuleResolution.slurpPath(path) },
 })
 
 // Codegen with recursive module compilation

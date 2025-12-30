@@ -1296,6 +1296,7 @@ fn queryDiagnostics(result) {
 // ========================================
 
 let Driver = import "src/driver.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 
 // Remap type vars and node ids for merged query context.
 fn remapType(t, typeVarMap, nextTypeVarIdRef) {
@@ -1376,7 +1377,7 @@ fn remapType(t, typeVarMap, nextTypeVarIdRef) {
 fn compile(filepath) {
   // Create driver that loads from filesystem
   let driver = Driver.make(.{
-    loadSource: fn(path) { slurp(path) },
+    loadSource: fn(path) { ModuleResolution.slurpPath(path) },
     withTypecheck: true,
     withAnf: false,  // Query service needs non-ANF AST (imports not hoisted, etc.)
   })

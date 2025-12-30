@@ -1,0 +1,38 @@
+// Module resolution helpers.
+//
+// Today, the compiler driver passes import specifiers through unchanged and
+// ultimately loads source via `slurp(...)`, so relative paths resolve against
+// the process CWD. Centralize any path mapping here so we can evolve resolution
+// semantics in one place.
+
+fn resolvePath(path) {
+  if path and path[0] == "@" {
+    let s = "~/lx/"
+    let length = len(path)
+    for let i = 1; i < length; i = i + 1 {
+      s = s + path[i]
+    }
+    return s
+  }
+  path
+}
+
+fn slurpPath(path) {
+  slurp(resolvePath(path))
+}
+
+fn makeLoadSource(sourceOverride, overridePath) {
+  fn(path) {
+    if sourceOverride and path == overridePath {
+      return sourceOverride
+    }
+    slurpPath(path)
+  }
+}
+
+.{
+  resolvePath: resolvePath,
+  slurpPath: slurpPath,
+  makeLoadSource: makeLoadSource,
+}
+

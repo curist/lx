@@ -223,6 +223,25 @@ fn buildFileIndex(ctx) {
   })
 }
 
+fn findImportByPathNode(ctx, pathNode) {
+  if !ctx or !ctx.nodes or !pathNode or !pathNode.id or !pathNode.filename {
+    return nil
+  }
+
+  let ids = ctx.fileNodeIds and ctx.fileNodeIds[pathNode.filename] or nil
+  if !ids {
+    ids = keys(ctx.nodes)
+  }
+
+  for let i = 0; i < len(ids); i = i + 1 {
+    let cand = ctx.nodes[ids[i]]
+    if cand and cand.type == NODE.Import and cand.path and cand.path.id == pathNode.id {
+      return cand
+    }
+  }
+  nil
+}
+
 // ========================================
 // Node Selection
 // ========================================
@@ -1141,6 +1160,23 @@ fn queryGotoDefinition(ctx, filename, line, col) {
   }
 
   if n.type == NODE.String {
+    // Import path string literal: jump to the imported file itself.
+    let importNode = findImportByPathNode(ctx, n)
+    if importNode and importNode.path and importNode.path.value {
+      return .{
+        success: true,
+        kind: "goto",
+        target: .{
+          filename: importNode.path.value,
+          line: 1,
+          col: 0,
+          endLine: 1,
+          endCol: 0,
+        },
+        candidates: candidatesForNodes(sel.ties),
+      }
+    }
+
     let dotNode = findDotByPropertyNode(ctx, n)
     let propName = propNameFromNode(n)
     if dotNode and propName {

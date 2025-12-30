@@ -1,0 +1,3 @@
+let T = import "test/fixtures/query/import-target.lx"
+T
+

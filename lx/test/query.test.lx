@@ -207,6 +207,22 @@ test("query - goto on non-identifier fails gracefully", fn(assert) {
   assert.equal(gotoResult.message, "Not an identifier at test.lx:1:0", "Goto should include location")
 })
 
+test("query - goto import path opens module", fn(assert) {
+  let useFile = "test/fixtures/query/import-path.lx"
+  let result = query.compileFast(useFile)
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto inside the import string: `"..."`
+  let gotoResult = query.queryGotoDefinition(result.ctx, useFile, 1, 16)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.kind, "goto", "Should be goto result")
+  assert.truthy(gotoResult.target, "Should have target")
+  assert.equal(gotoResult.target.filename, "test/fixtures/query/import-target.lx", "Should target imported module file")
+  assert.equal(gotoResult.target.line, 1, "Should target start of imported file")
+  assert.equal(gotoResult.target.col, 0, "Should target start column")
+})
+
 // ========================================
 // Multi-Module Import Tests
 // ========================================

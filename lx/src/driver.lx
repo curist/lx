@@ -292,6 +292,8 @@ fn make(opts) {
   let wholeProgramTypecheckDone = false
   let compileDepth = 0
 
+  let compileModule = nil
+
   fn inferCaps(result) {
     let passes = result and result.passes or .{}
     .{
@@ -440,7 +442,9 @@ fn make(opts) {
     // Build context for passes
     let ctx = .{
       importCache: cache,
-      compileModule: compileModuleInternal,
+      // Use the public wrapper so nested imports bump compileDepth, enabling
+      // per-import build options like `withImportLower`.
+      compileModule: compileModule,
       opts: .{
         withLower: effectiveWithLower,
         withAnf: effectiveWithAnf,
@@ -481,7 +485,7 @@ fn make(opts) {
     return result
   }
 
-  let compileModule = fn compileModule(path) {
+  compileModule = fn compileModule(path) {
     compileDepth = compileDepth + 1
     let isTop = compileDepth == 1
     let result = compileModuleInternal(path)

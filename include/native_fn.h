@@ -13,6 +13,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "lx/lxversion.h"
+
 #include "memory.h"
 #include "object.h"
 #include "vm.h"
@@ -24,6 +26,10 @@ void defineBuiltinNatives();
 // ---- start of native function declarations ----
 // ---- start of native function declarations ----
 // ---- start of native function declarations ----
+
+// Implemented in `src/vm.c` (needs access to the VM run loop).
+static bool pcallNative(int argCount, Value *args);
+static void runtimeError(const char* format, ...);
 
 static bool timeNative(int argCount, Value *args) {
   time_t now = time(NULL);
@@ -842,7 +848,6 @@ static bool systemNative(int argCount, Value *args) {
 }
 #endif
 
-#ifndef __EMSCRIPTEN__
 static bool exitNative(int argCount, Value *args) {
   int exitCode = 0;
   if (argCount == 0) {
@@ -1088,7 +1093,6 @@ static bool fsRealpathNative(int argCount, Value *args) {
   args[-1] = CSTRING_VAL(resolved);
   return true;
 }
-#endif
 
 static bool tolowerNative(int argCount, Value *args) {
   if (argCount < 1 || !IS_STRING(args[0])) {
@@ -1158,6 +1162,233 @@ static bool doubleToUint8ArrayNative(int argCount, Value *args) {
   return true;
 }
 
+static bool lxErrorNative(int argCount, Value *args) {
+  if (argCount < 1) {
+    runtimeError("Error");
+    return false;
+  }
+
+  if (IS_STRING(args[0])) {
+    runtimeError("%s", AS_STRING(args[0])->chars);
+    return false;
+  }
+
+  runtimeError("Error");
+  return false;
+}
+
+static inline uint32_t readU32le(const uint8_t* bytes) {
+  return (uint32_t)bytes[0]
+      | ((uint32_t)bytes[1] << 8)
+      | ((uint32_t)bytes[2] << 16)
+      | ((uint32_t)bytes[3] << 24);
+}
+
+static inline bool lxObjHeaderLooksValid(const uint8_t* bytes, size_t len) {
+  if (bytes == NULL) return false;
+  // objIsValid() reads from fixed offsets; make sure it can't read OOB.
+  if (len < 32) return false;
+  if (!(bytes[0] == 'L' && bytes[1] == 'X')) return false;
+  // Version is currently 1.
+  if (bytes[2] != 1) return false;
+  uint32_t objSize = readU32le(bytes + 4);
+  return objSize == (uint32_t)len;
+}
+
+static bool lxIsLxObjNative(int argCount, Value *args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Lx.isLxObj takes 1 arg.");
+    return false;
+  }
+
+  if (IS_STRING(args[0])) {
+    ObjString* s = AS_STRING(args[0]);
+    args[-1] = BOOL_VAL(lxObjHeaderLooksValid((const uint8_t*)s->chars, (size_t)s->length));
+    return true;
+  }
+
+  if (IS_ARRAY(args[0])) {
+    ValueArray* a = &AS_ARRAY(args[0]);
+    if (a->count < 32) {
+      args[-1] = BOOL_VAL(false);
+      return true;
+    }
+
+    // Header bytes: "LX" + version + flags.
+    for (int i = 0; i < 8; i++) {
+      if (!IS_NUMBER(a->values[i])) {
+        args[-1] = BOOL_VAL(false);
+        return true;
+      }
+      double n = AS_NUMBER(a->values[i]);
+      if (n < 0 || n > 255 || (uint8_t)n != n) {
+        args[-1] = BOOL_VAL(false);
+        return true;
+      }
+    }
+
+    uint8_t b0 = (uint8_t)AS_NUMBER(a->values[0]);
+    uint8_t b1 = (uint8_t)AS_NUMBER(a->values[1]);
+    uint8_t ver = (uint8_t)AS_NUMBER(a->values[2]);
+    if (!(b0 == 'L' && b1 == 'X')) {
+      args[-1] = BOOL_VAL(false);
+      return true;
+    }
+    if (ver != 1) {
+      args[-1] = BOOL_VAL(false);
+      return true;
+    }
+
+    uint32_t objSize =
+        (uint32_t)(uint8_t)AS_NUMBER(a->values[4]) |
+        ((uint32_t)(uint8_t)AS_NUMBER(a->values[5]) << 8) |
+        ((uint32_t)(uint8_t)AS_NUMBER(a->values[6]) << 16) |
+        ((uint32_t)(uint8_t)AS_NUMBER(a->values[7]) << 24);
+
+    args[-1] = BOOL_VAL(objSize == (uint32_t)a->count);
+    return true;
+  }
+
+  args[-1] = CSTRING_VAL("Error: Lx.isLxObj expects a string or byte array.");
+  return false;
+}
+
+static bool lxLoadObjNative(int argCount, Value *args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Lx.loadObj takes 1 arg (bytes).");
+    return false;
+  }
+
+  bool printCode = false;
+  if (argCount >= 2) {
+    if (!IS_BOOL(args[1])) {
+      args[-1] = CSTRING_VAL("Error: Lx.loadObj arg2 must be a bool (printCode).");
+      return false;
+    }
+    printCode = AS_BOOL(args[1]);
+  }
+
+  uint8_t* owned = NULL;
+  uint8_t* bytes = NULL;
+  size_t len = 0;
+
+  if (IS_STRING(args[0])) {
+    ObjString* s = AS_STRING(args[0]);
+    bytes = (uint8_t*)s->chars;
+    len = (size_t)s->length;
+  } else if (IS_ARRAY(args[0])) {
+    ValueArray* a = &AS_ARRAY(args[0]);
+    len = (size_t)a->count;
+    owned = (uint8_t*)malloc(len);
+    if (owned == NULL) {
+      args[-1] = CSTRING_VAL("Error: out of memory.");
+      return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+      if (!IS_NUMBER(a->values[i])) {
+        free(owned);
+        args[-1] = CSTRING_VAL("Error: Lx.loadObj byte arrays must contain numbers.");
+        return false;
+      }
+      double n = AS_NUMBER(a->values[i]);
+      if (n < 0 || n > 255 || (uint8_t)n != n) {
+        free(owned);
+        args[-1] = CSTRING_VAL("Error: invalid byte value in Lx.loadObj input.");
+        return false;
+      }
+      owned[i] = (uint8_t)n;
+    }
+    bytes = owned;
+  } else {
+    args[-1] = CSTRING_VAL("Error: Lx.loadObj expects a string or byte array.");
+    return false;
+  }
+
+  if (!lxObjHeaderLooksValid(bytes, len)) {
+    free(owned);
+    args[-1] = CSTRING_VAL("Error: invalid lxobj.");
+    return false;
+  }
+
+  ObjFunction* function = loadObj(bytes, printCode);
+  free(owned);
+
+  if (function == NULL) {
+    args[-1] = CSTRING_VAL("Error: failed to load lxobj.");
+    return false;
+  }
+
+  push(OBJ_VAL(function));
+  ObjClosure* closure = newClosure(function);
+  pop();
+
+  args[-1] = OBJ_VAL(closure);
+  return true;
+}
+
+static bool stdinReadAllNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdin.readAll takes 0 args.");
+    return false;
+  }
+
+  size_t capacity = 1024;
+  size_t length = 0;
+  char* buffer = (char*)malloc(capacity);
+  if (buffer == NULL) {
+    args[-1] = CSTRING_VAL("Error: out of memory.");
+    return false;
+  }
+
+  int c;
+  while ((c = fgetc(stdin)) != EOF) {
+    if (length + 1 >= capacity) {
+      capacity *= 2;
+      char* next = (char*)realloc(buffer, capacity);
+      if (next == NULL) {
+        free(buffer);
+        args[-1] = CSTRING_VAL("Error: out of memory.");
+        return false;
+      }
+      buffer = next;
+    }
+    buffer[length++] = (char)c;
+  }
+  buffer[length] = '\0';
+
+  args[-1] = OBJ_VAL(takeString(buffer, (int)length));
+  return true;
+}
+
+static bool stdinReadLineNative(int argCount, Value *args) {
+  if (argCount > 1) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdin.readLine takes 0 or 1 args.");
+    return false;
+  }
+  if (argCount == 1 && !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdin.readLine prompt must be a string.");
+    return false;
+  }
+
+  if (argCount == 1) {
+    ObjString* prompt = AS_STRING(args[0]);
+    fwrite(prompt->chars, sizeof(char), (size_t)prompt->length, stdout);
+    fflush(stdout);
+  }
+
+  char* line = NULL;
+  size_t cap = 0;
+  ssize_t n = getline(&line, &cap, stdin);
+  if (n < 0) {
+    free(line);
+    args[-1] = NIL_VAL;
+    return true;
+  }
+
+  args[-1] = OBJ_VAL(takeString(line, (int)n));
+  return true;
+}
+
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
@@ -1218,6 +1449,12 @@ static void defineLxNatives() {
   pop();
   pop();
 
+  push(CSTRING_VAL("version"));
+  push(CSTRING_VAL(LX_VERSION));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
   // Lx.fs
   ObjHashmap* fs = newHashmap();
   push(OBJ_VAL(fs)); // root
@@ -1226,12 +1463,10 @@ static void defineLxNatives() {
   tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
   pop();
   pop();
-#ifndef __EMSCRIPTEN__
   defineTableFunction(&fs->table, "cwd", fsCwdNative);
   defineTableFunction(&fs->table, "exists", fsExistsNative);
   defineTableFunction(&fs->table, "stat", fsStatNative);
   defineTableFunction(&fs->table, "realpath", fsRealpathNative);
-#endif
   pop(); // fs
 
   // Lx.path
@@ -1246,12 +1481,26 @@ static void defineLxNatives() {
   defineTableFunction(&path->table, "dirname", pathDirnameNative);
   pop(); // path
 
+  // Lx.stdin
+  ObjHashmap* stdinTable = newHashmap();
+  push(OBJ_VAL(stdinTable)); // root
+  push(CSTRING_VAL("stdin"));
+  push(OBJ_VAL(stdinTable));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+  defineTableFunction(&stdinTable->table, "readAll", stdinReadAllNative);
+  defineTableFunction(&stdinTable->table, "readLine", stdinReadLineNative);
+  pop(); // stdin
+
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array",
                       doubleToUint8ArrayNative);
-#ifndef __EMSCRIPTEN__
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "pcall", pcallNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "error", lxErrorNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "isLxObj", lxIsLxObjNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "loadObj", lxLoadObjNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "exit", exitNative);
-#endif
 
   pop();
   pop();
@@ -1312,9 +1561,7 @@ void defineBuiltinNatives() {
   defineNative("exec", execNative);
   defineNative("system", systemNative);
 #endif
-#ifndef __EMSCRIPTEN__
   defineNative("slurp", slurpNative);
   defineNative("spit", spitNative);
-#endif
 }
 #endif

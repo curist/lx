@@ -43,6 +43,7 @@ Global builtins:
 
 - `Lx.args: array[string]` CLI args.
 - `Lx.env: map[string]string` environment variables.
+- `Lx.version: string` runtime version string.
 - `Lx.fs`: filesystem helpers:
   - `Lx.fs.cwd() -> string`
   - `Lx.fs.exists(path: string) -> bool`
@@ -51,3 +52,10 @@ Global builtins:
 - `Lx.path`: path helpers:
   - `Lx.path.join(...segments: string) -> string`
   - `Lx.path.dirname(path: string) -> string`
+- `Lx.stdin`: stdin helpers (native builds):
+  - `Lx.stdin.readAll() -> string`
+  - `Lx.stdin.readLine(prompt?: string) -> string | nil`
+- `Lx.isLxObj(bytes: string | array[number]) -> bool` checks whether a byte buffer looks like an lxobj.
+- `Lx.loadObj(bytes: string | array[number], printCode?: bool) -> fn` loads an lxobj and returns a callable closure.
+- `Lx.pcall(fn: fn, ...args) -> {ok,value,error}` calls a function and captures runtime errors instead of aborting.
+- `Lx.error(message: string) -> never` raises a runtime error (caught by `Lx.pcall`).

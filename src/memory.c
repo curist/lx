@@ -190,6 +190,7 @@ static void markRoots() {
 
   markTable(&vm.globals);
   markValue(vm.lastResult);
+  markValue(vm.lastError);
 }
 
 static void traceReferences() {

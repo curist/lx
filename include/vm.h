@@ -1,6 +1,8 @@
 #ifndef clox_vm_h
 #define clox_vm_h
 
+#include <setjmp.h>
+
 #include "object.h"
 #include "table.h"
 #include "value.h"
@@ -21,6 +23,8 @@ typedef struct {
   Value stack[STACK_MAX];
   Value* stackTop;
   Value lastResult;
+  Value lastError;
+  jmp_buf* errorJmp;
 
   Table globals;
   Table strings;

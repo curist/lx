@@ -18,12 +18,131 @@ static void resetStack() {
   vm.openUpvalues = NULL;
 }
 
+static Value buildRuntimeErrorValue(const char* message) {
+  ObjHashmap* err = newHashmap();
+  push(OBJ_VAL(err));
+
+  // message
+  push(CSTRING_VAL("message"));
+  push(CSTRING_VAL(message));
+  tableSet(&err->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  // stack
+  ObjArray* stackArr = newArray();
+  push(OBJ_VAL(stackArr));
+  push(CSTRING_VAL("stack"));
+  push(OBJ_VAL(stackArr));
+  tableSet(&err->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  for (int i = vm.frameCount - 1; i >= 0; i--) {
+    CallFrame* frame = &vm.frames[i];
+    ObjFunction* function = frame->closure->function;
+    size_t instruction = 0;
+    if (frame->ip > function->chunk.code) {
+      instruction = (size_t)(frame->ip - function->chunk.code - 1);
+    }
+
+    int line = 0;
+    if (function->chunk.lines != NULL && function->chunk.count > 0) {
+      if (instruction >= (size_t)function->chunk.count) {
+        instruction = (size_t)function->chunk.count - 1;
+      }
+      line = (int)function->chunk.lines[instruction];
+    }
+
+    ObjHashmap* frameRec = newHashmap();
+    push(OBJ_VAL(frameRec));
+
+    // file
+    push(CSTRING_VAL("file"));
+    if (function->filename != NULL) {
+      push(CSTRING_VAL(function->filename->chars));
+    } else {
+      push(NIL_VAL);
+    }
+    tableSet(&frameRec->table, vm.stackTop[-2], vm.stackTop[-1]);
+    pop();
+    pop();
+
+    // line
+    push(CSTRING_VAL("line"));
+    push(NUMBER_VAL((double)line));
+    tableSet(&frameRec->table, vm.stackTop[-2], vm.stackTop[-1]);
+    pop();
+    pop();
+
+    // name
+    push(CSTRING_VAL("name"));
+    if (function->name != NULL) {
+      push(CSTRING_VAL(function->name->chars));
+    } else {
+      push(CSTRING_VAL("script"));
+    }
+    tableSet(&frameRec->table, vm.stackTop[-2], vm.stackTop[-1]);
+    pop();
+    pop();
+
+    // push record into stack array
+    writeValueArray(&stackArr->array, OBJ_VAL(frameRec));
+    pop(); // frameRec
+  }
+
+  pop(); // stackArr
+
+  Value out = OBJ_VAL(err);
+  pop(); // err
+  return out;
+}
+
 static void runtimeError(const char* format, ...) {
   va_list args;
   va_start(args, format);
-  vfprintf(stderr, format, args);
+  va_list args2;
+  va_copy(args2, args);
+  int n = vsnprintf(NULL, 0, format, args);
   va_end(args);
+
+  char* message = NULL;
+  if (n < 0) {
+    message = (char*)malloc(6);
+    if (message != NULL) memcpy(message, "Error", 6);
+  } else {
+    message = (char*)malloc((size_t)n + 1);
+    if (message != NULL) {
+      vsnprintf(message, (size_t)n + 1, format, args2);
+    }
+  }
+  va_end(args2);
+
+  if (message == NULL) {
+    // Fall back to a fixed string if we can't allocate.
+    message = (char*)malloc(6);
+    if (message != NULL) memcpy(message, "Error", 6);
+  }
+
+  if (message == NULL) {
+    // Worst case: print and bail.
+    fputs("Error\n", stderr);
+    resetStack();
+    return;
+  }
+
+  // Protected mode: capture structured error and abort back to the protected
+  // boundary. The caller is responsible for restoring VM state.
+  if (vm.errorJmp != NULL) {
+    vm.lastError = buildRuntimeErrorValue(message);
+    free(message);
+    longjmp(*vm.errorJmp, 1);
+  }
+
+  // Default mode: print like before.
+  fputs(message, stderr);
   fputs("\n", stderr);
+  free(message);
 
   int skippedCount = 0;
   bool shouldTruncate = vm.frameCount > 16;
@@ -100,6 +219,8 @@ void initVM() {
   vm.grayStack = NULL;
 
   vm.lastResult = NIL_VAL;
+  vm.lastError = NIL_VAL;
+  vm.errorJmp = NULL;
 
   initTable(&vm.globals);
   initTable(&vm.strings);
@@ -266,6 +387,89 @@ inline static void closeUpvalues(Value* last) {
   }
 }
 
+static InterpretResult runUntil(int stopFrameCount);
+
+static void pcallSetField(ObjHashmap* map, const char* key, Value value) {
+  push(CSTRING_VAL(key));
+  push(value);
+  tableSet(&map->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+}
+
+static Value pcallResult(bool ok, Value value, Value error) {
+  ObjHashmap* out = newHashmap();
+  push(OBJ_VAL(out));
+  pcallSetField(out, "ok", BOOL_VAL(ok));
+  pcallSetField(out, "value", value);
+  pcallSetField(out, "error", error);
+  pop();
+  return OBJ_VAL(out);
+}
+
+static bool pcallNative(int argCount, Value* args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Lx.pcall takes at least 1 arg (fn).");
+    return false;
+  }
+
+  Value fn = args[0];
+  int fnArgCount = argCount - 1;
+
+  int baseFrameCount = vm.frameCount;
+  Value* baseStackTop = vm.stackTop;
+
+  jmp_buf jb;
+  jmp_buf* prev = vm.errorJmp;
+  vm.errorJmp = &jb;
+  vm.lastError = NIL_VAL;
+
+  int jumped = setjmp(jb);
+  if (jumped != 0) {
+    Value err = vm.lastError;
+    closeUpvalues(baseStackTop);
+    vm.stackTop = baseStackTop;
+    vm.frameCount = baseFrameCount;
+    vm.errorJmp = prev;
+    args[-1] = pcallResult(false, NIL_VAL, err);
+    return true;
+  }
+
+  // Arrange a normal VM call: [ ... fn arg0..argN ]
+  push(fn);
+  for (int i = 1; i < argCount; i++) {
+    push(args[i]);
+  }
+
+  if (!callValue(peek(fnArgCount), fnArgCount)) {
+    // Should longjmp via runtimeError(), but keep a fallback.
+    Value err = vm.lastError;
+    closeUpvalues(baseStackTop);
+    vm.stackTop = baseStackTop;
+    vm.frameCount = baseFrameCount;
+    vm.errorJmp = prev;
+    args[-1] = pcallResult(false, NIL_VAL, err);
+    return true;
+  }
+
+  InterpretResult r = runUntil(baseFrameCount);
+  if (r != INTERPRET_OK) {
+    // Should longjmp via runtimeError(), but keep a fallback.
+    Value err = vm.lastError;
+    closeUpvalues(baseStackTop);
+    vm.stackTop = baseStackTop;
+    vm.frameCount = baseFrameCount;
+    vm.errorJmp = prev;
+    args[-1] = pcallResult(false, NIL_VAL, err);
+    return true;
+  }
+
+  Value result = pop();
+  vm.errorJmp = prev;
+  args[-1] = pcallResult(true, result, NIL_VAL);
+  return true;
+}
+
 inline static bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
@@ -286,7 +490,7 @@ inline static void concatenate() {
   push(OBJ_VAL(result));
 }
 
-static InterpretResult run(void) {
+static InterpretResult runUntil(int stopFrameCount) {
   CallFrame* frame = &vm.frames[vm.frameCount - 1];
   ObjClosure* closure = frame->closure;
   Value* slots = frame->slots;
@@ -912,6 +1116,10 @@ static InterpretResult run(void) {
         vm.stackTop = frame->slots;
         push(result);
 
+        if (vm.frameCount == stopFrameCount) {
+          return INTERPRET_OK;
+        }
+
         frame = &vm.frames[vm.frameCount - 1];
         closure = frame->closure;
         slots = frame->slots;
@@ -942,5 +1150,5 @@ InterpretResult interpret(uint8_t* obj) {
   push(OBJ_VAL(closure));
   call(closure, 0);
 
-  return run();
+  return runUntil(0);
 }

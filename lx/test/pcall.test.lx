@@ -1,0 +1,33 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+test("Lx.pcall returns ok/value", fn(assert) {
+  let r = Lx.pcall(fn() { 1 + 2 })
+  assert.truthy(r.ok)
+  assert.equal(r.value, 3)
+  assert.equal(r.error, nil)
+})
+
+test("Lx.pcall passes arguments", fn(assert) {
+  let r = Lx.pcall(fn(a, b) { a + b }, 10, 32)
+  assert.truthy(r.ok)
+  assert.equal(r.value, 42)
+})
+
+test("Lx.error is caught by Lx.pcall", fn(assert) {
+  let r = Lx.pcall(fn() { Lx.error("boom") })
+  assert.equal(r.ok, false)
+  assert.equal(r.value, nil)
+  assert.truthy(r.error)
+  assert.equal(r.error.message, "boom")
+  assert.truthy(r.error.stack and len(r.error.stack) > 0)
+})
+
+test("runtime errors are caught by Lx.pcall", fn(assert) {
+  let r = Lx.pcall(fn() { unknownVar })
+  assert.equal(r.ok, false)
+  assert.equal(r.value, nil)
+  assert.equal(r.error.message, "Undefined variable 'unknownVar'.")
+})
+
+suite.run()

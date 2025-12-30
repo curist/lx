@@ -47,11 +47,6 @@ build: prepare
 wasm: prepare
 	zig cc $(CFLAGS) -DWASM -target wasm32-wasi src/*.c -o out/lx.wasm
 
-EMFLAGS=-sASYNCIFY -sINVOKE_RUN=0 -sENVIRONMENT=web \
-				-sEXPORT_ES6 -sMODULARIZE -sEXPORTED_FUNCTIONS=_runRepl
-emcc: prepare
-	emcc $(CFLAGS) -DWASM $(EMFLAGS) src/*.c -o docs/lx.js
-
 benchmark: build
 	@cd benchmarks && LX="$(PWD)/out/lx" ./run.sh
 

@@ -1,27 +1,22 @@
 let driver = import "src/driver.lx"
-let parse = import "src/passes/frontend/parser.lx"
-let lower = import "src/passes/frontend/lower.lx"
-let anf = import "src/passes/frontend/anf.lx"
 let codegen = import "src/passes/backend/codegen.lx"
 let verify = import "src/passes/backend/verify-bytecode.lx"
 let objbuilder = import "src/objbuilder.lx"
 let errors = import "src/errors.lx"
-let tohex = (import "src/lib.lx").tohex
 let ModuleResolution = import "src/module_resolution.lx"
 let OP = (import "src/types.lx").OP
 
+let DEBUG_BUILD = true
+
 fn loadSource(path, sourceOverride, overridePath) {
-  if sourceOverride and path == overridePath {
-    return sourceOverride
-  }
+  if sourceOverride and path == overridePath { return sourceOverride }
   ModuleResolution.slurpPath(path)
 }
 
-
-fn makeDriverWithSource(source, path) {
+fn makeDriverWithSource(sourceOverride, overridePath) {
   driver.make(.{
     withTypecheck: false,
-    loadSource: fn(p) { loadSource(p, source, path) },
+    loadSource: fn(p) { loadSource(p, sourceOverride, overridePath) },
   })
 }
 
@@ -57,7 +52,6 @@ fn compileWithDriver(driverInstance, path) {
       return nil
     }
 
-    // Verify bytecode stack discipline (mandatory phase)
     let verifyResult = verify.verifyFunction(cg.function)
     result.verifyResult = verifyResult
     if !verifyResult.success {
@@ -72,111 +66,245 @@ fn compileWithDriver(driverInstance, path) {
   codegenModule(path)
 }
 
-fn handleBuildFunction(cb) {
-  let argsLength = len(Lx.args)
-  let DEBUG_BUILD = true
-  let usageMessage = join(["Usage:", Lx.args[0], "compile <path> [-o|--output <output>]"], " ")
-  if argsLength < 3 {
-    groanln(usageMessage)
-    Lx.exit(28)
+fn printHelp() {
+  groanln("Usage:")
+  groanln("")
+  groanln("  " + Lx.args[0] + " <command> [arguments]")
+  groanln("")
+  groanln("Commands:")
+  groanln("  run      Run source or lxobj")
+  groanln("  eval     Evaluate expression (arg or stdin)")
+  groanln("  repl     Start REPL (use :q to quit)")
+  groanln("  compile  Compile source to lxobj (-o/--output <output>)")
+  groanln("  disasm   Disassemble lxobj or lx source")
+  groanln("  version  Print version")
+  groanln("  help     Print this helpful page")
+}
+
+fn normalizeCommand(cmd) {
+  if !cmd or cmd == "" { return "help" }
+  if cmd == "-h" or cmd == "--help" or cmd == "h" { return "help" }
+  if cmd == "r" { return "run" }
+  if cmd == "c" { return "compile" }
+  if cmd == "d" { return "disasm" }
+  cmd
+}
+
+fn compilePathToFunction(path, sourceOverride) {
+  let d = makeDriverWithSource(sourceOverride, path)
+  compileWithDriver(d, path)
+}
+
+fn bytesToString(bytes) {
+  let byteString = ""
+  for let i = 0; i < len(bytes); i = i + 1 {
+    byteString = byteString + chr(bytes[i])
   }
-  let path = nil
-  let outputPath = nil
-  let i = 2
-  for i < argsLength {
-    let arg = Lx.args[i]
-    if arg == "-o" or arg == "--output" {
-      if i + 1 >= argsLength {
-        groanln(usageMessage)
-        Lx.exit(28)
-      }
-      outputPath = Lx.args[i + 1]
-      i = i + 2
-      continue
-    }
-    if !path {
-      path = arg
-    }
-    i = i + 1
+  byteString
+}
+
+fn slurpUserPath(path) {
+  // Prefer reading literal filesystem paths when they exist relative to CWD
+  // (e.g. `out/foo.lxobj`), otherwise fall back to module resolution (`cmd/...`).
+  if Lx and Lx.fs and Lx.fs.exists and Lx.fs.exists(path) {
+    return slurp(path)
   }
-  if !path {
-    groanln(usageMessage)
-    Lx.exit(28)
+  ModuleResolution.slurpPath(path)
+}
+
+fn printRuntimeError(err) {
+  if !err {
+    groanln("Runtime error.")
+    return
   }
-  let source = loadSource(path, nil, nil)
-  if !source {
-    groanln("Failed to open", path)
-    Lx.exit(2)
+  if err.message {
+    groanln(err.message)
+  } else {
+    groanln(err)
+    return
   }
 
-  let driverInstance = makeDriverWithSource(nil, nil)
-  let func = compileWithDriver(driverInstance, path)
-  if !func {
-    Lx.exit(65)
+  let stack = err.stack
+  if !stack { return }
+  for let i = 0; i < len(stack); i = i + 1 {
+    let f = stack[i] or .{}
+    let file = f.file or "[unknown]"
+    let line = int(f.line or 0)
+    let name = f.name or "script"
+    groanln("[" + file + " L" + str(line) + "] in " + name + "()")
   }
-  cb(func, DEBUG_BUILD, outputPath)
 }
 
 let handlers = .{
+  help: fn() { printHelp() },
+
+  version: fn() {
+    println("lx version " + (Lx and Lx.version or "?"))
+  },
+
   compile: fn() {
-    handleBuildFunction(fn(func, DEBUG_BUILD, outputPath) {
-      if outputPath {
-        let bytes = objbuilder(func, DEBUG_BUILD).bytes()
-        // Convert byte numbers to string
-        let byteString = ""
-        for let i = 0; i < len(bytes); i = i + 1 {
-          byteString = byteString + chr(bytes[i])
+    let argsLength = len(Lx.args)
+    let usageMessage = join(["Usage:", Lx.args[0], "compile <path> [-o|--output <output>]"], " ")
+    if argsLength < 3 {
+      groanln(usageMessage)
+      Lx.exit(28)
+    }
+
+    let path = nil
+    let outputPath = nil
+    let i = 2
+    for i < argsLength {
+      let arg = Lx.args[i]
+      if arg == "-o" or arg == "--output" {
+        if i + 1 >= argsLength {
+          groanln(usageMessage)
+          Lx.exit(28)
         }
-        let ok = spit(outputPath, byteString)
-        if ok != true {
-          groanln(ok or "Failed to write output.")
-          Lx.exit(74)
-        }
-      } else {
-        objbuilder(func, DEBUG_BUILD).dump()
+        outputPath = Lx.args[i + 1]
+        i = i + 2
+        continue
       }
-    })
+      if !path { path = arg }
+      i = i + 1
+    }
+    if !path {
+      groanln(usageMessage)
+      Lx.exit(28)
+    }
+
+    let func = compilePathToFunction(path, nil)
+    if !func { Lx.exit(65) }
+
+    if outputPath {
+      let bytes = objbuilder(func, DEBUG_BUILD).bytes()
+      let ok = spit(outputPath, bytesToString(bytes))
+      if ok != true {
+        groanln(ok or "Failed to write output.")
+        Lx.exit(74)
+      }
+    } else {
+      objbuilder(func, DEBUG_BUILD).dump()
+    }
   },
+
   run: fn() {
-    handleBuildFunction(fn(func, DEBUG_BUILD) {
-      objbuilder(func, DEBUG_BUILD).bytes()
-    })
+    if len(Lx.args) < 3 {
+      groanln("Usage: " + Lx.args[0] + " run <lxfile|lxobj>")
+      Lx.exit(28)
+    }
+
+    let path = Lx.args[2]
+    let data = slurpUserPath(path)
+
+    if Lx and Lx.isLxObj and Lx.isLxObj(data) {
+      let program = Lx.loadObj(data, false)
+      return program()
+    }
+
+    let func = compilePathToFunction(path, data)
+    if !func { Lx.exit(65) }
+
+    let bytes = objbuilder(func, DEBUG_BUILD).bytes()
+    let program = Lx.loadObj(bytes, false)
+    program()
   },
+
+  disasm: fn() {
+    if len(Lx.args) < 3 {
+      groanln("Usage: " + Lx.args[0] + " disasm <lxobj|lxfile>")
+      Lx.exit(28)
+    }
+
+    let path = Lx.args[2]
+    let data = slurpUserPath(path)
+    if Lx and Lx.isLxObj and Lx.isLxObj(data) {
+      Lx.loadObj(data, true)
+      return nil
+    }
+
+    let func = compilePathToFunction(path, data)
+    if !func { Lx.exit(65) }
+    let bytes = objbuilder(func, DEBUG_BUILD).bytes()
+    Lx.loadObj(bytes, true)
+  },
+
   eval: fn() {
-    if !__lx_input__ {
-      return "Empty input."
+    let src = nil
+    if len(Lx.args) >= 3 {
+      src = Lx.args[2]
+    } else if Lx and Lx.stdin and Lx.stdin.readAll {
+      src = Lx.stdin.readAll()
     }
+
+    if !src or src == "" {
+      groanln("Usage: " + Lx.args[0] + " eval <expression>")
+      groanln("  or pipe input via stdin: echo 'println(42)' | " + Lx.args[0] + " eval")
+      Lx.exit(64)
+    }
+
     let path = "[LX EVAL]"
-    let driverInstance = makeDriverWithSource(__lx_input__, path)
-    let func = compileWithDriver(driverInstance, path)
-    if !func {
-      return "Compile failed."
-    }
-    return objbuilder(func, false).bytes()
+    let d = makeDriverWithSource(src, path)
+    let func = compileWithDriver(d, path)
+    if !func { Lx.exit(65) }
+
+    let bytes = objbuilder(func, false).bytes()
+    let program = Lx.loadObj(bytes, false)
+    let result = program()
+    println(result)
   },
+
   repl: fn() {
-    if !__lx_input__ {
-      return "Empty input."
+    if !Lx or !Lx.stdin or !Lx.stdin.readLine or !Lx.pcall or !Lx.loadObj {
+      groanln("repl: missing required runtime APIs (Lx.stdin.readLine, Lx.pcall, Lx.loadObj)")
+      Lx.exit(70)
     }
-    let path = "[LX REPL]"
-    let driverInstance = makeDriverWithSource(__lx_input__, path)
-    let func = compileWithDriver(driverInstance, path)
-    if !func {
-      return "Compile failed."
+
+    let iter = 0
+    for true {
+      let line = Lx.stdin.readLine("> ")
+      if !line { break }
+      if line == "\n" or line == "" { continue }
+      if line == ":q\n" or line == ":q" or line == ":quit\n" or line == ":quit" { break }
+
+      iter = iter + 1
+      let path = "[LX REPL " + str(iter) + "]"
+
+      let d = makeDriverWithSource(line, path)
+      let func = compileWithDriver(d, path)
+      if !func {
+        continue
+      }
+
+      if len(func.chunk.bytecode) == 1 {
+        func.chunk.bytecode = [OP.NIL, OP.RETURN]
+      }
+
+      let bytes = objbuilder(func, false).bytes()
+      let program = Lx.loadObj(bytes, false)
+
+      let r = Lx.pcall(program)
+      if r.ok {
+        print("=> ")
+        println(r.value)
+      } else {
+        printRuntimeError(r.error)
+      }
     }
-    if func.chunk.bytecode->len() == 1 {
-      func.chunk.bytecode = [OP.NIL, OP.RETURN]->map(tohex)
-    }
-    return objbuilder(func, false).bytes()
   },
 }
 
 fn handleUnknownCommand() {
-  if Lx.args[1] {
-    groanln(Lx.args[0] + " " + Lx.args[1] + ": unknown command")
+  let cmd = Lx.args[1]
+  if cmd {
+    groanln(Lx.args[0] + " " + cmd + ": unknown command")
   }
   groanln("Run '" + Lx.args[0] + " help' for usage.")
   Lx.exit(28)
 }
 
-{Lx.args[1] and handlers[Lx.args[1]] or handleUnknownCommand}()
+let cmd = normalizeCommand(Lx.args[1])
+if len(Lx.args) < 2 {
+  printHelp()
+  Lx.exit(28)
+}
+{handlers[cmd] or handleUnknownCommand}()

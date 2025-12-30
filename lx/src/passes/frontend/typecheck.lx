@@ -151,8 +151,21 @@ fn builtinTypeByName(checker, name) {
   if name == "Lx" {
     return typeRecord(.{
       args: typeArray(typeString()),
+      version: typeString(),
       globals: typeFunction([], typeArray(typeString())),
       doubleToUint8Array: typeFunction([typeNumber()], typeArray(typeNumber())),
+      isLxObj: typeFunction([typeAny()], typeBool()),
+      loadObj: typeFunction([typeAny()], typeAny()),
+      pcall: typeFunction([typeAny()], typeRecord(.{
+        ok: typeBool(),
+        value: typeAny(),
+        error: typeAny(),
+      })),
+      error: typeFunction([typeAny()], typeNil()),
+      stdin: typeRecord(.{
+        readAll: typeFunction([], typeString()),
+        readLine: typeFunction([], typeOption(typeString())),
+      }),
       // exit(code?) -> Nil; model as 0-arg fn so `Lx.exit()` works, and extra args are allowed.
       exit: typeFunction([], typeNil()),
     })

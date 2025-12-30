@@ -274,6 +274,9 @@ fn runWarmupStep(state) {
     state.ctxCache[spec] = .{ epoch: state.epoch, result: r }
     updateDepGraphFromDriver(state)
   }
+  if state.openDocs and state.openDocs[spec] != nil {
+    publishDiagnosticsFromCache(state, spec)
+  }
   spec
 }
 
@@ -333,6 +336,7 @@ fn invalidate(state, path) {
 
   state.epoch = (state.epoch or 0) + 1
   state.ctxCache = .{}
+  keys(seen)
 }
 
 // ------------------------------------------------------------
@@ -646,6 +650,122 @@ fn noteResponse(state, msg) {
   state.pendingRequests[msg.id] = nil
 }
 
+fn compileForSpec(state, spec) {
+  if !spec {
+    return nil
+  }
+
+  let cached = state.ctxCache and state.ctxCache[spec] or nil
+  let ctxResult = cached and cached.epoch == state.epoch and cached.result or nil
+  if ctxResult {
+    return ctxResult
+  }
+
+  ctxResult = query.compileWithDriver(state.driver, spec, .{
+    withTypecheck: false,
+    mergeScope: "reachable",
+  })
+
+  state.ctxCache[spec] = .{ epoch: state.epoch, result: ctxResult }
+  updateDepGraphFromDriver(state)
+  ctxResult
+}
+
+fn toLspRange(r) {
+  if !r {
+    return nil
+  }
+  .{
+    start: .{
+      line: (r.line or 1) - 1,
+      character: r.col or 0,
+    },
+    end: .{
+      line: (r.endLine or r.line or 1) - 1,
+      character: r.endCol or r.col or 0,
+    },
+  }
+}
+
+fn diagSeverityToLsp(sev) {
+  if sev == "error" { return 1 }
+  if sev == "warning" { return 2 }
+  if sev == "info" { return 3 }
+  if sev == "hint" { return 4 }
+  nil
+}
+
+fn toLspDiagnostic(d) {
+  if !d {
+    return nil
+  }
+
+  let range = toLspRange(.{
+    line: d.line or 1,
+    col: d.col or 0,
+    endLine: d.endLine or d.line or 1,
+    endCol: d.endCol or d.col or 0,
+  })
+
+  let sev = diagSeverityToLsp(d.severity)
+  let msg =
+    (d.phase and ("[" + d.phase + "] " + (d.message or ""))) or (d.message or "")
+
+  let out = .{
+    range: range,
+    message: msg,
+    source: "lx",
+  }
+  if sev != nil { out.severity = sev }
+  out
+}
+
+fn publishDiagnosticsForSpec(state, spec, diags) {
+  if !state or !spec {
+    return
+  }
+  if state.openDocs and state.openDocs[spec] == nil and diags and len(diags) > 0 {
+    return
+  }
+
+  let out = []
+  for let i = 0; i < len(diags); i = i + 1 {
+    let ld = toLspDiagnostic(diags[i])
+    if ld { push(out, ld) }
+  }
+
+  sendNotification("textDocument/publishDiagnostics", .{
+    uri: specifierToUri(spec),
+    diagnostics: out,
+  })
+}
+
+fn publishDiagnosticsFromCache(state, spec) {
+  if !state or !spec {
+    return
+  }
+  if state.openDocs and state.openDocs[spec] == nil {
+    return
+  }
+
+  let mod = state.driver and state.driver.cache and state.driver.cache[spec] or nil
+  if !mod {
+    return
+  }
+
+  let diags = query.queryDiagnostics(mod)
+  // LSP mode is intentionally fast: no constraint-solver diagnostics.
+  let out = []
+  for let i = 0; i < len(diags); i = i + 1 {
+    let d = diags[i]
+    if d and d.phase == "typecheck" {
+      continue
+    }
+    push(out, d)
+  }
+  publishDiagnosticsForSpec(state, spec, out)
+}
+
 fn handleDefinition(state, msg) {
   let params = msg.params or .{}
   let td = params.textDocument or .{}
@@ -659,18 +779,9 @@ fn handleDefinition(state, msg) {
 
   let spec = pathToSpecifier(absPath)
 
-  let cached = state.ctxCache and state.ctxCache[spec] or nil
-  let ctxResult = cached and cached.epoch == state.epoch and cached.result or nil
-  if !ctxResult {
-    ctxResult = query.compileWithDriver(state.driver, spec, .{
-      withTypecheck: false,
-      mergeScope: "reachable",
-    })
-    if !ctxResult.success {
-      return nil
-    }
-    state.ctxCache[spec] = .{ epoch: state.epoch, result: ctxResult }
-    updateDepGraphFromDriver(state)
+  let ctxResult = compileForSpec(state, spec)
+  if !ctxResult or !ctxResult.success or !ctxResult.ctx {
+    return nil
   }
 
   let ln = (pos.line or 0) + 1
@@ -681,18 +792,52 @@ fn handleDefinition(state, msg) {
   }
 
   let target = r.target
+  .{ uri: specifierToUri(target.filename), range: toLspRange(target) }
+}
+
+fn handleHover(state, msg) {
+  let params = msg.params or .{}
+  let td = params.textDocument or .{}
+  let uri = td.uri
+  let pos = params.position or .{}
+
+  let absPath = uriToPath(uri)
+  if !absPath {
+    return nil
+  }
+
+  let spec = pathToSpecifier(absPath)
+  let ctxResult = compileForSpec(state, spec)
+  if !ctxResult or !ctxResult.success or !ctxResult.ctx {
+    return nil
+  }
+
+  let ln = (pos.line or 0) + 1
+  let col = pos.character or 0
+
+  let r = query.queryHover(ctxResult.ctx, spec, ln, col)
+  if !r or !r.success {
+    return nil
+  }
+
+  let lines = []
+  let sym = r.contents and r.contents.symbol or nil
+  if sym and sym.name {
+    let kind = sym.kind and (" (" + sym.kind + ")") or ""
+    push(lines, "**" + sym.name + "**" + kind)
+  }
+  let ty = r.contents and r.contents.type or nil
+  if ty {
+    push(lines, "`" + ty + "`")
+  }
+  if sym and sym.declaration and sym.declaration.filename {
+    let decl = sym.declaration
+    push(lines, "Defined at `" + decl.filename + ":" + str(decl.line or 0) + ":" + str(decl.col or 0) + "`")
+  }
+
   .{
-    uri: specifierToUri(target.filename),
-    range: .{
-      start: .{
-        line: (target.line or 1) - 1,
-        character: target.col or 0,
-      },
-      end: .{
-        line: (target.endLine or target.line or 1) - 1,
-        character: target.endCol or target.col or 0,
-      },
-    },
+    contents: .{ kind: "markdown", value: join(lines, "\n") },
+    range: toLspRange(r.range),
   }
 }
 
@@ -822,6 +967,7 @@ fn serve() {
       sendResponse(id, .{
         capabilities: .{
           definitionProvider: true,
+          hoverProvider: true,
           textDocumentSync: .{ openClose: true, change: 1, save: .{ includeText: true } },
         },
         serverInfo: .{ name: "lx", version: (Lx and Lx.version) or "dev" },
@@ -850,12 +996,20 @@ fn serve() {
       let spec = abs and pathToSpecifier(abs) or nil
       if spec and td.text != nil {
         state.openDocs[spec] = td.text
-        invalidate(state, spec)
+        let invalidated = invalidate(state, spec)
+        for let i = 0; i < len(invalidated); i = i + 1 {
+          let p = invalidated[i]
+          if state.openDocs[p] != nil {
+            publishDiagnosticsForSpec(state, p, [])
+          }
+        }
         enqueueWarmup(state, spec)
         if state.supportsWorkDoneProgress {
           startWarmupProgressIfNeeded()
           reportWarmupProgress("Queued " + spec)
         }
+        compileForSpec(state, spec)
+        publishDiagnosticsFromCache(state, spec)
       }
       warmupTick()
       continue
@@ -868,7 +1022,13 @@ fn serve() {
       let changes = (msg.params and msg.params.contentChanges) or []
       if spec and len(changes) > 0 and changes[0].text != nil {
         state.openDocs[spec] = changes[0].text
-        invalidate(state, spec)
+        let invalidated = invalidate(state, spec)
+        for let i = 0; i < len(invalidated); i = i + 1 {
+          let p = invalidated[i]
+          if state.openDocs[p] != nil {
+            publishDiagnosticsForSpec(state, p, [])
+          }
+        }
       }
       // Avoid compiling on every keystroke; warmup is driven by didOpen/didSave.
       continue
@@ -883,7 +1043,15 @@ fn serve() {
         if msg.params and msg.params.text != nil {
           state.openDocs[spec] = msg.params.text
         }
-        invalidate(state, spec)
+        let invalidated = invalidate(state, spec)
+        for let i = 0; i < len(invalidated); i = i + 1 {
+          let p = invalidated[i]
+          if state.openDocs[p] != nil {
+            publishDiagnosticsForSpec(state, p, [])
+          }
+        }
+        compileForSpec(state, spec)
+        publishDiagnosticsFromCache(state, spec)
         enqueueWarmup(state, spec)
         if state.supportsWorkDoneProgress {
           startWarmupProgressIfNeeded()
@@ -901,6 +1069,7 @@ fn serve() {
       if spec {
         state.openDocs[spec] = nil
         invalidate(state, spec)
+        publishDiagnosticsForSpec(state, spec, [])
       }
       continue
     }
@@ -909,6 +1078,15 @@ fn serve() {
       let loc = handleDefinition(state, msg)
       if id != nil {
         sendResponse(id, loc)
+      }
+      warmupTick()
+      continue
+    }
+
+    if method == "textDocument/hover" {
+      let h = handleHover(state, msg)
+      if id != nil {
+        sendResponse(id, h)
       }
       warmupTick()
       continue

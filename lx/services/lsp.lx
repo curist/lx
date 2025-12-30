@@ -243,6 +243,66 @@ fn updateDepGraphFromDriver(state) {
   state.graphIndex = i
 }
 
+// ------------------------------------------------------------
+// Warmup queue (best-effort background work)
+// ------------------------------------------------------------
+
+fn warmupEnabled() {
+  if !Lx or !Lx.env { return true }
+  let v = Lx.env["LX_LSP_WARMUP"]
+  if !v { return true }
+  v != "0" and v != "false"
+}
+
+fn warmupStepsPerTick() {
+  if !Lx or !Lx.env { return 1 }
+  let raw = Lx.env["LX_LSP_WARMUP_STEPS"]
+  let n = raw and tonumber(raw) or nil
+  let i = n and int(n) or 1
+  if i < 0 { return 0 }
+  if i > 8 { return 8 }
+  i
+}
+
+fn enqueueWarmup(state, spec) {
+  if !warmupEnabled() { return }
+  if !spec or !state or !state.warmupQueue or !state.warmupSeen { return }
+  if state.warmupSeen[spec] { return }
+  state.warmupSeen[spec] = true
+  push(state.warmupQueue, spec)
+}
+
+fn runWarmupStep(state) {
+  if !warmupEnabled() { return }
+  if !state or !state.warmupQueue or len(state.warmupQueue) == 0 { return }
+
+  let spec = pop(state.warmupQueue)
+  if !spec { return }
+  state.warmupSeen[spec] = nil
+
+  let cached = state.ctxCache and state.ctxCache[spec] or nil
+  if cached and cached.epoch == state.epoch {
+    return
+  }
+
+  let r = query.compileWithDriver(state.driver, spec, .{
+    withTypecheck: false,
+    mergeScope: "reachable",
+  })
+  if r and r.success {
+    state.ctxCache[spec] = .{ epoch: state.epoch, result: r }
+    updateDepGraphFromDriver(state)
+  }
+}
+
+fn runWarmupSlice(state) {
+  let steps = warmupStepsPerTick()
+  for let i = 0; i < steps; i = i + 1 {
+    if !state.warmupQueue or len(state.warmupQueue) == 0 { break }
+    runWarmupStep(state)
+  }
+}
+
 fn invalidate(state, path) {
   // Invalidate path + all reverse-deps (modules that import it), transitively.
   let work = [path]
@@ -646,6 +706,8 @@ fn serve() {
     deps: .{},
     rdeps: .{},
     graphIndex: 0,
+    warmupQueue: [],
+    warmupSeen: .{},
     driver: Driver.make(.{
       profile: "query",
       loadSource: loadSource,
@@ -692,6 +754,7 @@ fn serve() {
       Lx.exit(state.shutdown and 0 or 1)
     }
     if method == "initialized" {
+      runWarmupSlice(state)
       continue
     }
 
@@ -702,7 +765,9 @@ fn serve() {
       if spec and td.text != nil {
         state.openDocs[spec] = td.text
         invalidate(state, spec)
+        enqueueWarmup(state, spec)
       }
+      runWarmupSlice(state)
       continue
     }
 
@@ -715,6 +780,23 @@ fn serve() {
         state.openDocs[spec] = changes[0].text
         invalidate(state, spec)
       }
+      // Avoid compiling on every keystroke; warmup is driven by didOpen/didSave.
+      continue
+    }
+
+    if method == "textDocument/didSave" {
+      let td = (msg.params and msg.params.textDocument) or .{}
+      let abs = uriToPath(td.uri)
+      let spec = abs and pathToSpecifier(abs) or nil
+      if spec {
+        // Some clients include `text` with didSave; if present, keep it.
+        if msg.params and msg.params.text != nil {
+          state.openDocs[spec] = msg.params.text
+        }
+        invalidate(state, spec)
+        enqueueWarmup(state, spec)
+      }
+      runWarmupSlice(state)
       continue
     }
 
@@ -734,6 +816,7 @@ fn serve() {
       if id != nil {
         sendResponse(id, loc)
       }
+      runWarmupSlice(state)
       continue
     }
 
@@ -741,6 +824,8 @@ fn serve() {
     if id != nil {
       sendError(id, -32601, "Method not found: " + str(method))
     }
+
+    runWarmupSlice(state)
   }
 }
 

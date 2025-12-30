@@ -200,29 +200,47 @@ fn depsFromCompileResult(result) {
   out
 }
 
-fn rebuildDepGraph(state) {
-  state.deps = .{}
-  state.rdeps = .{}
+fn updateGraphForModule(state, path, result) {
+  if !path { return }
 
-  let cache = state.driver and state.driver.cache or nil
-  if !cache { return }
-
-  let mods = keys(cache)
-  mods->sort(stringLess)
-  for let i = 0; i < len(mods); i = i + 1 {
-    let path = mods[i]
-    let r = cache[path]
-    if !r or r.status != "done" { continue }
-
-    let deps = depsFromCompileResult(r)
-    state.deps[path] = deps
-
-    for let j = 0; j < len(deps); j = j + 1 {
-      let dep = deps[j]
-      if !state.rdeps[dep] { state.rdeps[dep] = .{} }
-      state.rdeps[dep][path] = true
+  // Remove old outgoing edges first
+  let old = state.deps and state.deps[path] or nil
+  if old and type(old) == "array" {
+    for let i = 0; i < len(old); i = i + 1 {
+      let dep = old[i]
+      if state.rdeps and state.rdeps[dep] {
+        state.rdeps[dep][path] = nil
+      }
     }
   }
+
+  if !result or result.status != "done" {
+    if state.deps { state.deps[path] = nil }
+    return
+  }
+
+  let deps = depsFromCompileResult(result)
+  state.deps[path] = deps
+  for let i = 0; i < len(deps); i = i + 1 {
+    let dep = deps[i]
+    if !state.rdeps[dep] { state.rdeps[dep] = .{} }
+    state.rdeps[dep][path] = true
+  }
+}
+
+fn updateDepGraphFromDriver(state) {
+  let driver = state.driver
+  if !driver { return }
+
+  let mods = driver.compiledModules or []
+  let i = state.graphIndex or 0
+  for i < len(mods) {
+    let path = mods[i]
+    let r = driver.cache and driver.cache[path] or nil
+    updateGraphForModule(state, path, r)
+    i = i + 1
+  }
+  state.graphIndex = i
 }
 
 fn invalidate(state, path) {
@@ -577,12 +595,15 @@ fn handleDefinition(state, msg) {
   let cached = state.ctxCache and state.ctxCache[spec] or nil
   let ctxResult = cached and cached.epoch == state.epoch and cached.result or nil
   if !ctxResult {
-    ctxResult = query.compileWithDriver(state.driver, spec, .{ withTypecheck: false })
+    ctxResult = query.compileWithDriver(state.driver, spec, .{
+      withTypecheck: false,
+      mergeScope: "reachable",
+    })
     if !ctxResult.success {
       return nil
     }
     state.ctxCache[spec] = .{ epoch: state.epoch, result: ctxResult }
-    rebuildDepGraph(state)
+    updateDepGraphFromDriver(state)
   }
 
   let ln = (pos.line or 0) + 1
@@ -624,6 +645,7 @@ fn serve() {
     ctxCache: .{},
     deps: .{},
     rdeps: .{},
+    graphIndex: 0,
     driver: Driver.make(.{
       profile: "query",
       loadSource: loadSource,

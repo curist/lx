@@ -1442,11 +1442,46 @@ fn remapType(t, typeVarMap, nextTypeVarIdRef) {
   out
 }
 
+fn collectReachable(driver, entry) {
+  let seen = .{}
+  let work = [entry]
+
+  for len(work) > 0 {
+    let p = pop(work)
+    if !p or seen[p] { continue }
+    seen[p] = true
+
+    let mod = driver and driver.cache and driver.cache[p] or nil
+    if !mod or mod.status != "done" or !mod.passes or !mod.passes.resolve {
+      continue
+    }
+
+    let importInfo = mod.passes.resolve.importInfoByNodeId or nil
+    if !importInfo or type(importInfo) != "map" {
+      continue
+    }
+
+    let ks = keys(importInfo)
+    for let i = 0; i < len(ks); i = i + 1 {
+      let info = importInfo[ks[i]]
+      let dep = info and info.importResult and info.importResult.path or nil
+      if dep and !seen[dep] {
+        push(work, dep)
+      }
+    }
+  }
+
+  let out = keys(seen)
+  out->sort(keyLess)
+  out
+}
+
 // Compile file and create query context in one step
 // This is the recommended API for IDE/LSP tooling
 fn compileWithDriver(driver, filepath, opts) {
   let withTypecheck = !(opts and opts.withTypecheck == false)
   let effectiveWithTypecheck = withTypecheck and driver and driver.withTypecheck != false
+  let mergeScope = opts and opts.mergeScope or "all"
 
   // Compile module through full pipeline
   let result = driver.compileModule(filepath)
@@ -1491,10 +1526,11 @@ fn compileWithDriver(driver, filepath, opts) {
   }
 
   let nextTypeVarId = .{ value: 1 }
-  let cacheKeys = keys(driver.cache)
-  cacheKeys->sort(keyLess)
-  for let i = 0; i < len(cacheKeys); i = i + 1 {
-    let k = cacheKeys[i]
+  let mergeKeys =
+    mergeScope == "reachable" and collectReachable(driver, filepath) or keys(driver.cache)
+  mergeKeys->sort(keyLess)
+  for let i = 0; i < len(mergeKeys); i = i + 1 {
+    let k = mergeKeys[i]
     let mod = driver.cache[k]
     if mod and mod.status == "done" and mod.passes.resolve {
       let moduleNodes = .{}

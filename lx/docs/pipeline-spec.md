@@ -380,7 +380,7 @@ Migration strategy:
 
 ### Phase 3: Migrate call sites and tests to `result.passes`
 
-10. Update high-level consumers (`lx/cmd/mlx.lx`, `lx/scripts/build-*.lx`, `lx/services/query.lx`) to read from `result.passes.*`.
+10. Update high-level consumers (`lx/main.lx`, `lx/scripts/build-*.lx`, `lx/services/query.lx`) to read from `result.passes.*`.
 11. Update tests gradually (many refer to legacy `lowerResult/anfResult/...`).
 12. Optionally: keep legacy aliases indefinitely or mark as deprecated in docs.
 

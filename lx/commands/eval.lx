@@ -1,4 +1,4 @@
-let common = import "cmd/mlx/common.lx"
+let common = import "commands/common.lx"
 
 fn run(ctx) {
   let src = nil
@@ -32,4 +32,3 @@ fn run(ctx) {
   summary: "Evaluate expression (arg or stdin)",
   run: run,
 }
-

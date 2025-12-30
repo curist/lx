@@ -1,29 +1,31 @@
-let common = import "cmd/mlx/common.lx"
+let common = import "commands/common.lx"
 
 fn run(ctx) {
   if len(ctx.argv) < 3 {
-    groanln("Usage: " + ctx.prog + " disasm <lxobj|lxfile>")
+    groanln("Usage: " + ctx.prog + " run <lxfile|lxobj>")
     Lx.exit(28)
   }
 
   let path = ctx.argv[2]
   let data = common.slurpUserPath(path)
+
   if Lx and Lx.isLxObj and Lx.isLxObj(data) {
-    Lx.loadObj(data, true)
-    return nil
+    let program = Lx.loadObj(data, false)
+    return program()
   }
 
   let func = common.compilePathToFunction(path, data)
   if !func { Lx.exit(65) }
+
   let bytes = common.objbuilder(func, common.DEBUG_BUILD).bytes()
-  Lx.loadObj(bytes, true)
+  let program = Lx.loadObj(bytes, false)
+  program()
 }
 
 .{
-  name: "disasm",
-  aliases: ["d"],
-  usage: "disasm <lxobj|lxfile>",
-  summary: "Disassemble lxobj or lx source",
+  name: "run",
+  aliases: ["r"],
+  usage: "run <lxfile|lxobj>",
+  summary: "Run source or lxobj",
   run: run,
 }
-

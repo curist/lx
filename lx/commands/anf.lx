@@ -173,25 +173,18 @@ fn printErrors(errors) {
   }
 }
 
-fn() {
-  let argsLength = len(Lx.args)
-  let usageMessage = join(["Usage:", Lx.args[0], "<path>"], " ")
-  if argsLength < 2 {
-    groanln(usageMessage)
+fn run(ctx) {
+  if len(ctx.argv) < 3 {
+    groanln("Usage: " + ctx.prog + " anf <path>")
     Lx.exit(28)
   }
-  let path = nil
-  if argsLength >= 4 and Lx.args[2] == "anf" {
-    path = Lx.args[3]
-  } else if argsLength >= 3 and Lx.args[1] == "anf" {
-    path = Lx.args[2]
-  } else {
-    path = Lx.args[argsLength - 1]
-  }
+
+  let path = ctx.argv[2]
   if !path or path == "" {
-    groanln(usageMessage)
+    groanln("Usage: " + ctx.prog + " anf <path>")
     Lx.exit(28)
   }
+
   let source = loadSource(path)
   if !source {
     groanln("Failed to open", path)
@@ -217,5 +210,15 @@ fn() {
     printErrors(anfResult.errors)
     Lx.exit(65)
   }
+
   dumpNode(anfResult.ast, 0)
-}()
+}
+
+.{
+  name: "anf",
+  aliases: ["anf_debug"],
+  usage: "anf <path>",
+  summary: "Dump ANF for a source file (debug)",
+  run: run,
+}
+

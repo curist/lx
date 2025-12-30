@@ -18,12 +18,12 @@ Use these scripts when:
 ## The Scripts
 
 ### `build-lxlx-driver.lx`
-Compiles `cmd/mlx.lx` (the lx compiler) using the NEW codegen from `src/passes/backend/codegen.lx`.
+Compiles `main.lx` (the lx compiler CLI entrypoint) using the NEW codegen from `src/passes/backend/codegen.lx`.
 
 - Uses `profile: "default"` (all passes including ANF inline optimization)
 - Recursively compiles all imported modules
 - Runs bytecode verification on all functions
-- Outputs to `/tmp/lxlx-new.lxobj`
+- Outputs to `out/lxlx-new.lxobj`
 - Codegen uses the most optimized AST available: anf-inline → anf → lower
 
 ### `build-globals-driver.lx`
@@ -31,7 +31,7 @@ Compiles `globals.lx` (standard library) using the NEW codegen from `src/passes/
 
 - Uses `profile: "default"` (all passes including ANF inline optimization)
 - Codegen uses the most optimized AST available: anf-inline → anf → lower
-- Outputs to `/tmp/lxglobals-new.lxobj`
+- Outputs to `out/lxglobals-new.lxobj`
 
 ## Bootstrap Process
 
@@ -94,9 +94,9 @@ Convert the .lxobj files to C headers and install them (or just run `make prepar
 
 ```bash
 # From lx-lang/ directory (parent of lx/)
-xxd -i lxlx-new.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxlx.h
+xxd -i out/lxlx-new.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxlx.h
 
-xxd -i lxglobals-new.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxglobals.h
+xxd -i out/lxglobals-new.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxglobals.h
 ```
 
 **Note:** Adjust paths if running from different directory.

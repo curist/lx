@@ -86,8 +86,7 @@ for let i = 0; i < len(hexBytes); i = i + 1 {
   byteString = byteString + chr(hexBytes[i])
 }
 
-// Save to /tmp
-let outputPath = "/tmp/lxglobals-new.lxobj"
+let outputPath = "out/lxglobals-new.lxobj"
 let ok = spit(outputPath, byteString)
 if ok != true {
   groanln(ok or "Failed to write output.")

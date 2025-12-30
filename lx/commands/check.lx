@@ -2,17 +2,22 @@ let driver = import "src/driver.lx"
 let errors = import "src/errors.lx"
 let ModuleResolution = import "src/module_resolution.lx"
 
-fn usage() {
-  groanln("Usage:")
-  groanln("  ./out/lx run lx/cmd/lxcheck.lx <entry>")
-  groanln("  # e.g. ./out/lx run lx/cmd/lxcheck.lx cmd/mlx.lx")
-  groanln("")
-  groanln("Notes:")
-  groanln("  - Uses `.lxroot` (or `LX_ROOT`) for project root detection.")
-  groanln("  - `<entry>` should be the module you want to typecheck (plus transitive imports).")
-}
+fn run(ctx) {
+  if len(ctx.argv) < 3 {
+    groanln("Usage: " + ctx.prog + " check <entry>")
+    Lx.exit(28)
+  }
 
-fn typecheckEntry(entry) {
+  let entry = ctx.argv[2]
+  if !entry {
+    groanln("Usage: " + ctx.prog + " check <entry>")
+    Lx.exit(28)
+  }
+  if ctx.argv[3] {
+    groanln("Usage: " + ctx.prog + " check <entry>")
+    Lx.exit(28)
+  }
+
   let d = driver.make(.{
     profile: "tooling",
     withTypecheck: true,
@@ -30,7 +35,6 @@ fn typecheckEntry(entry) {
     Lx.exit(70)
   }
 
-  // Summarize across all compiled modules (including transitive imports).
   let total = 0
   let fatalFailures = 0
   let typeFailures = 0
@@ -58,7 +62,6 @@ fn typecheckEntry(entry) {
   groanln("  fatal failures: " + str(fatalFailures))
   groanln("  typecheck failures: " + str(typeFailures))
 
-  // Print details: fatal failures first, then typecheck failures.
   for let i = 0; i < len(d.compiledModules); i = i + 1 {
     let path = d.compiledModules[i]
     let r = d.cache[path]
@@ -85,28 +88,11 @@ fn typecheckEntry(entry) {
   }
 }
 
-fn main() {
-  // This script is intended to be executed via `lx run <file> ...`, which keeps
-  // the outer argv (so args[1] is typically "run" and args[2] is the script path).
-  // Support both modes:
-  // - `lx run cmd/lxcheck.lx <entry>`    => base=3
-  // - embedded main program execution    => base=1
-  let base = 1
-  if Lx.args[1] == "run" { base = 3 }
-
-  let entry = Lx.args[base]
-  if !entry or entry == "help" or entry == "--help" or entry == "-h" {
-    usage()
-    return
-  }
-
-  if Lx.args[base + 1] {
-    groanln("Unexpected extra arguments.")
-    usage()
-    Lx.exit(28)
-  }
-
-  typecheckEntry(entry)
+.{
+  name: "check",
+  aliases: ["lxcheck"],
+  usage: "check <entry>",
+  summary: "Typecheck an entry module (dev)",
+  run: run,
 }
 
-main()

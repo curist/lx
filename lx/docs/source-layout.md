@@ -13,7 +13,8 @@ It is a target direction (some pieces may not exist yet).
 
 ```
 lx/
-  cmd/                 # User-facing entrypoints (CLI-ish programs)
+  main.lx              # Embedded CLI entrypoint
+  commands/            # CLI subcommand modules
   docs/                # Design docs for the lx compiler (this folder)
   examples/            # Small example programs / demos
   scripts/             # Dev/bootstrap drivers (repo-internal maintenance)
@@ -22,21 +23,22 @@ lx/
   test/                # Test suite for lx compiler and runtime contracts
 ```
 
-### `lx/cmd/` (entrypoints)
+### CLI entrypoints
 
 User-facing programs you run directly, e.g.:
-- `lx/cmd/mlx.lx`: the compiler command surface
-- `lx/cmd/anf_debug.lx`: debugging / introspection commands
-- `lx/cmd/lxcheck.lx`: developer-facing CLI to typecheck an entry module (run as `./cmd/lxcheck.lx <entry>` from `lx/`)
+- `lx/main.lx`: the compiler command surface (embedded entrypoint)
+- `lx/commands/*.lx`: subcommands (run as `./out/lx <command> ...`)
 
-Guideline: `cmd/` should be thin wrappers around `src/` libraries.
+Guideline: command modules should be thin wrappers around `src/` libraries.
+
+Note: developer tools like `anf` and `check` are CLI subcommands now (e.g. `./out/lx anf ...`, `./out/lx check ...`).
 
 ### `lx/scripts/` (bootstrap + maintenance)
 
 Repo-internal drivers that exist to unblock bootstrapping and maintenance tasks.
 These may write to temp paths and may assume a repo checkout.
 
-Keep separate from `cmd/` to avoid mixing “product surface” with “maintenance tools”.
+Keep separate from `commands/` to avoid mixing “product surface” with “maintenance tools”.
 
 Note: repo root `scripts/` is shell wrappers; `lx/scripts/` is lx code.
 

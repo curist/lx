@@ -2,7 +2,7 @@
 
 A programming language derived from [Lox](https://github.com/munificent/craftinginterpreters/wiki/Lox-implementations).
 
-This directory contains the self-hosted compiler/runtime code written in `lx` itself (`lx/src`, `lx/cmd`, `lx/test`, etc).
+This directory contains the self-hosted compiler/runtime code written in `lx` itself (`lx/src`, `lx/commands`, `lx/test`, etc).
 
 ## Running
 
@@ -10,7 +10,9 @@ From the repo root (recommended):
 
 ```sh
 ./out/lx run lx/test/anf.test.lx
-./out/lx run lx/cmd/lxcheck.lx cmd/mlx.lx
+./out/lx check main.lx
+
+./out/lx anf lx/test/stub/ch17.lx
 ```
 
 ## Module & Path Resolution

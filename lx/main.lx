@@ -1,16 +1,18 @@
-let helpCmd = import "cmd/mlx/commands/help.lx"
-let versionCmd = import "cmd/mlx/commands/version.lx"
-let compileCmd = import "cmd/mlx/commands/compile.lx"
-let runCmd = import "cmd/mlx/commands/run.lx"
-let evalCmd = import "cmd/mlx/commands/eval.lx"
-let replCmd = import "cmd/mlx/commands/repl.lx"
-let disasmCmd = import "cmd/mlx/commands/disasm.lx"
+let helpCmd = import "commands/help.lx"
+let versionCmd = import "commands/version.lx"
+let compileCmd = import "commands/compile.lx"
+let runCmd = import "commands/run.lx"
+let evalCmd = import "commands/eval.lx"
+let replCmd = import "commands/repl.lx"
+let disasmCmd = import "commands/disasm.lx"
+let anfCmd = import "commands/anf.lx"
+let checkCmd = import "commands/check.lx"
 
 fn isHelpArg(arg) {
   arg == "-h" or arg == "--help" or arg == "help"
 }
 
-let commands = [runCmd, evalCmd, replCmd, compileCmd, disasmCmd, versionCmd, helpCmd]
+let commands = [runCmd, evalCmd, replCmd, compileCmd, disasmCmd, anfCmd, checkCmd, versionCmd, helpCmd]
 let commandsByName = .{}
 for let i = 0; i < len(commands); i = i + 1 {
   let c = commands[i]
@@ -41,9 +43,9 @@ if cmdName != "help" and isHelpArg(Lx.args[2]) {
 
 let ctx = .{
   argv: helpTarget and [prog, "help", helpTarget] or Lx.args,
-  prog: prog,
-  commands: commands,
-  commandsByName: commandsByName,
+  prog,
+  commands,
+  commandsByName,
 }
 
 if len(ctx.argv) < 2 {
@@ -53,3 +55,4 @@ if len(ctx.argv) < 2 {
 
 let cmd = ctx.commandsByName[cmdName]
 {cmd and cmd.run or fn() { handleUnknown(ctx, cmdName) }}(ctx)
+

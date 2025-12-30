@@ -52,7 +52,7 @@ When migrating to single-stack VM:
 Call from `codegen()` after chunk generation:
 
 ```lx
-// In src/passes/backend/codegen.lx or cmd/mlx.lx
+// In src/passes/backend/codegen.lx or main.lx
 let verify = import "src/passes/backend/verify-bytecode.lx"
 
 fn codegen(ast, resolveResult) {

@@ -1,4 +1,4 @@
-let common = import "cmd/mlx/common.lx"
+let common = import "commands/common.lx"
 
 fn run(ctx) {
   if !Lx or !Lx.stdin or !Lx.stdin.readLine or !Lx.pcall or !Lx.loadObj {
@@ -46,4 +46,3 @@ fn run(ctx) {
   summary: "Start REPL (use :q to quit)",
   run: run,
 }
-

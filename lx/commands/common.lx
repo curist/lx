@@ -44,13 +44,12 @@ fn compileWithDriver(driverInstance, path) {
       (passes.parse and passes.parse.enumInfo) or
       .{}
 
-    // Fastcheck disabled during bootstrap - enable after first rebuild
-    // let fc = fastcheck(ast, result.passes.resolve, .{ enumInfo: enumInfo })
-    // result.fastcheckResult = fc
+    let fc = fastcheck(ast, result.passes.resolve, .{ enumInfo: enumInfo })
+    result.fastcheckResult = fc
     let cg = codegen(ast, result.passes.resolve, .{
       codegenModule: codegenModule,
       enumInfo: enumInfo,
-      // fastcheck: fc,
+      fastcheck: fc,
     })
     result.codegenResult = cg
     if !cg.success {

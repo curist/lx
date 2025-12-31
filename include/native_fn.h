@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -32,8 +33,18 @@ static bool pcallNative(int argCount, Value *args);
 static void runtimeError(const char* format, ...);
 
 static bool timeNative(int argCount, Value *args) {
-  time_t now = time(NULL);
-  args[-1] = NUMBER_VAL(now);
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  double milliseconds = (double)tv.tv_sec * 1000.0 + (double)(tv.tv_usec / 1000);
+  args[-1] = NUMBER_VAL(milliseconds);
+  return true;
+}
+
+static bool nanotimeNative(int argCount, Value *args) {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  double nanoseconds = (double)ts.tv_sec * 1000000000.0 + (double)ts.tv_nsec;
+  args[-1] = NUMBER_VAL(nanoseconds);
   return true;
 }
 
@@ -56,7 +67,8 @@ static bool strftimeNative(int argCount, Value *args) {
     }
     format = AS_STRING(args[1])->chars;
   }
-  time_t t = (time_t)AS_NUMBER(args[0]);
+  // Convert milliseconds to seconds
+  time_t t = (time_t)(AS_NUMBER(args[0]) / 1000.0);
   struct tm date = {0};
   localtime_r(&t, &date);
 
@@ -82,7 +94,8 @@ static bool strptimeNative(int argCount, Value *args) {
   struct tm date = {0};
   strptime(AS_STRING(args[0])->chars, AS_STRING(args[1])->chars, &date);
   time_t datetime = mktime(&date);
-  args[-1] = NUMBER_VAL(datetime);
+  // Convert seconds to milliseconds
+  args[-1] = NUMBER_VAL((double)datetime * 1000.0);
   return true;
 }
 
@@ -1556,6 +1569,7 @@ static void defineDateNatives() {
   pop();
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "time", timeNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "nanotime", nanotimeNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "format", strftimeNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "parse", strptimeNative);
 

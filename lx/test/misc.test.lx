@@ -25,7 +25,7 @@ test("unicode", fn(assert) {
 test("->", fn(assert) {
   fn add(a, b) { a + b }
   fn mul(a, b) { a * b }
-  let result = 2->do(fn(x) { x->add(3) })->mul(4)
+  let result = 2->{fn(x) { x->add(3) }}()->mul(4)
   assert.equal(result, 20)
 })
 

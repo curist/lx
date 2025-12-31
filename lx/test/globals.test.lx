@@ -1,14 +1,6 @@
 let suite = (import "test/makeTestSuite.lx")()
 fn test(name, cb) { suite.defineTest("globals - " + name, cb) }
 
-test("do", fn(assert) {
-  let r = do(123, fn(x) { x })
-  assert.equal(r, 123)
-
-  r = "foo"->do(fn (x) { x + x })
-  assert.equal(r, "foofoo")
-})
-
 test("each", fn(assert) {
   let a = 0
   range(10)->each(fn() { a = a + 1 })

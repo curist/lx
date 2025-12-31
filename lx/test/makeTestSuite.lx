@@ -1,4 +1,5 @@
 fn makeTestSuite() {
+  let startTime = Date.now()
   let tests = []
   let totalAssertions = 0
   let passedAssertions = 0
@@ -60,8 +61,11 @@ fn makeTestSuite() {
       ""
     }
 
-    let filename = last(Lx.args)
-    println(filename)
+    // In batch mode, don't print filename since all tests show the runner file
+    let batchMode = Lx.env["LX_TEST_BATCH"] == "1"
+    if !batchMode {
+      println(last(Lx.args))
+    }
 
     print("\e[1;" + if passedTests < len(tests) {"31"} else {"32"} + "m")
     println(
@@ -70,7 +74,10 @@ fn makeTestSuite() {
       "\e[0m\n"
     )
 
-    Lx.exit(len(tests) == passedTests and 0 or 1)
+    // In batch mode, don't exit - let other tests run
+    if !batchMode {
+      Lx.exit(len(tests) == passedTests and 0 or 1)
+    }
   }
 
   return .{

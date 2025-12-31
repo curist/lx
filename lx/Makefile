@@ -21,4 +21,5 @@ runall: $(LX)
 	$(LX) run test/stub/sink.lx
 
 test: $(LX)
-	@ls test/*.test.lx | xargs -I{} $(LX) run {}
+	@$(LX) run scripts/gen-test-runner.lx > /dev/null
+	@LX_TEST_BATCH=1 $(LX) run ../out/run-all-tests.lx

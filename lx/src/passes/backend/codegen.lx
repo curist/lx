@@ -1009,48 +1009,52 @@ fn compileImport(gen, node) {
   emitBytes(gen, OP.CALL, 0, node.line)
 }
 
+let valueExprHandlers = .{
+  [NODE.Block]: fn(gen, node) { compileBlock(gen, node, MODE.VALUE) },
+  [NODE.Call]: compileCall,
+  [NODE.If]: compileIf,
+  [NODE.For]: compileFor,
+  [NODE.Binary]: compileBinary,
+  [NODE.Logical]: compileLogical,
+  [NODE.Unary]: compileUnary,
+  [NODE.Grouping]: fn(gen, node) { compileValue(gen, node.expression) },
+  [NODE.Identifier]: compileIdentifier,
+  [NODE.Number]: compileLiteral,
+  [NODE.String]: compileLiteral,
+  [NODE.Bool]: compileLiteral,
+  [NODE.Nil]: compileLiteral,
+  [NODE.Array]: compileArray,
+  [NODE.Hashmap]: compileHashmap,
+  [NODE.Index]: compileIndex,
+  [NODE.Dot]: compileDot,
+  [NODE.Import]: compileImport,
+  [NODE.IntrinsicCall]: compileIntrinsicCall,
+}
+
 fn compileValueExpr(gen, node) {
   if !node { return }
   gen.metrics.nodesVisited = gen.metrics.nodesVisited + 1
   gen.currentNode = node
   gen.currentLine = node.line
 
-  if node.type == NODE.Block {
-    compileBlock(gen, node, MODE.VALUE)
-  } else if node.type == NODE.Call {
-    compileCall(gen, node)
-  } else if node.type == NODE.If {
-    compileIf(gen, node)
-  } else if node.type == NODE.For {
-    compileFor(gen, node)
-  } else if node.type == NODE.Binary {
-    compileBinary(gen, node)
-  } else if node.type == NODE.Logical {
-    compileLogical(gen, node)
-  } else if node.type == NODE.Unary {
-    compileUnary(gen, node)
-  } else if node.type == NODE.Grouping {
-    compileValue(gen, node.expression)
-  } else if node.type == NODE.Identifier {
-    compileIdentifier(gen, node)
-  } else if node.type == NODE.Number or node.type == NODE.String or
-            node.type == NODE.Bool or node.type == NODE.Nil {
-    compileLiteral(gen, node)
-  } else if node.type == NODE.Array {
-    compileArray(gen, node)
-  } else if node.type == NODE.Hashmap {
-    compileHashmap(gen, node)
-  } else if node.type == NODE.Index {
-    compileIndex(gen, node)
-  } else if node.type == NODE.Dot {
-    compileDot(gen, node)
-  } else if node.type == NODE.Import {
-    compileImport(gen, node)
-  } else if node.type == NODE.IntrinsicCall {
-    compileIntrinsicCall(gen, node)
+  if let handler = valueExprHandlers[node.type] {
+    handler(gen, node)
   } else {
     addError(gen, node, "Codegen not implemented for: " + (nameOf(NODE, node.type) or str(node.type)))
   }
+}
+
+let controlFlowHandlers = .{
+  [NODE.Return]: compileReturn,
+  [NODE.Break]: compileBreak,
+  [NODE.Continue]: compileContinue,
+}
+
+let modeAwareHandlers = .{
+  [NODE.Let]: compileLet,
+  [NODE.Assignment]: compileAssignment,
+  [NODE.Function]: compileFunctionExpr,
+  [NODE.Block]: compileBlock,
 }
 
 fn compileExpr(gen, node, mode) {
@@ -1059,36 +1063,14 @@ fn compileExpr(gen, node, mode) {
   gen.currentLine = node.line
 
   // Control-flow nodes that don't produce values
-  if node.type == NODE.Return {
-    compileReturn(gen, node)
-    return
-  }
-  if node.type == NODE.Break {
-    compileBreak(gen, node)
-    return
-  }
-  if node.type == NODE.Continue {
-    compileContinue(gen, node)
+  if let controlHandler = controlFlowHandlers[node.type] {
+    controlHandler(gen, node)
     return
   }
 
   // Nodes that handle mode internally
-  if node.type == NODE.Let {
-    compileLet(gen, node, mode)
-    return
-  }
-  if node.type == NODE.Assignment {
-    compileAssignment(gen, node, mode)
-    return
-  }
-  if node.type == NODE.Function {
-    compileFunctionExpr(gen, node, mode)
-    return
-  }
-
-  // Block handles mode internally to avoid value/POP overhead
-  if node.type == NODE.Block {
-    compileBlock(gen, node, mode)
+  if let modeHandler = modeAwareHandlers[node.type] {
+    modeHandler(gen, node, mode)
     return
   }
 

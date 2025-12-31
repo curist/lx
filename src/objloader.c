@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include "debug.h"
 #include "objloader.h"
@@ -36,6 +37,18 @@ double readDouble(const uint8_t* bytes) {
   double n = 0;
   memcpy(&n, bytes, sizeof(double));
   return n;
+}
+
+static Value numberToValueCanonical(double num) {
+#ifdef NAN_BOXING
+  if (isfinite(num) && num >= (double)INT64_MIN && num <= (double)INT64_MAX) {
+    int64_t i = (int64_t)num;
+    if ((double)i == num && fixnumFitsInt64(i)) {
+      return FIXNUM_VAL(i);
+    }
+  }
+#endif
+  return NUMBER_VAL(num);
 }
 
 size_t getSize(const uint8_t* bytes) {
@@ -293,7 +306,7 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
         break;
 
       case VAL_NUMBER:
-        addConstant(chunk, NUMBER_VAL(readDouble(&constSection[1])));
+        addConstant(chunk, numberToValueCanonical(readDouble(&constSection[1])));
         constSection += (1 + 8); // type + double 8 bytes
         break;
 

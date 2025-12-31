@@ -140,6 +140,14 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return simpleInstruction("OP_NOT", offset);
     case OP_NEGATE:
       return simpleInstruction("OP_NEGATE", offset);
+    case OP_ADD_INT:
+      return simpleInstruction("OP_ADD_INT", offset);
+    case OP_SUBTRACT_INT:
+      return simpleInstruction("OP_SUBTRACT_INT", offset);
+    case OP_MULTIPLY_INT:
+      return simpleInstruction("OP_MULTIPLY_INT", offset);
+    case OP_NEGATE_INT:
+      return simpleInstruction("OP_NEGATE_INT", offset);
     case OP_ASSOC:
       return simpleInstruction("OP_ASSOC", offset);
     case OP_APPEND:

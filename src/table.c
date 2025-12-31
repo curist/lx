@@ -35,7 +35,6 @@ void freeTable(Table* table) {
   initTable(table);
 }
 
-#ifndef NAN_BOXING
 static uint32_t hashDouble(double value) {
   // Normalize -0.0 and +0.0 to the same hash.
   if (value == 0) value = 0;
@@ -51,24 +50,13 @@ static uint32_t hashDouble(double value) {
   bits ^= bits >> 33;
   return (uint32_t)(bits ^ (bits >> 32));
 }
-#endif
 
 uint32_t hashValue(Value value) {
 #ifdef NAN_BOXING
   if (IS_STRING(value)) {
     return (uint32_t)AS_STRING(value)->hash;
   } else if (IS_NUMBER(value)) {
-    uint64_t bits = (uint64_t)value;
-    // Normalize -0.0 and +0.0 to the same hash.
-    if ((bits << 1) == 0) bits = 0;
-
-    // 64-bit mix (similar to splitmix64 finalizer).
-    bits ^= bits >> 33;
-    bits *= 0xff51afd7ed558ccdULL;
-    bits ^= bits >> 33;
-    bits *= 0xc4ceb9fe1a85ec53ULL;
-    bits ^= bits >> 33;
-    return (uint32_t)(bits ^ (bits >> 32));
+    return hashDouble(AS_NUMBER(value));
   } else {
     return 0;
   }
@@ -88,6 +76,7 @@ uint32_t hashValue(Value value) {
 
 static inline Value normalizeNumberKey(Value key) {
 #ifdef NAN_BOXING
+  // Only flonums need normalization for -0.0/+0.0; fixnums are already canonical
   if (IS_NUMBER(key)) {
     uint64_t bits = (uint64_t)key;
     if ((bits << 1) == 0) return NUMBER_VAL(0);
@@ -101,6 +90,13 @@ static inline Value normalizeNumberKey(Value key) {
 static inline bool numberKeyToArrayIndex(Value key, uint32_t* index) {
 #ifdef NAN_BOXING
   if (!IS_NUMBER(key)) return false;
+
+  if (IS_FIXNUM(key)) {
+    int64_t n = AS_FIXNUM(key);
+    if (n < 0 || (uint64_t)n > UINT32_MAX) return false;
+    *index = (uint32_t)n;
+    return true;
+  }
 
   uint64_t bits = (uint64_t)key;
   // Accept both +0.0 and -0.0 as index 0.

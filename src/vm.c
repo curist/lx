@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include "objloader.h"
 #include "object.h"
@@ -173,6 +174,84 @@ static void runtimeError(const char* format, ...) {
     }
   }
   resetStack();
+}
+
+static bool valueToInt64Exact(Value value, int64_t* out, const char* context) {
+  if (!IS_NUMBER(value)) {
+    runtimeError("%s must be a number.", context);
+    return false;
+  }
+
+#ifdef NAN_BOXING
+  if (IS_FIXNUM(value)) {
+    *out = AS_FIXNUM(value);
+    return true;
+  }
+#endif
+
+  double num = AS_NUMBER(value);
+  if (!isfinite(num)) {
+    runtimeError("%s must be a finite number.", context);
+    return false;
+  }
+
+  double truncNum = trunc(num);
+  if (truncNum != num) {
+    runtimeError("%s must be an integer.", context);
+    return false;
+  }
+
+  if (num < (double)INT64_MIN || num > (double)INT64_MAX) {
+    runtimeError("%s is out of range.", context);
+    return false;
+  }
+
+  int64_t i = (int64_t)num;
+  if ((double)i != num) {
+    runtimeError("%s must be an integer exactly representable as a number.", context);
+    return false;
+  }
+
+  *out = i;
+  return true;
+}
+
+static bool valueToInt32Exact(Value value, int32_t* out, const char* context) {
+  int64_t i64;
+  if (!valueToInt64Exact(value, &i64, context)) return false;
+  if (i64 < INT32_MIN || i64 > INT32_MAX) {
+    runtimeError("%s is out of 32-bit integer range.", context);
+    return false;
+  }
+  *out = (int32_t)i64;
+  return true;
+}
+
+static bool pushInt64AsNumber(int64_t i, const char* context) {
+#ifdef NAN_BOXING
+  if (fixnumFitsInt64(i)) {
+    push(FIXNUM_VAL(i));
+    return true;
+  }
+#endif
+
+  double d = (double)i;
+  if ((int64_t)d != i) {
+    runtimeError("%s result is out of representable range.", context);
+    return false;
+  }
+  push(NUMBER_VAL(d));
+  return true;
+}
+
+static void pushInt64AsNumberOrFlonum(int64_t i) {
+#ifdef NAN_BOXING
+  if (fixnumFitsInt64(i)) {
+    push(FIXNUM_VAL(i));
+    return;
+  }
+#endif
+  push(NUMBER_VAL((double)i));
 }
 
 static inline bool tableCtrlIsFull(uint8_t c) {
@@ -508,7 +587,7 @@ static InterpretResult runUntil(int stopFrameCount) {
 
 #define BINARY_OP(valueType, op_)                                    \
   do {                                                               \
-    if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {                \
+    if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {              \
       runtimeError("Operands must be numbers.");                     \
       return INTERPRET_RUNTIME_ERROR;                                \
     }                                                                \
@@ -517,15 +596,37 @@ static InterpretResult runUntil(int stopFrameCount) {
     push(valueType(a op_ b));                                        \
   } while (false)
 
-#define BIT_BINARY_OP(op_)                                           \
+#define BIT_BINARY_OP(op_, opName)                                   \
   do {                                                               \
-    if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {                \
-      runtimeError("Operands must be numbers.");                     \
+    int32_t b;                                                       \
+    int32_t a;                                                       \
+    if (!valueToInt32Exact(pop(), &b, opName)) return INTERPRET_RUNTIME_ERROR; \
+    if (!valueToInt32Exact(pop(), &a, opName)) return INTERPRET_RUNTIME_ERROR; \
+    uint32_t r = ((uint32_t)a) op_ ((uint32_t)b);                    \
+    if (!pushInt64AsNumber((int64_t)(int32_t)r, opName)) return INTERPRET_RUNTIME_ERROR; \
+  } while (false)
+
+#define BIT_SHIFT_OP(opName, isRight)                                \
+  do {                                                               \
+    int32_t shift;                                                   \
+    int32_t a;                                                       \
+    if (!valueToInt32Exact(pop(), &shift, opName)) return INTERPRET_RUNTIME_ERROR; \
+    if (!valueToInt32Exact(pop(), &a, opName)) return INTERPRET_RUNTIME_ERROR; \
+    if (shift < 0 || shift > 31) {                                   \
+      runtimeError("%s shift count must be in range 0..31.", opName); \
       return INTERPRET_RUNTIME_ERROR;                                \
     }                                                                \
-    int b = (int)AS_NUMBER(pop());                                   \
-    int a = (int)AS_NUMBER(pop());                                   \
-    push(NUMBER_VAL(a op_ b));                                       \
+    uint32_t ua = (uint32_t)a;                                       \
+    uint32_t res;                                                    \
+    if (!(isRight)) {                                                \
+      res = ua << (uint32_t)shift;                                   \
+    } else {                                                         \
+      res = ua >> (uint32_t)shift;                                   \
+      if (shift != 0 && a < 0) {                                     \
+        res |= ~(UINT32_C(0xFFFFFFFF) >> (uint32_t)shift);           \
+      }                                                              \
+    }                                                                \
+    if (!pushInt64AsNumber((int64_t)(int32_t)res, opName)) return INTERPRET_RUNTIME_ERROR; \
   } while (false)
 
   for (;;) {
@@ -563,7 +664,7 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
 
       case OP_CONST_BYTE:
-        push(NUMBER_VAL(READ_BYTE()));
+        push(FIXNUM_VAL(READ_BYTE()));
         break;
 
       case OP_NIL:
@@ -804,13 +905,16 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
 
       case OP_MOD: {
-        if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
-          runtimeError("Operands must be numbers.");
+        int64_t b;
+        int64_t a;
+        if (!valueToInt64Exact(pop(), &b, "Right operand of %")) return INTERPRET_RUNTIME_ERROR;
+        if (!valueToInt64Exact(pop(), &a, "Left operand of %")) return INTERPRET_RUNTIME_ERROR;
+        if (b == 0) {
+          runtimeError("Division by zero.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        int b = (int)AS_NUMBER(pop());
-        int a = (int)AS_NUMBER(pop());
-        push(NUMBER_VAL(a % b));
+        int64_t r = a % b;
+        if (!pushInt64AsNumber(r, "%")) return INTERPRET_RUNTIME_ERROR;
         break;
       }
 
@@ -827,24 +931,120 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_ADD_INT: {
+#ifdef NAN_BOXING
+        if (IS_FIXNUM(peek(0)) && IS_FIXNUM(peek(1))) {
+          int64_t b = AS_FIXNUM(pop());
+          int64_t a = AS_FIXNUM(pop());
+          int64_t r;
+          if (__builtin_add_overflow(a, b, &r)) {
+            push(NUMBER_VAL((double)a + (double)b));
+          } else {
+            pushInt64AsNumberOrFlonum(r);
+          }
+          break;
+        }
+#endif
+        // Fallback to the generic semantics (including string concatenation).
+        if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
+          concatenate();
+        } else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+          double b = AS_NUMBER(pop());
+          double a = AS_NUMBER(pop());
+          push(NUMBER_VAL(a + b));
+        } else {
+          runtimeError("Operands must be two numbers or two strings.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        break;
+      }
+
+      case OP_SUBTRACT_INT: {
+#ifdef NAN_BOXING
+        if (IS_FIXNUM(peek(0)) && IS_FIXNUM(peek(1))) {
+          int64_t b = AS_FIXNUM(pop());
+          int64_t a = AS_FIXNUM(pop());
+          int64_t r;
+          if (__builtin_sub_overflow(a, b, &r)) {
+            push(NUMBER_VAL((double)a - (double)b));
+          } else {
+            pushInt64AsNumberOrFlonum(r);
+          }
+          break;
+        }
+#endif
+        if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
+          runtimeError("Operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        double b = AS_NUMBER(pop());
+        double a = AS_NUMBER(pop());
+        push(NUMBER_VAL(a - b));
+        break;
+      }
+
+      case OP_MULTIPLY_INT: {
+#ifdef NAN_BOXING
+        if (IS_FIXNUM(peek(0)) && IS_FIXNUM(peek(1))) {
+          int64_t b = AS_FIXNUM(pop());
+          int64_t a = AS_FIXNUM(pop());
+          __int128 wide = (__int128)a * (__int128)b;
+          if (wide >= (__int128)FIXNUM_MIN && wide <= (__int128)FIXNUM_MAX) {
+            push(FIXNUM_VAL((int64_t)wide));
+          } else {
+            push(NUMBER_VAL((double)a * (double)b));
+          }
+          break;
+        }
+#endif
+        if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
+          runtimeError("Operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        double b = AS_NUMBER(pop());
+        double a = AS_NUMBER(pop());
+        push(NUMBER_VAL(a * b));
+        break;
+      }
+
+      case OP_NEGATE_INT: {
+#ifdef NAN_BOXING
+        if (IS_FIXNUM(peek(0))) {
+          int64_t a = AS_FIXNUM(pop());
+          if (a == FIXNUM_MIN) {
+            push(NUMBER_VAL(-((double)a)));
+          } else {
+            pushInt64AsNumberOrFlonum(-a);
+          }
+          break;
+        }
+#endif
+        if (!IS_NUMBER(peek(0))) {
+          runtimeError("Operand must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        push(NUMBER_VAL(-AS_NUMBER(pop())));
+        break;
+      }
+
       case OP_BIT_AND:
-        BIT_BINARY_OP(&);
+        BIT_BINARY_OP(&, "&");
         break;
 
       case OP_BIT_OR:
-        BIT_BINARY_OP(|);
+        BIT_BINARY_OP(|, "|");
         break;
 
       case OP_BIT_XOR:
-        BIT_BINARY_OP(^);
+        BIT_BINARY_OP(^, "^");
         break;
 
       case OP_BIT_LSHIFT:
-        BIT_BINARY_OP(<<);
+        BIT_SHIFT_OP("<<", false);
         break;
 
       case OP_BIT_RSHIFT:
-        BIT_BINARY_OP(>>);
+        BIT_SHIFT_OP(">>", true);
         break;
 
       case OP_ASSOC: {
@@ -1014,7 +1214,24 @@ static InterpretResult runUntil(int stopFrameCount) {
           runtimeError("ADD_LOCAL_IMM operand must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        Value result = NUMBER_VAL(AS_NUMBER(local) + (double)imm);
+        Value result;
+#ifdef NAN_BOXING
+        if (IS_FIXNUM(local)) {
+          int64_t a = AS_FIXNUM(local);
+          int64_t r;
+          if (__builtin_add_overflow(a, (int64_t)imm, &r)) {
+            result = NUMBER_VAL((double)a + (double)imm);
+          } else if (fixnumFitsInt64(r)) {
+            result = FIXNUM_VAL(r);
+          } else {
+            result = NUMBER_VAL((double)r);
+          }
+        } else {
+          result = NUMBER_VAL(AS_NUMBER(local) + (double)imm);
+        }
+#else
+        result = NUMBER_VAL(AS_NUMBER(local) + (double)imm);
+#endif
         slots[slot] = result;
         push(result); // Like SET_LOCAL, leaves value on stack
         break;

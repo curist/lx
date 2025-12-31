@@ -20,6 +20,41 @@ let PREC = enum {
   PRIMARY,
 }
 
+// Token types that can be used as hashmap/object keys
+// This explicitly allows keywords in key positions
+let KEY_TOKENS = .{
+  [TOKEN.IDENTIFIER]: true,
+  [TOKEN.IF]: true,
+  [TOKEN.ELSE]: true,
+  [TOKEN.FOR]: true,
+  [TOKEN.FN]: true,
+  [TOKEN.LET]: true,
+  [TOKEN.ENUM]: true,
+  [TOKEN.RETURN]: true,
+  [TOKEN.BREAK]: true,
+  [TOKEN.CONTINUE]: true,
+  [TOKEN.IMPORT]: true,
+  [TOKEN.IN]: true,
+  [TOKEN.COLLECT]: true,
+  [TOKEN.AND]: true,
+  [TOKEN.OR]: true,
+  [TOKEN.TRUE]: true,
+  [TOKEN.FALSE]: true,
+  [TOKEN.NIL]: true,
+}
+
+// Token types that are good breakpoints for error recovery
+let SYNC_BREAKPOINTS = .{
+  [TOKEN.FN]: true,
+  [TOKEN.LET]: true,
+  [TOKEN.ENUM]: true,
+  [TOKEN.FOR]: true,
+  [TOKEN.IF]: true,
+  [TOKEN.RETURN]: true,
+  [TOKEN.IMPORT]: true,
+  [TOKEN.DOT_BRACE]: true,
+}
+
 // Node ID counter - reset at start of each parse()
 let nodeIdCounter = 0
 
@@ -509,32 +544,9 @@ fn parse(src, filename) {
     errorAtCurrent(message)
   }
 
-  fn canBeKey(tokenType) {
-    // Token types that are safe to use as hashmap/object keys
-    // This explicitly allows keywords in key positions
-    tokenType == TOKEN.IDENTIFIER or
-    tokenType == TOKEN.IF or
-    tokenType == TOKEN.ELSE or
-    tokenType == TOKEN.FOR or
-    tokenType == TOKEN.FN or
-    tokenType == TOKEN.LET or
-    tokenType == TOKEN.ENUM or
-    tokenType == TOKEN.RETURN or
-    tokenType == TOKEN.BREAK or
-    tokenType == TOKEN.CONTINUE or
-    tokenType == TOKEN.IMPORT or
-    tokenType == TOKEN.IN or
-    tokenType == TOKEN.COLLECT or
-    tokenType == TOKEN.AND or
-    tokenType == TOKEN.OR or
-    tokenType == TOKEN.TRUE or
-    tokenType == TOKEN.FALSE or
-    tokenType == TOKEN.NIL
-  }
-
   fn consumeKey(message) {
     // Accept identifiers and keywords as keys for dot access / hashmap
-    if canBeKey(parser.current.type) {
+    if KEY_TOKENS[parser.current.type] {
       advance()
       return
     }
@@ -556,17 +568,7 @@ fn parse(src, filename) {
   fn synchronize() {
     parser.panicMode = false
     for parser.current.type != TOKEN.EOF {
-      let breakpoints = .{
-        [TOKEN.FN]: true,
-        [TOKEN.LET]: true,
-        [TOKEN.ENUM]: true,
-        [TOKEN.FOR]: true,
-        [TOKEN.IF]: true,
-        [TOKEN.RETURN]: true,
-        [TOKEN.IMPORT]: true,
-        [TOKEN.DOT_BRACE]: true,
-      }
-      if breakpoints[parser.current.type] {
+      if SYNC_BREAKPOINTS[parser.current.type] {
         return
       }
       advance()
@@ -871,44 +873,44 @@ fn parse(src, filename) {
       }
     }
 
-	    if hasNextKeyValuePair() {
-	      fn keyvalue() {
-	        let key
-	        let keyIdentToken = nil
-	        if match(TOKEN.LEFT_BRACKET) {
-	          // index pattern `.{ [expr]: value }`
-	          key = expression()
-	          if !key {
-	            syncHashmapPair()  // Recover to comma/brace boundary
-	            return
-	          }
-	          consume(TOKEN.RIGHT_BRACKET, "Expect ']' for hashmap index key.")
-	        } else {
-	          // key pattern `.{ key: value }` or shorthand `.{ key }`
-	          if parser.current.type == TOKEN.IDENTIFIER {
-	            advance()
-	            keyIdentToken = parser.previous
-	            key = StringKeyNodeFromToken(filename, keyIdentToken)
-	          } else {
-	            // Accept keywords as explicit keys (must use `:` form).
-	            consumeKey("Expect key for hashmap.")
-	            key = StringKeyNodeFromToken(filename, parser.previous)
-	          }
-	        }
+    if hasNextKeyValuePair() {
+      fn keyvalue() {
+        let key
+        let keyIdentToken = nil
+        if match(TOKEN.LEFT_BRACKET) {
+          // index pattern `.{ [expr]: value }`
+          key = expression()
+          if !key {
+            syncHashmapPair()  // Recover to comma/brace boundary
+            return
+          }
+          consume(TOKEN.RIGHT_BRACKET, "Expect ']' for hashmap index key.")
+        } else {
+          // key pattern `.{ key: value }` or shorthand `.{ key }`
+          if parser.current.type == TOKEN.IDENTIFIER {
+            advance()
+            keyIdentToken = parser.previous
+            key = StringKeyNodeFromToken(filename, keyIdentToken)
+          } else {
+            // Accept keywords as explicit keys (must use `:` form).
+            consumeKey("Expect key for hashmap.")
+            key = StringKeyNodeFromToken(filename, parser.previous)
+          }
+        }
 
-	        // Shorthand: `.{ x, y }` expands to `.{ x: x, y: y }`.
-	        // Only supported for identifiers (keywords require explicit `:`).
-	        if keyIdentToken and !check(TOKEN.COLON) {
-	          push(pairs, .{ key: key, value: IdentifierNode(filename, keyIdentToken) })
-	          return
-	        }
+        // Shorthand: `.{ x, y }` expands to `.{ x: x, y: y }`.
+        // Only supported for identifiers (keywords require explicit `:`).
+        if keyIdentToken and !check(TOKEN.COLON) {
+          push(pairs, .{ key: key, value: IdentifierNode(filename, keyIdentToken) })
+          return
+        }
 
-	        consume(TOKEN.COLON, "Expect ':' for hashmap.")
+        consume(TOKEN.COLON, "Expect ':' for hashmap.")
 
-	        let value = expression()
-	        if value {
-	          push(pairs, .{ key: key, value: value })
-	        }
+        let value = expression()
+        if value {
+          push(pairs, .{ key: key, value: value })
+        }
       }
 
       keyvalue()

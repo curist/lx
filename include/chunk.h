@@ -4,16 +4,31 @@
 #include "value.h"
 
 typedef enum {
+  // Control flow
   OP_NOP,
+  OP_RETURN,
+  OP_JUMP,
+  OP_JUMP_IF_TRUE,
+  OP_JUMP_IF_FALSE,
+  OP_LOOP,
+  OP_CALL,
+  OP_CLOSURE,
+  OP_CLOSE_UPVALUE,
+  OP_UNWIND,
+
+  // Constants
   OP_CONSTANT,
   OP_CONST_BYTE,
   OP_NIL,
   OP_TRUE,
   OP_FALSE,
-  OP_EQUAL,
+
+  // Stack manipulation
   OP_POP,
   OP_DUP,
   OP_SWAP,
+
+  // Variables
   OP_GET_LOCAL,
   OP_SET_LOCAL,
   OP_GET_GLOBAL,
@@ -21,48 +36,58 @@ typedef enum {
   OP_SET_GLOBAL,
   OP_GET_UPVALUE,
   OP_SET_UPVALUE,
-  OP_GET_BY_INDEX,
-  OP_SET_BY_INDEX,
-  OP_GREATER,
-  OP_LESS,
+
+  // Arithmetic (baseline)
   OP_ADD,
   OP_SUBTRACT,
   OP_MULTIPLY,
   OP_DIVIDE,
-  OP_NOT,
   OP_MOD,
   OP_NEGATE,
+
+  // Arithmetic (specialized int)
+  OP_ADD_INT,
+  OP_SUBTRACT_INT,
+  OP_MULTIPLY_INT,
+  OP_NEGATE_INT,
+
+  // Arithmetic (quickened)
+  OP_ADD_NUM,
+  OP_ADD_STR,
+
+  // Comparison
+  OP_EQUAL,
+  OP_GREATER,
+  OP_LESS,
+
+  // Logical
+  OP_NOT,
+
+  // Bitwise
   OP_BIT_AND,
   OP_BIT_OR,
   OP_BIT_XOR,
   OP_BIT_LSHIFT,
   OP_BIT_RSHIFT,
-  OP_JUMP,
-  OP_JUMP_IF_TRUE,
-  OP_JUMP_IF_FALSE,
-  OP_LOOP,
-  OP_ASSOC,
-  OP_APPEND,
+
+  // Data structures
+  OP_ARRAY,
   OP_HASHMAP,
   OP_ENUM,
-  OP_ARRAY,
   OP_LENGTH,
-  OP_CALL,
-  OP_CLOSURE,
-  OP_CLOSE_UPVALUE,
-  OP_UNWIND,
-  OP_ADD_LOCAL_IMM,       // Superinstruction: GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
-  OP_STORE_LOCAL,         // Superinstruction: SET_LOCAL + POP
-  OP_STORE_BY_IDX,   // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
+  OP_GET_BY_INDEX,
+  OP_SET_BY_INDEX,
+  OP_ASSOC,
+  OP_APPEND,
+
+  // Superinstructions
+  OP_ADD_LOCAL_IMM,       // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
+  OP_STORE_LOCAL,         // SET_LOCAL + POP
+  OP_STORE_BY_IDX,        // GET_LOCAL×3 + SET_BY_INDEX
+
+  // Special/optimization
   OP_COALESCE_CONST,      // Replace TOS with constant if TOS is falsy
   OP_IS_EVEN,             // Test if TOS integer is even (hot-path for % 2 == 0)
-  OP_ADD_INT,             // Integer add (Fixnum fast path, overflow -> Flonum)
-  OP_SUBTRACT_INT,        // Integer subtract (Fixnum fast path, overflow -> Flonum)
-  OP_MULTIPLY_INT,        // Integer multiply (Fixnum fast path, overflow -> Flonum)
-  OP_NEGATE_INT,          // Integer negate (Fixnum fast path, overflow -> Flonum)
-  OP_ADD_NUM,             // Quickened: assumes two numbers (guard + deopt)
-  OP_ADD_STR,             // Quickened: assumes two strings (guard + deopt)
-  OP_RETURN = 0xff,
 } OpCode;
 
 typedef struct {

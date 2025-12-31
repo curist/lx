@@ -86,16 +86,31 @@ let KEYWORDS = fold([
 
 // XXX: need to keep this in sync with clox
 let OP = enum {
-  NOP, // might be useful in the future if we want to do op patching
+  // Control flow
+  NOP,
+  RETURN,
+  JUMP,
+  JUMP_IF_TRUE,
+  JUMP_IF_FALSE,
+  LOOP,
+  CALL,
+  CLOSURE,
+  CLOSE_UPVALUE,
+  UNWIND,
+
+  // Constants
   CONSTANT,
   CONST_BYTE,
   NIL,
   TRUE,
   FALSE,
-  EQUAL,
+
+  // Stack manipulation
   POP,
   DUP,
   SWAP,
+
+  // Variables
   GET_LOCAL,
   SET_LOCAL,
   GET_GLOBAL,
@@ -103,48 +118,58 @@ let OP = enum {
   SET_GLOBAL,
   GET_UPVALUE,
   SET_UPVALUE,
-  GET_BY_INDEX,
-  SET_BY_INDEX,
-  GREATER,
-  LESS,
+
+  // Arithmetic (baseline)
   ADD,
   SUBTRACT,
   MULTIPLY,
   DIVIDE,
-  NOT,
   MOD,
   NEGATE,
+
+  // Arithmetic (specialized int)
+  ADD_INT,
+  SUBTRACT_INT,
+  MULTIPLY_INT,
+  NEGATE_INT,
+
+  // Arithmetic (quickened)
+  ADD_NUM,
+  ADD_STR,
+
+  // Comparison
+  EQUAL,
+  GREATER,
+  LESS,
+
+  // Logical
+  NOT,
+
+  // Bitwise
   BIT_AND,
   BIT_OR,
   BIT_XOR,
   BIT_LSHIFT,
   BIT_RSHIFT,
-  JUMP,
-  JUMP_IF_TRUE,
-  JUMP_IF_FALSE,
-  LOOP,
-  ASSOC,
-  APPEND,
+
+  // Data structures
+  ARRAY,
   HASHMAP,
   ENUM,
-  ARRAY,
   LENGTH,
-  CALL,
-  CLOSURE,
-  CLOSE_UPVALUE,
-  UNWIND,
-  ADD_LOCAL_IMM,    // Superinstruction: GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
-  STORE_LOCAL,      // Superinstruction: SET_LOCAL + POP
-  STORE_BY_IDX,     // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
+  GET_BY_INDEX,
+  SET_BY_INDEX,
+  ASSOC,
+  APPEND,
+
+  // Superinstructions
+  ADD_LOCAL_IMM,    // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
+  STORE_LOCAL,      // SET_LOCAL + POP
+  STORE_BY_IDX,     // GET_LOCAL×3 + SET_BY_INDEX
+
+  // Special/optimization
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy
   IS_EVEN,          // Test if TOS integer is even (hot-path for % 2 == 0)
-  ADD_INT,          // Integer add (Fixnum fast path, overflow -> Flonum)
-  SUBTRACT_INT,     // Integer subtract (Fixnum fast path, overflow -> Flonum)
-  MULTIPLY_INT,     // Integer multiply (Fixnum fast path, overflow -> Flonum)
-  NEGATE_INT,       // Integer negate (Fixnum fast path, overflow -> Flonum)
-  ADD_NUM,          // Quickened: assumes two numbers (guard + deopt)
-  ADD_STR,          // Quickened: assumes two strings (guard + deopt)
-  RETURN = 255,     // 0xff - fixed to allow adding opcodes without breaking RETURN
 }
 
 let ValueType = enum { BOOL, NIL, NUMBER, OBJ }

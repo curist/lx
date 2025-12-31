@@ -8,7 +8,7 @@ let OP = types.OP
 test("OP_UNWIND opcode is defined", fn(assert) {
   assert.truthy(OP.UNWIND, "OP.UNWIND should be defined")
   assert.truthy(OP.UNWIND >= 0, "OP.UNWIND should have a valid value")
-  assert.truthy(OP.UNWIND < OP.RETURN, "OP.UNWIND should come before OP.RETURN")
+  assert.truthy(OP.UNWIND > OP.RETURN, "OP.UNWIND should come after OP.RETURN in reorganized enum")
 })
 
 test("OP_UNWIND has correct name mapping", fn(assert) {

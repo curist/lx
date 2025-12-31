@@ -287,6 +287,35 @@ fn runWarmupSlice(state) {
   runWarmupStep(state)
 }
 
+fn invalidateSingle(state, path) {
+  // Invalidate just this single file, not its dependents.
+  if !path { return }
+
+  // Remove outgoing edges path -> dep
+  let deps = state.deps and state.deps[path] or nil
+  if deps and type(deps) == "array" {
+    for let j = 0; j < len(deps); j = j + 1 {
+      let dep = deps[j]
+      if state.rdeps and state.rdeps[dep] {
+        state.rdeps[dep][path] = nil
+      }
+    }
+  }
+
+  // Clear dependency info for this file
+  if state.deps { state.deps[path] = nil }
+
+  // Drop compiled module cache entry
+  if state.driver and state.driver.cache and state.driver.cache[path] {
+    state.driver.cache[path] = nil
+  }
+
+  // Clear from context cache
+  if state.ctxCache and state.ctxCache[path] {
+    state.ctxCache[path] = nil
+  }
+}
+
 fn invalidate(state, path) {
   // Invalidate path + all reverse-deps (modules that import it), transitively.
   let work = [path]
@@ -336,6 +365,7 @@ fn invalidate(state, path) {
   }
 
   state.epoch = (state.epoch or 0) + 1
+  state.staleCtxCache = state.ctxCache
   state.ctxCache = .{}
   keys(seen)
 }
@@ -667,9 +697,20 @@ fn compileForSpec(state, spec) {
     mergeScope: "reachable",
   })
 
-  state.ctxCache[spec] = .{ epoch: state.epoch, result: ctxResult }
-  updateDepGraphFromDriver(state)
-  ctxResult
+  if ctxResult and ctxResult.success {
+    state.ctxCache[spec] = .{ epoch: state.epoch, result: ctxResult }
+    updateDepGraphFromDriver(state)
+    ctxResult
+  } else {
+    // Compilation failed; fall back to stale cache if available
+    let stale = state.staleCtxCache and state.staleCtxCache[spec] or nil
+    let staleResult = stale and stale.result or nil
+    if staleResult and staleResult.success {
+      staleResult
+    } else {
+      ctxResult
+    }
+  }
 }
 
 fn toLspRange(r) {
@@ -886,6 +927,7 @@ fn serve() {
     shutdown: false,
     epoch: 0,
     ctxCache: .{},
+    staleCtxCache: .{},
     deps: .{},
     rdeps: .{},
     graphIndex: 0,
@@ -1053,15 +1095,12 @@ fn serve() {
       let changes = (msg.params and msg.params.contentChanges) or []
       if spec and len(changes) > 0 and changes[0].text != nil {
         state.openDocs[spec] = changes[0].text
-        let invalidated = invalidate(state, spec)
-        for let i = 0; i < len(invalidated); i = i + 1 {
-          let p = invalidated[i]
-          if state.openDocs[p] != nil {
-            publishDiagnosticsForSpec(state, p, [])
-          }
-        }
+        // Invalidate just this file (not dependents) and recompile for real-time feedback
+        invalidateSingle(state, spec)
+        compileForSpec(state, spec)
+        publishDiagnosticsFromCache(state, spec)
       }
-      // Avoid compiling on every keystroke; warmup is driven by didOpen/didSave.
+      warmupTick()
       continue
     }
 
@@ -1074,6 +1113,7 @@ fn serve() {
         if msg.params and msg.params.text != nil {
           state.openDocs[spec] = msg.params.text
         }
+        // Invalidate this file + all dependents transitively
         let invalidated = invalidate(state, spec)
         for let i = 0; i < len(invalidated); i = i + 1 {
           let p = invalidated[i]
@@ -1081,8 +1121,17 @@ fn serve() {
             publishDiagnosticsForSpec(state, p, [])
           }
         }
+        // Recompile the saved file
         compileForSpec(state, spec)
         publishDiagnosticsFromCache(state, spec)
+        // Recompile any open dependents (files that import this one)
+        for let i = 0; i < len(invalidated); i = i + 1 {
+          let p = invalidated[i]
+          if p != spec and state.openDocs[p] != nil {
+            compileForSpec(state, p)
+            publishDiagnosticsFromCache(state, p)
+          }
+        }
         enqueueWarmup(state, spec)
         if state.supportsWorkDoneProgress {
           startWarmupProgressIfNeeded()

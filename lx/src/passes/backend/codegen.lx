@@ -463,7 +463,9 @@ fn compileUnary(gen, node) {
   if op == "!" {
     emitByte(gen, OP.NOT, node.line)
   } else if op == "-" {
-    emitByte(gen, OP.NEGATE, node.line)
+    let fc = gen.fastcheck and gen.fastcheck.facts
+    let isInt = fc and (fc[node.operand and node.operand.id] == "NUM_INT")
+    emitByte(gen, isInt and OP.NEGATE_INT or OP.NEGATE, node.line)
   } else {
     addError(gen, node, "Unsupported unary op: " + op)
   }
@@ -476,10 +478,16 @@ fn compileBinary(gen, node) {
   compileValue(gen, node.left)
   compileValue(gen, node.right)
   let op = node.operator and node.operator.lexeme or ""
+
+  let fc = gen.fastcheck and gen.fastcheck.facts
+  let leftInt = fc and (fc[node.left and node.left.id] == "NUM_INT")
+  let rightInt = fc and (fc[node.right and node.right.id] == "NUM_INT")
+  let bothInt = leftInt and rightInt
+
   let opCodes = .{
-    ["+"]: OP.ADD,
-    ["-"]: OP.SUBTRACT,
-    ["*"]: OP.MULTIPLY,
+    ["+"]: bothInt and OP.ADD_INT or OP.ADD,
+    ["-"]: bothInt and OP.SUBTRACT_INT or OP.SUBTRACT,
+    ["*"]: bothInt and OP.MULTIPLY_INT or OP.MULTIPLY,
     ["/"]: OP.DIVIDE,
     ["%"]: OP.MOD,
     ["=="]: OP.EQUAL,
@@ -1085,6 +1093,7 @@ fn codegen(ast, resolveResult, opts) {
     loopContinueSlots: [],  // Track loop continue slots (keeps loop var)
     loopScopeDepth: 0,
     codegenModule: opts and opts.codegenModule or nil,
+    fastcheck: opts and opts.fastcheck or nil,
 
     // Track actual emitted local positions (nodeId -> absolute slot)
     emittedLocals: .{},

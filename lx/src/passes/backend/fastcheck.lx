@@ -1,0 +1,569 @@
+// FastCheck - lightweight numeric representation analysis
+//
+// Infers a numeric class for expressions and locals to guide future opcode specialization.
+// This pass is intra-procedural and conservative; it treats results of numeric operators
+// as numeric on non-error paths, but does not attempt global type inference.
+//
+// Output:
+// .{
+//   success: true,
+//   facts: .{ [nodeId]: "NON_NUM" | "NUM_ANY" | "NUM_INT" | "NUM_FLOAT" },
+//   locals: .{ [declNodeId]: class },
+//   errors: [],
+// }
+
+let .{ NODE } = import "src/types.lx"
+
+let CLASS = .{
+  NON_NUM: "NON_NUM",
+  NUM_ANY: "NUM_ANY",
+  NUM_INT: "NUM_INT",
+  NUM_FLOAT: "NUM_FLOAT",
+}
+
+let BUILTIN_INT_RETURNS = .{
+  len: true,
+  ord: true,
+  int: true,
+}
+
+fn dotPropertyName(node) {
+  if !node or node.type != NODE.Dot { return nil }
+  if node.property and node.property.type == NODE.Identifier { return node.property.name }
+  if node.property and node.property.type == NODE.String { return node.property.value }
+  nil
+}
+
+fn isIntegralNumber(n) {
+  // Treat NaN as non-integer for the purposes of integer-context reasoning.
+  if n != n { return false }
+  int(n) == n
+}
+
+fn joinClass(a, b) {
+  if a == b { return a }
+  if a == CLASS.NON_NUM or b == CLASS.NON_NUM { return CLASS.NON_NUM }
+  if a == CLASS.NUM_ANY or b == CLASS.NUM_ANY { return CLASS.NUM_ANY }
+  // NUM_INT ⊔ NUM_FLOAT = NUM_ANY
+  CLASS.NUM_ANY
+}
+
+fn copyMap(m) {
+  let out = .{}
+  if !m { return out }
+  let ks = keys(m)
+  for let i = 0; i < len(ks); i = i + 1 {
+    let k = ks[i]
+    out[k] = m[k]
+  }
+  out
+}
+
+fn joinEnv(a, b) {
+  let out = .{}
+  let ks = keys(a)
+  for let i = 0; i < len(ks); i = i + 1 {
+    let k = ks[i]
+    if b[k] != nil {
+      out[k] = joinClass(a[k], b[k])
+    } else {
+      out[k] = a[k]
+    }
+  }
+  let ks2 = keys(b)
+  for let i = 0; i < len(ks2); i = i + 1 {
+    let k = ks2[i]
+    if out[k] != nil { continue }
+    out[k] = b[k]
+  }
+  out
+}
+
+fn envEqual(a, b) {
+  let ka = keys(a)
+  let kb = keys(b)
+  if len(ka) != len(kb) { return false }
+  for let i = 0; i < len(ka); i = i + 1 {
+    let k = ka[i]
+    if a[k] != b[k] { return false }
+  }
+  true
+}
+
+fn enumMembersMapFromInfo(info) {
+  if !info or !info.members { return nil }
+  let m = .{}
+  for let i = 0; i < len(info.members); i = i + 1 {
+    let mem = info.members[i]
+    if mem and mem.name != nil and mem.value != nil {
+      m[mem.name] = mem.value
+    }
+  }
+  m
+}
+
+fn collectEnumExportsFromModuleResult(moduleResult) {
+  if !moduleResult { return nil }
+  let parseResult = moduleResult.passes and moduleResult.passes.parse
+  if !parseResult or !parseResult.ast { return nil }
+
+  let enumInfo = parseResult.enumInfo or .{}
+  let ast = parseResult.ast
+  if ast.type != NODE.Block or !ast.expressions { return .{} }
+
+  let out = .{} // fieldName -> memberMap
+
+  for let i = 0; i < len(ast.expressions); i = i + 1 {
+    let n = ast.expressions[i]
+
+    // Pattern A: `let X = enum {...}`
+    if n and n.type == NODE.Let and n.name and n.name.type == NODE.Identifier {
+      let init = n.init
+      if init and init.type == NODE.Hashmap and enumInfo[init.id] {
+        let m = enumMembersMapFromInfo(enumInfo[init.id])
+        if m { out[n.name.name] = m }
+      }
+    }
+
+    // Pattern B: `something.FIELD = enum {...}` (common in `types.lx`)
+    if n and n.type == NODE.Assignment and n.target and n.target.type == NODE.Dot {
+      let fieldName = dotPropertyName(n.target)
+      if fieldName {
+        let v = n.value
+        if v and v.type == NODE.Hashmap and enumInfo[v.id] {
+          let m = enumMembersMapFromInfo(enumInfo[v.id])
+          if m { out[fieldName] = m }
+        }
+      }
+    }
+  }
+
+  out
+}
+
+fn analyze(ast, resolveResult, opts) {
+  let facts = .{}
+  let locals = .{}
+
+  let resolvedNames = resolveResult and resolveResult.resolvedNames or .{}
+  let importInfoByNodeId = resolveResult and resolveResult.importInfoByNodeId or .{}
+
+  // Optional: enumInfo keyed by the AST's current node IDs (driver remaps through lower/anf).
+  // Keep this explicit so FastCheck stays independent of any specific frontend pass output.
+  let enumInfo = (opts and opts.enumInfo) or nil
+
+  // Side facts: enum-values and module-values for dot/index propagation.
+  let enumValueFacts = .{}   // nodeId -> { memberName -> number }
+  let moduleValueFacts = .{} // nodeId -> moduleResult
+  let enumExportsCache = .{} // modulePath -> { fieldName -> memberMap }
+  let enumMembersByDeclId = .{} // declNodeId -> memberMap (locals holding enum objects)
+  let moduleByDeclId = .{}      // declNodeId -> moduleResult (locals holding imported module objects)
+  let builtinByDeclId = .{}     // declNodeId -> builtinName (locals aliasing builtins)
+
+  // Lexical scopes: track which decl nodeIds are introduced so we can remove on exit.
+  let scopeStack = []
+
+  fn enterScope() { push(scopeStack, []) }
+  fn exitScope(env) {
+    let decls = pop(scopeStack) or []
+    for let i = 0; i < len(decls); i = i + 1 {
+      let id = decls[i]
+      env[id] = nil
+    }
+    env
+  }
+
+  fn declare(env, declNodeId, cls) {
+    locals[declNodeId] = cls
+    env[declNodeId] = cls
+    push(scopeStack[len(scopeStack) - 1], declNodeId)
+  }
+
+  fn update(env, declNodeId, cls) {
+    locals[declNodeId] = cls
+    env[declNodeId] = cls
+  }
+
+  fn record(node, cls) {
+    if node and node.id { facts[node.id] = cls }
+    cls
+  }
+
+  fn lookupIdentifierClass(env, node) {
+    let binding = resolvedNames[node.id]
+    if binding and (binding.kind == "local" or binding.kind == "upvalue") {
+      let declId = binding.declaredAt
+      if enumMembersByDeclId[declId] { return CLASS.NON_NUM }
+      if moduleByDeclId[declId] { return CLASS.NON_NUM }
+      if env[declId] { return env[declId] }
+      if locals[declId] { return locals[declId] }
+    }
+    CLASS.NON_NUM
+  }
+
+  fn getEnumExports(moduleResult) {
+    if !moduleResult { return nil }
+    let path = moduleResult.path or ""
+    let cached = enumExportsCache[path]
+    if cached { return cached }
+    let m = collectEnumExportsFromModuleResult(moduleResult) or .{}
+    enumExportsCache[path] = m
+    m
+  }
+
+  fn getStringKey(node) {
+    if !node { return nil }
+    if node.type == NODE.Grouping { return getStringKey(node.expression) }
+    if node.type == NODE.String { return node.value }
+    if node.type == NODE.Identifier { return node.name }
+    nil
+  }
+
+  fn analyzeStmt(env, node) {
+    // Statements are expressions in the AST; we mainly care about env effects.
+    if !node { return CLASS.NON_NUM }
+    if node.type == NODE.Block { return analyzeExpr(env, node) }
+    if node.type == NODE.Let { return analyzeExpr(env, node) }
+    if node.type == NODE.Assignment { return analyzeExpr(env, node) }
+    if node.type == NODE.For { return analyzeExpr(env, node) }
+    // Everything else: treat as expression.
+    analyzeExpr(env, node)
+  }
+
+  fn analyzeExpr(env, node) {
+    if !node { return CLASS.NON_NUM }
+
+    if node.type == NODE.Function {
+      // Functions are not numbers, but we still analyze their bodies to
+      // populate facts for codegen within the function.
+      enterScope()
+      let fnEnv = .{}
+
+      // Parameters are locals inside the function scope; we treat them as unknown.
+      let params = node.params or []
+      for let i = 0; i < len(params); i = i + 1 {
+        let p = params[i]
+        if p and p.id { declare(fnEnv, p.id, CLASS.NON_NUM) }
+      }
+
+      if node.body { analyzeExpr(fnEnv, node.body) }
+      exitScope(fnEnv)
+      return record(node, CLASS.NON_NUM)
+    }
+
+    if node.type == NODE.Number {
+      let cls = isIntegralNumber(node.value) and CLASS.NUM_INT or CLASS.NUM_FLOAT
+      return record(node, cls)
+    }
+    if node.type == NODE.Identifier {
+      let binding = resolvedNames[node.id]
+      if binding and (binding.kind == "local" or binding.kind == "upvalue") {
+        let declId = binding.declaredAt
+        let em = enumMembersByDeclId[declId]
+        if em {
+          enumValueFacts[node.id] = em
+          return record(node, CLASS.NON_NUM)
+        }
+        let mr = moduleByDeclId[declId]
+        if mr {
+          moduleValueFacts[node.id] = mr
+          return record(node, CLASS.NON_NUM)
+        }
+      }
+      return record(node, lookupIdentifierClass(env, node))
+    }
+    if node.type == NODE.Unary {
+      let op = node.operator and node.operator.lexeme or ""
+      let c = analyzeExpr(env, node.operand)
+      if op == "-" {
+        if c == CLASS.NUM_INT { return record(node, CLASS.NUM_INT) }
+        if c == CLASS.NUM_FLOAT { return record(node, CLASS.NUM_FLOAT) }
+        return record(node, CLASS.NUM_ANY)
+      }
+      // ! and others
+      return record(node, CLASS.NON_NUM)
+    }
+    if node.type == NODE.Binary {
+      let op = node.operator and node.operator.lexeme or ""
+      let lc = analyzeExpr(env, node.left)
+      let rc = analyzeExpr(env, node.right)
+
+      if op == "+" or op == "-" or op == "*" {
+        if lc == CLASS.NUM_INT and rc == CLASS.NUM_INT { return record(node, CLASS.NUM_INT) }
+        if lc == CLASS.NUM_FLOAT or rc == CLASS.NUM_FLOAT { return record(node, CLASS.NUM_FLOAT) }
+        return record(node, CLASS.NUM_ANY)
+      }
+      if op == "/" {
+        return record(node, CLASS.NUM_FLOAT)
+      }
+      if op == "%" or op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>" {
+        return record(node, CLASS.NUM_INT)
+      }
+
+      // Comparisons, equality, etc.
+      return record(node, CLASS.NON_NUM)
+    }
+    if node.type == NODE.Logical {
+      let lc = analyzeExpr(env, node.left)
+      let rc = analyzeExpr(env, node.right)
+      return record(node, joinClass(lc, rc))
+    }
+    if node.type == NODE.Grouping {
+      let inner = node.expression
+      let cls = analyzeExpr(env, inner)
+      // Preserve enum/module side facts through grouping, so `(import "m").E.A` works.
+      if inner and inner.id {
+        if enumValueFacts[inner.id] { enumValueFacts[node.id] = enumValueFacts[inner.id] }
+        if moduleValueFacts[inner.id] { moduleValueFacts[node.id] = moduleValueFacts[inner.id] }
+      }
+      return record(node, cls)
+    }
+    if node.type == NODE.Dot {
+      analyzeExpr(env, node.object)
+
+      let propName = dotPropertyName(node)
+      if !propName { return record(node, CLASS.NON_NUM) }
+
+      // Enum member access: E.Member => integer-valued number
+      let baseEnum = enumValueFacts[node.object.id]
+      if baseEnum and baseEnum[propName] != nil {
+        let v = baseEnum[propName]
+        return record(node, isIntegralNumber(v) and CLASS.NUM_INT or CLASS.NUM_FLOAT)
+      }
+
+      // Module enum access: types.TOKEN => enum object (not numeric), but keep enum map for subsequent .Member
+      let baseModule = moduleValueFacts[node.object.id]
+      if baseModule {
+        let ex = getEnumExports(baseModule) or .{}
+        let m = ex[propName]
+        if m {
+          enumValueFacts[node.id] = m
+          return record(node, CLASS.NON_NUM)
+        }
+      }
+
+      return record(node, CLASS.NON_NUM)
+    }
+    if node.type == NODE.Index {
+      analyzeExpr(env, node.object)
+      analyzeExpr(env, node.index)
+
+      let baseEnum = enumValueFacts[node.object.id]
+      if baseEnum {
+        let key = getStringKey(node.index)
+        if key and baseEnum[key] != nil {
+          let v = baseEnum[key]
+          return record(node, isIntegralNumber(v) and CLASS.NUM_INT or CLASS.NUM_FLOAT)
+        }
+      }
+
+      // Module enum access via indexing: `types["TOKEN"]` => enum object.
+      let baseModule = moduleValueFacts[node.object.id]
+      if baseModule {
+        let key = getStringKey(node.index)
+        if key {
+          let ex = getEnumExports(baseModule) or .{}
+          let m = ex[key]
+          if m {
+            enumValueFacts[node.id] = m
+            return record(node, CLASS.NON_NUM)
+          }
+        }
+      }
+
+      return record(node, CLASS.NON_NUM)
+    }
+    if node.type == NODE.Call {
+      analyzeExpr(env, node.callee)
+      let args = node.args or []
+      for let i = 0; i < len(args); i = i + 1 { analyzeExpr(env, args[i]) }
+
+      // Builtins with integer-valued results.
+      if node.callee and node.callee.type == NODE.Identifier {
+        let binding = resolvedNames[node.callee.id]
+        if binding and binding.kind == "builtin" and BUILTIN_INT_RETURNS[binding.name] {
+          return record(node, CLASS.NUM_INT)
+        }
+        if binding and (binding.kind == "local" or binding.kind == "upvalue") {
+          let name = builtinByDeclId[binding.declaredAt]
+          if name and BUILTIN_INT_RETURNS[name] {
+            return record(node, CLASS.NUM_INT)
+          }
+        }
+      }
+
+      return record(node, CLASS.NON_NUM)
+    }
+    if node.type == NODE.IntrinsicCall {
+      let args = node.args or []
+      for let i = 0; i < len(args); i = i + 1 { analyzeExpr(env, args[i]) }
+      // Current intrinsics are not numeric-producing.
+      return record(node, CLASS.NON_NUM)
+    }
+    if node.type == NODE.Import {
+      // Import expressions evaluate to a module object (non-numeric).
+      // Record module result so let-bindings can propagate it.
+      let info = importInfoByNodeId[node.id]
+      let mr = info and info.importResult
+      if mr { moduleValueFacts[node.id] = mr }
+      return record(node, CLASS.NON_NUM)
+    }
+    if node.type == NODE.If {
+      analyzeExpr(env, node.condition)
+      // Branch environments start from the same pre-state.
+      let base = copyMap(env)
+
+      let thenEnv = copyMap(base)
+      let thenClass = analyzeExpr(thenEnv, node.then)
+
+      let elseEnv = copyMap(base)
+      let elseClass = node.else and analyzeExpr(elseEnv, node.else) or CLASS.NON_NUM
+
+      let merged = joinEnv(thenEnv, elseEnv)
+      let ks = keys(merged)
+      for let i = 0; i < len(ks); i = i + 1 {
+        let k = ks[i]
+        env[k] = merged[k]
+      }
+
+      return record(node, joinClass(thenClass, elseClass))
+    }
+    if node.type == NODE.Block {
+      enterScope()
+      let exprs = node.expressions or []
+      let lastClass = CLASS.NON_NUM
+      for let i = 0; i < len(exprs); i = i + 1 {
+        lastClass = analyzeStmt(env, exprs[i])
+      }
+      exitScope(env)
+      return record(node, lastClass)
+    }
+    if node.type == NODE.Let {
+      let initClass = node.init and analyzeExpr(env, node.init) or CLASS.NON_NUM
+      // Let declarations are locals keyed by node.name.id (Identifier nodeId).
+      declare(env, node.name.id, initClass)
+
+      // Propagate module/enum side facts through let-bound locals.
+      if node.init and node.init.id {
+        let em = enumValueFacts[node.init.id]
+        if em { enumMembersByDeclId[node.name.id] = em }
+        let mr = moduleValueFacts[node.init.id]
+        if mr { moduleByDeclId[node.name.id] = mr }
+      }
+
+      // Track module imports: let m = import "x"
+      if node.init and node.init.type == NODE.Import {
+        let info = importInfoByNodeId[node.init.id]
+        let mr = info and info.importResult
+        if mr { moduleByDeclId[node.name.id] = mr }
+      }
+
+      // Track enum declarations: let E = enum { ... }
+      if node.init and node.init.type == NODE.Hashmap and enumInfo and enumInfo[node.init.id] {
+        let info = enumInfo[node.init.id]
+        let m = enumMembersMapFromInfo(info)
+        if m {
+          enumMembersByDeclId[node.name.id] = m
+        }
+      }
+
+      // Alias propagation: let E2 = E
+      if node.init and node.init.type == NODE.Identifier {
+        let src = resolvedNames[node.init.id]
+        if src and src.kind == "builtin" and BUILTIN_INT_RETURNS[src.name] {
+          builtinByDeclId[node.name.id] = src.name
+        }
+        let srcDeclId = src and src.declaredAt
+        if srcDeclId {
+          let em = enumMembersByDeclId[srcDeclId]
+          if em { enumMembersByDeclId[node.name.id] = em }
+          let mr = moduleByDeclId[srcDeclId]
+          if mr { moduleByDeclId[node.name.id] = mr }
+          let bn = builtinByDeclId[srcDeclId]
+          if bn { builtinByDeclId[node.name.id] = bn }
+        }
+      }
+
+      // Bridge: let TOKEN = types.TOKEN where `types` is an import and TOKEN is an exported enum.
+      if node.init and node.init.type == NODE.Dot and node.init.object and node.init.object.type == NODE.Identifier {
+        let baseModule = moduleValueFacts[node.init.object.id]
+        if baseModule {
+          let fieldName = dotPropertyName(node.init)
+          let ex = fieldName and getEnumExports(baseModule)
+          let m = ex and ex[fieldName]
+          if m { enumMembersByDeclId[node.name.id] = m }
+        }
+      }
+
+      return record(node, CLASS.NON_NUM)
+    }
+    if node.type == NODE.Assignment {
+      let valueClass = analyzeExpr(env, node.value)
+      if node.target and node.target.type == NODE.Identifier {
+        let binding = resolvedNames[node.target.id]
+        if binding and (binding.kind == "local" or binding.kind == "upvalue") {
+          update(env, binding.declaredAt, valueClass)
+        }
+      }
+      return record(node, valueClass)
+    }
+    if node.type == NODE.For {
+      enterScope()
+      if node.init { analyzeStmt(env, node.init) }
+
+      // Fixed-point iteration (bounded) over loop body/update.
+      let header = copyMap(env)
+      for let iter = 0; iter < 4; iter = iter + 1 {
+        let loopEnv = copyMap(header)
+        if node.condition { analyzeExpr(loopEnv, node.condition) }
+        if node.body { analyzeStmt(loopEnv, node.body) }
+        if node.update { analyzeStmt(loopEnv, node.update) }
+        let joined = joinEnv(header, loopEnv)
+        if envEqual(joined, header) { break }
+        header = joined
+      }
+
+      // Update env with joined facts for in-scope vars.
+      let ks = keys(header)
+      for let i = 0; i < len(ks); i = i + 1 {
+        let k = ks[i]
+        env[k] = header[k]
+      }
+
+      exitScope(env)
+      return record(node, CLASS.NON_NUM) // loops return nil
+    }
+
+    if node.type == NODE.Return {
+      if node.value { analyzeExpr(env, node.value) }
+      return record(node, CLASS.NON_NUM)
+    }
+    if node.type == NODE.Break or node.type == NODE.Continue {
+      return record(node, CLASS.NON_NUM)
+    }
+
+    // Unknown node: be conservative.
+    return record(node, CLASS.NON_NUM)
+  }
+
+  // Analyze top-level as a block-like scope (module scope).
+  enterScope()
+  let env0 = .{}
+  analyzeExpr(env0, ast)
+  exitScope(env0)
+
+  .{
+    success: true,
+    facts: facts,
+    locals: locals,
+    errors: [],
+  }
+}
+
+fn fastcheck(ast, resolveResult, opts) {
+  if !ast { return .{ success: false, errors: ["fastcheck: missing ast"] } }
+  if !resolveResult { return .{ success: false, errors: ["fastcheck: missing resolve result"] } }
+  analyze(ast, resolveResult, opts or .{})
+}
+
+fastcheck

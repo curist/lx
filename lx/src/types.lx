@@ -138,6 +138,10 @@ let OP = enum {
   STORE_BY_IDX,     // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy
   IS_EVEN,          // Test if TOS integer is even (hot-path for % 2 == 0)
+  ADD_INT,          // Integer add (Fixnum fast path, overflow -> Flonum)
+  SUBTRACT_INT,     // Integer subtract (Fixnum fast path, overflow -> Flonum)
+  MULTIPLY_INT,     // Integer multiply (Fixnum fast path, overflow -> Flonum)
+  NEGATE_INT,       // Integer negate (Fixnum fast path, overflow -> Flonum)
   RETURN = 255,     // 0xff - fixed to allow adding opcodes without breaking RETURN
 }
 

@@ -1,5 +1,6 @@
 let driver = import "src/driver.lx"
 let codegen = import "src/passes/backend/codegen.lx"
+let fastcheck = import "src/passes/backend/fastcheck.lx"
 let verify = import "src/passes/backend/verify-bytecode.lx"
 let objbuilder = import "src/objbuilder.lx"
 let errors = import "src/errors.lx"
@@ -42,9 +43,14 @@ fn compileWithDriver(driverInstance, path) {
       (passes.lower and passes.lower.enumInfo) or
       (passes.parse and passes.parse.enumInfo) or
       .{}
+
+    // Fastcheck disabled during bootstrap - enable after first rebuild
+    // let fc = fastcheck(ast, result.passes.resolve, .{ enumInfo: enumInfo })
+    // result.fastcheckResult = fc
     let cg = codegen(ast, result.passes.resolve, .{
       codegenModule: codegenModule,
       enumInfo: enumInfo,
+      // fastcheck: fc,
     })
     result.codegenResult = cg
     if !cg.success {

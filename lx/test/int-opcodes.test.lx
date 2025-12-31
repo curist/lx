@@ -1,0 +1,214 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let driver = import "src/driver.lx"
+let fastcheck = import "src/passes/backend/fastcheck.lx"
+let codegen = import "src/passes/backend/codegen.lx"
+let verify = import "src/passes/backend/verify-bytecode.lx"
+let types = import "src/types.lx"
+let object = import "src/object.lx"
+
+let OP = types.OP
+let ValueType = types.ValueType
+let ObjType = object.ObjType
+
+fn pickModuleAst(passes) {
+  (passes["anf-inline"] and passes["anf-inline"].ast) or
+  (passes.anf and passes.anf.ast) or
+  (passes.lower and passes.lower.ast) or
+  (passes.parse and passes.parse.ast)
+}
+
+fn pickEnumInfo(passes) {
+  (passes.anf and passes.anf.enumInfo) or
+  (passes.lower and passes.lower.enumInfo) or
+  (passes.parse and passes.parse.enumInfo) or
+  .{}
+}
+
+fn compileToBytecode(sourceByPath, entryPath) {
+  let d = driver.make(.{
+    withTypecheck: false,
+    loadSource: fn(path) { sourceByPath[path] },
+  })
+
+  let r = d.compileModule(entryPath)
+  let passes = r.passes or .{}
+  let ast = pickModuleAst(passes)
+  let enumInfo = pickEnumInfo(passes)
+  let resolveResult = passes.resolve
+
+  let codegenCache = .{}
+  fn codegenModule(path) {
+    let cached = codegenCache[path]
+    if cached { return cached }
+
+    let mr = d.compileModule(path)
+    if !mr or !mr.success { return nil }
+    let mp = mr.passes or .{}
+    let mast = pickModuleAst(mp)
+    let menumInfo = pickEnumInfo(mp)
+    let mresolve = mp.resolve
+
+    let mfc = fastcheck(mast, mresolve, .{ enumInfo: menumInfo })
+    let mcg = codegen(mast, mresolve, .{
+      enumInfo: menumInfo,
+      fastcheck: mfc,
+      codegenModule: codegenModule,
+    })
+    if !mcg or !mcg.success { return nil }
+    codegenCache[path] = mcg.function
+    mcg.function
+  }
+
+  let fc = fastcheck(ast, resolveResult, .{ enumInfo })
+  let cg = codegen(ast, resolveResult, .{
+    enumInfo,
+    fastcheck: fc,
+    codegenModule: codegenModule,
+  })
+
+  .{ r, ast, enumInfo, resolveResult, fc, cg }
+}
+
+fn findFunctionConstantByName(chunk, name) {
+  let consts = (chunk and chunk.constants) or []
+  for let i = 0; i < len(consts); i = i + 1 {
+    let c = consts[i]
+    if !c or c.kind != ValueType.OBJ { continue }
+    let o = c.value
+    if o and o.kind == ObjType.FUNCTION {
+      let fnObj = o.value
+      if fnObj and fnObj.name == name { return fnObj }
+    }
+  }
+  nil
+}
+
+fn containsOp(bytecode, op) {
+  for let i = 0; i < len(bytecode); i = i + 1 {
+    if bytecode[i] == op { return true }
+  }
+  false
+}
+
+test("codegen emits *_INT ops for proven integers (in function body)", fn(assert) {
+  let src = .{
+    ["main.lx"]: "
+fn f() {
+  let a = 40 + 2
+  let b = a * 3
+  let c = -b
+  c - 1
+}
+f()
+",
+  }
+
+  let out = compileToBytecode(src, "main.lx")
+
+  assert.equal(out.r.success, true)
+  assert.equal(out.fc.success, true)
+  assert.equal(out.cg.success, true)
+
+  let fnObj = findFunctionConstantByName(out.cg.function.chunk, "f")
+  assert.truthy(fnObj)
+
+  let v = verify.verifyFunction(fnObj)
+  assert.equal(v.success, true)
+
+  let bc = fnObj.chunk.bytecode
+  assert.truthy(containsOp(bc, OP.ADD_INT))
+  assert.truthy(containsOp(bc, OP.MULTIPLY_INT))
+  assert.truthy(containsOp(bc, OP.NEGATE_INT))
+  assert.truthy(containsOp(bc, OP.SUBTRACT_INT))
+
+  assert.equal(containsOp(bc, OP.ADD), false)
+  assert.equal(containsOp(bc, OP.MULTIPLY), false)
+  assert.equal(containsOp(bc, OP.SUBTRACT), false)
+  assert.equal(containsOp(bc, OP.NEGATE), false)
+})
+
+test("fastcheck: enum member arithmetic uses *_INT ops", fn(assert) {
+  let src = .{
+    ["main.lx"]: "
+fn f() {
+  let E = enum { A, B }
+  E.A + E.B
+}
+f()
+",
+  }
+
+  let out = compileToBytecode(src, "main.lx")
+  assert.equal(out.r.success, true)
+  assert.equal(out.fc.success, true)
+  assert.equal(out.cg.success, true)
+
+  let fnObj = findFunctionConstantByName(out.cg.function.chunk, "f")
+  assert.truthy(fnObj)
+
+  let v = verify.verifyFunction(fnObj)
+  assert.equal(v.success, true)
+
+  let bc = fnObj.chunk.bytecode
+  assert.truthy(containsOp(bc, OP.ADD_INT))
+})
+
+test("fastcheck: builtin int returns participate in *_INT ops (len)", fn(assert) {
+  let src = .{
+    ["main.lx"]: "
+fn f() {
+  len([1, 2, 3]) + 1
+}
+f()
+",
+  }
+
+  let out = compileToBytecode(src, "main.lx")
+  assert.equal(out.r.success, true)
+  assert.equal(out.fc.success, true)
+  assert.equal(out.cg.success, true)
+
+  let fnObj = findFunctionConstantByName(out.cg.function.chunk, "f")
+  assert.truthy(fnObj)
+
+  let v = verify.verifyFunction(fnObj)
+  assert.equal(v.success, true)
+
+  let bc = fnObj.chunk.bytecode
+  assert.truthy(containsOp(bc, OP.ADD_INT))
+})
+
+test("fastcheck: imported-module enum propagation enables *_INT ops", fn(assert) {
+  let src = .{
+    ["main.lx"]: "
+fn f() {
+  let m = import \"m.lx\"
+  m.E.A + 1
+}
+f()
+",
+    ["m.lx"]: "
+let out = .{}
+out.E = enum { A, B }
+out
+",
+  }
+
+  let out = compileToBytecode(src, "main.lx")
+  assert.equal(out.r.success, true)
+  assert.equal(out.fc.success, true)
+  assert.equal(out.cg.success, true)
+
+  let fnObj = findFunctionConstantByName(out.cg.function.chunk, "f")
+  assert.truthy(fnObj)
+
+  let v = verify.verifyFunction(fnObj)
+  assert.equal(v.success, true)
+
+  let bc = fnObj.chunk.bytecode
+  assert.truthy(containsOp(bc, OP.ADD_INT))
+})
+
+suite.run()

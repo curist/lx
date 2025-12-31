@@ -49,6 +49,7 @@ let STACK_MIN = .{
   [OP.POP]:           1,
   [OP.NOT]:           1,
   [OP.NEGATE]:        1,
+  [OP.NEGATE_INT]:    1,
   [OP.LENGTH]:        1,
   [OP.SET_LOCAL]:     1,  // Needs value to store
   [OP.SET_GLOBAL]:    1,
@@ -69,8 +70,11 @@ let STACK_MIN = .{
   [OP.GREATER]:       2,
   [OP.LESS]:          2,
   [OP.ADD]:           2,
+  [OP.ADD_INT]:       2,
   [OP.SUBTRACT]:      2,
+  [OP.SUBTRACT_INT]:  2,
   [OP.MULTIPLY]:      2,
+  [OP.MULTIPLY_INT]:  2,
   [OP.DIVIDE]:        2,
   [OP.MOD]:           2,
   [OP.BIT_AND]:       2,
@@ -122,6 +126,7 @@ let STACK_EFFECTS = .{
   // Neutral (0): peek value, perform operation, leave on stack
   [OP.NOT]:           0,   // pop 1, push 1 (bool)
   [OP.NEGATE]:        0,   // pop 1, push 1 (number)
+  [OP.NEGATE_INT]:    0,   // pop 1, push 1 (number)
   [OP.LENGTH]:        0,
   [OP.SET_LOCAL]:     0,   // Current: peek value, update local, leave on stack (followed by POP)
                             // Future single-stack: will be 0 (updates in-place)
@@ -139,8 +144,11 @@ let STACK_EFFECTS = .{
   [OP.GREATER]:       -1,
   [OP.LESS]:          -1,
   [OP.ADD]:           -1,
+  [OP.ADD_INT]:       -1,
   [OP.SUBTRACT]:      -1,
+  [OP.SUBTRACT_INT]:  -1,
   [OP.MULTIPLY]:      -1,
+  [OP.MULTIPLY_INT]:  -1,
   [OP.DIVIDE]:        -1,
   [OP.MOD]:           -1,
   [OP.BIT_AND]:       -1,
@@ -298,6 +306,10 @@ let INSTRUCTION_LENGTHS = .{
   [OP.UNWIND]:        3,  // opcode + count + keep
   [OP.RETURN]:        1,
   [OP.IS_EVEN]:       1,  // No operands
+  [OP.ADD_INT]:       1,  // No operands
+  [OP.SUBTRACT_INT]:  1,  // No operands
+  [OP.MULTIPLY_INT]:  1,  // No operands
+  [OP.NEGATE_INT]:    1,  // No operands
 
   // Superinstructions
   [OP.ADD_LOCAL_IMM]:      3,  // opcode + slot + imm

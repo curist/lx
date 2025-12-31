@@ -480,12 +480,38 @@ fn compileBinary(gen, node) {
   let op = node.operator and node.operator.lexeme or ""
 
   let fc = gen.fastcheck and gen.fastcheck.facts
-  let leftInt = fc and (fc[node.left and node.left.id] == "NUM_INT")
-  let rightInt = fc and (fc[node.right and node.right.id] == "NUM_INT")
+  let leftClass = fc and fc[node.left and node.left.id]
+  let rightClass = fc and fc[node.right and node.right.id]
+
+  let leftInt = leftClass == "NUM_INT"
+  let rightInt = rightClass == "NUM_INT"
   let bothInt = leftInt and rightInt
 
+  // Helper to check if a class is numeric
+  fn isNumeric(cls) {
+    cls == "NUM_INT" or cls == "NUM_FLOAT" or cls == "NUM_ANY"
+  }
+
+  let leftNum = isNumeric(leftClass)
+  let rightNum = isNumeric(rightClass)
+  let bothNum = leftNum and rightNum
+
+  let leftStr = leftClass == "STR"
+  let rightStr = rightClass == "STR"
+  let bothStr = leftStr and rightStr
+
+  // Choose opcode for + operator based on FastCheck results
+  let addOp = OP.ADD
+  if bothInt {
+    addOp = OP.ADD_INT
+  } else if bothStr {
+    addOp = OP.ADD_STR
+  } else if bothNum {
+    addOp = OP.ADD_NUM
+  }
+
   let opCodes = .{
-    ["+"]: bothInt and OP.ADD_INT or OP.ADD,
+    ["+"]: addOp,
     ["-"]: bothInt and OP.SUBTRACT_INT or OP.SUBTRACT,
     ["*"]: bothInt and OP.MULTIPLY_INT or OP.MULTIPLY,
     ["/"]: OP.DIVIDE,

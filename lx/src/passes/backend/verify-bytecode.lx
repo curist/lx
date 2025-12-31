@@ -71,6 +71,8 @@ let STACK_MIN = .{
   [OP.LESS]:          2,
   [OP.ADD]:           2,
   [OP.ADD_INT]:       2,
+  [OP.ADD_NUM]:       2,
+  [OP.ADD_STR]:       2,
   [OP.SUBTRACT]:      2,
   [OP.SUBTRACT_INT]:  2,
   [OP.MULTIPLY]:      2,
@@ -145,6 +147,8 @@ let STACK_EFFECTS = .{
   [OP.LESS]:          -1,
   [OP.ADD]:           -1,
   [OP.ADD_INT]:       -1,
+  [OP.ADD_NUM]:       -1,
+  [OP.ADD_STR]:       -1,
   [OP.SUBTRACT]:      -1,
   [OP.SUBTRACT_INT]:  -1,
   [OP.MULTIPLY]:      -1,
@@ -234,7 +238,7 @@ fn readShort(code, ip) {
 fn safeReadByte(code, ip, verifier, errorIp) {
   // Returns: byte value or nil if out of bounds
   if ip < 0 or ip >= len(code) {
-    addError(verifier, errorIp, "Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
+    addError(verifier, errorIp, "[verify-bytecode] Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
     return nil
   }
   return readByte(code, ip)
@@ -243,7 +247,7 @@ fn safeReadByte(code, ip, verifier, errorIp) {
 fn safeReadShort(code, ip, verifier, errorIp) {
   // Returns: short value or nil if out of bounds
   if ip + 1 < 0 or ip + 1 >= len(code) {
-    addError(verifier, errorIp, "Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
+    addError(verifier, errorIp, "[verify-bytecode] Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
     return nil
   }
   return readShort(code, ip)
@@ -307,6 +311,8 @@ let INSTRUCTION_LENGTHS = .{
   [OP.RETURN]:        1,
   [OP.IS_EVEN]:       1,  // No operands
   [OP.ADD_INT]:       1,  // No operands
+  [OP.ADD_NUM]:       1,  // No operands
+  [OP.ADD_STR]:       1,  // No operands
   [OP.SUBTRACT_INT]:  1,  // No operands
   [OP.MULTIPLY_INT]:  1,  // No operands
   [OP.NEGATE_INT]:    1,  // No operands
@@ -404,7 +410,7 @@ fn propagateHeight(verifier, ip, height) {
   // Bounds check
   let codeLen = len(verifier.chunk.bytecode)
   if ip < 0 or ip >= codeLen {
-    addError(verifier, ip, "Jump target out of bounds: " + str(ip) + " (code length: " + str(codeLen) + ")")
+    addError(verifier, ip, "[verify-bytecode] Jump target out of bounds: " + str(ip) + " (code length: " + str(codeLen) + ")")
     return false
   }
 
@@ -414,7 +420,7 @@ fn propagateHeight(verifier, ip, height) {
     // Already visited this IP
     if existing != height {
       addError(verifier, ip,
-        "Inconsistent stack height at join: expected " + str(existing) +
+        "[verify-bytecode] Inconsistent stack height at join: expected " + str(existing) +
         " but reached with " + str(height))
       return false
     }
@@ -472,12 +478,12 @@ fn processInstruction(verifier, ip) {
   if !minRequired {
     // minRequired is nil or false (unknown opcode)
     // Note: 0 is truthy in lx, so this doesn't trigger for opcodes that need 0 inputs
-    addError(verifier, ip, "Unknown opcode: " + opName)
+    addError(verifier, ip, "[verify-bytecode] Unknown opcode: " + opName)
     return nil  // Fatal
   }
   if inHeight < minRequired {
     addError(verifier, ip,
-      "Insufficient stack for " + opName + ": " +
+      "[verify-bytecode] Insufficient stack for " + opName + ": " +
       "height=" + str(inHeight) + ", required=" + str(minRequired))
     return nil
   }
@@ -487,7 +493,7 @@ fn processInstruction(verifier, ip) {
   if !effect and effect != 0 {
     // effect is nil or false (unknown opcode)
     // Note: 0 is truthy in lx, so we need to check != 0 for neutral opcodes
-    addError(verifier, ip, "Unknown opcode: " + opName)
+    addError(verifier, ip, "[verify-bytecode] Unknown opcode: " + opName)
     return nil  // Fatal - stop processing this path
   }
 
@@ -496,7 +502,7 @@ fn processInstruction(verifier, ip) {
   // Note: outHeight < 0 check is now redundant (minRequired + effect >= 0 by design)
   // but keep it as a sanity check
   if outHeight < 0 {
-    addError(verifier, ip, "Stack underflow: height would be " + str(outHeight))
+    addError(verifier, ip, "[verify-bytecode] Stack underflow: height would be " + str(outHeight))
     return nil
   }
 
@@ -507,7 +513,7 @@ fn processInstruction(verifier, ip) {
     let base = verifier.initialHeight
     if inHeight < base {
       addError(verifier, ip,
-        "OP_RETURN with insufficient stack: " + str(inHeight) +
+        "[verify-bytecode] OP_RETURN with insufficient stack: " + str(inHeight) +
         " (expected >= " + str(base) + ")")
     }
     return nil  // Terminal instruction
@@ -516,7 +522,7 @@ fn processInstruction(verifier, ip) {
   // Propagate to successors
   let instrLen = instructionLength(verifier.chunk, ip)
   if !instrLen {
-    addError(verifier, ip, "Failed to decode instruction length for " + opName)
+    addError(verifier, ip, "[verify-bytecode] Failed to decode instruction length for " + opName)
     return nil  // Fatal
   }
   let nextIp = ip + instrLen

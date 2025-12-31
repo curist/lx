@@ -1,0 +1,53 @@
+// Test assert.throws functionality
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+test("assert.throws catches runtime errors", fn(assert) {
+  assert.throws(fn() {
+    unknownVariable
+  }, nil)
+})
+
+test("assert.throws with expected message", fn(assert) {
+  assert.throws(fn() {
+    Lx.error("custom error")
+  }, "custom error")
+})
+
+test("assert.throws with undefined variable", fn(assert) {
+  assert.throws(fn() {
+    foobar
+  }, "Undefined variable 'foobar'.")
+})
+
+test("assert.throws with division validation", fn(assert) {
+  fn divide(a, b) {
+    if b == 0 {
+      Lx.error("division by zero")
+    }
+    a / b
+  }
+
+  assert.throws(fn() {
+    divide(10, 0)
+  }, "division by zero")
+})
+
+test("assert.throws with type error", fn(assert) {
+  assert.throws(fn() {
+    let x = 5
+    x()
+  }, nil)
+})
+
+test("successful function does not throw", fn(assert) {
+  fn safe() {
+    42
+  }
+
+  let result = safe()
+  assert.equal(result, 42)
+})
+
+suite.run()

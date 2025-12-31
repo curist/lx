@@ -1063,14 +1063,14 @@ fn compileExpr(gen, node, mode) {
   gen.currentLine = node.line
 
   // Control-flow nodes that don't produce values
-  if let controlHandler = controlFlowHandlers[node.type] {
-    controlHandler(gen, node)
+  if let handler = controlFlowHandlers[node.type] {
+    handler(gen, node)
     return
   }
 
   // Nodes that handle mode internally
-  if let modeHandler = modeAwareHandlers[node.type] {
-    modeHandler(gen, node, mode)
+  if let handler = modeAwareHandlers[node.type] {
+    handler(gen, node, mode)
     return
   }
 

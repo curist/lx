@@ -35,6 +35,37 @@ fn makeTestSuite() {
         )
         testPassed = false
       },
+      throws: fn(func, expectedMessage) {
+        totalAssertions = totalAssertions + 1
+        testAssertions = testAssertions + 1
+        let result = Lx.pcall(func)
+
+        if result.ok {
+          println(
+            "assertion fail (" + str(testAssertions) + "):", testName, "\n",
+            "\texpected function to throw but it succeeded with value:", result.value, "\n",
+          )
+          testPassed = false
+          return
+        }
+
+        if expectedMessage {
+          let errorMsg = result.error and result.error.message or ""
+          if errorMsg == expectedMessage {
+            passedAssertions = passedAssertions + 1
+            return
+          }
+          println(
+            "assertion fail (" + str(testAssertions) + "):", testName, "\n",
+            "\texpected error message:", expectedMessage, "\n",
+            "\tactual error message:", errorMsg, "\n",
+          )
+          testPassed = false
+          return
+        }
+
+        passedAssertions = passedAssertions + 1
+      },
     }
     push(tests, fn() {
       testBody(assert)

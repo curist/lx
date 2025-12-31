@@ -362,6 +362,66 @@ fn lowerArrow(lowerer, node) {
 }
 
 fn lowerIf(lowerer, node) {
+  // Special case: if-let pattern needs scoping
+  // Desugar: if let x = expr { then } else { else }
+  // Into:    { let x = expr; if x { then } else { else } }
+  if node.condition and (node.condition.type == NODE.Let or node.condition.type == NODE.LetDestructure) {
+    let letNode = lowerExpr(lowerer, node.condition)
+    let condIdentifier = nil
+
+    if letNode.type == NODE.Let {
+      // For simple let, use the bound variable name
+      condIdentifier = .{
+        type: NODE.Identifier,
+        filename: node.filename,
+        id: allocNodeId(lowerer),
+        line: letNode.line,
+        col: letNode.col,
+        endLine: letNode.endLine,
+        endCol: letNode.endCol,
+        name: letNode.name.name,
+        lexeme: letNode.name.lexeme,
+      }
+      lowerer.origin[condIdentifier.id] = node.condition.id
+    } else {
+      // For destructuring, we need a synthetic variable
+      // This case is less common but should be handled
+      let syntheticName = "$iflet_" + str(node.id)
+      condIdentifier = .{
+        type: NODE.Identifier,
+        filename: node.filename,
+        id: allocNodeId(lowerer),
+        line: letNode.line,
+        col: letNode.col,
+        endLine: letNode.endLine,
+        endCol: letNode.endCol,
+        name: syntheticName,
+        lexeme: syntheticName,
+      }
+      lowerer.origin[condIdentifier.id] = node.condition.id
+    }
+
+    let ifNode = copyNodeShallow(lowerer, node)
+    ifNode.condition = condIdentifier
+    ifNode.then = lowerExpr(lowerer, node.then)
+    if node.else {
+      ifNode.else = lowerExpr(lowerer, node.else)
+    }
+
+    let blockNode = .{
+      type: NODE.Block,
+      filename: node.filename,
+      id: allocNodeId(lowerer),
+      line: node.line,
+      col: node.col,
+      endLine: node.endLine,
+      endCol: node.endCol,
+      expressions: [letNode, ifNode],
+    }
+    lowerer.origin[blockNode.id] = node.id
+    return blockNode
+  }
+
   let newNode = copyNodeShallow(lowerer, node)
 
   newNode.condition = lowerExpr(lowerer, node.condition)

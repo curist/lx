@@ -1,0 +1,94 @@
+// Test if-let scoping: variables should not leak to outer scope
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+test("if-let variable is scoped to if block", fn(assert) {
+  let outer = "outer"
+
+  if let x = "inner" {
+    assert.equal(x, "inner", "x should be 'inner' inside if block")
+  }
+
+  // x should not be accessible here - accessing it should throw
+  assert.throws(fn() { x }, "Undefined variable 'x'.")
+  assert.equal(outer, "outer", "outer should still be accessible")
+})
+
+test("if-let with truthy value executes then branch", fn(assert) {
+  let executed = false
+
+  if let val = "truthy" {
+    executed = true
+    assert.equal(val, "truthy", "val should be available in then branch")
+  }
+
+  assert.truthy(executed, "then branch should execute for truthy value")
+})
+
+test("if-let with nil value skips then branch", fn(assert) {
+  let executed = false
+
+  if let val = nil {
+    executed = true
+  }
+
+  assert.truthy(!executed, "then branch should not execute for nil")
+})
+
+test("if-let with false value skips then branch", fn(assert) {
+  let executed = false
+
+  if let val = false {
+    executed = true
+  }
+
+  assert.truthy(!executed, "then branch should not execute for false")
+})
+
+test("if-let with else branch", fn(assert) {
+  let thenExecuted = false
+  let elseExecuted = false
+
+  if let val = nil {
+    thenExecuted = true
+  } else {
+    elseExecuted = true
+  }
+
+  assert.truthy(!thenExecuted, "then branch should not execute")
+  assert.truthy(elseExecuted, "else branch should execute")
+})
+
+test("if-let with hashmap lookup", fn(assert) {
+  let map = .{ foo: "bar", baz: nil }
+  let foundFoo = false
+  let foundBaz = false
+
+  if let val = map["foo"] {
+    foundFoo = true
+    assert.equal(val, "bar", "should get correct value from map")
+  }
+
+  if let val = map["baz"] {
+    foundBaz = true
+  }
+
+  assert.truthy(foundFoo, "should find 'foo' key")
+  assert.truthy(!foundBaz, "should not execute for nil value")
+})
+
+test("nested if-let scoping", fn(assert) {
+  if let outer = "outer" {
+    assert.equal(outer, "outer", "outer binding works")
+
+    if let inner = "inner" {
+      assert.equal(inner, "inner", "inner binding works")
+      assert.equal(outer, "outer", "outer still accessible in nested scope")
+    }
+
+    assert.equal(outer, "outer", "outer still accessible after nested if")
+  }
+})
+
+suite.run()

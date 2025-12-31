@@ -43,7 +43,7 @@ fn register(test) {
   })
 
   test("typecheck - Date and Lx builtins typecheck via dot access", fn(assert) {
-    let result = parseAndTypecheck("{ Date.RFC3339\nDate.time()\nLx.args\nLx.doubleToUint8Array(1) }")
+    let result = parseAndTypecheck("{ Date.RFC3339\nDate.now()\nLx.args\nLx.doubleToUint8Array(1) }")
     assert.truthy(result.success)
     if !result.success { return }
     assert.equal(deref(result, getExprType(result, 0)).kind, "String")

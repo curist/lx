@@ -1628,7 +1628,7 @@ static void defineDateNatives() {
   pop();
   pop();
 
-  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "time", timeNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "now", timeNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "nanotime", nanotimeNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "format", strftimeNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "parse", strptimeNative);

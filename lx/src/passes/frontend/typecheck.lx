@@ -138,11 +138,11 @@ fn builtinTypeByName(checker, name) {
     }))
   }
 
-  // Namespaced builtins: model as records so `Date.time()` / `Lx.args` typecheck.
+  // Namespaced builtins: model as records so `Date.now()` / `Lx.args` typecheck.
   if name == "Date" {
     return typeRecord(.{
       RFC3339: typeString(),
-      time: typeFunction([], typeNumber()),
+      now: typeFunction([], typeNumber()),
       // format(ts, fmt?) -> String; model required arg only, extra args allowed.
       format: typeFunction([typeNumber()], typeString()),
       parse: typeFunction([typeString(), typeString()], typeNumber()),

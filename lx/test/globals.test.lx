@@ -62,7 +62,7 @@ test("startsWith", fn(assert) {
 })
 
 test("Date", fn(assert) {
-  let now = Date.time()
+  let now = Date.now()
   assert.equal(type(Date.RFC3339), "string")
   assert.equal(Date.format(now, Date.RFC3339)->type(), "string")
 
@@ -73,7 +73,7 @@ test("Date", fn(assert) {
 })
 
 test("Date.format optional format", fn(assert) {
-  let now = Date.time()
+  let now = Date.now()
   assert.equal(Date.format(now, Date.RFC3339), Date.format(now))
 })
 

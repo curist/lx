@@ -42,9 +42,23 @@ fn makeTestSuite() {
   }
 
   fn run() {
-    let passedTests = range(tests)->fold(0, fn(acc, testCase) {
+    let startTime = Date.now()
+    let passedTests = tests->fold(0, fn(acc, testCase) {
       acc + { testCase() and 1 or 0 }
     })
+
+    let endTime = Date.now()
+    let elapsed = endTime - startTime
+
+    let timeStr = if elapsed > 50 {
+      if elapsed < 1000 {
+        " (" + str(int(elapsed)) + "ms)"
+      } else {
+        " (" + str(elapsed / 1000) + "s)"
+      }
+    } else {
+      ""
+    }
 
     let filename = last(Lx.args)
     println(filename)
@@ -52,7 +66,7 @@ fn makeTestSuite() {
     print("\e[1;" + if passedTests < len(tests) {"31"} else {"32"} + "m")
     println(
       "passed tests", str(passedTests) + "/" + len(tests)->str(),
-      "asserts", str(passedAssertions) + "/" + str(totalAssertions),
+      "asserts", str(passedAssertions) + "/" + str(totalAssertions) + timeStr,
       "\e[0m\n"
     )
 

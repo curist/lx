@@ -83,7 +83,7 @@ Notes:
 
 - `Date` - runtime date/time namespace.
 - `Date.RFC3339: string` Default RFC3339 format string.
-- `Date.time() -> number` Current unix timestamp (milliseconds).
+- `Date.now() -> number` Current unix timestamp (milliseconds).
 - `Date.nanotime() -> number` Current unix timestamp (nanoseconds).
 - `Date.format(unix: number, format?: string) -> string` Format unix timestamp (milliseconds).
 - `Date.parse(s: string, format: string) -> number` Parse a date string, returns unix timestamp (milliseconds).

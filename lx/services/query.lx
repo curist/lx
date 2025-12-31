@@ -380,41 +380,39 @@ fn lastExprFromAst(ast) {
 }
 
 fn findLetByNameNode(ctx, nameNode) {
-  let key = spanKeyFromNode(nameNode)
-  if ctx and ctx.letsByNameSpan and key and ctx.letsByNameSpan[key] {
-    return ctx.letsByNameSpan[key]
-  }
-  if ctx {
-    if !ctx._queryCache { ctx._queryCache = .{} }
-    if !ctx._queryCache.letByNameId { ctx._queryCache.letByNameId = .{} }
-    if !ctx._queryCache.letMiss { ctx._queryCache.letMiss = .{} }
-    let cacheKey = key or (nameNode and nameNode.id and str(nameNode.id)) or nil
-    if cacheKey and ctx._queryCache.letByNameId[cacheKey] {
-      return ctx._queryCache.letByNameId[cacheKey]
-    }
-    if cacheKey and ctx._queryCache.letMiss[cacheKey] {
-      return nil
-    }
+  // Early return if no context
+  if !ctx {
+    return nil
   }
 
-  let ids = keys(ctx.nodes)
-  for let i = 0; i < len(ids); i = i + 1 {
-    let n = ctx.nodes[ids[i]]
-    if n and n.type == NODE.Let and n.name and nameNode and spanKeyFromNode(n.name) == key {
-      if ctx {
-        let cacheKey = key or (nameNode and nameNode.id and str(nameNode.id)) or nil
-        if cacheKey {
-          ctx._queryCache.letByNameId[cacheKey] = n
-        }
-      }
-      return n
-    }
+  let key = spanKeyFromNode(nameNode)
+
+  // Check primary index first
+  if ctx.letsByNameSpan and key and ctx.letsByNameSpan[key] {
+    return ctx.letsByNameSpan[key]
   }
-  if ctx {
-    let cacheKey = key or (nameNode and nameNode.id and str(nameNode.id)) or nil
-    if cacheKey {
-      ctx._queryCache.letMiss[cacheKey] = true
-    }
+
+  // Initialize query cache if needed
+  if !ctx._queryCache { ctx._queryCache = .{} }
+  if !ctx._queryCache.letByNameId { ctx._queryCache.letByNameId = .{} }
+  if !ctx._queryCache.letMiss { ctx._queryCache.letMiss = .{} }
+
+  let cacheKey = key or (nameNode and nameNode.id and str(nameNode.id)) or nil
+
+  // Check cache hit
+  if cacheKey and ctx._queryCache.letByNameId[cacheKey] {
+    return ctx._queryCache.letByNameId[cacheKey]
+  }
+
+  // Check cache miss
+  if cacheKey and ctx._queryCache.letMiss[cacheKey] {
+    return nil
+  }
+
+  // Not found - record cache miss and return nil
+  // (Removed linear scan fallback for performance)
+  if cacheKey {
+    ctx._queryCache.letMiss[cacheKey] = true
   }
   nil
 }
@@ -424,44 +422,39 @@ fn propNodeCacheKey(propNode) {
 }
 
 fn findDotByPropertyNode(ctx, propNode) {
-  if ctx and ctx.dotsByPropertySpan {
-    let key = spanKeyFromNode(propNode)
-    if key and ctx.dotsByPropertySpan[key] {
-      return ctx.dotsByPropertySpan[key]
-    }
-  }
-  if ctx {
-    if !ctx._queryCache { ctx._queryCache = .{} }
-    if !ctx._queryCache.dotByProp { ctx._queryCache.dotByProp = .{} }
-    if !ctx._queryCache.dotMiss { ctx._queryCache.dotMiss = .{} }
-    let key = propNodeCacheKey(propNode)
-    if key and ctx._queryCache.dotByProp[key] {
-      return ctx._queryCache.dotByProp[key]
-    }
-    if key and ctx._queryCache.dotMiss[key] {
-      return nil
-    }
+  // Early return if no context
+  if !ctx {
+    return nil
   }
 
-  let ids = keys(ctx.nodes)
-  for let i = 0; i < len(ids); i = i + 1 {
-    let n = ctx.nodes[ids[i]]
-    if n and n.type == NODE.Dot and n.property {
-      let p = n.property
-      if p.filename == propNode.filename and
-         p.line == propNode.line and p.col == propNode.col and
-         p.endLine == propNode.endLine and p.endCol == propNode.endCol {
-        if ctx {
-          let key = propNodeCacheKey(propNode)
-          if key { ctx._queryCache.dotByProp[key] = n }
-        }
-        return n
-      }
-    }
+  let key = spanKeyFromNode(propNode)
+
+  // Check primary index first
+  if ctx.dotsByPropertySpan and key and ctx.dotsByPropertySpan[key] {
+    return ctx.dotsByPropertySpan[key]
   }
-  if ctx {
-    let key = propNodeCacheKey(propNode)
-    if key { ctx._queryCache.dotMiss[key] = true }
+
+  // Initialize query cache if needed
+  if !ctx._queryCache { ctx._queryCache = .{} }
+  if !ctx._queryCache.dotByProp { ctx._queryCache.dotByProp = .{} }
+  if !ctx._queryCache.dotMiss { ctx._queryCache.dotMiss = .{} }
+
+  let cacheKey = propNodeCacheKey(propNode)
+
+  // Check cache hit
+  if cacheKey and ctx._queryCache.dotByProp[cacheKey] {
+    return ctx._queryCache.dotByProp[cacheKey]
+  }
+
+  // Check cache miss
+  if cacheKey and ctx._queryCache.dotMiss[cacheKey] {
+    return nil
+  }
+
+  // Not found - record cache miss and return nil
+  // (Removed linear scan fallback for performance)
+  if cacheKey {
+    ctx._queryCache.dotMiss[cacheKey] = true
   }
   nil
 }
@@ -470,14 +463,21 @@ fn findRecordField(recordNode, fieldName) {
   if !recordNode or recordNode.type != NODE.Hashmap or !recordNode.pairs {
     return nil
   }
-  for let i = 0; i < len(recordNode.pairs); i = i + 1 {
-    let pair = recordNode.pairs[i]
-    let key = pair and pair.key
-    if key and key.type == NODE.String and key.value == fieldName {
-      return .{ key, value: pair.value }
+
+  // Build field index lazily on first access
+  if !recordNode._fieldIndex {
+    recordNode._fieldIndex = .{}
+    for let i = 0; i < len(recordNode.pairs); i = i + 1 {
+      let pair = recordNode.pairs[i]
+      let key = pair and pair.key
+      if key and key.type == NODE.String and key.value {
+        recordNode._fieldIndex[key.value] = .{ key, value: pair.value }
+      }
     }
   }
-  nil
+
+  // O(1) lookup instead of O(N) scan
+  recordNode._fieldIndex[fieldName]
 }
 
 fn gotoTargetForRecordField(ctx, field) {

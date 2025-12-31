@@ -60,6 +60,8 @@ typedef enum {
   OP_SUBTRACT_INT,        // Integer subtract (Fixnum fast path, overflow -> Flonum)
   OP_MULTIPLY_INT,        // Integer multiply (Fixnum fast path, overflow -> Flonum)
   OP_NEGATE_INT,          // Integer negate (Fixnum fast path, overflow -> Flonum)
+  OP_ADD_NUM,             // Quickened: assumes two numbers (guard + deopt)
+  OP_ADD_STR,             // Quickened: assumes two strings (guard + deopt)
   OP_RETURN = 0xff,
 } OpCode;
 

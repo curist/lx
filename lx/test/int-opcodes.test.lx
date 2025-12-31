@@ -211,4 +211,86 @@ out
   assert.truthy(containsOp(bc, OP.ADD_INT))
 })
 
+test("fastcheck: identifies string concatenation candidates (for future OP_ADD_STR)", fn(assert) {
+  let src = .{
+    ["main.lx"]: "
+fn f() {
+  let a = \"hello\"
+  let b = \" world\"
+  a + b
+}
+f()
+",
+  }
+
+  let out = compileToBytecode(src, "main.lx")
+  assert.equal(out.r.success, true)
+  assert.equal(out.fc.success, true)
+  assert.equal(out.cg.success, true)
+
+  // Verify FastCheck classified the + operation as STR
+  // (even though codegen doesn't emit OP_ADD_STR yet - waiting for quickening infrastructure)
+  let addNodeId = nil
+  fn findAddNode(node) {
+    if !node { return }
+    if node.type == types.NODE.Binary {
+      let op = node.operator and node.operator.lexeme
+      if op == "+" { addNodeId = node.id }
+    }
+    if node.expressions {
+      for let i = 0; i < len(node.expressions); i = i + 1 {
+        findAddNode(node.expressions[i])
+      }
+    }
+    if node.body { findAddNode(node.body) }
+  }
+  findAddNode(out.ast)
+
+  if addNodeId {
+    let cls = out.fc.facts[addNodeId]
+    assert.equal(cls, "STR")
+  }
+})
+
+test("fastcheck: identifies numeric addition candidates (for future OP_ADD_NUM)", fn(assert) {
+  let src = .{
+    ["main.lx"]: "
+fn f() {
+  let a = 3.14
+  let b = 2.71
+  a + b
+}
+f()
+",
+  }
+
+  let out = compileToBytecode(src, "main.lx")
+  assert.equal(out.r.success, true)
+  assert.equal(out.fc.success, true)
+  assert.equal(out.cg.success, true)
+
+  // Verify FastCheck classified the + operation as NUM_FLOAT
+  // (even though codegen doesn't emit OP_ADD_NUM yet - waiting for quickening infrastructure)
+  let addNodeId = nil
+  fn findAddNode(node) {
+    if !node { return }
+    if node.type == types.NODE.Binary {
+      let op = node.operator and node.operator.lexeme
+      if op == "+" { addNodeId = node.id }
+    }
+    if node.expressions {
+      for let i = 0; i < len(node.expressions); i = i + 1 {
+        findAddNode(node.expressions[i])
+      }
+    }
+    if node.body { findAddNode(node.body) }
+  }
+  findAddNode(out.ast)
+
+  if addNodeId {
+    let cls = out.fc.facts[addNodeId]
+    assert.equal(cls, "NUM_FLOAT")
+  }
+})
+
 suite.run()

@@ -1027,6 +1027,60 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_ADD_NUM: {
+        // Quickened opcode: assumes two numbers (guard + deopt).
+        // When quickening infrastructure is implemented, guard failure will deopt.
+        // For now, fall back to baseline OP_ADD semantics on guard failure.
+        Value b = peek(0);
+        Value a = peek(1);
+        if (LIKELY(IS_NUMBER(a) && IS_NUMBER(b))) {
+          // Fast path: both are numbers
+          pop(); pop();
+          push(NUMBER_VAL(AS_NUMBER(a) + AS_NUMBER(b)));
+          break;
+        }
+        // Guard failed: fall back to baseline OP_ADD logic
+        // TODO: when quickening is implemented, this will deopt and re-dispatch
+        if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
+          concatenate();
+        } else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+          double numB = AS_NUMBER(pop());
+          double numA = AS_NUMBER(pop());
+          push(NUMBER_VAL(numA + numB));
+        } else {
+          runtimeError("Operands must be two numbers or two strings.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        break;
+      }
+
+      case OP_ADD_STR: {
+        // Quickened opcode: assumes two strings (guard + deopt).
+        // When quickening infrastructure is implemented, guard failure will deopt.
+        // For now, fall back to baseline OP_ADD semantics on guard failure.
+        Value b = peek(0);
+        Value a = peek(1);
+        if (LIKELY(IS_STRING(a) && IS_STRING(b))) {
+          // Fast path: both are strings, concatenate them
+          // Must match baseline OP_ADD concatenation semantics exactly
+          concatenate();
+          break;
+        }
+        // Guard failed: fall back to baseline OP_ADD logic
+        // TODO: when quickening is implemented, this will deopt and re-dispatch
+        if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
+          concatenate();
+        } else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+          double numB = AS_NUMBER(pop());
+          double numA = AS_NUMBER(pop());
+          push(NUMBER_VAL(numA + numB));
+        } else {
+          runtimeError("Operands must be two numbers or two strings.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        break;
+      }
+
       case OP_BIT_AND:
         BIT_BINARY_OP(&, "&");
         break;

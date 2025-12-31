@@ -142,6 +142,8 @@ let OP = enum {
   SUBTRACT_INT,     // Integer subtract (Fixnum fast path, overflow -> Flonum)
   MULTIPLY_INT,     // Integer multiply (Fixnum fast path, overflow -> Flonum)
   NEGATE_INT,       // Integer negate (Fixnum fast path, overflow -> Flonum)
+  ADD_NUM,          // Quickened: assumes two numbers (guard + deopt)
+  ADD_STR,          // Quickened: assumes two strings (guard + deopt)
   RETURN = 255,     // 0xff - fixed to allow adding opcodes without breaking RETURN
 }
 

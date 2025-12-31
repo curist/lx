@@ -15,16 +15,19 @@
 let .{ NODE } = import "src/types.lx"
 
 let CLASS = .{
-  NON_NUM: "NON_NUM",
-  NUM_ANY: "NUM_ANY",
-  NUM_INT: "NUM_INT",
-  NUM_FLOAT: "NUM_FLOAT",
+  UNKNOWN: "UNKNOWN",   // Not proven; could be anything
+  NON_NUM: "NON_NUM",   // Definitely not numeric/string (functions, modules, enums)
+  STR: "STR",           // Proven string
+  NUM_ANY: "NUM_ANY",   // Proven number (unknown if int/float)
+  NUM_INT: "NUM_INT",   // Proven integer
+  NUM_FLOAT: "NUM_FLOAT", // Proven float
 }
 
-let BUILTIN_INT_RETURNS = .{
-  len: true,
-  ord: true,
-  int: true,
+let BUILTIN_RET_CLASS = .{
+  len: CLASS.NUM_INT,
+  ord: CLASS.NUM_INT,
+  int: CLASS.NUM_INT,
+  str: CLASS.STR,
 }
 
 fn dotPropertyName(node) {
@@ -40,12 +43,40 @@ fn isIntegralNumber(n) {
   int(n) == n
 }
 
+fn isNum(cls) {
+  cls == CLASS.NUM_INT or cls == CLASS.NUM_FLOAT or cls == CLASS.NUM_ANY
+}
+
 fn joinClass(a, b) {
   if a == b { return a }
-  if a == CLASS.NON_NUM or b == CLASS.NON_NUM { return CLASS.NON_NUM }
-  if a == CLASS.NUM_ANY or b == CLASS.NUM_ANY { return CLASS.NUM_ANY }
-  // NUM_INT ⊔ NUM_FLOAT = NUM_ANY
-  CLASS.NUM_ANY
+  if a == CLASS.UNKNOWN or b == CLASS.UNKNOWN { return CLASS.UNKNOWN }
+
+  let an = isNum(a)
+  let bn = isNum(b)
+  if an and bn { return CLASS.NUM_ANY }
+
+  // Mixing different proven categories (string, number, non-num) → unknown
+  CLASS.UNKNOWN
+}
+
+fn plusClass(lc, rc) {
+  // String concat: STR + STR → STR
+  if lc == CLASS.STR and rc == CLASS.STR { return CLASS.STR }
+
+  // Numeric add: NUM + NUM → numeric
+  if isNum(lc) and isNum(rc) {
+    if lc == CLASS.NUM_INT and rc == CLASS.NUM_INT { return CLASS.NUM_INT }
+    if lc == CLASS.NUM_FLOAT or rc == CLASS.NUM_FLOAT { return CLASS.NUM_FLOAT }
+    return CLASS.NUM_ANY
+  }
+
+  // Mixed or unknown: cannot conclude
+  CLASS.UNKNOWN
+}
+
+fn intOnlyOp(lc, rc) {
+  if lc == CLASS.NUM_INT and rc == CLASS.NUM_INT { return CLASS.NUM_INT }
+  CLASS.UNKNOWN
 }
 
 fn copyMap(m) {
@@ -198,7 +229,8 @@ fn analyze(ast, resolveResult, opts) {
       if env[declId] { return env[declId] }
       if locals[declId] { return locals[declId] }
     }
-    CLASS.NON_NUM
+    // Unknown identifier: could be anything
+    CLASS.UNKNOWN
   }
 
   fn getEnumExports(moduleResult) {
@@ -221,7 +253,7 @@ fn analyze(ast, resolveResult, opts) {
 
   fn analyzeStmt(env, node) {
     // Statements are expressions in the AST; we mainly care about env effects.
-    if !node { return CLASS.NON_NUM }
+    if !node { return CLASS.UNKNOWN }
     if node.type == NODE.Block { return analyzeExpr(env, node) }
     if node.type == NODE.Let { return analyzeExpr(env, node) }
     if node.type == NODE.Assignment { return analyzeExpr(env, node) }
@@ -231,7 +263,7 @@ fn analyze(ast, resolveResult, opts) {
   }
 
   fn analyzeExpr(env, node) {
-    if !node { return CLASS.NON_NUM }
+    if !node { return CLASS.UNKNOWN }
 
     if node.type == NODE.Function {
       // Functions are not numbers, but we still analyze their bodies to
@@ -243,7 +275,7 @@ fn analyze(ast, resolveResult, opts) {
       let params = node.params or []
       for let i = 0; i < len(params); i = i + 1 {
         let p = params[i]
-        if p and p.id { declare(fnEnv, p.id, CLASS.NON_NUM) }
+        if p and p.id { declare(fnEnv, p.id, CLASS.UNKNOWN) }
       }
 
       if node.body { analyzeExpr(fnEnv, node.body) }
@@ -254,6 +286,9 @@ fn analyze(ast, resolveResult, opts) {
     if node.type == NODE.Number {
       let cls = isIntegralNumber(node.value) and CLASS.NUM_INT or CLASS.NUM_FLOAT
       return record(node, cls)
+    }
+    if node.type == NODE.String {
+      return record(node, CLASS.STR)
     }
     if node.type == NODE.Identifier {
       let binding = resolvedNames[node.id]
@@ -288,25 +323,35 @@ fn analyze(ast, resolveResult, opts) {
       let lc = analyzeExpr(env, node.left)
       let rc = analyzeExpr(env, node.right)
 
-      if op == "+" or op == "-" or op == "*" {
-        if lc == CLASS.NUM_INT and rc == CLASS.NUM_INT { return record(node, CLASS.NUM_INT) }
-        if lc == CLASS.NUM_FLOAT or rc == CLASS.NUM_FLOAT { return record(node, CLASS.NUM_FLOAT) }
-        return record(node, CLASS.NUM_ANY)
-      }
-      if op == "/" {
-        return record(node, CLASS.NUM_FLOAT)
-      }
-      if op == "%" or op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>" {
-        return record(node, CLASS.NUM_INT)
+      if op == "+" { return record(node, plusClass(lc, rc)) }
+
+      if op == "-" or op == "*" {
+        if isNum(lc) and isNum(rc) {
+          if lc == CLASS.NUM_INT and rc == CLASS.NUM_INT { return record(node, CLASS.NUM_INT) }
+          if lc == CLASS.NUM_FLOAT or rc == CLASS.NUM_FLOAT { return record(node, CLASS.NUM_FLOAT) }
+          return record(node, CLASS.NUM_ANY)
+        }
+        return record(node, CLASS.UNKNOWN)
       }
 
-      // Comparisons, equality, etc.
+      if op == "/" {
+        if isNum(lc) and isNum(rc) { return record(node, CLASS.NUM_FLOAT) }
+        return record(node, CLASS.UNKNOWN)
+      }
+
+      if op == "%" or op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>" {
+        return record(node, intOnlyOp(lc, rc))
+      }
+
+      // Comparisons, equality, etc. - these return booleans, not numbers
       return record(node, CLASS.NON_NUM)
     }
     if node.type == NODE.Logical {
-      let lc = analyzeExpr(env, node.left)
-      let rc = analyzeExpr(env, node.right)
-      return record(node, joinClass(lc, rc))
+      analyzeExpr(env, node.left)
+      analyzeExpr(env, node.right)
+      // Logical operators (and/or) can return either operand, making the result
+      // unpredictable for specialization purposes. Return UNKNOWN to avoid false positives.
+      return record(node, CLASS.UNKNOWN)
     }
     if node.type == NODE.Grouping {
       let inner = node.expression
@@ -322,7 +367,7 @@ fn analyze(ast, resolveResult, opts) {
       analyzeExpr(env, node.object)
 
       let propName = dotPropertyName(node)
-      if !propName { return record(node, CLASS.NON_NUM) }
+      if !propName { return record(node, CLASS.UNKNOWN) }
 
       // Enum member access: E.Member => integer-valued number
       let baseEnum = enumValueFacts[node.object.id]
@@ -342,7 +387,8 @@ fn analyze(ast, resolveResult, opts) {
         }
       }
 
-      return record(node, CLASS.NON_NUM)
+      // Unknown property access
+      return record(node, CLASS.UNKNOWN)
     }
     if node.type == NODE.Index {
       analyzeExpr(env, node.object)
@@ -371,28 +417,32 @@ fn analyze(ast, resolveResult, opts) {
         }
       }
 
-      return record(node, CLASS.NON_NUM)
+      // Unknown index operation
+      return record(node, CLASS.UNKNOWN)
     }
     if node.type == NODE.Call {
       analyzeExpr(env, node.callee)
       let args = node.args or []
       for let i = 0; i < len(args); i = i + 1 { analyzeExpr(env, args[i]) }
 
-      // Builtins with integer-valued results.
+      // Builtins with known return classes.
       if node.callee and node.callee.type == NODE.Identifier {
         let binding = resolvedNames[node.callee.id]
-        if binding and binding.kind == "builtin" and BUILTIN_INT_RETURNS[binding.name] {
-          return record(node, CLASS.NUM_INT)
+        if binding and binding.kind == "builtin" {
+          let cls = BUILTIN_RET_CLASS[binding.name]
+          if cls { return record(node, cls) }
         }
         if binding and (binding.kind == "local" or binding.kind == "upvalue") {
           let name = builtinByDeclId[binding.declaredAt]
-          if name and BUILTIN_INT_RETURNS[name] {
-            return record(node, CLASS.NUM_INT)
+          if name {
+            let cls = BUILTIN_RET_CLASS[name]
+            if cls { return record(node, cls) }
           }
         }
       }
 
-      return record(node, CLASS.NON_NUM)
+      // Unknown call: could return anything
+      return record(node, CLASS.UNKNOWN)
     }
     if node.type == NODE.IntrinsicCall {
       let args = node.args or []
@@ -543,7 +593,7 @@ fn analyze(ast, resolveResult, opts) {
     }
 
     // Unknown node: be conservative.
-    return record(node, CLASS.NON_NUM)
+    return record(node, CLASS.UNKNOWN)
   }
 
   // Analyze top-level as a block-like scope (module scope).

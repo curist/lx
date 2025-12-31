@@ -1303,16 +1303,11 @@ fn parse(src, filename) {
 
   // Main parsing loop
   advance()
-  let body = []
-
-  for !match(TOKEN.EOF) {
+  let body = collect !match(TOKEN.EOF) {
     skipSemicolons()  // Skip any leading semicolons
     if check(TOKEN.EOF) { break }  // Re-check after skipping
 
-    let stmt = expressionStatement()
-    if stmt {
-      push(body, stmt)
-    }
+    expressionStatement() or { continue }
   }
 
   // Root is an implicit block (no braces). Range spans the full file.

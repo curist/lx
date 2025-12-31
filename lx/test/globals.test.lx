@@ -110,4 +110,15 @@ test("split", fn(assert) {
   assert.equal(split(s, "foo")[0], "okay\n")
 })
 
+test("substr", fn(assert) {
+  assert.equal(substr("abcdef", 0, 3), "abc")
+  assert.equal(substr("abcdef", 2, 10), "cdef")
+  assert.equal(substr("abcdef", 100, 3), "")
+  assert.equal(substr("abcdef", 2, 0), "")
+  assert.equal(substr("abcdef", 2, -1), "")
+  // Out-of-bounds indices clamp/truncate instead of erroring.
+  assert.equal(substr("abcdef", 1000000000000, 3), "")
+  assert.equal(substr("abcdef", 2, 1000000000000), "cdef")
+})
+
 suite.run()

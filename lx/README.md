@@ -50,6 +50,7 @@ The runtime provides:
 - `str(value) -> string` Convert a value to a string (uses runtime formatting).
 - `join(values: array, sep: string) -> string` Join stringified values with a separator.
 - `split(s: string, sep: string) -> array[string]` Split by substring; when `sep == ""`, splits into chars.
+- `substr(s: string, start: number, length: number) -> string` Substring by byte offset; if `length <= 0`, returns `""`.
 - `tolower(s: string) -> string` Lowercase ASCII.
 - `toupper(s: string) -> string` Uppercase ASCII.
 - `tonumber(s: string) -> number` Parse a string to a number (float).

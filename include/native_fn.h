@@ -775,6 +775,66 @@ static bool splitNative(int argCount, Value *args) {
   return true;
 }
 
+static bool substrNative(int argCount, Value *args) {
+  if (argCount < 3) {
+    args[-1] = CSTRING_VAL("Error: substr takes 3 args.");
+    return false;
+  }
+  if (!IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: First arg must be a string.");
+    return false;
+  }
+  if (!IS_NUMBER(args[1]) || !IS_NUMBER(args[2])) {
+    args[-1] = CSTRING_VAL("Error: start and length must be numbers.");
+    return false;
+  }
+
+  ObjString *input = AS_STRING(args[0]);
+
+  double startRaw = AS_NUMBER(args[1]);
+  double lengthRaw = AS_NUMBER(args[2]);
+
+  if (!isfinite(startRaw) || !isfinite(lengthRaw)) {
+    args[-1] = CSTRING_VAL("Error: start and length must be finite numbers.");
+    return false;
+  }
+
+  if (lengthRaw <= 0) {
+    args[-1] = CSTRING_VAL("");
+    return true;
+  }
+
+  if (startRaw < 0) startRaw = 0;
+
+  double inputLen = (double)input->length;
+  if (startRaw >= inputLen) {
+    args[-1] = CSTRING_VAL("");
+    return true;
+  }
+
+  // If we're in-bounds, enforce integral start/length (but allow out-of-bounds
+  // inputs above to truncate without error).
+  if (startRaw != trunc(startRaw) || lengthRaw != trunc(lengthRaw)) {
+    args[-1] = CSTRING_VAL("Error: start and length must be integers.");
+    return false;
+  }
+
+  size_t startIndex = (size_t)startRaw;
+  size_t maxLen = input->length - startIndex;
+
+  double outLenD = lengthRaw;
+  if (outLenD > (double)maxLen) outLenD = (double)maxLen;
+  if (outLenD > (double)INT_MAX) outLenD = (double)INT_MAX;
+  if (outLenD <= 0) {
+    args[-1] = CSTRING_VAL("");
+    return true;
+  }
+
+  int outLength = (int)outLenD;
+  args[-1] = OBJ_VAL(copyString(input->chars + startIndex, outLength));
+  return true;
+}
+
 static bool getlineNative(int argCount, Value *args) {
   char line[8192];
   char *read = NULL;
@@ -1589,6 +1649,7 @@ void defineBuiltinNatives() {
   defineNative("str", strNative);
   defineNative("join", joinNative);
   defineNative("split", splitNative);
+  defineNative("substr", substrNative);
   defineNative("tolower", tolowerNative);
   defineNative("toupper", toupperNative);
   defineNative("tonumber", tonumberNative);

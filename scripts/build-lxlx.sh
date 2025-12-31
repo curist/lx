@@ -5,17 +5,7 @@ set -eo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-LX=${LX:-}
-if [[ -z "$LX" ]]; then
-  if [[ -x "./out/lx" ]]; then
-    LX="./out/lx"
-  else
-    LX=lx
-  fi
-fi
-if [[ "$LX" == */* ]] && ! [ -x "$LX" ] && [ -x "$ROOT/$LX" ]; then
-  LX="$ROOT/$LX"
-fi
+LX=${LX:-lx}
 if ! command -v "$LX" >/dev/null 2>&1 && ! [ -x "$LX" ]; then
   echo skip building lxlx.h
   exit 0

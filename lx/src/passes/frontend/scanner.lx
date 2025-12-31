@@ -17,15 +17,7 @@ fn initScanner(src) {
 
   fn getLexeme() {
     let n = state.current - state.start
-    if n <= 0 { return "" }
-    if n == 1 { return src[state.start] }
-    if n == 2 { return src[state.start] + src[state.start + 1] }
-
-    let parts = []
-    for let i = state.start; i < state.current; i = i + 1 {
-      push(parts, src[i])
-    }
-    join(parts, "")
+    substr(src, state.start, n)
   }
 
   fn Token(type) {.{
@@ -63,7 +55,7 @@ fn initScanner(src) {
 
   fn peekAtIndex(index) {
     if index >= srcLen { return .{ length: 1, s: "" } }
-    let charLength = {
+    let length = {
       let val = ord(src[index])
       if val < 128 {
         1
@@ -75,18 +67,13 @@ fn initScanner(src) {
         4
       }
     }
-    let s = src[index]
-    if charLength == 2 {
-      s = s + src[index + 1]
-    } else if charLength == 3 {
-      s = s + src[index + 1] + src[index + 2]
-    } else if charLength == 4 {
-      s = s + src[index + 1] + src[index + 2] + src[index + 3]
+    let s = if length == 1 {
+      src[index]
+    } else {
+      substr(src, index, length)
     }
-    return .{
-      length: charLength,
-      s: s,
-    }
+
+    .{ s, length }
   }
 
   fn advance() {
@@ -111,7 +98,7 @@ fn initScanner(src) {
   }
 
   fn peekNext() {
-    if state.current + 1 >= srcLen { nil } else { peekAtIndex(state.current + 1).s }
+    if state.current + 1 < srcLen { peekAtIndex(state.current + 1).s }
   }
 
   fn skipWhitespace() {
@@ -270,10 +257,8 @@ fn initScanner(src) {
     errorToken("Unexpected character: " + c)
   }
 
-  let tokens = []
-
   // scan all tokens
-  for !isAtEnd() { push(tokens, _scanToken()) }
+  let tokens = collect !isAtEnd() { _scanToken() }
 
   let tokensLength = len(tokens)
   let currentTokenIndex = 0

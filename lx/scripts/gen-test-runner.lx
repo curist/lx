@@ -17,10 +17,10 @@ let testFiles = if result.code == 0 {
   []
 }
 
-// Generate import statements with filename printing
+// Generate import statements with filename printing, wrapped in pcall
 let imports = testFiles
   ->map(fn(name) {
-    "println(\"test/" + name + "\")\nimport \"test/" + name + "\""
+    "println(\"test/" + name + "\")\n{\n  let result = Lx.pcall(fn() {\n    import \"test/" + name + "\"\n  })\n  if !result.ok {\n    println(\"  Error:\", result.error)\n  }\n}"
   })
   ->join("\n")
 

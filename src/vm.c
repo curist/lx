@@ -1346,7 +1346,62 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_STORE_BY_IDX: {
+      case OP_GETI: {
+        // Superinstruction: GET_LOCAL + GET_LOCAL + GET_BY_INDEX
+        uint8_t arrSlot = READ_BYTE();
+        uint8_t idxSlot = READ_BYTE();
+
+        Value object = slots[arrSlot];
+        Value key = slots[idxSlot];
+
+        if (!IS_ENUM(object) && !IS_HASHMAP(object) && !IS_ARRAY(object)) {
+          runtimeError("Only array / hashmap / enum can get value by index.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        Value result;
+        if (IS_ARRAY(object)) {
+          if (!IS_NUMBER(key)) {
+            runtimeError("Can only use number index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          int index = (int)AS_NUMBER(key);
+          if ((double)index != AS_NUMBER(key)) {
+            runtimeError("Can only use integer index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+
+          ValueArray* array = &AS_ARRAY(object);
+          if (index >= 0 && index < array->count) {
+            result = array->values[index];
+          } else {
+            result = NIL_VAL;
+          }
+        } else if (IS_ENUM(object)) {
+          if (!IS_NUMBER(key) && !IS_STRING(key)) {
+            runtimeError("Enum key type must be number or string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* table = &AS_ENUM_FORWARD(object);
+          if (!tableGet(table, key, &result)) {
+            result = NIL_VAL;
+          }
+        } else {
+          // Hashmap
+          if (!IS_NUMBER(key) && !IS_STRING(key)) {
+            runtimeError("Hashmap key type must be number or string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* table = &AS_HASHMAP(object);
+          if (!tableGet(table, key, &result)) {
+            result = NIL_VAL;
+          }
+        }
+        push(result);
+        break;
+      }
+
+      case OP_SETI: {
         // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
         uint8_t arrSlot = READ_BYTE();
         uint8_t idxSlot = READ_BYTE();

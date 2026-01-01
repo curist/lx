@@ -172,7 +172,8 @@ let OP = enum {
   // Superinstructions
   ADD_LOCAL_IMM,    // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
   STORE_LOCAL,      // SET_LOCAL + POP
-  STORE_BY_IDX,     // GET_LOCAL×3 + SET_BY_INDEX
+  GETI,             // GET_LOCAL×2 + GET_BY_INDEX
+  SETI,             // GET_LOCAL×3 + SET_BY_INDEX
 
   // Special/optimization
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy

@@ -847,7 +847,7 @@ fn compileAssignment(gen, node, mode) {
   }
 
   if node.target.type == NODE.Index {
-    // Try to emit STORE_BY_IDX for arr[i] = val where all are locals
+    // Try to emit SETI for arr[i] = val where all are locals
     if node.target.object.type == NODE.Identifier and
        node.target.index.type == NODE.Identifier and
        node.value.type == NODE.Identifier {
@@ -858,12 +858,12 @@ fn compileAssignment(gen, node, mode) {
       if objBinding and objBinding.kind == "local" and
          idxBinding and idxBinding.kind == "local" and
          valBinding and valBinding.kind == "local" {
-        // Emit STORE_BY_IDX superinstruction
+        // Emit SETI superinstruction
         let objSlot = computeAbsoluteSlot(gen, objBinding)
         let idxSlot = computeAbsoluteSlot(gen, idxBinding)
         let valSlot = computeAbsoluteSlot(gen, valBinding)
 
-        emitByte(gen, OP.STORE_BY_IDX, node.line)
+        emitByte(gen, OP.SETI, node.line)
         emitByte(gen, localSlot(objSlot), node.line)
         emitByte(gen, localSlot(idxSlot), node.line)
         emitByte(gen, localSlot(valSlot), node.line)
@@ -901,6 +901,26 @@ fn compileAssignment(gen, node, mode) {
 }
 
 fn compileIndex(gen, node) {
+  // Try to emit GETI for arr[i] where both are locals
+  if node.object.type == NODE.Identifier and
+     node.index.type == NODE.Identifier {
+    let objBinding = gen.resolvedNames[node.object.id]
+    let idxBinding = gen.resolvedNames[node.index.id]
+
+    if objBinding and objBinding.kind == "local" and
+       idxBinding and idxBinding.kind == "local" {
+      // Emit GETI superinstruction
+      let objSlot = computeAbsoluteSlot(gen, objBinding)
+      let idxSlot = computeAbsoluteSlot(gen, idxBinding)
+
+      emitByte(gen, OP.GETI, node.line)
+      emitByte(gen, localSlot(objSlot), node.line)
+      emitByte(gen, localSlot(idxSlot), node.line)
+      return
+    }
+  }
+
+  // Normal path
   compileValue(gen, node.object)
   compileValue(gen, node.index)
   emitByte(gen, OP.GET_BY_INDEX, node.line)

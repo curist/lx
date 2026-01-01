@@ -249,8 +249,10 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return twoByteInstruction("OP_ADD_LOCAL_IMM", chunk, offset);
     case OP_STORE_LOCAL:
       return byteInstruction("OP_STORE_LOCAL", chunk, offset);
-    case OP_STORE_BY_IDX:
-      return threeByteInstruction("OP_STORE_BY_IDX", chunk, offset);
+    case OP_GETI:
+      return twoByteInstruction("OP_GETI", chunk, offset);
+    case OP_SETI:
+      return threeByteInstruction("OP_SETI", chunk, offset);
     case OP_COALESCE_CONST:
       return constantInstruction("OP_COALESCE_CONST", chunk, offset);
     case OP_COALESCE_CONST_LONG:

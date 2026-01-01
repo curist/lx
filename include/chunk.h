@@ -90,7 +90,8 @@ typedef enum {
   // Superinstructions
   OP_ADD_LOCAL_IMM,       // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
   OP_STORE_LOCAL,         // SET_LOCAL + POP
-  OP_STORE_BY_IDX,        // GET_LOCAL×3 + SET_BY_INDEX
+  OP_GETI,                // GET_LOCAL×2 + GET_BY_INDEX
+  OP_SETI,                // GET_LOCAL×3 + SET_BY_INDEX
 
   // Special/optimization
   OP_COALESCE_CONST,      // Replace TOS with constant if TOS is falsy

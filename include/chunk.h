@@ -18,6 +18,7 @@ typedef enum {
 
   // Constants
   OP_CONSTANT,
+  OP_CONSTANT_LONG,
   OP_CONST_BYTE,
   OP_NIL,
   OP_TRUE,

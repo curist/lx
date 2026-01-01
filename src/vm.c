@@ -656,6 +656,12 @@ static InterpretResult runUntil(int stopFrameCount) {
         push(READ_CONSTANT());
         break;
 
+      case OP_CONSTANT_LONG: {
+        uint16_t index = READ_SHORT();
+        push(frame->closure->function->chunk.constants.values[index]);
+        break;
+      }
+
       case OP_CONST_BYTE:
         push(FIXNUM_VAL(READ_BYTE()));
         break;

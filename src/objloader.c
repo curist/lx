@@ -280,10 +280,10 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
   }
 
   uint8_t* constSection = &code_start[code_size];
-  uint8_t constsCount = constSection[4];
+  uint16_t constsCount = getShortSize(&constSection[4]);
 
   // skip reading consts total + total consts bytes size
-  constSection += (1 + 4);
+  constSection += (2 + 4);
   for (size_t i = 0; i < constsCount; i++) {
     // we are going to ^ read this many constants
     uint8_t type = constSection[0];

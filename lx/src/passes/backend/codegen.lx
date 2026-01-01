@@ -154,7 +154,7 @@ fn addConstant(chunk, value, gen) {
 
 fn makeConstant(gen, value) {
   let constant = addConstant(gen.currentFunction.chunk, value, gen)
-  if constant > 256 {
+  if constant >= 65536 {
     addError(gen, gen.currentNode, "Too many constants in one chunk.")
     return 0
   }
@@ -162,7 +162,14 @@ fn makeConstant(gen, value) {
 }
 
 fn emitConstant(gen, value, line) {
-  emitBytes(gen, OP.CONSTANT, makeConstant(gen, value), line)
+  let index = makeConstant(gen, value)
+  if index >= 256 {
+    // Use CONSTANT_LONG for indices 256-65535
+    // Use bit shift to extract high byte
+    emit3(gen, OP.CONSTANT_LONG, (index >> 8) & 255, index & 255, line)
+  } else {
+    emitBytes(gen, OP.CONSTANT, index, line)
+  }
 }
 
 fn identifierConstant(gen, name) {

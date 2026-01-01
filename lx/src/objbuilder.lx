@@ -161,10 +161,10 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
   obj = concat(obj, int32ToBytes(1))
 
   let constantsSize = len(chunk.constants)
-  push(obj, constantsSize)
+  obj = concat(obj, numberToDoubleBytes(constantsSize))
 
+  let constants = []
   if constantsSize > 0 {
-    let constants = []
     let objTypeHandlers = .{
       [ObjType.STRING]: fn(value) {
         constants = concat(constants, int32ToBytes(len(value)))
@@ -205,11 +205,11 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
         Lx.exit(55)
       }
     })
-
-    // update constants section size
-    writeBytesAt(obj, int32ToBytes(len(constants) + 1), constSectionStart)
-    obj = concat(obj, constants)
   }
+
+  // update constants section size (2 bytes for count + constants data)
+  writeBytesAt(obj, int32ToBytes(len(constants) + 2), constSectionStart)
+  obj = concat(obj, constants)
 
   if debug {
     // save start index, we will update this to actual debug size

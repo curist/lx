@@ -33,6 +33,7 @@ let STACK_MIN = .{
   [OP.TRUE]:          0,
   [OP.FALSE]:         0,
   [OP.CONSTANT]:      0,
+  [OP.CONSTANT_LONG]: 0,
   [OP.CONST_BYTE]:    0,
   [OP.GET_LOCAL]:     0,
   [OP.GET_GLOBAL]:    0,
@@ -109,6 +110,7 @@ let STACK_MIN = .{
 let STACK_EFFECTS = .{
   // Push 1 value (+1)
   [OP.CONSTANT]:      1,
+  [OP.CONSTANT_LONG]: 1,
   [OP.CONST_BYTE]:    1,
   [OP.NIL]:           1,
   [OP.TRUE]:          1,
@@ -270,6 +272,7 @@ let INSTRUCTION_LENGTHS = .{
   [OP.COALESCE_CONST]: 2,  // opcode + constant index
 
   // 2-byte operand (length = 3)
+  [OP.CONSTANT_LONG]: 3,
   [OP.JUMP]:          3,
   [OP.JUMP_IF_TRUE]:  3,
   [OP.JUMP_IF_FALSE]: 3,

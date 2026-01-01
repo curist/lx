@@ -730,6 +730,37 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_GET_GLOBAL_LONG: {
+        uint16_t index = READ_SHORT();
+        ObjString* name = AS_STRING(frame->closure->function->chunk.constants.values[index]);
+        Value value;
+        if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
+          runtimeError("Undefined variable '%s'.", name->chars);
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        push(value);
+        break;
+      }
+
+      case OP_DEFINE_GLOBAL_LONG: {
+        uint16_t index = READ_SHORT();
+        ObjString* name = AS_STRING(frame->closure->function->chunk.constants.values[index]);
+        tableSet(&vm.globals, OBJ_VAL(name), peek(0));
+        pop();
+        break;
+      }
+
+      case OP_SET_GLOBAL_LONG: {
+        uint16_t index = READ_SHORT();
+        ObjString* name = AS_STRING(frame->closure->function->chunk.constants.values[index]);
+        if (tableSet(&vm.globals, OBJ_VAL(name), peek(0))) {
+          tableDelete(&vm.globals, OBJ_VAL(name));
+          runtimeError("Undefined variable '%s'.", name->chars);
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        break;
+      }
+
       case OP_GET_UPVALUE: {
         uint8_t slot = READ_BYTE();
         push(*closure->upvalues[slot]->location);
@@ -738,6 +769,18 @@ static InterpretResult runUntil(int stopFrameCount) {
 
       case OP_SET_UPVALUE: {
         uint8_t slot = READ_BYTE();
+        *closure->upvalues[slot]->location = peek(0);
+        break;
+      }
+
+      case OP_GET_UPVALUE_LONG: {
+        uint16_t slot = READ_SHORT();
+        push(*closure->upvalues[slot]->location);
+        break;
+      }
+
+      case OP_SET_UPVALUE_LONG: {
+        uint16_t slot = READ_SHORT();
         *closure->upvalues[slot]->location = peek(0);
         break;
       }
@@ -1218,6 +1261,24 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_CLOSURE_LONG: {
+        uint16_t index = READ_SHORT();
+        ObjFunction* function = AS_FUNCTION(frame->closure->function->chunk.constants.values[index]);
+        ObjClosure* newClosureObj = newClosure(function);
+        push(OBJ_VAL(newClosureObj));
+        // Upvalue encoding is the same regardless of short/long closure opcode
+        for (int i = 0; i < newClosureObj->upvalueCount; i++) {
+          uint8_t isLocal = READ_BYTE();
+          uint8_t index = READ_BYTE();
+          if (isLocal) {
+            newClosureObj->upvalues[i] = captureUpvalue(slots + index);
+          } else {
+            newClosureObj->upvalues[i] = closure->upvalues[index];
+          }
+        }
+        break;
+      }
+
       case OP_CLOSE_UPVALUE:
         closeUpvalues(vm.stackTop - 1);
         pop();
@@ -1341,6 +1402,16 @@ static InterpretResult runUntil(int stopFrameCount) {
         if (isFalsey(tos)) {
           pop();
           push(frame->closure->function->chunk.constants.values[constantIdx]);
+        }
+        break;
+      }
+
+      case OP_COALESCE_CONST_LONG: {
+        uint16_t index = READ_SHORT();
+        Value tos = peek(0);
+        if (isFalsey(tos)) {
+          pop();
+          push(frame->closure->function->chunk.constants.values[index]);
         }
         break;
       }

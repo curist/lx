@@ -1,0 +1,21 @@
+// Test >255 global variables to trigger OP_GET_GLOBAL_LONG, etc.
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+test("300 global variables", fn(assert) {
+  // Create 300 globals programmatically
+  let globals = .{}
+
+  for let i = 0; i < 300; i = i + 1 {
+    globals["g" + str(i)] = i
+  }
+
+  // Verify all globals are accessible
+  assert.equal(len(keys(globals)), 300, "Should have 300 globals")
+  assert.equal(globals["g0"], 0, "First global")
+  assert.equal(globals["g255"], 255, "Boundary at 255")
+  assert.equal(globals["g256"], 256, "First _LONG index")
+  assert.equal(globals["g299"], 299, "Last global")
+})
+
+suite.run()

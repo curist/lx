@@ -13,6 +13,7 @@ typedef enum {
   OP_LOOP,
   OP_CALL,
   OP_CLOSURE,
+  OP_CLOSURE_LONG,
   OP_CLOSE_UPVALUE,
   OP_UNWIND,
 
@@ -33,10 +34,15 @@ typedef enum {
   OP_GET_LOCAL,
   OP_SET_LOCAL,
   OP_GET_GLOBAL,
+  OP_GET_GLOBAL_LONG,
   OP_DEFINE_GLOBAL,
+  OP_DEFINE_GLOBAL_LONG,
   OP_SET_GLOBAL,
+  OP_SET_GLOBAL_LONG,
   OP_GET_UPVALUE,
+  OP_GET_UPVALUE_LONG,
   OP_SET_UPVALUE,
+  OP_SET_UPVALUE_LONG,
 
   // Arithmetic (baseline)
   OP_ADD,
@@ -88,6 +94,7 @@ typedef enum {
 
   // Special/optimization
   OP_COALESCE_CONST,      // Replace TOS with constant if TOS is falsy
+  OP_COALESCE_CONST_LONG,
   OP_IS_EVEN,             // Test if TOS integer is even (hot-path for % 2 == 0)
 } OpCode;
 

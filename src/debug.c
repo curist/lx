@@ -49,6 +49,13 @@ static int constantLongInstruction(const char* name, Chunk* chunk, int offset) {
   return offset + 3;
 }
 
+static int byteLongInstruction(const char* name, Chunk* chunk, int offset) {
+  uint16_t slot = (uint16_t)(chunk->code[offset + 1] << 8);
+  slot |= chunk->code[offset + 2];
+  printf("%-16s %4d\n", name, slot);
+  return offset + 3;
+}
+
 static int constByteInstruction(const char* name, Chunk* chunk, int offset) {
   uint8_t constant = chunk->code[offset + 1];
   printf("%-16s %4d\n", name, constant);
@@ -119,14 +126,24 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return byteInstruction("OP_SET_LOCAL", chunk, offset);
     case OP_GET_GLOBAL:
       return constantInstruction("OP_GET_GLOBAL", chunk, offset);
+    case OP_GET_GLOBAL_LONG:
+      return constantLongInstruction("OP_GET_GLOBAL_LONG", chunk, offset);
     case OP_DEFINE_GLOBAL:
       return constantInstruction("OP_DEFINE_GLOBAL", chunk, offset);
+    case OP_DEFINE_GLOBAL_LONG:
+      return constantLongInstruction("OP_DEFINE_GLOBAL_LONG", chunk, offset);
     case OP_SET_GLOBAL:
       return constantInstruction("OP_SET_GLOBAL", chunk, offset);
+    case OP_SET_GLOBAL_LONG:
+      return constantLongInstruction("OP_SET_GLOBAL_LONG", chunk, offset);
     case OP_GET_UPVALUE:
       return byteInstruction("OP_GET_UPVALUE", chunk, offset);
+    case OP_GET_UPVALUE_LONG:
+      return byteLongInstruction("OP_GET_UPVALUE_LONG", chunk, offset);
     case OP_SET_UPVALUE:
       return byteInstruction("OP_SET_UPVALUE", chunk, offset);
+    case OP_SET_UPVALUE_LONG:
+      return byteLongInstruction("OP_SET_UPVALUE_LONG", chunk, offset);
     case OP_GET_BY_INDEX:
       return simpleInstruction("OP_GET_BY_INDEX", offset);
     case OP_SET_BY_INDEX:
@@ -203,6 +220,27 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
 
       return offset;
     }
+    case OP_CLOSURE_LONG: {
+      offset++;
+      uint16_t constant = (uint16_t)(chunk->code[offset] << 8);
+      constant |= chunk->code[offset + 1];
+      offset += 2;
+
+      printf("%-16s %4d ", "OP_CLOSURE_LONG", constant);
+      printValue(stdout, chunk->constants.values[constant]);
+      printf("\n");
+
+      ObjFunction* function = AS_FUNCTION(
+          chunk->constants.values[constant]);
+      for (int j = 0; j < function->upvalueCount; j++) {
+        int isLocal = chunk->code[offset++];
+        int index = chunk->code[offset++];
+        printf("%04d      |                       %s %d\n",
+               offset - 2, isLocal ? "local  " : "upvalue", index);
+      }
+
+      return offset;
+    }
     case OP_CLOSE_UPVALUE:
       return simpleInstruction("OP_CLOSE_UPVALUE", offset);
     case OP_UNWIND:
@@ -215,6 +253,8 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return threeByteInstruction("OP_STORE_BY_IDX", chunk, offset);
     case OP_COALESCE_CONST:
       return constantInstruction("OP_COALESCE_CONST", chunk, offset);
+    case OP_COALESCE_CONST_LONG:
+      return constantLongInstruction("OP_COALESCE_CONST_LONG", chunk, offset);
     case OP_IS_EVEN:
       return simpleInstruction("OP_IS_EVEN", offset);
     case OP_RETURN:

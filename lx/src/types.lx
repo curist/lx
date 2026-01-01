@@ -95,6 +95,7 @@ let OP = enum {
   LOOP,
   CALL,
   CLOSURE,
+  CLOSURE_LONG,
   CLOSE_UPVALUE,
   UNWIND,
 
@@ -115,10 +116,15 @@ let OP = enum {
   GET_LOCAL,
   SET_LOCAL,
   GET_GLOBAL,
+  GET_GLOBAL_LONG,
   DEFINE_GLOBAL,
+  DEFINE_GLOBAL_LONG,
   SET_GLOBAL,
+  SET_GLOBAL_LONG,
   GET_UPVALUE,
+  GET_UPVALUE_LONG,
   SET_UPVALUE,
+  SET_UPVALUE_LONG,
 
   // Arithmetic (baseline)
   ADD,
@@ -170,6 +176,7 @@ let OP = enum {
 
   // Special/optimization
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy
+  COALESCE_CONST_LONG,
   IS_EVEN,          // Test if TOS integer is even (hot-path for % 2 == 0)
 }
 

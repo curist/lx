@@ -172,6 +172,36 @@ fn emitConstant(gen, value, line) {
   }
 }
 
+// Helper: emit global operation with automatic short/long selection
+fn emitGlobalOp(gen, shortOp, longOp, name, line) {
+  let idx = makeConstant(gen, ObjectString(name))
+  if idx >= 256 {
+    emit3(gen, longOp, (idx >> 8) & 255, idx & 255, line)
+  } else {
+    emitBytes(gen, shortOp, idx, line)
+  }
+}
+
+// Helper: emit upvalue operation with automatic short/long selection
+fn emitUpvalueOp(gen, shortOp, longOp, slot, line) {
+  if slot >= 256 {
+    emit3(gen, longOp, (slot >> 8) & 255, slot & 255, line)
+  } else {
+    emitBytes(gen, shortOp, slot, line)
+  }
+}
+
+// Helper: emit closure with automatic short/long selection
+fn emitClosure(gen, func, line) {
+  let constIndex = makeConstant(gen, ObjectFunction(func))
+  if constIndex >= 256 {
+    emit3(gen, OP.CLOSURE_LONG, (constIndex >> 8) & 255, constIndex & 255, line)
+  } else {
+    emitBytes(gen, OP.CLOSURE, constIndex, line)
+  }
+  constIndex
+}
+
 fn identifierConstant(gen, name) {
   makeConstant(gen, ObjectString(name))
 }
@@ -340,10 +370,10 @@ fn compileIdentifier(gen, node) {
     let absoluteSlot = computeAbsoluteSlot(gen, binding)
     emitBytes(gen, binding.getOp, localSlot(absoluteSlot), node.line)
   } else if binding.kind == "upvalue" {
-    emitBytes(gen, binding.getOp, binding.upvalueIndex, node.line)
+    emitUpvalueOp(gen, binding.getOp, OP.GET_UPVALUE_LONG, binding.upvalueIndex, node.line)
   } else {
-    let idx = identifierConstant(gen, binding.name)
-    emitBytes(gen, binding.getOp, idx, node.line)
+    // Global variable - use long form if needed
+    emitGlobalOp(gen, binding.getOp, OP.GET_GLOBAL_LONG, binding.name, node.line)
   }
 }
 
@@ -367,13 +397,10 @@ fn compileLet(gen, node, mode) {
     }
     // STMT mode: local stays on stack, no extra value needed
   } else {
-    let idx = identifierConstant(gen, node.name.name)
     if mode == MODE.VALUE {
       emitByte(gen, OP.DUP, node.line)
-      emitBytes(gen, OP.DEFINE_GLOBAL, idx, node.line)
-    } else {
-      emitBytes(gen, OP.DEFINE_GLOBAL, idx, node.line)
     }
+    emitGlobalOp(gen, OP.DEFINE_GLOBAL, OP.DEFINE_GLOBAL_LONG, node.name.name, node.line)
   }
 }
 
@@ -570,7 +597,11 @@ fn compileLogical(gen, node) {
         constValue = ObjectString(node.right.value)
       }
       let constIndex = makeConstant(gen, constValue)
-      emitBytes(gen, OP.COALESCE_CONST, constIndex, node.line)
+      if constIndex >= 256 {
+        emit3(gen, OP.COALESCE_CONST_LONG, (constIndex >> 8) & 255, constIndex & 255, node.line)
+      } else {
+        emitBytes(gen, OP.COALESCE_CONST, constIndex, node.line)
+      }
     } else {
       // General case: use jump-based implementation
       emitByte(gen, OP.DUP, node.line)
@@ -699,8 +730,7 @@ fn compileFunctionExpr(gen, node, mode) {
     func.upvalueCount = len(scope.upvalues or [])
   }
 
-  let constIndex = makeConstant(gen, ObjectFunction(func))
-  emitBytes(gen, OP.CLOSURE, constIndex, node.line)
+  emitClosure(gen, func, node.line)
 
   let upvalues = scope and scope.upvalues or []
   for let i = 0; i < len(upvalues); i = i + 1 {
@@ -799,7 +829,13 @@ fn compileAssignment(gen, node, mode) {
         emitBytes(gen, OP.SET_LOCAL, localSlot(absoluteSlot), node.line)
       }
     } else if info.kind == "upvalue" {
-      emitBytes(gen, OP.SET_UPVALUE, info.upvalueIndex, node.line)
+      emitUpvalueOp(gen, OP.SET_UPVALUE, OP.SET_UPVALUE_LONG, info.upvalueIndex, node.line)
+      if mode == MODE.STMT {
+        emitByte(gen, OP.POP, node.line)
+      }
+    } else if info.kind == "global" {
+      // Global assignment - use long form if needed
+      emitGlobalOp(gen, OP.SET_GLOBAL, OP.SET_GLOBAL_LONG, node.target.name, node.line)
       if mode == MODE.STMT {
         emitByte(gen, OP.POP, node.line)
       }

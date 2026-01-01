@@ -37,11 +37,14 @@ let STACK_MIN = .{
   [OP.CONST_BYTE]:    0,
   [OP.GET_LOCAL]:     0,
   [OP.GET_GLOBAL]:    0,
+  [OP.GET_GLOBAL_LONG]: 0,
   [OP.GET_UPVALUE]:   0,
+  [OP.GET_UPVALUE_LONG]: 0,
   [OP.HASHMAP]:       0,
   [OP.ENUM]:          0,
   [OP.ARRAY]:         0,
   [OP.CLOSURE]:       0,
+  [OP.CLOSURE_LONG]:  0,
   [OP.JUMP]:          0,
   [OP.LOOP]:          0,
   [OP.NOP]:           0,
@@ -54,13 +57,17 @@ let STACK_MIN = .{
   [OP.LENGTH]:        1,
   [OP.SET_LOCAL]:     1,  // Needs value to store
   [OP.SET_GLOBAL]:    1,
+  [OP.SET_GLOBAL_LONG]: 1,
   [OP.SET_UPVALUE]:   1,
+  [OP.SET_UPVALUE_LONG]: 1,
   [OP.DEFINE_GLOBAL]: 1,
+  [OP.DEFINE_GLOBAL_LONG]: 1,
   [OP.DUP]:           1,
   [OP.JUMP_IF_TRUE]:  1,
   [OP.JUMP_IF_FALSE]: 1,
   [OP.RETURN]:        1,
   [OP.COALESCE_CONST]: 1,  // Needs value to check
+  [OP.COALESCE_CONST_LONG]: 1,
   [OP.IS_EVEN]:       1,   // Needs value to test
 
   // Need 0 inputs
@@ -117,12 +124,15 @@ let STACK_EFFECTS = .{
   [OP.FALSE]:         1,
   [OP.GET_LOCAL]:     1,
   [OP.GET_GLOBAL]:    1,
+  [OP.GET_GLOBAL_LONG]: 1,
   [OP.GET_UPVALUE]:   1,
+  [OP.GET_UPVALUE_LONG]: 1,
   [OP.HASHMAP]:       1,
   [OP.ENUM]:          1,
   [OP.ARRAY]:         1,
   [OP.DUP]:           1,
   [OP.CLOSURE]:       1,
+  [OP.CLOSURE_LONG]:  1,
 
   // Pop 1 value (-1)
   [OP.POP]:           -1,
@@ -135,12 +145,16 @@ let STACK_EFFECTS = .{
   [OP.SET_LOCAL]:     0,   // Current: peek value, update local, leave on stack (followed by POP)
                             // Future single-stack: will be 0 (updates in-place)
   [OP.SET_GLOBAL]:    0,   // Peek value, set global, leave on stack
+  [OP.SET_GLOBAL_LONG]: 0,
   [OP.SET_UPVALUE]:   0,   // Peek value, set upvalue, leave on stack
+  [OP.SET_UPVALUE_LONG]: 0,
   [OP.DEFINE_GLOBAL]: 0,   // Peek value, define global, leave on stack
+  [OP.DEFINE_GLOBAL_LONG]: 0,
   [OP.SWAP]:          0,
   [OP.NOP]:           0,
   [OP.CLOSE_UPVALUE]: 0,   // Closes upvalue + pops from value stack
   [OP.COALESCE_CONST]: 0,  // Conditionally replaces TOS, always leaves 1 value
+  [OP.COALESCE_CONST_LONG]: 0,
   [OP.IS_EVEN]:       0,   // pop 1 (value), push 1 (bool)
 
   // Binary operations (-1): pop 2, push 1
@@ -273,6 +287,12 @@ let INSTRUCTION_LENGTHS = .{
 
   // 2-byte operand (length = 3)
   [OP.CONSTANT_LONG]: 3,
+  [OP.GET_GLOBAL_LONG]: 3,
+  [OP.DEFINE_GLOBAL_LONG]: 3,
+  [OP.SET_GLOBAL_LONG]: 3,
+  [OP.GET_UPVALUE_LONG]: 3,
+  [OP.SET_UPVALUE_LONG]: 3,
+  [OP.COALESCE_CONST_LONG]: 3,
   [OP.JUMP]:          3,
   [OP.JUMP_IF_TRUE]:  3,
   [OP.JUMP_IF_FALSE]: 3,
@@ -347,6 +367,29 @@ fn instructionLength(chunk, ip) {
     // Unwrap: Value.value -> Object, Object.value -> Function
     let upvalueCount = constant.value.value.upvalueCount or 0
     let totalLen = 2 + (upvalueCount * 2)
+    // Verify the full instruction fits in bytecode
+    if ip + totalLen > len(code) {
+      return nil  // Instruction extends past end of code
+    }
+    return totalLen
+  }
+
+  if opcode == OP.CLOSURE_LONG {
+    // Bounds check before reading 2-byte operand
+    if ip + 2 >= len(code) {
+      return nil  // Out of bounds
+    }
+    // 2-byte constant index (big-endian)
+    let constIdxHigh = readByte(code, ip + 1)
+    let constIdxLow = readByte(code, ip + 2)
+    let constantIdx = (constIdxHigh << 8) + constIdxLow
+    let constant = chunk.constants[constantIdx]
+    if !constant or !constant.value or !constant.value.value {
+      return nil  // Failed to unwrap constant Value -> Object -> Function
+    }
+    // Unwrap: Value.value -> Object, Object.value -> Function
+    let upvalueCount = constant.value.value.upvalueCount or 0
+    let totalLen = 3 + (upvalueCount * 2)  // opcode + 2-byte index + upvalue data
     // Verify the full instruction fits in bytecode
     if ip + totalLen > len(code) {
       return nil  // Instruction extends past end of code

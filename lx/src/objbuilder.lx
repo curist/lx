@@ -72,14 +72,10 @@ fn int32ToBytes(num) {
   return bytes
 }
 
-fn numberToDoubleBytes(num) {
-  if num > 256*256 { return [255, 255] }
-  let bytes = [0, 0]
-  bytes[0] = num & 255
-  num = num >> 8
-  bytes[1] = num & 255
-  num = num >> 8
-  return bytes
+// Convert uint16 to 2-byte little-endian representation
+fn uint16ToLEBytes(num) {
+  if num > 65535 { return [255, 255] }
+  return [num & 255, (num >> 8) & 255]
 }
 
 fn doubleToBytes(num) {
@@ -147,7 +143,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
   push(obj, func.upvalueCount)
 
   // chunk name info
-  obj = concat(obj, numberToDoubleBytes(len(funcName)))
+  obj = concat(obj, uint16ToLEBytes(len(funcName)))
   obj = concat(obj, stringToBytes(funcName))
 
   let codeSize = len(chunk.bytecode)
@@ -161,7 +157,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
   obj = concat(obj, int32ToBytes(1))
 
   let constantsSize = len(chunk.constants)
-  obj = concat(obj, numberToDoubleBytes(constantsSize))
+  obj = concat(obj, uint16ToLEBytes(constantsSize))
 
   let constants = []
   if constantsSize > 0 {
@@ -218,7 +214,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
     obj = concat(obj, int32ToBytes(0))
     let debugLines = []
 
-    let filePathStringLength = numberToDoubleBytes(len(filename))
+    let filePathStringLength = uint16ToLEBytes(len(filename))
     debugLines = concat(debugLines, filePathStringLength)
     debugLines = concat(debugLines, stringToBytes(filename))
 
@@ -227,7 +223,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
     fn emitDebugLines(line) {
       if line == -1 or runningLength == 0 { return }
       push(debugLines, runningLength)
-      debugLines = concat(debugLines, numberToDoubleBytes(line))
+      debugLines = concat(debugLines, uint16ToLEBytes(line))
       lastLineNumber = -1
       runningLength = 0
     }

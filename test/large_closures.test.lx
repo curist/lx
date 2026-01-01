@@ -1,0 +1,23 @@
+// Test >255 function constants to trigger OP_CLOSURE_LONG
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+test("300 function constants", fn(assert) {
+  let funcs = []
+
+  // Create 300 unique closures
+  for let i = 0; i < 300; i = i + 1 {
+    // Each iteration creates a new closure that captures i
+    let capture = i
+    push(funcs, fn() { capture })
+  }
+
+  // Verify all closures work correctly
+  assert.equal(len(funcs), 300, "Should have 300 closures")
+  assert.equal(funcs[0](), 0, "First closure")
+  assert.equal(funcs[255](), 255, "Boundary at 255")
+  assert.equal(funcs[256](), 256, "First _LONG index")
+  assert.equal(funcs[299](), 299, "Last closure")
+})
+
+suite.run()

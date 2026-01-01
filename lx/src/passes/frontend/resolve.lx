@@ -596,181 +596,128 @@ fn resolveBlockWithHoisting(resolver, node, context) {
 // Expression Resolution
 // ========================================
 
-fn resolveExpr(resolver, node, context) {
-  if !node { return }
-
-  // Build node map as we traverse
-  if node.id {
-    resolver.nodes[node.id] = node
-  }
-
-  // Dispatch based on type
-  if node.type == NODE.Identifier {
+let resolveExprHandlers = .{
+  [NODE.Identifier]: fn(resolver, node, context) {
     resolveIdentifier(resolver, node, context)
-  } else if node.type == NODE.Number or node.type == NODE.String or
-            node.type == NODE.Bool or node.type == NODE.Nil {
-    // Literals - nothing to resolve
-  } else if node.type == NODE.Binary or node.type == NODE.Logical {
-    // Binary/Logical: resolve both operands
+  },
+  [NODE.Number]: fn(resolver, node, context) { nil },
+  [NODE.String]: fn(resolver, node, context) { nil },
+  [NODE.Bool]: fn(resolver, node, context) { nil },
+  [NODE.Nil]: fn(resolver, node, context) { nil },
+  [NODE.Binary]: fn(resolver, node, context) {
     resolveExpr(resolver, node.left, context)
     resolveExpr(resolver, node.right, context)
-  } else if node.type == NODE.Unary {
-    // Unary: resolve operand
+  },
+  [NODE.Logical]: fn(resolver, node, context) {
+    resolveExpr(resolver, node.left, context)
+    resolveExpr(resolver, node.right, context)
+  },
+  [NODE.Unary]: fn(resolver, node, context) {
     resolveExpr(resolver, node.operand, context)
-  } else if node.type == NODE.Grouping {
-    // Grouping: resolve inner expression
+  },
+  [NODE.Grouping]: fn(resolver, node, context) {
     resolveExpr(resolver, node.expression, context)
-  } else if node.type == NODE.Let {
-    // Let declaration
+  },
+  [NODE.Let]: fn(resolver, node, context) {
     let name = node.name.name
-
-    // Declare local (uninitialized)
     let local = declareLocal(resolver, name, "var", node.name.id)
-
-    // Resolve initializer if present
     if node.init {
       resolveExpr(resolver, node.init, context)
     }
-
-    // Mark as initialized
     markInitialized(resolver, local)
-  } else if node.type == NODE.Block {
-    // Block - create new scope and use hoisting-aware resolution
+  },
+  [NODE.Block]: fn(resolver, node, context) {
     beginScope(resolver, "block")
     resolveBlockWithHoisting(resolver, node, context)
     endScope(resolver, node.id)
-  } else if node.type == NODE.Call {
-    // Call: resolve callee and all arguments
+  },
+  [NODE.Call]: fn(resolver, node, context) {
     resolveExpr(resolver, node.callee, context)
     for let i = 0; i < len(node.args); i = i + 1 {
       resolveExpr(resolver, node.args[i], context)
     }
-  } else if node.type == NODE.Arrow {
-    // Arrow: x->f(a) desugars to f(x, a) in lower, but for name resolution we
-    // can resolve the left operand and the RHS expression directly.
+  },
+  [NODE.Arrow]: fn(resolver, node, context) {
     resolveExpr(resolver, node.left, context)
     if node.right and node.right.type == NODE.Call {
       resolveExpr(resolver, node.right, context)
     } else {
-      // Match lower's validation to keep tooling consistent.
       addError(resolver, node.id, "Arrow operator requires function call on right side")
       resolveExpr(resolver, node.right, context)
     }
-  } else if node.type == NODE.IntrinsicCall {
-    // IntrinsicCall: resolve arguments only (no callee)
+  },
+  [NODE.IntrinsicCall]: fn(resolver, node, context) {
     for let i = 0; i < len(node.args or []); i = i + 1 {
       resolveExpr(resolver, node.args[i], context)
     }
-  } else if node.type == NODE.If {
-    // If: resolve condition, then, and else branches
+  },
+  [NODE.If]: fn(resolver, node, context) {
     resolveExpr(resolver, node.condition, context)
     resolveExpr(resolver, node.then, context)
     if node.else {
       resolveExpr(resolver, node.else, context)
     }
-  } else if node.type == NODE.Assignment {
-    // Assignment: validate target and resolve binding
+  },
+  [NODE.Assignment]: fn(resolver, node, context) {
     let target = node.target
-
-    // Validate target type
     if target.type == NODE.Identifier {
-      // Resolve the identifier to get binding info
       resolveExpr(resolver, target, context)
-
-      // Check that identifier has a setOp (can be assigned to)
       let binding = resolver.resolvedNames[target.id]
       if binding and binding.setOp {
-        // Store discriminated binding info (only relevant fields per kind)
         if binding.kind == "local" {
-          resolver.assignmentInfo[node.id] = .{
-            kind: "local",
-            slot: binding.slot,
-          }
+          resolver.assignmentInfo[node.id] = .{ kind: "local", slot: binding.slot }
         } else if binding.kind == "upvalue" {
-          resolver.assignmentInfo[node.id] = .{
-            kind: "upvalue",
-            upvalueIndex: binding.upvalueIndex,
-          }
+          resolver.assignmentInfo[node.id] = .{ kind: "upvalue", upvalueIndex: binding.upvalueIndex }
         } else if binding.kind == "builtin" {
-          // No userland globals: assigning to an unresolved/builtin name is an error.
           addError(resolver, node.id, "Cannot assign to undeclared name '" + binding.name + "'")
         }
       } else {
         addError(resolver, node.id, "Cannot assign to identifier (no setOp)")
       }
     } else if target.type == NODE.Index {
-      // Index assignment: arr[idx] = value
-      // Codegen reads object/index from node.target AST
       resolveExpr(resolver, target.object, context)
       resolveExpr(resolver, target.index, context)
-      resolver.assignmentInfo[node.id] = .{
-        kind: "index",
-      }
+      resolver.assignmentInfo[node.id] = .{ kind: "index" }
     } else if target.type == NODE.Dot {
-      // Dot assignment: obj.prop = value
-      // Codegen reads property from node.target.property AST
       resolveExpr(resolver, target.object, context)
-      resolver.assignmentInfo[node.id] = .{
-        kind: "dot",
-      }
+      resolver.assignmentInfo[node.id] = .{ kind: "dot" }
     } else {
       addError(resolver, node.id, "Invalid assignment target")
     }
-
-    // Resolve value
     resolveExpr(resolver, node.value, context)
-  } else if node.type == NODE.Array {
-    // Array: resolve all elements
+  },
+  [NODE.Array]: fn(resolver, node, context) {
     for let i = 0; i < len(node.elements); i = i + 1 {
       resolveExpr(resolver, node.elements[i], context)
     }
-  } else if node.type == NODE.Hashmap {
-    // Hashmap: resolve all keys and values
+  },
+  [NODE.Hashmap]: fn(resolver, node, context) {
     for let i = 0; i < len(node.pairs); i = i + 1 {
       resolveExpr(resolver, node.pairs[i].key, context)
       resolveExpr(resolver, node.pairs[i].value, context)
     }
-  } else if node.type == NODE.Index {
-    // Index: resolve object and index
+  },
+  [NODE.Index]: fn(resolver, node, context) {
     resolveExpr(resolver, node.object, context)
     resolveExpr(resolver, node.index, context)
-  } else if node.type == NODE.Dot {
-    // Dot: resolve object (property is just an identifier, not resolved)
+  },
+  [NODE.Dot]: fn(resolver, node, context) {
     resolveExpr(resolver, node.object, context)
-  } else if node.type == NODE.Function {
-    // Function: create scope, declare params, resolve body
+  },
+  [NODE.Function]: fn(resolver, node, context) {
     resolveFunction(resolver, node, context)
-  } else if node.type == NODE.For {
-    // For loop: create loop scope, resolve init/condition/update/body
+  },
+  [NODE.For]: fn(resolver, node, context) {
     beginScope(resolver, "loop")
-
-    // Resolve init (if present) - can declare variables
-    if node.init {
-      resolveExpr(resolver, node.init, context)
-    }
-
-    // Resolve condition (if present)
-    if node.condition {
-      resolveExpr(resolver, node.condition, context)
-    }
-
-    // Resolve update (if present)
-    if node.update {
-      resolveExpr(resolver, node.update, context)
-    }
-
-    // Resolve body
+    if node.init { resolveExpr(resolver, node.init, context) }
+    if node.condition { resolveExpr(resolver, node.condition, context) }
+    if node.update { resolveExpr(resolver, node.update, context) }
     resolveExpr(resolver, node.body, context)
-
     endScope(resolver, node.id)
-  } else if node.type == NODE.ForIn or node.type == NODE.CollectIn {
-    // For-in / collect-in: binders are strings in the parsed AST; lower will
-    // desugar them into explicit let nodes. For resolve-only runs, approximate
-    // by introducing locals for binders in the loop scope.
+  },
+  [NODE.ForIn]: fn(resolver, node, context) {
     beginScope(resolver, "loop")
-
     resolveExpr(resolver, node.iterable, context)
-
     if node.valueBinder and node.valueBinder != "_" {
       let local = declareLocal(resolver, node.valueBinder, "var", node.id)
       markInitialized(resolver, local)
@@ -779,66 +726,79 @@ fn resolveExpr(resolver, node, context) {
       let local = declareLocal(resolver, node.indexBinder, "var", node.id)
       markInitialized(resolver, local)
     }
-
     resolveExpr(resolver, node.body, context)
     endScope(resolver, node.id)
-  } else if node.type == NODE.Collect {
-    // Collect: semantically a loop that returns an array. For resolution, treat
-    // it like a for-loop with loop scope.
+  },
+  [NODE.CollectIn]: fn(resolver, node, context) {
     beginScope(resolver, "loop")
-
+    resolveExpr(resolver, node.iterable, context)
+    if node.valueBinder and node.valueBinder != "_" {
+      let local = declareLocal(resolver, node.valueBinder, "var", node.id)
+      markInitialized(resolver, local)
+    }
+    if node.indexBinder and node.indexBinder != "_" {
+      let local = declareLocal(resolver, node.indexBinder, "var", node.id)
+      markInitialized(resolver, local)
+    }
+    resolveExpr(resolver, node.body, context)
+    endScope(resolver, node.id)
+  },
+  [NODE.Collect]: fn(resolver, node, context) {
+    beginScope(resolver, "loop")
     if node.init { resolveExpr(resolver, node.init, context) }
     if node.condition { resolveExpr(resolver, node.condition, context) }
     if node.update { resolveExpr(resolver, node.update, context) }
     resolveExpr(resolver, node.body, context)
-
     endScope(resolver, node.id)
-  } else if node.type == NODE.Return {
-    // Return: validate placement
+  },
+  [NODE.Return]: fn(resolver, node, context) {
     let scope = resolver.currentScope
-
-    // Check if in function or at top level
     if !isInFunction(scope) {
-      // Outside function: only allow at top-level end, not in nested blocks
       if !context or !context.atTopLevel {
         addError(resolver, node.id, "Return is only allowed in functions or at top level")
       } else if !context.isLastExpr {
         addError(resolver, node.id, "Can only return at end of file when not in function")
       }
     } else {
-      // In function - must be at end of block
       if context and !context.isLastExpr {
         addError(resolver, node.id, "Return must be at end of block")
       }
     }
-
-    // Resolve return value if present
     if node.value {
       resolveExpr(resolver, node.value, context)
     }
-  } else if node.type == NODE.Break {
-    // Break: must be inside loop and at end of block
+  },
+  [NODE.Break]: fn(resolver, node, context) {
     if !isInLoop(resolver.currentScope) {
       addError(resolver, node.id, "Can only break inside a loop")
     }
-
     if context and !context.isLastExpr {
       addError(resolver, node.id, "Break must be at end of block")
     }
-  } else if node.type == NODE.Continue {
-    // Continue: must be inside loop
+  },
+  [NODE.Continue]: fn(resolver, node, context) {
     if !isInLoop(resolver.currentScope) {
       addError(resolver, node.id, "Can only continue inside a loop")
     }
-
     if context and !context.isLastExpr {
       addError(resolver, node.id, "Continue must be at end of block")
     }
-  } else if node.type == NODE.Import {
-    // Import: resolve path and compile module via callback
+  },
+  [NODE.Import]: fn(resolver, node, context) {
     resolveImport(resolver, node)
+  },
+}
+
+fn resolveExpr(resolver, node, context) {
+  if !node { return }
+
+  if node.id {
+    resolver.nodes[node.id] = node
+  }
+
+  if let handler = resolveExprHandlers[node.type] {
+    handler(resolver, node, context)
   } else {
-    // TODO: Implement other node types
     addError(resolver, node.id, "Resolution not yet implemented for: " + (nameOf(NODE, node.type) or str(node.type)))
   }
 }

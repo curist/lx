@@ -1249,64 +1249,47 @@ fn lowerImport(lowerer, node) {
 // Main Expression Dispatcher
 // ========================================
 
+let lowerExprHandlers = .{
+  [NODE.Arrow]: lowerArrow,
+  [NODE.If]: lowerIf,
+  [NODE.Binary]: lowerBinary,
+  [NODE.Unary]: lowerUnary,
+  [NODE.Logical]: lowerLogical,
+  [NODE.Grouping]: lowerGrouping,
+  [NODE.Let]: lowerLet,
+  [NODE.Block]: lowerBlock,
+  [NODE.Function]: lowerFunction,
+  [NODE.Call]: lowerCall,
+  [NODE.For]: lowerFor,
+  [NODE.ForIn]: lowerForIn,
+  [NODE.Collect]: lowerCollect,
+  [NODE.CollectIn]: lowerCollectIn,
+  [NODE.Return]: lowerReturn,
+  [NODE.Break]: lowerBreak,
+  [NODE.Continue]: lowerContinue,
+  [NODE.Array]: lowerArray,
+  [NODE.Hashmap]: lowerHashmap,
+  [NODE.Index]: lowerIndex,
+  [NODE.Dot]: lowerDot,
+  [NODE.Assignment]: lowerAssignment,
+  [NODE.Import]: lowerImport,
+  [NODE.Number]: lowerLeaf,
+  [NODE.String]: lowerLeaf,
+  [NODE.Bool]: lowerLeaf,
+  [NODE.Nil]: lowerLeaf,
+  [NODE.Identifier]: lowerLeaf,
+}
+
 fn lowerExpr(lowerer, node) {
   if !node { return nil }
 
-  if node.type == NODE.Arrow {
-    return lowerArrow(lowerer, node)
-  } else if node.type == NODE.If {
-    return lowerIf(lowerer, node)
-  } else if node.type == NODE.Binary {
-    return lowerBinary(lowerer, node)
-  } else if node.type == NODE.Unary {
-    return lowerUnary(lowerer, node)
-  } else if node.type == NODE.Logical {
-    return lowerLogical(lowerer, node)
-  } else if node.type == NODE.Grouping {
-    return lowerGrouping(lowerer, node)
-  } else if node.type == NODE.Let {
-    return lowerLet(lowerer, node)
-  } else if node.type == NODE.Block {
-    return lowerBlock(lowerer, node)
-  } else if node.type == NODE.Function {
-    return lowerFunction(lowerer, node)
-  } else if node.type == NODE.Call {
-    return lowerCall(lowerer, node)
-  } else if node.type == NODE.For {
-    return lowerFor(lowerer, node)
-  } else if node.type == NODE.ForIn {
-    return lowerForIn(lowerer, node)
-  } else if node.type == NODE.Collect {
-    return lowerCollect(lowerer, node)
-  } else if node.type == NODE.CollectIn {
-    return lowerCollectIn(lowerer, node)
-  } else if node.type == NODE.Return {
-    return lowerReturn(lowerer, node)
-  } else if node.type == NODE.Break {
-    return lowerBreak(lowerer, node)
-  } else if node.type == NODE.Continue {
-    return lowerContinue(lowerer, node)
-  } else if node.type == NODE.Array {
-    return lowerArray(lowerer, node)
-  } else if node.type == NODE.Hashmap {
-    return lowerHashmap(lowerer, node)
-  } else if node.type == NODE.Index {
-    return lowerIndex(lowerer, node)
-  } else if node.type == NODE.Dot {
-    return lowerDot(lowerer, node)
-  } else if node.type == NODE.Assignment {
-    return lowerAssignment(lowerer, node)
-  } else if node.type == NODE.Import {
-    return lowerImport(lowerer, node)
-  } else if node.type == NODE.Number or node.type == NODE.String or
-            node.type == NODE.Bool or node.type == NODE.Nil or
-            node.type == NODE.Identifier {
-    return lowerLeaf(lowerer, node)
-  } else {
-    // Unknown node type - this should never happen if parser is correct
-    addError(lowerer, node.id, "Unknown node type in lowering: " + (nameOf(NODE, node.type) or str(node.type)))
-    return node
+  if let handler = lowerExprHandlers[node.type] {
+    return handler(lowerer, node)
   }
+
+  // Unknown node type - this should never happen if parser is correct
+  addError(lowerer, node.id, "Unknown node type in lowering: " + (nameOf(NODE, node.type) or str(node.type)))
+  node
 }
 
 // ========================================

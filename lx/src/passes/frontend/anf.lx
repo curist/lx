@@ -721,57 +721,43 @@ fn anfImport(anf, node) {
 // Main Expression Dispatcher
 // ========================================
 
+let anfExprHandlers = .{
+  [NODE.If]: anfIf,
+  [NODE.Binary]: anfBinary,
+  [NODE.Unary]: anfUnary,
+  [NODE.Logical]: anfLogical,
+  [NODE.Grouping]: anfGrouping,
+  [NODE.Let]: anfLet,
+  [NODE.Block]: anfBlock,
+  [NODE.Function]: anfFunction,
+  [NODE.Call]: anfCall,
+  [NODE.For]: anfFor,
+  [NODE.Return]: anfReturn,
+  [NODE.Break]: anfBreak,
+  [NODE.Continue]: anfContinue,
+  [NODE.Array]: anfArray,
+  [NODE.Hashmap]: anfHashmap,
+  [NODE.Index]: anfIndex,
+  [NODE.Dot]: anfDot,
+  [NODE.Assignment]: anfAssignment,
+  [NODE.Import]: anfImport,
+  [NODE.IntrinsicCall]: anfIntrinsicCall,
+  [NODE.Number]: fn(anf, node) { copyNodeShallow(anf, node) },
+  [NODE.String]: fn(anf, node) { copyNodeShallow(anf, node) },
+  [NODE.Bool]: fn(anf, node) { copyNodeShallow(anf, node) },
+  [NODE.Nil]: fn(anf, node) { copyNodeShallow(anf, node) },
+  [NODE.Identifier]: fn(anf, node) { copyNodeShallow(anf, node) },
+}
+
 fn anfExpr(anf, node) {
   if !node { return nil }
 
-  if node.type == NODE.If {
-    return anfIf(anf, node)
-  } else if node.type == NODE.Binary {
-    return anfBinary(anf, node)
-  } else if node.type == NODE.Unary {
-    return anfUnary(anf, node)
-  } else if node.type == NODE.Logical {
-    return anfLogical(anf, node)
-  } else if node.type == NODE.Grouping {
-    return anfGrouping(anf, node)
-  } else if node.type == NODE.Let {
-    return anfLet(anf, node)
-  } else if node.type == NODE.Block {
-    return anfBlock(anf, node)
-  } else if node.type == NODE.Function {
-    return anfFunction(anf, node)
-  } else if node.type == NODE.Call {
-    return anfCall(anf, node)
-  } else if node.type == NODE.For {
-    return anfFor(anf, node)
-  } else if node.type == NODE.Return {
-    return anfReturn(anf, node)
-  } else if node.type == NODE.Break {
-    return anfBreak(anf, node)
-  } else if node.type == NODE.Continue {
-    return anfContinue(anf, node)
-  } else if node.type == NODE.Array {
-    return anfArray(anf, node)
-  } else if node.type == NODE.Hashmap {
-    return anfHashmap(anf, node)
-  } else if node.type == NODE.Index {
-    return anfIndex(anf, node)
-  } else if node.type == NODE.Dot {
-    return anfDot(anf, node)
-  } else if node.type == NODE.Assignment {
-    return anfAssignment(anf, node)
-  } else if node.type == NODE.Import {
-    return anfImport(anf, node)
-  } else if node.type == NODE.IntrinsicCall {
-    return anfIntrinsicCall(anf, node)
-  } else if node.type == NODE.Number or node.type == NODE.String or
-            node.type == NODE.Bool or node.type == NODE.Nil or
-            node.type == NODE.Identifier {
-    return copyNodeShallow(anf, node)
-  } else {
-    addError(anf, node.id, "Unknown node type in ANF: " + (nameOf(NODE, node.type) or str(node.type)))
-    return node
+  if let handler = anfExprHandlers[node.type] {
+    return handler(anf, node)
   }
+
+  addError(anf, node.id, "Unknown node type in ANF: " + (nameOf(NODE, node.type) or str(node.type)))
+  node
 }
 
 // ========================================

@@ -615,15 +615,15 @@ fn compileLogical(gen, node) {
   }
 }
 
-fn compileIf(gen, node) {
+fn compileIf(gen, node, mode) {
   compileValue(gen, node.condition)
   let thenJump = emitJump(gen, OP.JUMP_IF_FALSE, node.line)
-  compileValue(gen, node.then)
+  compileExpr(gen, node.then, mode)
   let elseJump = emitJump(gen, OP.JUMP, node.line)
   patchJump(gen, thenJump)
   if node.else {
-    compileValue(gen, node.else)
-  } else {
+    compileExpr(gen, node.else, mode)
+  } else if mode == MODE.VALUE {
     emitByte(gen, OP.NIL, node.line)
   }
   patchJump(gen, elseJump)
@@ -966,7 +966,7 @@ fn compileContinue(gen, node) {
   push(gen.continueOffsets[len(gen.continueOffsets) - 1], jump)
 }
 
-fn compileFor(gen, node) {
+fn compileFor(gen, node, mode) {
   // Record the loop base slot for break
   let loopBreakSlot = gen.nextLocalSlot
   push(gen.loopBaseSlots, loopBreakSlot)
@@ -1024,8 +1024,10 @@ fn compileFor(gen, node) {
 
   popScope(gen)
 
-  // For loops always return nil
-  emitByte(gen, OP.NIL, node.line)
+  // For loops always return nil (only emit in VALUE mode)
+  if mode == MODE.VALUE {
+    emitByte(gen, OP.NIL, node.line)
+  }
 }
 
 fn compileImport(gen, node) {
@@ -1053,10 +1055,7 @@ fn compileImport(gen, node) {
 }
 
 let valueExprHandlers = .{
-  [NODE.Block]: fn(gen, node) { compileBlock(gen, node, MODE.VALUE) },
   [NODE.Call]: compileCall,
-  [NODE.If]: compileIf,
-  [NODE.For]: compileFor,
   [NODE.Binary]: compileBinary,
   [NODE.Logical]: compileLogical,
   [NODE.Unary]: compileUnary,
@@ -1098,6 +1097,8 @@ let modeAwareHandlers = .{
   [NODE.Assignment]: compileAssignment,
   [NODE.Function]: compileFunctionExpr,
   [NODE.Block]: compileBlock,
+  [NODE.If]: compileIf,
+  [NODE.For]: compileFor,
 }
 
 fn compileExpr(gen, node, mode) {

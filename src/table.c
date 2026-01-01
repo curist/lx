@@ -52,7 +52,6 @@ static uint32_t hashDouble(double value) {
 }
 
 uint32_t hashValue(Value value) {
-#ifdef NAN_BOXING
   if (IS_STRING(value)) {
     return (uint32_t)AS_STRING(value)->hash;
   } else if (IS_NUMBER(value)) {
@@ -60,35 +59,18 @@ uint32_t hashValue(Value value) {
   } else {
     return 0;
   }
-#else
-  switch (value.type) {
-    case VAL_NUMBER: return hashDouble(AS_NUMBER(value));
-    case VAL_OBJ: {
-      if (IS_STRING(value)) {
-        return (uint32_t)AS_STRING(value)->hash;
-      }
-      return 0;
-    }
-    default: return 0;
-  }
-#endif
 }
 
 static inline Value normalizeNumberKey(Value key) {
-#ifdef NAN_BOXING
   // Only flonums need normalization for -0.0/+0.0; fixnums are already canonical
   if (IS_NUMBER(key)) {
     uint64_t bits = (uint64_t)key;
     if ((bits << 1) == 0) return NUMBER_VAL(0);
   }
-#else
-  if (IS_NUMBER(key) && AS_NUMBER(key) == 0) return NUMBER_VAL(0);
-#endif
   return key;
 }
 
 static inline bool numberKeyToArrayIndex(Value key, uint32_t* index) {
-#ifdef NAN_BOXING
   if (!IS_NUMBER(key)) return false;
 
   if (IS_FIXNUM(key)) {
@@ -131,19 +113,6 @@ static inline bool numberKeyToArrayIndex(Value key, uint32_t* index) {
   if (val > UINT32_MAX) return false;
   *index = (uint32_t)val;
   return true;
-#else
-  if (!IS_NUMBER(key)) return false;
-  double num = AS_NUMBER(key);
-  if (num == 0) {
-    *index = 0;
-    return true;
-  }
-  if (num < 0) return false;
-  uint32_t i = (uint32_t)num;
-  if ((double)i != num) return false;
-  *index = i;
-  return true;
-#endif
 }
 
 static bool shouldGrowArrayForIndex(const Table* table, uint32_t index) {

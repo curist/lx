@@ -182,12 +182,10 @@ static bool valueToInt64Exact(Value value, int64_t* out, const char* context) {
     return false;
   }
 
-#ifdef NAN_BOXING
   if (IS_FIXNUM(value)) {
     *out = AS_FIXNUM(value);
     return true;
   }
-#endif
 
   double num = AS_NUMBER(value);
   if (!isfinite(num)) {
@@ -228,12 +226,10 @@ static bool valueToInt32Exact(Value value, int32_t* out, const char* context) {
 }
 
 static bool pushInt64AsNumber(int64_t i, const char* context) {
-#ifdef NAN_BOXING
   if (fixnumFitsInt64(i)) {
     push(FIXNUM_VAL(i));
     return true;
   }
-#endif
 
   double d = (double)i;
   if ((int64_t)d != i) {
@@ -245,12 +241,10 @@ static bool pushInt64AsNumber(int64_t i, const char* context) {
 }
 
 static void pushInt64AsNumberOrFlonum(int64_t i) {
-#ifdef NAN_BOXING
   if (fixnumFitsInt64(i)) {
     push(FIXNUM_VAL(i));
     return;
   }
-#endif
   push(NUMBER_VAL((double)i));
 }
 
@@ -428,8 +422,7 @@ static bool callValue(Value callee, int argCount) {
         break; // Non-callable object type.
     }
   }
-  // XXX: we probably won't have classes?
-  runtimeError("Can only call functions and classes.");
+  runtimeError("Can only call functions.");
   return false;
 }
 
@@ -932,7 +925,6 @@ static InterpretResult runUntil(int stopFrameCount) {
       }
 
       case OP_ADD_INT: {
-#ifdef NAN_BOXING
         if (IS_FIXNUM(peek(0)) && IS_FIXNUM(peek(1))) {
           int64_t b = AS_FIXNUM(pop());
           int64_t a = AS_FIXNUM(pop());
@@ -944,7 +936,6 @@ static InterpretResult runUntil(int stopFrameCount) {
           }
           break;
         }
-#endif
         // Fallback to the generic semantics (including string concatenation).
         if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
           concatenate();
@@ -960,7 +951,6 @@ static InterpretResult runUntil(int stopFrameCount) {
       }
 
       case OP_SUBTRACT_INT: {
-#ifdef NAN_BOXING
         if (IS_FIXNUM(peek(0)) && IS_FIXNUM(peek(1))) {
           int64_t b = AS_FIXNUM(pop());
           int64_t a = AS_FIXNUM(pop());
@@ -972,7 +962,6 @@ static InterpretResult runUntil(int stopFrameCount) {
           }
           break;
         }
-#endif
         if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
           runtimeError("Operands must be numbers.");
           return INTERPRET_RUNTIME_ERROR;
@@ -984,7 +973,6 @@ static InterpretResult runUntil(int stopFrameCount) {
       }
 
       case OP_MULTIPLY_INT: {
-#ifdef NAN_BOXING
         if (IS_FIXNUM(peek(0)) && IS_FIXNUM(peek(1))) {
           int64_t b = AS_FIXNUM(pop());
           int64_t a = AS_FIXNUM(pop());
@@ -996,7 +984,6 @@ static InterpretResult runUntil(int stopFrameCount) {
           }
           break;
         }
-#endif
         if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
           runtimeError("Operands must be numbers.");
           return INTERPRET_RUNTIME_ERROR;
@@ -1008,7 +995,6 @@ static InterpretResult runUntil(int stopFrameCount) {
       }
 
       case OP_NEGATE_INT: {
-#ifdef NAN_BOXING
         if (IS_FIXNUM(peek(0))) {
           int64_t a = AS_FIXNUM(pop());
           if (a == FIXNUM_MIN) {
@@ -1018,7 +1004,6 @@ static InterpretResult runUntil(int stopFrameCount) {
           }
           break;
         }
-#endif
         if (!IS_NUMBER(peek(0))) {
           runtimeError("Operand must be a number.");
           return INTERPRET_RUNTIME_ERROR;
@@ -1269,7 +1254,6 @@ static InterpretResult runUntil(int stopFrameCount) {
           return INTERPRET_RUNTIME_ERROR;
         }
         Value result;
-#ifdef NAN_BOXING
         if (IS_FIXNUM(local)) {
           int64_t a = AS_FIXNUM(local);
           int64_t r;
@@ -1283,9 +1267,6 @@ static InterpretResult runUntil(int stopFrameCount) {
         } else {
           result = NUMBER_VAL(AS_NUMBER(local) + (double)imm);
         }
-#else
-        result = NUMBER_VAL(AS_NUMBER(local) + (double)imm);
-#endif
         slots[slot] = result;
         push(result); // Like SET_LOCAL, leaves value on stack
         break;

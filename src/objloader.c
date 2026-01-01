@@ -40,14 +40,12 @@ double readDouble(const uint8_t* bytes) {
 }
 
 static Value numberToValueCanonical(double num) {
-#ifdef NAN_BOXING
   if (isfinite(num) && num >= (double)INT64_MIN && num <= (double)INT64_MAX) {
     int64_t i = (int64_t)num;
     if ((double)i == num && fixnumFitsInt64(i)) {
       return FIXNUM_VAL(i);
     }
   }
-#endif
   return NUMBER_VAL(num);
 }
 

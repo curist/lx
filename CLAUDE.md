@@ -5,14 +5,14 @@ This document contains important information for AI assistants working with the 
 ## Quick Reference: Common Gotchas
 
 1. **`type()` returns `"map"` not `"hashmap"`** ⚠️ MOST COMMON MISTAKE
-2. **Imports are relative to cwd**, not the importing file
+2. **Imports are relative to project root** - determined by `.lxroot` marker file
 3. **No `this` keyword** - explicitly reference objects
 4. **Forward declarations required** for mutual recursion (until Phase 10+)
 5. **Closure capture by value** for primitives - use objects for mutable state
 6. **No string interpolation** - use concatenation
 7. **No `++`/`--` operators** - use `i = i + 1`
 8. **Hashmaps use `.{ }` syntax** - dot prefix required
-9. **Opcode/object changes may require bootstrapping** - embedded bytecode headers must be regenerated (see `lx/scripts/README.md`)
+9. **Opcode/object changes may require bootstrapping** - see Bootstrapping section below
 10. **`nameOf()` expects an `enum`** - it no longer accepts generic maps/records
 
 ## Communication Guidelines
@@ -321,13 +321,26 @@ Common globals (from `globals.lx`):
 
 ## Import System
 
-**CRITICAL:** Imports are resolved relative to **current working directory (cwd)**, NOT relative to the importing file.
+**Module Resolution:**
+
+Imports are resolved relative to the **project root**, which is discovered by:
+1. Starting from the **entry file's directory** (not cwd)
+2. Walking up parent directories to find a `.lxroot` marker file
+3. Using that directory as the project root
+4. If no `.lxroot` found, falling back to `LX_ROOT` env var or entry file's directory
 
 ```lx
-// These paths are resolved from cwd
-let parser = import "src/parser.lx"     // Resolves to {cwd}/src/parser.lx
-let suite = import "test/helpers.lx"    // Resolves to {cwd}/test/helpers.lx
+// These paths are resolved relative to project root
+let parser = import "src/parser.lx"     // Resolves to {projectRoot}/src/parser.lx
+let suite = import "test/helpers.lx"    // Resolves to {projectRoot}/test/helpers.lx
 ```
+
+**Example:**
+- Entry file: `lx/scripts/build.lx`
+- Entry file directory: `lx/scripts/`
+- Search for `.lxroot`: walks up to find `lx/.lxroot`
+- Project root: `lx/`
+- Import `"src/driver.lx"` → resolves to `lx/src/driver.lx`
 
 **Module exports:**
 - If a file exports just a function: `parse` (last line), import it directly:
@@ -381,3 +394,76 @@ make test
 make
 make test
 ```
+
+## Bootstrapping
+
+The lx compiler is **self-hosted** - it's written in lx and compiles itself. The embedded bytecode headers (`include/lx/lxlx.h` and `include/lx/lxglobals.h`) contain the compiled compiler and must be regenerated when core compiler code changes.
+
+### When to Bootstrap
+
+Regenerate headers when you modify:
+- Compiler source files (`lx/src/`, `lx/main.lx`, `lx/globals.lx`)
+- Module resolution logic
+- Bytecode format or opcodes
+- Object file format
+
+### How to Bootstrap
+
+**Normal build** (uses system `lx` compiler):
+```bash
+make          # Builds ./out/lx using embedded headers
+make test     # Runs tests
+```
+
+**Bootstrap build** (uses newly built compiler to rebuild itself):
+```bash
+# Step 1: Build with system compiler
+make clean
+make
+
+# Step 2: Rebuild using the newly built compiler
+LX=./out/lx make -B prepare build
+
+# Step 3: Verify the build is stable
+make test
+```
+
+**What happens during bootstrapping:**
+1. `scripts/build-lxlx.sh` runs `lx run lx/scripts/build-lxlx-driver.lx`
+2. Driver compiles `lx/main.lx` and all dependencies
+3. Generates `out/lxlx-new.lxobj` bytecode
+4. Converts to C header format in `include/lx/lxlx.h`
+5. Same process for `lxglobals.h`
+6. C compiler links headers into `out/lx` binary
+
+**Debugging bootstrap issues:**
+```bash
+# Test build script directly
+lx run lx/scripts/build-lxlx-driver.lx > out/test.lxobj
+
+# Use new compiler to compile a simple file
+./out/lx run /tmp/test.lx
+
+# Verify module resolution
+./out/lx compile lx/main.lx
+```
+
+**Common issues:**
+- **Path doubling** (`lx/lx/main.lx`) - Check entry file paths in build scripts use `lx/` prefix
+- **Wrong project root** - Ensure `.lxroot` exists in `lx/` directory
+- **Infinite loops** - Check for circular dependencies in module resolution
+- **Build hangs** - Set timeout when testing: `timeout 30 make prepare build`
+
+### Module Resolution in Build Scripts
+
+Build scripts in `lx/scripts/` must use `forEntry()` with correct paths:
+
+```lx
+// ✅ CORRECT - Full path from repo root
+let resolver = ModuleResolution.forEntry("lx/main.lx")
+
+// ❌ WRONG - Will find wrong project root
+let resolver = ModuleResolution.forEntry("main.lx")
+```
+
+The resolver finds `.lxroot` by walking up from the entry file's directory.

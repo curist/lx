@@ -344,6 +344,13 @@ let DOCS = .{
     markdown: "`join(values: array, sep: string) -> string`\nJoin stringified values with a separator.",
     source: "lx/README.md",
   },
+  ["keys"]: .{
+    name: "keys",
+    signature: "keys(x: map | enum) -> array[string]",
+    description: "Keys/names.",
+    markdown: "`keys(x: map | enum) -> array[string]`\nKeys/names.",
+    source: "lx/README.md",
+  },
   ["last"]: .{
     name: "last",
     signature: "last(coll: array | string) -> any",

@@ -1354,8 +1354,8 @@ static InterpretResult runUntil(int stopFrameCount) {
         Value object = slots[arrSlot];
         Value key = slots[idxSlot];
 
-        if (!IS_ENUM(object) && !IS_HASHMAP(object) && !IS_ARRAY(object)) {
-          runtimeError("Only array / hashmap / enum can get value by index.");
+        if (!IS_ENUM(object) && !IS_HASHMAP(object) && !IS_ARRAY(object) && !IS_STRING(object)) {
+          runtimeError("Only array / hashmap / string / enum can get value by index.");
           return INTERPRET_RUNTIME_ERROR;
         }
 
@@ -1386,14 +1386,30 @@ static InterpretResult runUntil(int stopFrameCount) {
           if (!tableGet(table, key, &result)) {
             result = NIL_VAL;
           }
-        } else {
-          // Hashmap
+        } else if (IS_HASHMAP(object)) {
           if (!IS_NUMBER(key) && !IS_STRING(key)) {
             runtimeError("Hashmap key type must be number or string.");
             return INTERPRET_RUNTIME_ERROR;
           }
           Table* table = &AS_HASHMAP(object);
           if (!tableGet(table, key, &result)) {
+            result = NIL_VAL;
+          }
+        } else {
+          // String
+          if (!IS_NUMBER(key)) {
+            runtimeError("String index type must be a number.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          ObjString* s = AS_STRING(object);
+          char* ch = NULL;
+          size_t index = (size_t)AS_NUMBER(key);
+          if (index < s->length) {
+            ch = &s->chars[index];
+          }
+          if (ch != NULL) {
+            result = OBJ_VAL(copyString(ch, 1));
+          } else {
             result = NIL_VAL;
           }
         }

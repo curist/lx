@@ -21,11 +21,11 @@ echo "const uint8_t lxglobals_bytecode[] = {" >> $TARGET
 # If $LX is the in-repo compiler (`out/lx`), use fast-path compile.
 # Otherwise, use the driver pipeline to avoid bootstrapping mismatches.
 if [[ "$LX" == *"/out/lx" || "$LX" == "out/lx" || "$LX" == "./out/lx" ]]; then
-  if ! $LX compile ./globals.lx > "$OBJ"; then
-    $LX run scripts/build-globals-driver.lx > /dev/null
+  if ! $LX compile lx/globals.lx > "$OBJ"; then
+    $LX run lx/scripts/build-globals-driver.lx > /dev/null
   fi
 else
-  $LX run scripts/build-globals-driver.lx > /dev/null
+  $LX run lx/scripts/build-globals-driver.lx > /dev/null
 fi
 xxd -i < "$OBJ" >> $TARGET
 echo "};" >> $TARGET

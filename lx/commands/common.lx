@@ -9,15 +9,16 @@ let OP = (import "src/types.lx").OP
 
 let DEBUG_BUILD = true
 
-fn loadSource(path, sourceOverride, overridePath) {
+fn loadSource(path, sourceOverride, overridePath, resolver) {
   if sourceOverride and path == overridePath { return sourceOverride }
-  ModuleResolution.slurpPath(path)
+  resolver.slurpPath(path)
 }
 
-fn makeDriverWithSource(sourceOverride, overridePath) {
+fn makeDriverWithSource(sourceOverride, overridePath, entryPath) {
+  let resolver = ModuleResolution.forEntry(entryPath)
   driver.make(.{
     withTypecheck: false,
-    loadSource: fn(p) { loadSource(p, sourceOverride, overridePath) },
+    loadSource: fn(p) { loadSource(p, sourceOverride, overridePath, resolver) },
   })
 }
 
@@ -72,8 +73,36 @@ fn compileWithDriver(driverInstance, path) {
 }
 
 fn compilePathToFunction(path, sourceOverride) {
-  let d = makeDriverWithSource(sourceOverride, path)
-  compileWithDriver(d, path)
+  let resolver = ModuleResolution.forEntry(path)
+  let d = makeDriverWithSource(sourceOverride, path, path)
+
+  // Convert path to module specifier relative to project root
+  let roots = resolver.roots()
+  let moduleSpec = path
+  if roots and roots.projectRoot {
+    let absPath = path
+    if len(absPath) > 0 and absPath[0] != "/" {
+      absPath = Lx.path.join(Lx.fs.cwd(), absPath)
+    }
+    let prefix = roots.projectRoot + "/"
+    if len(absPath) >= len(prefix) {
+      let matches = true
+      for let i = 0; i < len(prefix); i = i + 1 {
+        if absPath[i] != prefix[i] {
+          matches = false
+          break
+        }
+      }
+      if matches {
+        moduleSpec = ""
+        for let i = len(prefix); i < len(absPath); i = i + 1 {
+          moduleSpec = moduleSpec + absPath[i]
+        }
+      }
+    }
+  }
+
+  compileWithDriver(d, moduleSpec)
 }
 
 fn bytesToString(bytes) {
@@ -84,13 +113,14 @@ fn bytesToString(bytes) {
   byteString
 }
 
-fn slurpUserPath(path) {
+fn slurpUserPath(path, entryPath) {
   // Prefer reading literal filesystem paths when they exist relative to CWD
   // (e.g. `out/foo.lxobj`), otherwise fall back to module resolution (`cmd/...`).
   if Lx and Lx.fs and Lx.fs.exists and Lx.fs.exists(path) {
     return slurp(path)
   }
-  ModuleResolution.slurpPath(path)
+  let resolver = ModuleResolution.forEntry(entryPath or path)
+  resolver.slurpPath(path)
 }
 
 fn printRuntimeError(err) {

@@ -23,10 +23,11 @@ println("=== Building lxlx.h with NEW codegen (PR3) ===")
 println("")
 
 // Create driver with NEW codegen (PR3)
+let resolver = ModuleResolution.forEntry("lx/main.lx")
 let d = driver.make(.{
   profile: "default",
   withTypecheck: false,
-  loadSource: fn(path) { ModuleResolution.slurpPath(path) }
+  loadSource: fn(path) { resolver.slurpPath(path) }
 })
 
 // Codegen with recursive module compilation

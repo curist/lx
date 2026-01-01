@@ -24,11 +24,11 @@ echo "const uint8_t lxlx_bytecode[] = {" >> $TARGET
 # If $LX is the in-repo compiler (`out/lx`), use fast-path compile.
 # Otherwise, use the driver pipeline to avoid bootstrapping mismatches.
 if [[ "$LX" == *"/out/lx" || "$LX" == "out/lx" || "$LX" == "./out/lx" ]]; then
-  if ! $LX compile main.lx > "$OBJ"; then
-    $LX run scripts/build-lxlx-driver.lx > /dev/null
+  if ! $LX compile lx/main.lx > "$OBJ"; then
+    $LX run lx/scripts/build-lxlx-driver.lx > /dev/null
   fi
 else
-  $LX run scripts/build-lxlx-driver.lx > /dev/null
+  $LX run lx/scripts/build-lxlx-driver.lx > /dev/null
 fi
 xxd -i < "$OBJ" >> $TARGET
 echo "};" >> $TARGET

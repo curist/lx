@@ -18,10 +18,11 @@ fn run(ctx) {
     Lx.exit(28)
   }
 
+  let resolver = ModuleResolution.forEntry(entry)
   let d = driver.make(.{
     profile: "tooling",
     withTypecheck: true,
-    loadSource: fn(p) { ModuleResolution.slurpPath(p) },
+    loadSource: fn(p) { resolver.slurpPath(p) },
   })
 
   if !d {

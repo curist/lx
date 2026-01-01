@@ -157,7 +157,7 @@ fn pathToUri(path) {
 
 fn pathToSpecifier(path) {
   let roots = ModuleResolution.roots()
-  let base = roots and roots.moduleBase or nil
+  let base = roots and roots.projectRoot or nil
   if !base {
     return path
   }

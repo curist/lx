@@ -1,0 +1,16 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let ModuleResolution = import "src/module_resolution.lx"
+
+test("ModuleResolution - fallback to project root for non-lx paths", fn(assert) {
+  let resolved = ModuleResolution.resolvePath("benchmarks/lx/sum_loop.lx")
+  assert.truthy(resolved)
+  assert.equal(Lx.fs.exists(resolved), true)
+
+  let source = ModuleResolution.slurpPath("benchmarks/lx/sum_loop.lx")
+  assert.truthy(source)
+  assert.truthy(len(source) > 0)
+})
+
+suite.run()

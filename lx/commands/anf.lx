@@ -2,7 +2,6 @@
 let parse = import "src/passes/frontend/parser.lx"
 let lower = import "src/passes/frontend/lower.lx"
 let anf = import "src/passes/frontend/anf.lx"
-let ModuleResolution = import "src/module_resolution.lx"
 let types = import "src/types.lx"
 
 let NODE = types.NODE
@@ -154,8 +153,6 @@ fn dumpNode(node, indent) {
   }
 }
 
-fn loadSource(path) { ModuleResolution.slurpPath(path) }
-
 fn printErrors(errors) {
   if !errors or len(errors) == 0 { return }
   for let i = 0; i < len(errors); i = i + 1 {
@@ -185,7 +182,7 @@ fn run(ctx) {
     Lx.exit(28)
   }
 
-  let source = loadSource(path)
+  let source = slurp(path)
   if !source {
     groanln("Failed to open", path)
     Lx.exit(2)
@@ -221,4 +218,3 @@ fn run(ctx) {
   summary: "Dump ANF for a source file (debug)",
   run: run,
 }
-

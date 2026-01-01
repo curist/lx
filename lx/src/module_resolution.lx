@@ -14,7 +14,9 @@
 //
 // Paths are kept simple:
 // - No tilde expansion, no shell expansion.
-// - Non-absolute paths are joined against either the module base or project root.
+// - Non-absolute paths are joined against the module base, with a fallback to the
+//   project root when the module-base path doesn't exist (useful for top-level
+//   folders like `benchmarks/` that live outside `lx/`).
 
 let _cached = .{
   ok: false,
@@ -28,6 +30,19 @@ fn _startsWithLxSlash(path) {
 
 fn _isAbs(path) {
   path and len(path) > 0 and path[0] == "/"
+}
+
+fn _pathExists(path) {
+  if !path or !Lx or !Lx.fs {
+    return false
+  }
+  if Lx.fs.stat {
+    return Lx.fs.stat(path) != nil
+  }
+  if Lx.fs.exists {
+    return Lx.fs.exists(path)
+  }
+  false
 }
 
 fn _computeRoots() {
@@ -111,8 +126,15 @@ fn resolvePath(path) {
     return Lx.path.join(roots.projectRoot, path)
   }
 
-  // Otherwise, resolve from module base (usually <projectRoot>/lx).
-  Lx.path.join(roots.moduleBase, path)
+  // Otherwise, resolve from module base (usually <projectRoot>/lx), with a
+  // fallback to <projectRoot> when the module-base path doesn't exist.
+  let fromModuleBase = Lx.path.join(roots.moduleBase, path)
+  if roots.moduleBase != roots.projectRoot {
+    let fromProjectRoot = Lx.path.join(roots.projectRoot, path)
+    if _pathExists(fromModuleBase) { return fromModuleBase }
+    if _pathExists(fromProjectRoot) { return fromProjectRoot }
+  }
+  fromModuleBase
 }
 
 fn slurpPath(path) {

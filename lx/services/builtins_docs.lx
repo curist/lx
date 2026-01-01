@@ -1,128 +1,23 @@
 let data = import "services/builtins_docs_data.lx"
 
-fn startsWith(s, prefix) {
-  if !s or !prefix { return false }
-  if len(prefix) > len(s) { return false }
-  for let i = 0; i < len(prefix); i = i + 1 {
-    if s[i] != prefix[i] { return false }
-  }
-  true
-}
-
-fn slice(s, start, endExclusive) {
-  if !s { return s }
-  let n = len(s)
-  let a = start or 0
-  let b = endExclusive or n
-  if a < 0 { a = 0 }
-  if b < a { b = a }
-  if a > n { a = n }
-  if b > n { b = n }
-  let out = []
-  for let i = a; i < b; i = i + 1 {
-    push(out, s[i])
-  }
-  join(out, "")
-}
-
-fn parseLinesToSet(listStr) {
-  let out = .{}
-  if !listStr or listStr == "" {
-    return out
-  }
-  let lines = split(listStr, "\n")
-  for let i = 0; i < len(lines); i = i + 1 {
-    let name = lines[i]
-    if name and name != "" {
-      out[name] = true
-    }
-  }
-  out
-}
-
-fn tsvSplitLine(line) {
-  // 4 columns: name \t signature \t description \t source
-  let cols = []
-  let start = 0
-  for let i = 0; i <= len(line); i = i + 1 {
-    let atEnd = i == len(line)
-    if atEnd or line[i] == "\t" {
-      push(cols, slice(line, start, i))
-      start = i + 1
-    }
-  }
-  cols
-}
-
-fn buildDocsFromTsv(tsv) {
-  let docs = .{}
-  if !tsv or tsv == "" {
-    return docs
-  }
-  let lines = split(tsv, "\n")
-  for let i = 0; i < len(lines); i = i + 1 {
-    let line = lines[i]
-    if !line or line == "" { continue }
-    let cols = tsvSplitLine(line)
-    let name = (len(cols) > 0 and cols[0]) or nil
-    if !name or name == "" { continue }
-
-    let signature = (len(cols) > 1 and cols[1]) or nil
-    let description = (len(cols) > 2 and cols[2]) or nil
-    let source = (len(cols) > 3 and cols[3]) or nil
-
-    // Normalize empty -> nil
-    if signature == "" { signature = nil }
-    if description == "" { description = nil }
-    if source == "" { source = nil }
-
-    let markdown = nil
-    if signature {
-      markdown = "`" + signature + "`"
-      if description {
-        markdown = markdown + "\n" + description
-      }
-    } else if description {
-      markdown = description
-    }
-
-    docs[name] = .{
-      name: name,
-      signature: signature,
-      description: description,
-      markdown: markdown,
-      source: source,
-    }
-  }
-  docs
-}
-
-let _cache = .{ ok: false, docs: nil, nativeNames: nil, preludeNames: nil }
-
-fn ensureLoaded() {
-  if _cache.ok {
-    return
-  }
-  _cache.ok = true
-  _cache.docs = buildDocsFromTsv(data and data.DOCS_TSV)
-  _cache.nativeNames = parseLinesToSet(data and data.NATIVE_NAMES_LIST)
-  _cache.preludeNames = parseLinesToSet(data and data.PRELUDE_NAMES_LIST)
-}
+// Data is now loaded directly as proper lx data structures.
+// No parsing needed - just use the hashmaps directly.
+let _docs = data and data.DOCS or .{}
+let _nativeNames = data and data.NATIVE_NAMES or .{}
+let _preludeNames = data and data.PRELUDE_NAMES or .{}
 
 fn docFor(name) {
-  ensureLoaded()
   if !name {
     return nil
   }
 
-  let doc = _cache.docs and _cache.docs[name]
+  let doc = _docs[name]
   if doc {
     return doc
   }
 
   // If it's a known native builtin but undocumented, return a placeholder.
-  let nativeNames = _cache.nativeNames
-  if nativeNames and nativeNames[name] {
+  if _nativeNames[name] {
     return .{
       name: name,
       signature: nil,
@@ -133,8 +28,7 @@ fn docFor(name) {
   }
 
   // If it's a known prelude builtin but undocumented, return a placeholder.
-  let preludeNames = _cache.preludeNames
-  if preludeNames and preludeNames[name] {
+  if _preludeNames[name] {
     return .{
       name: name,
       signature: nil,

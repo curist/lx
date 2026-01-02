@@ -27,7 +27,7 @@ static int byteInstruction(const char* name, Chunk* chunk, int offset) {
 static int jumpInstruction(const char* name, int sign, Chunk* chunk, int offset) {
   uint16_t jump = (uint16_t)(chunk->code[offset + 1] << 8);
   jump |= chunk->code[offset + 2];
-  printf("%-16s %4d -> %d\n", name, offset,
+  printf("%-17s %4d -> %d\n", name, offset,
          offset + 3 + sign * jump);
   return offset + 3;
 }
@@ -82,6 +82,18 @@ static int threeByteInstruction(const char* name, Chunk* chunk, int offset) {
   uint8_t byte3 = chunk->code[offset + 3];
   printf("%-16s %4d %4d %4d\n", name, byte1, byte2, byte3);
   return offset + 4;
+}
+
+static int forLoopInstruction(const char* name, int sign, Chunk* chunk, int offset) {
+  uint8_t i_slot = chunk->code[offset + 1];
+  uint8_t limit_slot = chunk->code[offset + 2];
+  uint8_t cmp_kind = chunk->code[offset + 3];
+  uint16_t jump = (uint16_t)(chunk->code[offset + 4] << 8);
+  jump |= chunk->code[offset + 5];
+  const char* cmp_str = (cmp_kind == 0) ? "<" : "<=";
+  printf("%-19s i=%d limit=%d %s -> %d\n", name, i_slot, limit_slot, cmp_str,
+         offset + 6 + sign * jump);
+  return offset + 6;
 }
 
 int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
@@ -259,6 +271,10 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return constantLongInstruction("OP_COALESCE_CONST_LONG", chunk, offset);
     case OP_IS_EVEN:
       return simpleInstruction("OP_IS_EVEN", offset);
+    case OP_FORPREP_1:
+      return forLoopInstruction("OP_FORPREP_1", 1, chunk, offset);
+    case OP_FORLOOP_1:
+      return forLoopInstruction("OP_FORLOOP_1", -1, chunk, offset);
     case OP_RETURN:
       return simpleInstruction("OP_RETURN", offset);
     default:

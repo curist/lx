@@ -97,6 +97,10 @@ typedef enum {
   OP_COALESCE_CONST,      // Replace TOS with constant if TOS is falsy
   OP_COALESCE_CONST_LONG,
   OP_IS_EVEN,             // Test if TOS integer is even (hot-path for % 2 == 0)
+
+  // Fused numeric for loops (appended to avoid renumbering existing opcodes)
+  OP_FORPREP_1,           // Numeric for loop prepare (step=1)
+  OP_FORLOOP_1,           // Numeric for loop iterate (step=1)
 } OpCode;
 
 typedef struct {

@@ -986,7 +986,238 @@ fn compileContinue(gen, node) {
   push(gen.continueOffsets[len(gen.continueOffsets) - 1], jump)
 }
 
+// Fused numeric loop pattern matching and codegen (Phase 1 MVP)
+// Only fuses when limit is an Identifier (no temp allocation)
+fn matchNumericForLoop(gen, node) {
+  if !node.init or !node.condition or !node.update {
+    return nil
+  }
+
+  // Match init: let i = <expr>
+  if node.init.type != NODE.Let {
+    return nil
+  }
+  if !node.init.name or node.init.name.type != NODE.Identifier {
+    return nil
+  }
+  let i_name = node.init.name.value or node.init.name.name or node.init.name.lexeme
+
+  // Phase 1 MVP: Init value must be a number literal (ensures fixnum at runtime)
+  if !node.init.init or node.init.init.type != NODE.Number {
+    return nil
+  }
+  // Verify it's an integer value (not a float)
+  let init_value = node.init.init.value
+  if init_value != int(init_value) {
+    return nil
+  }
+
+  // Match condition: i < limit or i <= limit
+  if node.condition.type != NODE.Binary { return nil }
+  let cond = node.condition
+  let cmp_kind = nil
+  let op = cond.operator.lexeme or cond.operator
+  if op == "<" {
+    cmp_kind = 0
+  } else {
+    if op == "<=" {
+      cmp_kind = 1
+    } else {
+      return nil
+    }
+  }
+
+  // Check left side is identifier i
+  if cond.left.type != NODE.Identifier { return nil }
+  let left_name = cond.left.value or cond.left.name or cond.left.lexeme
+  if left_name != i_name { return nil }
+
+  // Phase 1 MVP: Right side (limit) must be an Identifier (no temp allocation)
+  if cond.right.type != NODE.Identifier { return nil }
+  let limit_node = cond.right
+
+  // Match update: i = i + 1
+  if node.update.type != NODE.Assignment { return nil }
+  if !node.update.target or node.update.target.type != NODE.Identifier { return nil }
+  let update_target_name = node.update.target.value or node.update.target.name or node.update.target.lexeme
+  if update_target_name != i_name { return nil }
+
+  let update_value = node.update.value
+  if update_value.type != NODE.Binary { return nil }
+  let update_op = update_value.operator.lexeme or update_value.operator
+  if update_op != "+" { return nil }
+  if update_value.left.type != NODE.Identifier { return nil }
+  let update_left_name = update_value.left.value or update_value.left.name or update_value.left.lexeme
+  if update_left_name != i_name { return nil }
+  if update_value.right.type != NODE.Number or update_value.right.value != 1 { return nil }
+
+  .{ i_name, limit_node, cmp_kind }
+}
+
+fn compileNumericForLoop(gen, node, match, mode) {
+  // Setup loop tracking (same as regular compileFor)
+  let loopBreakSlot = gen.nextLocalSlot
+  push(gen.loopBaseSlots, loopBreakSlot)
+
+  pushScope(gen, node)
+  let prevScopeDepth = gen.loopScopeDepth
+  gen.loopScopeDepth = gen.scopeInfo[node.id] and gen.scopeInfo[node.id].depth or 0
+
+  push(gen.breakOffsets, [])
+  push(gen.continueOffsets, [])
+
+  // Compile init and derive i_slot from validated slot allocation
+  // Phase 1 MVP: require init allocates exactly one local (the loop var)
+  let slotBeforeInit = gen.nextLocalSlot
+  compileStmt(gen, node.init)
+  let slotAfterInit = gen.nextLocalSlot
+
+  // Validate that init allocated exactly one local (the loop variable)
+  if slotAfterInit != slotBeforeInit + 1 {
+    // Init allocated 0 locals (error) or >1 locals (complex expr, not supported)
+    pop(gen.continueOffsets)
+    pop(gen.breakOffsets)
+    gen.loopScopeDepth = prevScopeDepth
+    pop(gen.loopBaseSlots)
+    popScope(gen)
+    return false
+  }
+  let i_slot = slotBeforeInit
+
+  // Record loop continue slot (right after init, before body)
+  let loopContinueSlot = gen.nextLocalSlot
+  push(gen.loopContinueSlots, loopContinueSlot)
+
+  // Resolve limit identifier to its existing slot (no temp allocation!)
+  // Strategy: use resolver binding to find the declaration node ID,
+  // then look up that declaration in gen.emittedLocals
+  let limit_binding = gen.resolvedNames[match.limit_node.id]
+  if !limit_binding or limit_binding.kind != "local" or limit_binding.declaredAt == nil {
+    // Cannot resolve limit variable, fall back
+    pop(gen.loopContinueSlots)
+    pop(gen.continueOffsets)
+    pop(gen.breakOffsets)
+    gen.loopScopeDepth = prevScopeDepth
+    pop(gen.loopBaseSlots)
+    popScope(gen)
+    return false
+  }
+
+  // Look up the declaration node ID in emittedLocals
+  let limit_slot = gen.emittedLocals[limit_binding.declaredAt]
+  if limit_slot == nil {
+    // Cannot find slot for limit variable, fall back
+    pop(gen.loopContinueSlots)
+    pop(gen.continueOffsets)
+    pop(gen.breakOffsets)
+    gen.loopScopeDepth = prevScopeDepth
+    pop(gen.loopBaseSlots)
+    popScope(gen)
+    return false
+  }
+
+  // CRITICAL INVARIANT: For fused loops, both i and limit slots must be
+  // below loopContinueSlot (live across iterations). Anything >= loopContinueSlot
+  // can be overwritten by loop body locals.
+  if i_slot >= loopContinueSlot or limit_slot >= loopContinueSlot {
+    // Slots not stable across iterations, fall back to generic loop
+    pop(gen.loopContinueSlots)
+    pop(gen.continueOffsets)
+    pop(gen.breakOffsets)
+    gen.loopScopeDepth = prevScopeDepth
+    pop(gen.loopBaseSlots)
+    popScope(gen)
+    return false
+  }
+
+  // Additional safety: verify slots are in valid range
+  if i_slot < 0 or i_slot >= 256 or limit_slot < 0 or limit_slot >= 256 {
+    pop(gen.loopContinueSlots)
+    pop(gen.continueOffsets)
+    pop(gen.breakOffsets)
+    gen.loopScopeDepth = prevScopeDepth
+    pop(gen.loopBaseSlots)
+    popScope(gen)
+    return false
+  }
+
+  // Sanity check: i and limit must not alias in bytecode space
+  // (localSlot adds 1, so this checks bytecode slot collision)
+  if localSlot(i_slot) == localSlot(limit_slot) {
+    pop(gen.loopContinueSlots)
+    pop(gen.continueOffsets)
+    pop(gen.breakOffsets)
+    gen.loopScopeDepth = prevScopeDepth
+    pop(gen.loopBaseSlots)
+    popScope(gen)
+    return false
+  }
+
+  // Emit FORPREP_1 with placeholder for exit jump
+  let prepOffset = len(gen.currentFunction.chunk.bytecode)
+  emit1(gen, OP.FORPREP_1, node.line)
+  emit1(gen, localSlot(i_slot), node.line)
+  emit1(gen, localSlot(limit_slot), node.line)
+  emit1(gen, match.cmp_kind, node.line)
+  let exitJumpHi = len(gen.currentFunction.chunk.bytecode)
+  emit2(gen, 0, 0, node.line)  // Placeholder for forward jump
+
+  // Emit loop body
+  let loopBodyStart = len(gen.currentFunction.chunk.bytecode)
+  compileStmt(gen, node.body)
+
+  // Patch continues to jump here (right before FORLOOP_1)
+  patchContinues(gen)
+
+  // Emit FORLOOP_1 with backward jump to body start
+  emit1(gen, OP.FORLOOP_1, node.line)
+  emit1(gen, localSlot(i_slot), node.line)
+  emit1(gen, localSlot(limit_slot), node.line)
+  emit1(gen, match.cmp_kind, node.line)
+  let backJump = len(gen.currentFunction.chunk.bytecode) + 2 - loopBodyStart
+  emit2(gen, int(backJump / 256), backJump % 256, node.line)
+
+  // Patch exit jump from FORPREP_1
+  let exitOffset = len(gen.currentFunction.chunk.bytecode) - (prepOffset + 6)
+  gen.currentFunction.chunk.bytecode[exitJumpHi] = int(exitOffset / 256)
+  gen.currentFunction.chunk.bytecode[exitJumpHi + 1] = exitOffset % 256
+
+  // Cleanup (same as regular compileFor)
+  endScope(gen, node)
+  patchBreaks(gen)
+
+  gen.loopScopeDepth = prevScopeDepth
+  pop(gen.breakOffsets)
+  pop(gen.continueOffsets)
+  pop(gen.loopBaseSlots)
+  pop(gen.loopContinueSlots)
+
+  popScope(gen)
+
+  // For loops always return nil
+  if mode == MODE.VALUE {
+    emitByte(gen, OP.NIL, node.line)
+  }
+
+  true
+}
+
 fn compileFor(gen, node, mode) {
+  // Try to fuse numeric loops (Phase 1 MVP)
+  // Only fuses when:
+  // 1. Pattern matches: for let i = start; i <//<= limit; i = i + 1 { body }
+  // 2. Both i and limit are Identifiers resolved to local slots
+  // 3. Both slots < loopContinueSlot (stable across iterations)
+  let match = matchNumericForLoop(gen, node)
+  if match {
+    let success = compileNumericForLoop(gen, node, match, mode)
+    if success {
+      return
+    }
+    // If fusion failed safety checks, fall through to generic loop
+  }
+
+  // Generic loop compilation (unchanged)
   // Record the loop base slot for break
   let loopBreakSlot = gen.nextLocalSlot
   push(gen.loopBaseSlots, loopBreakSlot)

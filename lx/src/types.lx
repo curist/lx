@@ -179,6 +179,10 @@ let OP = enum {
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy
   COALESCE_CONST_LONG,
   IS_EVEN,          // Test if TOS integer is even (hot-path for % 2 == 0)
+
+  // Fused numeric for loops (appended to avoid renumbering existing opcodes)
+  FORPREP_1,        // Numeric for loop prepare (step=1)
+  FORLOOP_1,        // Numeric for loop iterate (step=1)
 }
 
 let ValueType = enum { BOOL, NIL, NUMBER, OBJ }

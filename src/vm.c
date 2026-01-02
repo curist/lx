@@ -1501,6 +1501,100 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_FORPREP_1: {
+        // Numeric for loop prepare (step=1)
+        // Operands: i_slot(u8) limit_slot(u8) cmp_kind(u8) offset(u16)
+        uint8_t i_slot = READ_BYTE();
+        uint8_t limit_slot = READ_BYTE();
+        uint8_t cmp_kind = READ_BYTE();  // 0=LT, 1=LE
+        uint16_t offset = READ_SHORT();
+
+        Value i = slots[i_slot];
+        Value limit = slots[limit_slot];
+
+        // Require i to be fixnum
+        if (!IS_FIXNUM(i)) {
+          runtimeError("Loop variable must be an integer.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Require limit to be numeric (fixnum or double)
+        if (!IS_NUMBER(limit)) {
+          runtimeError("Loop limit must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Check initial entry condition
+        bool shouldEnter = false;
+        if (IS_FIXNUM(limit)) {
+          int64_t i_int = AS_FIXNUM(i);
+          int64_t limit_int = AS_FIXNUM(limit);
+          shouldEnter = (cmp_kind == 0) ? (i_int < limit_int) : (i_int <= limit_int);
+        } else {
+          double i_double = (double)AS_FIXNUM(i);
+          double limit_double = AS_NUMBER(limit);
+          shouldEnter = (cmp_kind == 0) ? (i_double < limit_double) : (i_double <= limit_double);
+        }
+
+        if (!shouldEnter) {
+          // Skip loop body
+          frame->ip += offset;
+        }
+        // Otherwise fall through to loop body
+        break;
+      }
+
+      case OP_FORLOOP_1: {
+        // Numeric for loop iterate (step=1)
+        // Operands: i_slot(u8) limit_slot(u8) cmp_kind(u8) offset(u16)
+        uint8_t i_slot = READ_BYTE();
+        uint8_t limit_slot = READ_BYTE();
+        uint8_t cmp_kind = READ_BYTE();  // 0=LT, 1=LE
+        uint16_t offset = READ_SHORT();
+
+        Value i = slots[i_slot];
+        Value limit = slots[limit_slot];
+
+        // i must remain fixnum throughout loop
+        if (!IS_FIXNUM(i)) {
+          runtimeError("Loop variable corrupted (must be integer).");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        int64_t i_int = AS_FIXNUM(i);
+
+        // Increment with overflow check
+        if (i_int == FIXNUM_MAX) {
+          runtimeError("Loop variable overflow.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        i_int++;
+
+        // Store incremented value
+        slots[i_slot] = FIXNUM_VAL(i_int);
+
+        // Check loop condition
+        bool shouldContinue = false;
+        if (IS_FIXNUM(limit)) {
+          int64_t limit_int = AS_FIXNUM(limit);
+          shouldContinue = (cmp_kind == 0) ? (i_int < limit_int) : (i_int <= limit_int);
+        } else if (IS_NUMBER(limit)) {
+          double i_double = (double)i_int;
+          double limit_double = AS_NUMBER(limit);
+          shouldContinue = (cmp_kind == 0) ? (i_double < limit_double) : (i_double <= limit_double);
+        } else {
+          runtimeError("Loop limit must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        if (shouldContinue) {
+          // Jump back to loop body
+          frame->ip -= offset;
+        }
+        // Otherwise exit loop
+        break;
+      }
+
       case OP_RETURN: {
         Value result = pop();
         closeUpvalues(frame->slots);

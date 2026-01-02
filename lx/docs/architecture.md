@@ -16,6 +16,7 @@ Source
   → Optimized AST
   → passes/frontend/typecheck.lx (optional)
   → Type Information
+  → select.lx (opcode selection policy)
   → passes/backend/codegen.lx
   → Bytecode + Chunk
   → passes/backend/verify-bytecode.lx
@@ -148,15 +149,61 @@ administrative let elimination.
 
 ---
 
+### **select.lx** — Opcode selection policy module
+
+* Centralizes all policy decisions for bytecode generation
+* Separates "what to emit" (policy) from "how to emit" (mechanism)
+* Pure functions that query analysis facts and return decisions
+* No bytecode emission or state mutation
+* Responsibilities:
+  * **Opcode selection**: Choose specialized opcodes based on type facts
+    * Unary ops: `NEGATE` vs `NEGATE_INT`
+    * Binary ops: `ADD` vs `ADD_INT` vs `ADD_STR` vs `ADD_NUM`
+  * **Micro-optimizations**: Recognize patterns for superinstructions
+    * `v or CONST` → `COALESCE_CONST`
+    * `i = i + n` → `ADD_LOCAL_IMM`
+  * **Facts abstraction**: Queries `gen.fastcheck` (today) or `gen.rep` (future)
+* Enables evolution:
+  * Swap analysis passes without touching codegen
+  * Add new optimizations in one place
+  * Test policy decisions independently
+
+**API Functions:**
+* `unaryOpcode(gen, node)` → OP
+* `binaryCode(gen, node)` → OP | [OP, OP]
+* `logicalOrCoalesceConst(gen, node)` → plan | nil
+* `assignmentSuper(gen, node, mode)` → plan | nil
+
+---
+
 ### **codegen.lx** — Mechanical bytecode emission pass
 
 * Walks resolved AST in **source order**
-* Looks up decisions from side tables
+* Delegates policy decisions to `select.lx`
 * Emits bytecode and builds chunks
 * Tracks **nodeId for each bytecode instruction** (`chunk.nodeIds[]`)
-* No semantic analysis
+* Responsibilities:
+  * Evaluate operands in correct order
+  * Query select module for opcode choices
+  * Emit bytes and manage constant pool
+  * Maintain stack and local slot discipline
+  * Patch jumps and handle control flow
+* No semantic analysis or type reasoning
 * No reordering or deduplication
 * All invariants enforced by resolver
+
+**Architecture:**
+```
+codegen:
+  1. Compile operands (recursive)
+  2. Ask select: "What opcode should I use?"
+  3. Emit the opcode (mechanical)
+
+select:
+  1. Read type facts from gen.fastcheck/gen.rep
+  2. Match patterns (structural)
+  3. Return decision (pure, no side effects)
+```
 
 ---
 
@@ -330,6 +377,32 @@ parser node with position information:
    * Deterministic behavior
    * Each pass testable in isolation
 
+6. **Evolvable backend architecture**
+
+   * **Policy/mechanism separation**: `select.lx` decouples opcode choice from emission
+   * **Analysis-agnostic codegen**: Swap type/representation analysis without touching emission code
+   * **Composable optimizations**: Add micro-optimizations in select module, not scattered through codegen
+   * **Local reasoning**: Policy decisions have no side effects, emission logic has no semantic reasoning
+
+### Backend Architecture Rationale
+
+The separation of `select.lx` from `codegen.lx` addresses three key problems:
+
+1. **Scalability**: Adding new analysis passes (fixnum flow, enum exhaustiveness, etc.)
+   should not require threading logic throughout codegen. The select layer provides a
+   stable interface between analysis and emission.
+
+2. **Correctness**: It is hard to reason about correctness when codegen both decides
+   semantics and emits bytecode. Separating concerns makes both easier to verify.
+
+3. **Evolution cost**: Replacing or upgrading analysis passes (e.g., fastcheck → rep)
+   becomes a localized change to select.lx, not a risky multi-file rewrite.
+
+This follows the principle that **each module should have exactly one reason to change**:
+* Analysis passes change when we improve type/representation inference
+* Select changes when we add new optimizations or opcode specializations
+* Codegen changes when we modify bytecode format or stack discipline
+
 ---
 
 ## Non-Goals
@@ -358,9 +431,11 @@ Lx supports **multiple consumers** of the same frontend pipeline:
 ### 1. Compiler
 
 ```
-parser → lower → anf → resolve → anf-inline → codegen → verify-bytecode → objbuilder → runtime
-                          ↓
-                    errors.lx (error formatting & reporting)
+parser → lower → anf → resolve → anf-inline → select → codegen → verify-bytecode → objbuilder → runtime
+                          ↓                       ↑
+                    errors.lx              (policy layer)
+                 (error formatting
+                  & reporting)
 ```
 
 ### 2. Tooling / LSP

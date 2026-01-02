@@ -1,0 +1,214 @@
+// src/select.lx
+//
+// Opcode selection and micro-optimizations for codegen.
+// Purpose:
+// - Centralize all "policy" decisions (fastcheck/rep facts, opcode choice, superinstructions).
+// - Keep codegen mechanical: evaluate operands, ask select, emit.
+//
+// Contract:
+// - No byte emission.
+// - No mutation of gen slot counters / scope stacks.
+// - May read gen.fastcheck (today) or gen.rep (future).
+// - Must be deterministic and side-effect free.
+
+let .{ OP, NODE } = import "src/types.lx"
+
+// -----------------------------------------------------------------------------
+// Facts access (fastcheck today, rep analysis tomorrow)
+// -----------------------------------------------------------------------------
+
+fn facts(gen) {
+  // Prefer future rep pass if present; fall back to fastcheck.
+  // rep.facts format suggestion:
+  //   facts[nodeId] = "FIXNUM" | "NUM_FLOAT" | "NUM_ANY" | "STR" | "BOOL" | "NIL" | ...
+  if gen.rep and gen.rep.facts { return gen.rep.facts }
+  if gen.fastcheck and gen.fastcheck.facts { return gen.fastcheck.facts }
+  nil
+}
+
+fn classOf(gen, node) {
+  let fc = facts(gen)
+  fc and fc[node and node.id]
+}
+
+fn isNumericClass(cls) {
+  cls == "NUM_INT" or cls == "NUM_FLOAT" or cls == "NUM_ANY" or
+  cls == "FIXNUM" // forward-compat alias if you rename later
+}
+
+fn isIntClass(cls) {
+  cls == "NUM_INT" or cls == "FIXNUM"
+}
+
+fn isStrClass(cls) {
+  cls == "STR"
+}
+
+// -----------------------------------------------------------------------------
+// Unary selection
+// -----------------------------------------------------------------------------
+
+fn selectUnaryOpcode(gen, node) {
+  // node: NODE.Unary
+  let op = node.operator and node.operator.lexeme or ""
+  if op == "!" { return OP.NOT }
+  if op == "-" {
+    let operandCls = classOf(gen, node.operand)
+    return isIntClass(operandCls) and OP.NEGATE_INT or OP.NEGATE
+  }
+  nil
+}
+
+// -----------------------------------------------------------------------------
+// Binary selection
+// -----------------------------------------------------------------------------
+
+// Returns either:
+// - single opcode (number), or
+// - array [opcode1, opcode2] for 2-step sequences (e.g. "!=").
+fn selectBinaryCode(gen, node) {
+  // node: NODE.Binary, operands already compiled by codegen.
+  let op = node.operator and node.operator.lexeme or ""
+
+  let leftCls = classOf(gen, node.left)
+  let rightCls = classOf(gen, node.right)
+
+  let leftInt = isIntClass(leftCls)
+  let rightInt = isIntClass(rightCls)
+  let bothInt = leftInt and rightInt
+
+  let leftNum = isNumericClass(leftCls)
+  let rightNum = isNumericClass(rightCls)
+  let bothNum = leftNum and rightNum
+
+  let leftStr = isStrClass(leftCls)
+  let rightStr = isStrClass(rightCls)
+  let bothStr = leftStr and rightStr
+
+  // Choose opcode for + based on facts (matches your current policy)
+  let addOp = OP.ADD
+  if bothInt {
+    addOp = OP.ADD_INT
+  } else if bothStr {
+    addOp = OP.ADD_STR
+  } else if bothNum {
+    addOp = OP.ADD_NUM
+  }
+
+  let opCodes = .{
+    ["+"]: addOp,
+    ["-"]: bothInt and OP.SUBTRACT_INT or OP.SUBTRACT,
+    ["*"]: bothInt and OP.MULTIPLY_INT or OP.MULTIPLY,
+    ["/"]: OP.DIVIDE,
+    ["%"]: OP.MOD,
+
+    ["=="]: OP.EQUAL,
+    ["!="]: [OP.EQUAL, OP.NOT],
+
+    [">"]: OP.GREATER,
+    [">="]: [OP.LESS, OP.NOT],
+    ["<"]: OP.LESS,
+    ["<="]: [OP.GREATER, OP.NOT],
+
+    ["|"]: OP.BIT_OR,
+    ["^"]: OP.BIT_XOR,
+    ["&"]: OP.BIT_AND,
+    ["<<"]: OP.BIT_LSHIFT,
+    [">>"]: OP.BIT_RSHIFT,
+  }
+
+  opCodes[op]
+}
+
+// -----------------------------------------------------------------------------
+// Logical OR coalesce selection
+// -----------------------------------------------------------------------------
+
+// Returns nil if not applicable, otherwise:
+//   .{ kind: "coalesce_const", valueType: "Number"|"String", value: <literal> }
+//
+// Codegen will turn this into COALESCE_CONST/COALESCE_CONST_LONG by allocating constant.
+// We keep this pass pure (no makeConstant here).
+fn selectLogicalOrCoalesceConst(gen, node) {
+  // node: NODE.Logical
+  // Only handles op == "or" and RHS literal (Number/String).
+  let op = node.operator and node.operator.lexeme or ""
+  if op != "or" { return nil }
+
+  let rhs = node.right
+  if !rhs { return nil }
+
+  // Match current behavior: only Number/String literals.
+  // (Bool literals aren't in the constant pool; nil also isn't.)
+  if rhs.type == NODE.Number {
+    return .{ kind: "coalesce_const", valueType: "Number", value: rhs.value }
+  }
+  if rhs.type == NODE.String {
+    return .{ kind: "coalesce_const", valueType: "String", value: rhs.value }
+  }
+
+  nil
+}
+
+// -----------------------------------------------------------------------------
+// Assignment superinstructions
+// -----------------------------------------------------------------------------
+
+// Returns nil if not applicable, otherwise a plan:
+//
+// 1) ADD_LOCAL_IMM pattern:
+//    .{ kind: "ADD_LOCAL_IMM", targetId: <Identifier node>, imm: <0..255> }
+//
+// Codegen will:
+// - resolve target binding -> absolute slot
+// - emit OP.ADD_LOCAL_IMM slot imm
+// - if STMT mode, emit POP
+//
+// NOTE: This only recognizes the structural pattern; codegen enforces binding kind.
+fn selectAssignmentSuper(gen, node, mode) {
+  // node: NODE.Assignment
+  if !node or node.type != NODE.Assignment { return nil }
+  if !node.target or node.target.type != NODE.Identifier { return nil }
+
+  let value = node.value
+  if !value or value.type != NODE.Binary { return nil }
+
+  let binOp = value.operator and value.operator.lexeme or ""
+  if binOp != "+" { return nil }
+
+  // target: i
+  // value: (i + <imm>)
+  if !value.left or value.left.type != NODE.Identifier { return nil }
+  if !value.right or value.right.type != NODE.Number { return nil }
+
+  // same identifier name
+  if value.left.name != node.target.name { return nil }
+
+  let imm = value.right.value
+  if imm < 0 or imm >= 256 { return nil }
+  if int(imm) != imm { return nil }
+
+  .{
+    kind: "ADD_LOCAL_IMM",
+    targetId: node.target.id,
+    imm: int(imm),
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Public API
+// -----------------------------------------------------------------------------
+
+let select = .{
+  // unary/binary
+  unaryOpcode: selectUnaryOpcode,
+  binaryCode: selectBinaryCode,
+
+  // logical OR coalesce (pure match)
+  logicalOrCoalesceConst: selectLogicalOrCoalesceConst,
+
+  // assignment superinstructions (pure match)
+  assignmentSuper: selectAssignmentSuper,
+}
+
+select

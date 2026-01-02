@@ -101,6 +101,8 @@ typedef enum {
   // Fused numeric for loops (appended to avoid renumbering existing opcodes)
   OP_FORPREP_1,           // Numeric for loop prepare (step=1)
   OP_FORLOOP_1,           // Numeric for loop iterate (step=1)
+  OP_FORPREP,             // Numeric for loop prepare (arbitrary signed step)
+  OP_FORLOOP,             // Numeric for loop iterate (arbitrary signed step)
 } OpCode;
 
 typedef struct {

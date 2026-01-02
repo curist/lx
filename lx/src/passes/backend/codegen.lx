@@ -1012,19 +1012,21 @@ fn matchNumericForLoop(gen, node) {
     return nil
   }
 
-  // Match condition: i < limit or i <= limit
+  // Match condition: i < limit, i <= limit, i > limit, or i >= limit
   if node.condition.type != NODE.Binary { return nil }
   let cond = node.condition
   let cmp_kind = nil
   let op = cond.operator.lexeme or cond.operator
   if op == "<" {
     cmp_kind = 0
+  } else if op == "<=" {
+    cmp_kind = 1
+  } else if op == ">" {
+    cmp_kind = 2
+  } else if op == ">=" {
+    cmp_kind = 3
   } else {
-    if op == "<=" {
-      cmp_kind = 1
-    } else {
-      return nil
-    }
+    return nil
   }
 
   // Check left side is identifier i
@@ -1032,7 +1034,7 @@ fn matchNumericForLoop(gen, node) {
   let left_name = cond.left.value or cond.left.name or cond.left.lexeme
   if left_name != i_name { return nil }
 
-  // Phase 1 MVP: Right side (limit) must be an Identifier (no temp allocation)
+  // Phase 1: Limit must be an Identifier
   if cond.right.type != NODE.Identifier { return nil }
   let limit_node = cond.right
 
@@ -1045,13 +1047,42 @@ fn matchNumericForLoop(gen, node) {
   let update_value = node.update.value
   if update_value.type != NODE.Binary { return nil }
   let update_op = update_value.operator.lexeme or update_value.operator
-  if update_op != "+" { return nil }
+
+  // Accept both + and - for step
+  if update_op != "+" and update_op != "-" { return nil }
+
   if update_value.left.type != NODE.Identifier { return nil }
   let update_left_name = update_value.left.value or update_value.left.name or update_value.left.lexeme
   if update_left_name != i_name { return nil }
-  if update_value.right.type != NODE.Number or update_value.right.value != 1 { return nil }
 
-  .{ i_name, limit_node, cmp_kind }
+  // Extract step value (must be integer constant)
+  if update_value.right.type != NODE.Number { return nil }
+  let step_value = update_value.right.value
+  if step_value != int(step_value) { return nil }
+
+  let step_int = int(step_value)
+
+  // Apply sign based on operator
+  if update_op == "-" {
+    step_int = 0 - step_int
+  }
+
+  // Validate step range for int8_t encoding
+  if step_int < -128 or step_int > 127 { return nil }
+  if step_int == 0 { return nil }  // Zero step would infinite loop
+
+  // Validate step direction matches comparison direction
+  if step_int < 0 and (cmp_kind == 0 or cmp_kind == 1) {
+    return nil  // Negative step requires > or >= comparison
+  }
+  if step_int > 0 and (cmp_kind == 2 or cmp_kind == 3) {
+    return nil  // Positive step requires < or <= comparison
+  }
+
+  // Determine if we can use optimized _1 opcodes
+  let use_fast_path = (step_int == 1)
+
+  .{ i_name, limit_node, cmp_kind, step: step_int, use_fast_path }
 }
 
 fn compileNumericForLoop(gen, node, match, mode) {
@@ -1088,7 +1119,7 @@ fn compileNumericForLoop(gen, node, match, mode) {
   let loopContinueSlot = gen.nextLocalSlot
   push(gen.loopContinueSlots, loopContinueSlot)
 
-  // Resolve limit identifier to its existing slot (no temp allocation!)
+  // Resolve limit slot from identifier (either user variable or ANF temp)
   // Strategy: use resolver binding to find the declaration node ID,
   // then look up that declaration in gen.emittedLocals
   let limit_binding = gen.resolvedNames[match.limit_node.id]
@@ -1153,12 +1184,24 @@ fn compileNumericForLoop(gen, node, match, mode) {
     return false
   }
 
-  // Emit FORPREP_1 with placeholder for exit jump
+  // Choose opcode based on step value
+  let prep_opcode = match.use_fast_path and OP.FORPREP_1 or OP.FORPREP
+  let loop_opcode = match.use_fast_path and OP.FORLOOP_1 or OP.FORLOOP
+
+  // Emit FORPREP with placeholder for exit jump
   let prepOffset = len(gen.currentFunction.chunk.bytecode)
-  emit1(gen, OP.FORPREP_1, node.line)
+  emit1(gen, prep_opcode, node.line)
   emit1(gen, localSlot(i_slot), node.line)
   emit1(gen, localSlot(limit_slot), node.line)
   emit1(gen, match.cmp_kind, node.line)
+
+  // Emit step byte only for non-fast-path
+  if !match.use_fast_path {
+    // Encode step as int8_t (two's complement for negative)
+    let step_byte = match.step < 0 and (256 + match.step) or match.step
+    emit1(gen, step_byte, node.line)
+  }
+
   let exitJumpHi = len(gen.currentFunction.chunk.bytecode)
   emit2(gen, 0, 0, node.line)  // Placeholder for forward jump
 
@@ -1169,20 +1212,29 @@ fn compileNumericForLoop(gen, node, match, mode) {
   // Patch continues to jump here (right before FORLOOP_1)
   patchContinues(gen)
 
-  // Emit FORLOOP_1 with backward jump to body start
-  emit1(gen, OP.FORLOOP_1, node.line)
+  // Emit FORLOOP with backward jump to body start
+  emit1(gen, loop_opcode, node.line)
   emit1(gen, localSlot(i_slot), node.line)
   emit1(gen, localSlot(limit_slot), node.line)
   emit1(gen, match.cmp_kind, node.line)
+
+  // Emit step byte only for non-fast-path
+  if !match.use_fast_path {
+    let step_byte = match.step < 0 and (256 + match.step) or match.step
+    emit1(gen, step_byte, node.line)
+  }
+
   let backJump = len(gen.currentFunction.chunk.bytecode) + 2 - loopBodyStart
   emit2(gen, int(backJump / 256), backJump % 256, node.line)
 
-  // Patch exit jump from FORPREP_1
-  let exitOffset = len(gen.currentFunction.chunk.bytecode) - (prepOffset + 6)
+  // Patch exit jump from FORPREP
+  let instruction_length = match.use_fast_path and 6 or 7
+  let exitOffset = len(gen.currentFunction.chunk.bytecode) - (prepOffset + instruction_length)
   gen.currentFunction.chunk.bytecode[exitJumpHi] = int(exitOffset / 256)
   gen.currentFunction.chunk.bytecode[exitJumpHi + 1] = exitOffset % 256
 
   // Cleanup (same as regular compileFor)
+  // Note: ANF temps (if any) are in the loop scope and will be cleaned up by endScope
   endScope(gen, node)
   patchBreaks(gen)
 

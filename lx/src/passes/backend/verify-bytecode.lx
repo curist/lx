@@ -115,6 +115,8 @@ let STACK_MIN = .{
   // Fused numeric for loops
   [OP.FORPREP_1]:          0,  // Operates on locals only
   [OP.FORLOOP_1]:          0,  // Operates on locals only
+  [OP.FORPREP]:            0,  // Operates on locals only
+  [OP.FORLOOP]:            0,  // Operates on locals only
 }
 
 // Static table of stack effects for each opcode
@@ -205,6 +207,8 @@ let STACK_EFFECTS = .{
   // Fused numeric for loops (stack-neutral, operate on locals)
   [OP.FORPREP_1]:          0,
   [OP.FORLOOP_1]:          0,
+  [OP.FORPREP]:            0,
+  [OP.FORLOOP]:            0,
 
   // RETURN (0): special handling in stackEffect()
   [OP.RETURN]:        0,
@@ -359,6 +363,8 @@ let INSTRUCTION_LENGTHS = .{
   // Fused numeric for loops
   [OP.FORPREP_1]:          6,  // opcode + i_slot + limit_slot + cmp_kind + offset[2]
   [OP.FORLOOP_1]:          6,  // opcode + i_slot + limit_slot + cmp_kind + offset[2]
+  [OP.FORPREP]:            7,  // opcode + i_slot + limit_slot + cmp_kind + step + offset[2]
+  [OP.FORLOOP]:            7,  // opcode + i_slot + limit_slot + cmp_kind + step + offset[2]
 }
 
 fn instructionLength(chunk, ip) {

@@ -183,6 +183,8 @@ let OP = enum {
   // Fused numeric for loops (appended to avoid renumbering existing opcodes)
   FORPREP_1,        // Numeric for loop prepare (step=1)
   FORLOOP_1,        // Numeric for loop iterate (step=1)
+  FORPREP,          // Numeric for loop prepare (arbitrary signed step)
+  FORLOOP,          // Numeric for loop iterate (arbitrary signed step)
 }
 
 let ValueType = enum { BOOL, NIL, NUMBER, OBJ }

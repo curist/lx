@@ -88,12 +88,34 @@ static int forLoopInstruction(const char* name, int sign, Chunk* chunk, int offs
   uint8_t i_slot = chunk->code[offset + 1];
   uint8_t limit_slot = chunk->code[offset + 2];
   uint8_t cmp_kind = chunk->code[offset + 3];
-  uint16_t jump = (uint16_t)(chunk->code[offset + 4] << 8);
-  jump |= chunk->code[offset + 5];
-  const char* cmp_str = (cmp_kind == 0) ? "<" : "<=";
-  printf("%-19s i=%d limit=%d %s -> %d\n", name, i_slot, limit_slot, cmp_str,
-         offset + 6 + sign * jump);
-  return offset + 6;
+
+  // Check if this is a stepped variant (OP_FORPREP/OP_FORLOOP)
+  OpCode op = chunk->code[offset];
+  bool has_step = (op == OP_FORPREP || op == OP_FORLOOP);
+
+  int8_t step = 1;
+  int offset_idx = 4;
+  if (has_step) {
+    step = (int8_t)chunk->code[offset + 4];  // Signed step
+    offset_idx = 5;
+  }
+
+  uint16_t jump = (uint16_t)(chunk->code[offset + offset_idx] << 8);
+  jump |= chunk->code[offset + offset_idx + 1];
+
+  const char* cmp_str;
+  switch (cmp_kind) {
+    case 0: cmp_str = "<"; break;
+    case 1: cmp_str = "<="; break;
+    case 2: cmp_str = ">"; break;
+    case 3: cmp_str = ">="; break;
+    default: cmp_str = "?"; break;
+  }
+
+  int instruction_length = has_step ? 7 : 6;
+  printf("%-19s i=%d limit=%d %s step=%d -> %d\n", name, i_slot, limit_slot,
+         cmp_str, step, offset + instruction_length + sign * jump);
+  return offset + instruction_length;
 }
 
 int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
@@ -275,6 +297,10 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return forLoopInstruction("OP_FORPREP_1", 1, chunk, offset);
     case OP_FORLOOP_1:
       return forLoopInstruction("OP_FORLOOP_1", -1, chunk, offset);
+    case OP_FORPREP:
+      return forLoopInstruction("OP_FORPREP", 1, chunk, offset);
+    case OP_FORLOOP:
+      return forLoopInstruction("OP_FORLOOP", -1, chunk, offset);
     case OP_RETURN:
       return simpleInstruction("OP_RETURN", offset);
     default:

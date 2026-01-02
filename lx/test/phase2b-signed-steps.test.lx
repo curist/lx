@@ -1,0 +1,123 @@
+let suite = (import "test/makeTestSuite.lx")()
+fn test(name, cb) { suite.defineTest("phase2b-signed-steps - " + name, cb) }
+
+// Phase 2B: Signed constant steps
+
+test("countdown loop with i = i - 1", fn(assert) {
+  let sum = 0
+  for let i = 10; i > 0; i = i - 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 55)  // 10+9+8+...+1
+})
+
+test("countdown loop with >= comparison", fn(assert) {
+  let sum = 0
+  for let i = 5; i >= 0; i = i - 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 15)  // 5+4+3+2+1+0
+})
+
+test("step by 2 ascending", fn(assert) {
+  let result = []
+  for let i = 0; i < 10; i = i + 2 {
+    push(result, i)
+  }
+  assert.equal(len(result), 5)
+  assert.equal(result[0], 0)
+  assert.equal(result[1], 2)
+  assert.equal(result[4], 8)
+})
+
+test("step by 3 ascending", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 20; i = i + 3 {
+    sum = sum + 1
+  }
+  assert.equal(sum, 7)  // 0, 3, 6, 9, 12, 15, 18
+})
+
+test("step by -2 descending", fn(assert) {
+  let result = []
+  for let i = 10; i > 0; i = i - 2 {
+    push(result, i)
+  }
+  assert.equal(len(result), 5)
+  assert.equal(result[0], 10)
+  assert.equal(result[4], 2)
+})
+
+test("step by -5 descending", fn(assert) {
+  let count = 0
+  for let i = 100; i >= 0; i = i - 5 {
+    count = count + 1
+  }
+  assert.equal(count, 21)  // 100, 95, ..., 5, 0
+})
+
+test("large positive step", fn(assert) {
+  let count = 0
+  for let i = 0; i < 1000; i = i + 100 {
+    count = count + 1
+  }
+  assert.equal(count, 10)  // 0, 100, 200, ..., 900
+})
+
+test("maximum positive step (127)", fn(assert) {
+  let count = 0
+  for let i = 0; i < 1000; i = i + 127 {
+    count = count + 1
+  }
+  assert.equal(count, 8)  // 0, 127, 254, ..., 889
+})
+
+test("maximum negative step (-128)", fn(assert) {
+  let count = 0
+  for let i = 0; i > -1000; i = i - 128 {
+    count = count + 1
+  }
+  assert.equal(count, 8)  // 0, -128, -256, ..., -896
+})
+
+test("empty loop with negative step", fn(assert) {
+  let count = 0
+  for let i = 0; i > 10; i = i - 1 {
+    count = count + 1
+  }
+  assert.equal(count, 0)  // Never enters
+})
+
+test("nested loops with different steps", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 10; i = i + 2 {
+    for let j = 10; j > 0; j = j - 2 {
+      sum = sum + 1
+    }
+  }
+  assert.equal(sum, 25)  // 5 outer * 5 inner
+})
+
+test("countdown with break", fn(assert) {
+  let sum = 0
+  for let i = 10; i > 0; i = i - 1 {
+    if i == 5 {
+      break
+    }
+    sum = sum + i
+  }
+  assert.equal(sum, 40)  // 10+9+8+7+6
+})
+
+test("step-by-N with continue", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 20; i = i + 3 {
+    if i == 9 {
+      continue
+    }
+    sum = sum + i
+  }
+  assert.equal(sum, 54)  // 0+3+6+12+15+18 (skip 9)
+})
+
+suite.run()

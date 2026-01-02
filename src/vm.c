@@ -1595,6 +1595,109 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_FORPREP: {
+        // Numeric for loop prepare (parametric step)
+        // Operands: i_slot(u8) limit_slot(u8) cmp_kind(u8) step(i8) offset(u16)
+        uint8_t i_slot = READ_BYTE();
+        uint8_t limit_slot = READ_BYTE();
+        uint8_t cmp_kind = READ_BYTE();  // 0=<, 1=<=, 2=>, 3=>=
+        int8_t step = (int8_t)READ_BYTE();  // Signed step (-128 to 127)
+        (void)step;  // Step not used in FORPREP, only needed to advance IP
+        uint16_t offset = READ_SHORT();
+
+        Value i = slots[i_slot];
+        Value limit = slots[limit_slot];
+
+        // Validate types
+        if (!IS_FIXNUM(i)) {
+          runtimeError("For loop variable must be a fixnum.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        if (!IS_NUMBER(limit)) {
+          runtimeError("For loop limit must be numeric.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Check initial entry condition
+        int64_t i_int = AS_FIXNUM(i);
+        double limit_dbl = AS_NUMBER(limit);
+        bool shouldEnter = false;
+
+        switch (cmp_kind) {
+          case 0: shouldEnter = ((double)i_int < limit_dbl); break;   // <
+          case 1: shouldEnter = ((double)i_int <= limit_dbl); break;  // <=
+          case 2: shouldEnter = ((double)i_int > limit_dbl); break;   // >
+          case 3: shouldEnter = ((double)i_int >= limit_dbl); break;  // >=
+          default:
+            runtimeError("Invalid comparison kind in FORPREP.");
+            return INTERPRET_RUNTIME_ERROR;
+        }
+
+        if (!shouldEnter) {
+          // Skip loop body by jumping forward
+          frame->ip += offset;
+        }
+        // Otherwise fall through to loop body
+        break;
+      }
+
+      case OP_FORLOOP: {
+        // Numeric for loop iterate (parametric step)
+        // Operands: i_slot(u8) limit_slot(u8) cmp_kind(u8) step(i8) offset(u16)
+        uint8_t i_slot = READ_BYTE();
+        uint8_t limit_slot = READ_BYTE();
+        uint8_t cmp_kind = READ_BYTE();  // 0=<, 1=<=, 2=>, 3=>=
+        int8_t step = (int8_t)READ_BYTE();  // Signed step
+        uint16_t offset = READ_SHORT();
+
+        Value i = slots[i_slot];
+        Value limit = slots[limit_slot];
+
+        // Extract i as int64
+        if (!IS_FIXNUM(i)) {
+          runtimeError("Loop variable corrupted (must be fixnum).");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        int64_t i_int = AS_FIXNUM(i);
+
+        // Increment with signed step
+        i_int += step;
+
+        // Check for fixnum overflow
+        if (!fixnumFitsInt64(i_int)) {
+          runtimeError("For loop counter overflow.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Store incremented value
+        slots[i_slot] = FIXNUM_VAL(i_int);
+
+        // Check loop continuation condition
+        if (!IS_NUMBER(limit)) {
+          runtimeError("Loop limit must be numeric.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        double limit_dbl = AS_NUMBER(limit);
+        bool shouldContinue = false;
+
+        switch (cmp_kind) {
+          case 0: shouldContinue = ((double)i_int < limit_dbl); break;   // <
+          case 1: shouldContinue = ((double)i_int <= limit_dbl); break;  // <=
+          case 2: shouldContinue = ((double)i_int > limit_dbl); break;   // >
+          case 3: shouldContinue = ((double)i_int >= limit_dbl); break;  // >=
+          default:
+            runtimeError("Invalid comparison kind in FORLOOP.");
+            return INTERPRET_RUNTIME_ERROR;
+        }
+
+        if (shouldContinue) {
+          // Jump backward to loop body
+          frame->ip -= offset;
+        }
+        // Otherwise exit loop
+        break;
+      }
+
       case OP_RETURN: {
         Value result = pop();
         closeUpvalues(frame->slots);

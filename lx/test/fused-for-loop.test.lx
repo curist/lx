@@ -1,0 +1,206 @@
+let suite = (import "test/makeTestSuite.lx")()
+fn test(name, cb) { suite.defineTest("fused-for-loop - " + name, cb) }
+
+// Basic correctness tests
+
+test("< comparison with integer literal init", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 5; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 10)
+})
+
+test("<= comparison with integer literal init", fn(assert) {
+  let sum = 0
+  for let i = 1; i <= 5; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 15)
+})
+
+test("empty loop - limit less than start (<)", fn(assert) {
+  let count = 0
+  for let i = 10; i < 5; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 0)
+})
+
+test("empty loop - limit equal to start (<)", fn(assert) {
+  let count = 0
+  for let i = 5; i < 5; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 0)
+})
+
+test("single iteration - limit equal to start (<=)", fn(assert) {
+  let count = 0
+  for let i = 5; i <= 5; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 1)
+})
+
+// Mixed-mode tests (fixnum induction var, double limit)
+
+test("mixed-mode: fixnum i vs double limit (<)", fn(assert) {
+  let sum = 0
+  let limit = 5.0  // double
+  for let i = 0; i < limit; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 10)
+})
+
+test("mixed-mode: fixnum i vs double limit (<=)", fn(assert) {
+  let sum = 0
+  let limit = 5.0  // double
+  for let i = 1; i <= limit; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 15)
+})
+
+test("fractional limit with < (runs until i >= limit)", fn(assert) {
+  let count = 0
+  let limit = 5.5
+  for let i = 0; i < limit; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 6)  // i = 0,1,2,3,4,5 then 6 < 5.5 false
+})
+
+test("fractional limit with <= (runs until i > limit)", fn(assert) {
+  let count = 0
+  let limit = 5.5
+  for let i = 0; i <= limit; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 6)  // i = 0,1,2,3,4,5 then 6 <= 5.5 false
+})
+
+// NaN behavior
+
+test("NaN limit - loop terminates immediately (<)", fn(assert) {
+  let count = 0
+  let limit = 0.0 / 0.0  // NaN
+  for let i = 0; i < limit; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 0)
+})
+
+test("NaN limit - loop terminates immediately (<=)", fn(assert) {
+  let count = 0
+  let limit = 0.0 / 0.0  // NaN
+  for let i = 0; i <= limit; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 0)
+})
+
+// Infinity behavior
+// Note: +Inf limit will loop until fixnum overflow (which should error)
+// We can't easily test the overflow error in the current test framework,
+// so we test that a reasonable +Inf loop works as expected
+
+test("+Inf limit allows large iterations", fn(assert) {
+  let count = 0
+  let limit = 1.0 / 0.0  // +Inf
+  for let i = 0; i < limit; i = i + 1 {
+    count = count + 1
+    if count == 100 { break }  // Exit early to avoid overflow
+  }
+  assert.equal(count, 100)
+})
+
+test("-Inf limit - loop terminates immediately", fn(assert) {
+  let count = 0
+  let limit = -1.0 / 0.0  // -Inf
+  for let i = 0; i < limit; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 0)
+})
+
+// Break and continue integration
+
+test("break in fused loop", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 10; i = i + 1 {
+    if i == 5 { break }
+    sum = sum + i
+  }
+  assert.equal(sum, 10)  // 0+1+2+3+4
+})
+
+test("continue in fused loop", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 10; i = i + 1 {
+    if i == 5 { continue }
+    sum = sum + i
+  }
+  assert.equal(sum, 40)  // 0+1+2+3+4+6+7+8+9 (skips 5)
+})
+
+test("nested fused loops with break", fn(assert) {
+  let result = []
+  for let i = 0; i < 3; i = i + 1 {
+    for let j = 0; j < 3; j = j + 1 {
+      if j == 2 { break }
+      push(result, i * 10 + j)
+    }
+  }
+  assert.equal(len(result), 6)
+  assert.equal(result[0], 0)   // i=0, j=0
+  assert.equal(result[1], 1)   // i=0, j=1
+  assert.equal(result[2], 10)  // i=1, j=0
+  assert.equal(result[3], 11)  // i=1, j=1
+  assert.equal(result[4], 20)  // i=2, j=0
+  assert.equal(result[5], 21)  // i=2, j=1
+})
+
+// Large iteration counts
+
+test("large iteration count", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 1000; i = i + 1 {
+    sum = sum + 1
+  }
+  assert.equal(sum, 1000)
+})
+
+test("negative start value", fn(assert) {
+  let sum = 0
+  for let i = -5; i < 5; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, -5)  // -5 + -4 + -3 + -2 + -1 + 0 + 1 + 2 + 3 + 4 = -5
+})
+
+// Limit variable must be stable across iterations
+
+test("limit variable read from local", fn(assert) {
+  let n = 5
+  let sum = 0
+  for let i = 0; i < n; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 10)
+})
+
+test("limit variable read from parameter", fn(assert) {
+  fn sumTo(n) {
+    let sum = 0
+    for let i = 1; i <= n; i = i + 1 {
+      sum = sum + i
+    }
+    sum
+  }
+  assert.equal(sumTo(10), 55)
+  assert.equal(sumTo(100), 5050)
+})
+
+suite.run()

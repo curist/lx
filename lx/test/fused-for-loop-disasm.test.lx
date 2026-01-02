@@ -1,0 +1,237 @@
+let suite = (import "test/makeTestSuite.lx")()
+fn test(name, cb) { suite.defineTest("fused-for-loop-disasm - " + name, cb) }
+
+let driver = import "src/driver.lx"
+let fastcheck = import "src/passes/backend/fastcheck.lx"
+let codegen = import "src/passes/backend/codegen.lx"
+let types = import "src/types.lx"
+
+let OP = types.OP
+
+fn pickModuleAst(passes) {
+  (passes["anf-inline"] and passes["anf-inline"].ast) or
+  (passes.anf and passes.anf.ast) or
+  (passes.lower and passes.lower.ast) or
+  (passes.parse and passes.parse.ast)
+}
+
+fn pickEnumInfo(passes) {
+  (passes.anf and passes.anf.enumInfo) or
+  (passes.lower and passes.lower.enumInfo) or
+  (passes.parse and passes.parse.enumInfo) or
+  .{}
+}
+
+fn compileToBytecode(source, entryPath) {
+  let sourceByPath = .{}
+  sourceByPath[entryPath] = source
+
+  let d = driver.make(.{
+    withTypecheck: false,
+    loadSource: fn(path) { sourceByPath[path] },
+  })
+
+  let r = d.compileModule(entryPath)
+  let passes = r.passes or .{}
+  let ast = pickModuleAst(passes)
+  let enumInfo = pickEnumInfo(passes)
+  let resolveResult = passes.resolve
+
+  let codegenCache = .{}
+  fn codegenModule(path) {
+    let cached = codegenCache[path]
+    if cached { return cached }
+
+    let mr = d.compileModule(path)
+    if !mr or !mr.success { return nil }
+    let mp = mr.passes or .{}
+    let mast = pickModuleAst(mp)
+    let menumInfo = pickEnumInfo(mp)
+    let mresolve = mp.resolve
+
+    let mfc = fastcheck(mast, mresolve, .{ enumInfo: menumInfo })
+    let mcg = codegen(mast, mresolve, .{
+      enumInfo: menumInfo,
+      fastcheck: mfc,
+      codegenModule: codegenModule,
+    })
+    if !mcg or !mcg.success { return nil }
+    codegenCache[path] = mcg.function
+    mcg.function
+  }
+
+  let fc = fastcheck(ast, resolveResult, .{ enumInfo })
+  let cg = codegen(ast, resolveResult, .{
+    enumInfo,
+    fastcheck: fc,
+    codegenModule: codegenModule,
+  })
+
+  if !cg or !cg.success { return nil }
+
+  cg.function.chunk
+}
+
+fn extractAllOpcodes(chunk) {
+  // Extract opcodes from chunk and recursively from all nested function constants
+  if !chunk or !chunk.bytecode {
+    return []
+  }
+
+  let opcodes = []
+  let bytecode = chunk.bytecode
+  let i = 0
+  for i < len(bytecode) {
+    let opcode = bytecode[i]
+    push(opcodes, opcode)
+
+    // Skip operands based on opcode
+    // FORPREP_1 and FORLOOP_1 have 5 operand bytes (i_slot + limit_slot + cmp_kind + offset[2])
+    if opcode == OP.FORPREP_1 or opcode == OP.FORLOOP_1 {
+      i = i + 6  // opcode + 5 operands
+    } else {
+      i = i + 1
+    }
+  }
+
+  // Recursively extract opcodes from nested functions
+  let constants = chunk.constants or []
+  for constant in constants {
+    if constant and constant.kind == 3 {  // ValueType.OBJ = 3
+      let value = constant.value
+      if value and type(value) == "map" and value.value {
+        let innerValue = value.value
+        if innerValue and type(innerValue) == "map" and innerValue.chunk {
+          let nestedOpcodes = extractAllOpcodes(innerValue.chunk)
+          for opcode in nestedOpcodes {
+            push(opcodes, opcode)
+          }
+        }
+      }
+    }
+  }
+
+  opcodes
+}
+
+fn hasOpcode(opcodes, target) {
+  for opcode in opcodes {
+    if opcode == target {
+      return true
+    }
+  }
+  false
+}
+
+// Get actual opcode values from types module
+let OP_FORPREP_1 = OP.FORPREP_1
+let OP_FORLOOP_1 = OP.FORLOOP_1
+
+test("simple < loop emits fused opcodes", fn(assert) {
+  let source = "
+fn test(n) {
+  let sum = 0
+  for let i = 0; i < n; i = i + 1 {
+    sum = sum + i
+  }
+  sum
+}
+test(5)
+"
+  let chunk = compileToBytecode(source, "test.lx")
+  assert.truthy(chunk)
+  let opcodes = extractAllOpcodes(chunk)
+  assert.truthy(hasOpcode(opcodes, OP_FORPREP_1))
+  assert.truthy(hasOpcode(opcodes, OP_FORLOOP_1))
+})
+
+test("simple <= loop emits fused opcodes", fn(assert) {
+  let source = "
+fn test(n) {
+  let sum = 0
+  for let i = 1; i <= n; i = i + 1 {
+    sum = sum + i
+  }
+  sum
+}
+test(5)
+"
+  let chunk = compileToBytecode(source, "test.lx")
+  assert.truthy(chunk)
+  let opcodes = extractAllOpcodes(chunk)
+  assert.truthy(hasOpcode(opcodes, OP_FORPREP_1))
+  assert.truthy(hasOpcode(opcodes, OP_FORLOOP_1))
+})
+
+test("loop with local variable limit emits fused opcodes", fn(assert) {
+  let source = "
+let limit = 10
+for let i = 1; i <= limit; i = i + 1 {
+  println(i)
+}
+"
+  let chunk = compileToBytecode(source, "test.lx")
+  assert.truthy(chunk)
+  let opcodes = extractAllOpcodes(chunk)
+  assert.truthy(hasOpcode(opcodes, OP_FORPREP_1))
+  assert.truthy(hasOpcode(opcodes, OP_FORLOOP_1))
+})
+
+test("nested loops emit multiple fused opcodes", fn(assert) {
+  let source = "
+let n = 3
+for let i = 0; i < n; i = i + 1 {
+  for let j = 0; j < n; j = j + 1 {
+    println(i, j)
+  }
+}
+"
+  let chunk = compileToBytecode(source, "test.lx")
+  assert.truthy(chunk)
+  let opcodes = extractAllOpcodes(chunk)
+
+  // Count occurrences of fused opcodes (should be 2 FORPREP_1 and 2 FORLOOP_1)
+  let forprep_count = 0
+  let forloop_count = 0
+  for opcode in opcodes {
+    if opcode == OP_FORPREP_1 { forprep_count = forprep_count + 1 }
+    if opcode == OP_FORLOOP_1 { forloop_count = forloop_count + 1 }
+  }
+
+  assert.equal(forprep_count, 2)
+  assert.equal(forloop_count, 2)
+})
+
+test("loop with break still emits fused opcodes", fn(assert) {
+  let source = "
+let sum = 0
+let limit = 10
+for let i = 0; i < limit; i = i + 1 {
+  if i == 5 { break }
+  sum = sum + i
+}
+"
+  let chunk = compileToBytecode(source, "test.lx")
+  assert.truthy(chunk)
+  let opcodes = extractAllOpcodes(chunk)
+  assert.truthy(hasOpcode(opcodes, OP_FORPREP_1))
+  assert.truthy(hasOpcode(opcodes, OP_FORLOOP_1))
+})
+
+test("loop with continue still emits fused opcodes", fn(assert) {
+  let source = "
+let sum = 0
+let limit = 10
+for let i = 0; i < limit; i = i + 1 {
+  if i == 5 { continue }
+  sum = sum + i
+}
+"
+  let chunk = compileToBytecode(source, "test.lx")
+  assert.truthy(chunk)
+  let opcodes = extractAllOpcodes(chunk)
+  assert.truthy(hasOpcode(opcodes, OP_FORPREP_1))
+  assert.truthy(hasOpcode(opcodes, OP_FORLOOP_1))
+})
+
+suite.run()

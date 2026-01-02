@@ -1,0 +1,126 @@
+let suite = (import "test/makeTestSuite.lx")()
+fn test(name, cb) { suite.defineTest("fixnum-natives - " + name, cb) }
+
+// Helper to check if a value is a fixnum (not a double)
+// We can't directly check the internal representation, but we can verify
+// that fixnum values work correctly in fused loops
+fn isIntegral(n) {
+  n == int(n)
+}
+
+test("len() returns correct values", fn(assert) {
+  assert.equal(len([]), 0)
+  assert.equal(len([1, 2, 3]), 3)
+  assert.equal(len("hello"), 5)
+  assert.equal(len(""), 0)
+})
+
+test("int() returns integer part", fn(assert) {
+  assert.equal(int(42.7), 42)
+  assert.equal(int(42.2), 42)
+  assert.equal(int(-42.7), -42)
+  assert.equal(int(0.9), 0)
+  assert.truthy(isIntegral(int(42.7)))
+})
+
+test("tonumber() returns integers for integral strings", fn(assert) {
+  assert.equal(tonumber("123"), 123)
+  assert.equal(tonumber("0"), 0)
+  assert.equal(tonumber("-456"), -456)
+  assert.truthy(isIntegral(tonumber("123")))
+})
+
+test("tonumber() returns doubles for fractional strings", fn(assert) {
+  let result = tonumber("123.5")
+  assert.equal(result, 123.5)
+  assert.truthy(!isIntegral(result))
+})
+
+test("range() creates array with integral indices", fn(assert) {
+  let arr = range(5)
+  assert.equal(len(arr), 5)
+  assert.equal(arr[0], 0)
+  assert.equal(arr[1], 1)
+  assert.equal(arr[4], 4)
+
+  // Verify all elements are integral
+  for i in arr {
+    assert.truthy(isIntegral(i))
+  }
+})
+
+test("len() result can be used as loop limit", fn(assert) {
+  let arr = [10, 20, 30, 40, 50]
+  let sum = 0
+  let n = len(arr)
+  for let i = 0; i < n; i = i + 1 {
+    sum = sum + arr[i]
+  }
+  assert.equal(sum, 150)
+})
+
+test("tonumber() result can be used as loop limit", fn(assert) {
+  let n = tonumber("10")
+  let sum = 0
+  for let i = 0; i < n; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 45)  // 0+1+2+...+9
+})
+
+test("int() result can be used as loop limit", fn(assert) {
+  let n = int(10.9)
+  let sum = 0
+  for let i = 0; i < n; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 45)  // 0+1+2+...+9
+})
+
+test("range() values work in nested loops", fn(assert) {
+  let result = []
+  let outer = range(3)
+  let inner = range(3)
+  for x in outer {
+    for y in inner {
+      push(result, x * 10 + y)
+    }
+  }
+  assert.equal(len(result), 9)
+  assert.equal(result[0], 0)   // 0*10 + 0
+  assert.equal(result[4], 11)  // 1*10 + 1
+  assert.equal(result[8], 22)  // 2*10 + 2
+})
+
+test("len() works with large arrays", fn(assert) {
+  let arr = range(1000)
+  assert.equal(len(arr), 1000)
+
+  let sum = 0
+  let n = len(arr)
+  for let i = 0; i < n; i = i + 1 {
+    sum = sum + 1
+  }
+  assert.equal(sum, 1000)
+})
+
+test("tonumber() large integers stay integral", fn(assert) {
+  let n = tonumber("1000000")
+  assert.truthy(isIntegral(n))
+  assert.equal(n, 1000000)
+})
+
+test("tonumber() with negative integers", fn(assert) {
+  let n = tonumber("-500")
+  assert.truthy(isIntegral(n))
+  assert.equal(n, -500)
+
+  let sum = 0
+  let limit = int(-1 * n)  // Convert to positive
+  for let i = 0; i < limit; i = i + 1 {
+    sum = sum + 1
+  }
+  assert.equal(sum, 500)
+})
+
+suite.run()

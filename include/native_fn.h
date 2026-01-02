@@ -161,8 +161,15 @@ static bool intNative(int argCount, Value *args) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
     return false;
   }
-  double integer = (int)AS_NUMBER(arg);
-  args[-1] = NUMBER_VAL(integer);
+  double num = AS_NUMBER(arg);
+  int64_t integer = (int64_t)num;
+
+  // Return fixnum if the truncated value fits in fixnum range
+  if (fixnumFitsInt64(integer)) {
+    args[-1] = FIXNUM_VAL(integer);
+  } else {
+    args[-1] = NUMBER_VAL((double)integer);
+  }
   return true;
 }
 
@@ -304,13 +311,15 @@ static bool lenNative(int argCount, Value *args) {
   }
   Value arg = args[0];
   if (IS_STRING(arg)) {
-    double len = AS_STRING(arg)->length;
-    args[-1] = NUMBER_VAL(len);
+    int64_t len = (int64_t)AS_STRING(arg)->length;
+    // Lengths always fit in fixnum range (strings/arrays can't be that large)
+    args[-1] = FIXNUM_VAL(len);
     return true;
   }
   if (IS_ARRAY(arg)) {
-    double count = AS_ARRAY(arg).count;
-    args[-1] = NUMBER_VAL(count);
+    int64_t count = (int64_t)AS_ARRAY(arg).count;
+    // Lengths always fit in fixnum range
+    args[-1] = FIXNUM_VAL(count);
     return true;
   }
 
@@ -567,7 +576,8 @@ static bool rangeNative(int argCount, Value *args) {
     arr->array.values = GROW_ARRAY(Value, NULL, 0, num);
     arr->array.count = num;
     for (int i = 0; i < num; i++) {
-      arr->array.values[i] = NUMBER_VAL(i);
+      // Array indices are always small integers - use fixnum
+      arr->array.values[i] = FIXNUM_VAL(i);
     }
   } else {
     // every other value types start with an empty array
@@ -1239,7 +1249,20 @@ static bool tonumberNative(int argCount, Value *args) {
     return false;
   }
   char *s = AS_STRING(args[0])->chars;
-  args[-1] = NUMBER_VAL(strtod(s, NULL));
+  double num = strtod(s, NULL);
+
+  // Check if the number is an integer (no fractional part)
+  if (num == (double)(int64_t)num) {
+    int64_t integer = (int64_t)num;
+    // Return fixnum if it fits in fixnum range
+    if (fixnumFitsInt64(integer)) {
+      args[-1] = FIXNUM_VAL(integer);
+      return true;
+    }
+  }
+
+  // Return as double (either has fractional part or out of fixnum range)
+  args[-1] = NUMBER_VAL(num);
   return true;
 }
 

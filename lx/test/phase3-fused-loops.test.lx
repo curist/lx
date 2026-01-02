@@ -1,0 +1,109 @@
+let suite = (import "test/makeTestSuite.lx")()
+fn test(name, cb) { suite.defineTest("phase3-fused-loops - " + name, cb) }
+
+// Phase 3: Loops with len(), int(), tonumber() limits should now be fused
+// These tests verify that fixnum-returning natives enable more loop fusion
+
+test("loop with len() limit executes correctly", fn(assert) {
+  let arr = [10, 20, 30, 40, 50]
+  let sum = 0
+  let n = len(arr)
+  for let i = 0; i < n; i = i + 1 {
+    sum = sum + arr[i]
+  }
+  assert.equal(sum, 150)
+})
+
+test("loop with tonumber() limit executes correctly", fn(assert) {
+  let limit = tonumber("100")
+  let sum = 0
+  for let i = 0; i < limit; i = i + 1 {
+    sum = sum + 1
+  }
+  assert.equal(sum, 100)
+})
+
+test("loop with int() limit executes correctly", fn(assert) {
+  let limit = int(99.9)
+  let sum = 0
+  for let i = 0; i < limit; i = i + 1 {
+    sum = sum + 1
+  }
+  assert.equal(sum, 99)
+})
+
+test("nested loops with len() limits", fn(assert) {
+  let outer = [1, 2, 3]
+  let inner = [10, 20]
+  let result = []
+
+  let m = len(outer)
+  let n = len(inner)
+
+  for let i = 0; i < m; i = i + 1 {
+    for let j = 0; j < n; j = j + 1 {
+      push(result, outer[i] + inner[j])
+    }
+  }
+
+  assert.equal(len(result), 6)
+  assert.equal(result[0], 11)  // 1 + 10
+  assert.equal(result[1], 21)  // 1 + 20
+  assert.equal(result[2], 12)  // 2 + 10
+})
+
+test("range() creates fixnum values", fn(assert) {
+  let indices = range(5)
+  let sum = 0
+  let n = len(indices)
+
+  for let i = 0; i < n; i = i + 1 {
+    sum = sum + indices[i]
+  }
+
+  assert.equal(sum, 10)  // 0+1+2+3+4
+})
+
+test("len() on strings returns fixnum", fn(assert) {
+  let str = "hello"
+  let count = 0
+  let n = len(str)
+
+  for let i = 0; i < n; i = i + 1 {
+    count = count + 1
+  }
+
+  assert.equal(count, 5)
+})
+
+test("tonumber() with large integer", fn(assert) {
+  let limit = tonumber("10000")
+  let count = 0
+
+  for let i = 0; i < limit; i = i + 1 {
+    count = count + 1
+  }
+
+  assert.equal(count, 10000)
+})
+
+test("int() with negative truncation", fn(assert) {
+  let limit = int(-5.7)  // Should be -5
+  let result = limit
+  assert.equal(result, -5)
+})
+
+test("combined: len + range + int", fn(assert) {
+  let arr = range(10)
+  let n = len(arr)
+  let half = int(n / 2)
+
+  let sum = 0
+  for let i = 0; i < half; i = i + 1 {
+    sum = sum + arr[i]
+  }
+
+  assert.equal(sum, 10)  // 0+1+2+3+4
+})
+
+suite.run()

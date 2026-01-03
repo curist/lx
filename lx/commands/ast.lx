@@ -515,14 +515,277 @@ fn printSummary(stats) {
   }
 }
 
+// Find node by ID in AST
+fn findNodeById(node, targetId) {
+  if !node { return nil }
+
+  let t = type(node)
+  if t == "array" {
+    for let i = 0; i < len(node); i = i + 1 {
+      let found = findNodeById(node[i], targetId)
+      if found { return found }
+    }
+    return nil
+  }
+
+  if t != "map" or !node.type { return nil }
+
+  // Check if this is the node we're looking for
+  if node.id == targetId { return node }
+
+  // Search children
+  if node.value {
+    let found = findNodeById(node.value, targetId)
+    if found { return found }
+  }
+  if node.name {
+    let found = findNodeById(node.name, targetId)
+    if found { return found }
+  }
+  if node.params {
+    let found = findNodeById(node.params, targetId)
+    if found { return found }
+  }
+  if node.body {
+    let found = findNodeById(node.body, targetId)
+    if found { return found }
+  }
+  if node.expressions {
+    let found = findNodeById(node.expressions, targetId)
+    if found { return found }
+  }
+  if node.left {
+    let found = findNodeById(node.left, targetId)
+    if found { return found }
+  }
+  if node.right {
+    let found = findNodeById(node.right, targetId)
+    if found { return found }
+  }
+  if node.operand {
+    let found = findNodeById(node.operand, targetId)
+    if found { return found }
+  }
+  if node.expression {
+    let found = findNodeById(node.expression, targetId)
+    if found { return found }
+  }
+  if node.condition {
+    let found = findNodeById(node.condition, targetId)
+    if found { return found }
+  }
+  if node.then {
+    let found = findNodeById(node.then, targetId)
+    if found { return found }
+  }
+  if node.else {
+    let found = findNodeById(node.else, targetId)
+    if found { return found }
+  }
+  if node.init {
+    let found = findNodeById(node.init, targetId)
+    if found { return found }
+  }
+  if node.update {
+    let found = findNodeById(node.update, targetId)
+    if found { return found }
+  }
+  if node.callee {
+    let found = findNodeById(node.callee, targetId)
+    if found { return found }
+  }
+  if node.args {
+    let found = findNodeById(node.args, targetId)
+    if found { return found }
+  }
+  if node.object {
+    let found = findNodeById(node.object, targetId)
+    if found { return found }
+  }
+  if node.index {
+    let found = findNodeById(node.index, targetId)
+    if found { return found }
+  }
+  if node.property {
+    let found = findNodeById(node.property, targetId)
+    if found { return found }
+  }
+  if node.target {
+    let found = findNodeById(node.target, targetId)
+    if found { return found }
+  }
+  if node.elements {
+    let found = findNodeById(node.elements, targetId)
+    if found { return found }
+  }
+  if node.pairs {
+    let found = findNodeById(node.pairs, targetId)
+    if found { return found }
+  }
+  if node.path {
+    let found = findNodeById(node.path, targetId)
+    if found { return found }
+  }
+
+  nil
+}
+
+// Build reverse origin map (newId -> oldId becomes oldId -> [newIds])
+fn buildReverseOriginMap(origin) {
+  if !origin { return .{} }
+
+  let reverse = .{}
+  let newIds = keys(origin)
+  for let i = 0; i < len(newIds); i = i + 1 {
+    let newId = newIds[i]
+    let oldId = origin[newId]
+    if !reverse[oldId] {
+      reverse[oldId] = []
+    }
+    push(reverse[oldId], newId)
+  }
+  reverse
+}
+
+// Track node through compilation passes
+fn trackNodeThroughPasses(nodeId, pipelineResult) {
+  if !pipelineResult or !pipelineResult.passOrder { return [] }
+
+  let history = []
+  let currentIds = [nodeId]  // Track multiple descendants
+
+  for let i = 0; i < len(pipelineResult.passOrder); i = i + 1 {
+    let passName = pipelineResult.passOrder[i]
+    let passResult = pipelineResult.passes[passName]
+
+    if !passResult { continue }
+
+    let ast = passResult.ast or pipelineResult.ast
+
+    // Find all current nodes in this pass's AST
+    let foundNodes = []
+    for let j = 0; j < len(currentIds); j = j + 1 {
+      let id = currentIds[j]
+      let node = findNodeById(ast, id)
+      if node {
+        push(foundNodes, node)
+      }
+    }
+
+    if len(foundNodes) > 0 {
+      push(history, .{
+        pass: passName,
+        nodes: foundNodes,
+        ids: currentIds,
+      })
+    } else {
+      push(history, .{
+        pass: passName,
+        nodes: [],
+        ids: currentIds,
+        notFound: true,
+      })
+    }
+
+    // Track forward using origin map from next pass
+    if i + 1 < len(pipelineResult.passOrder) {
+      let nextPassName = pipelineResult.passOrder[i + 1]
+      let nextPassResult = pipelineResult.passes[nextPassName]
+
+      if nextPassResult and nextPassResult.origin {
+        // Build reverse map to find descendants
+        let reverseOrigin = buildReverseOriginMap(nextPassResult.origin)
+
+        let nextIds = []
+        for let j = 0; j < len(currentIds); j = j + 1 {
+          let id = currentIds[j]
+          let descendants = reverseOrigin[id]
+          if descendants {
+            for let k = 0; k < len(descendants); k = k + 1 {
+              push(nextIds, descendants[k])
+            }
+          }
+        }
+
+        if len(nextIds) > 0 {
+          currentIds = nextIds
+        }
+      }
+    }
+  }
+
+  history
+}
+
+// Format node for tracking display (concise)
+fn formatNodeForTracking(node) {
+  if !node { return "<not found>" }
+
+  let typeName = nameOf(NODE, node.type) or str(node.type)
+  let info = typeName
+
+  // Add key identifying information
+  if node.type == NODE.Identifier and node.name {
+    info = info + " '" + node.name + "'"
+  } else if node.type == NODE.Number and node.value != nil {
+    info = info + " " + str(node.value)
+  } else if node.type == NODE.String and node.value {
+    info = info + " \"" + node.value + "\""
+  } else if node.type == NODE.Binary {
+    info = info + " (operator)"
+  }
+
+  if node.anfSynthetic {
+    info = info + " [synthetic]"
+  }
+
+  info
+}
+
+// Print node tracking history
+fn printNodeTracking(nodeId, history) {
+  println("Tracking node #" + str(nodeId) + " through compilation pipeline")
+  println("=======================================================")
+  println("")
+
+  for let i = 0; i < len(history); i = i + 1 {
+    let entry = history[i]
+    println("[" + entry.pass + "]")
+
+    if entry.notFound {
+      println("  Node not found (may have been removed or transformed)")
+      if len(entry.ids) > 0 {
+        println("  Looked for: #" + join(collect id in entry.ids { str(id) }, ", #"))
+      }
+    } else if len(entry.nodes) == 0 {
+      println("  No matching nodes")
+    } else if len(entry.nodes) == 1 {
+      let node = entry.nodes[0]
+      println("  " + formatNodeForTracking(node) + " #" + str(node.id))
+      if node.line {
+        println("  Line: " + str(node.line))
+      }
+    } else {
+      println("  Split into " + str(len(entry.nodes)) + " nodes:")
+      for let j = 0; j < len(entry.nodes); j = j + 1 {
+        let node = entry.nodes[j]
+        println("    - " + formatNodeForTracking(node) + " #" + str(node.id))
+      }
+    }
+
+    println("")
+  }
+}
+
 fn parseArgs(argv) {
   // Parse command line arguments
-  // Returns .{ path: "...", pass: "...", showHelp: bool, summary: bool } or .{ error: "..." }
+  // Returns .{ path: "...", pass: "...", showHelp: bool, summary: bool, trackNode: num } or .{ error: "..." }
 
   let path = nil
   let pass = DEFAULT_PASS
   let showHelp = false
   let summary = false
+  let trackNode = nil
 
   let i = 2  // Start after command name
   for true {
@@ -542,6 +805,16 @@ fn parseArgs(argv) {
     } else if arg == "--summary" {
       summary = true
       i = i + 1
+    } else if arg == "--track-node" {
+      i = i + 1
+      if i >= len(argv) {
+        return .{ error: "--track-node requires a node ID" }
+      }
+      trackNode = tonumber(argv[i])
+      if !trackNode or trackNode <= 0 {
+        return .{ error: "--track-node requires a positive integer node ID" }
+      }
+      i = i + 1
     } else {
       if path {
         return .{ error: "Multiple file paths specified" }
@@ -559,7 +832,7 @@ fn parseArgs(argv) {
     return .{ error: "No file path specified" }
   }
 
-  .{ path: path, pass: pass, showHelp: false, summary: summary }
+  .{ path: path, pass: pass, showHelp: false, summary: summary, trackNode: trackNode }
 }
 
 fn printMetadataHelp() {
@@ -713,6 +986,7 @@ fn run(ctx) {
     groanln("Error: " + args.error)
     groanln("Usage: " + ctx.prog + " ast [--pass <pass-name>] <path>")
     groanln("       " + ctx.prog + " ast --summary <path>")
+    groanln("       " + ctx.prog + " ast --track-node <id> <path>")
     groanln("       " + ctx.prog + " ast --help-metadata")
     groanln("")
     groanln("Available passes: " + join(VALID_PASSES, ", "))
@@ -768,10 +1042,13 @@ fn run(ctx) {
     Lx.exit(65)
   }
 
-  // Summary mode or AST dump mode
+  // Summary mode, tracking mode, or AST dump mode
   if args.summary {
     let stats = buildSummaryStats(result)
     printSummary(stats)
+  } else if args.trackNode {
+    let history = trackNodeThroughPasses(args.trackNode, result)
+    printNodeTracking(args.trackNode, history)
   } else {
     // Build metadata from pipeline results
     let meta = buildMetadata(result)
@@ -782,7 +1059,7 @@ fn run(ctx) {
 
 .{
   name: "ast",
-  usage: "ast [--pass <pass-name>] <path>\n       ast --summary <path>\n       ast --help-metadata",
+  usage: "ast [--pass <pass-name>] <path>\n       ast --summary <path>\n       ast --track-node <id> <path>\n       ast --help-metadata",
   summary: "Dump AST with metadata at different compilation stages (debug)",
   run: run,
 }

@@ -1,0 +1,582 @@
+// AST dumper - print AST at different compilation stages with enriched metadata
+//
+// METADATA GUIDE:
+//
+// Origin Tracking (lower, anf, lower-loops passes):
+//   [origin: #N] - This node was created from node #N in the previous pass
+//                  Helps trace transformations through the pipeline
+//
+// Name Bindings (resolve pass):
+//   For Identifier nodes, shows what the name resolves to:
+//
+//   [local slot=N decl=#X depth=D]
+//     - Local variable at slot N
+//     - Declared at node #X
+//     - At scope depth D (0=global scope, 1=first nested scope, etc.)
+//
+//   [upvalue idx=N decl=#X depth=D]
+//     - Captured variable (closure) at upvalue index N
+//     - Originally declared at node #X
+//     - Accessed from scope depth D
+//
+//   [builtin name=X]
+//     - Built-in global function/value (e.g., println, len, type)
+//
+// Scope Info (resolve pass):
+//   For Function/Block nodes with scopes:
+//   [scope depth=D locals=N upvalues=M]
+//     - Scope at depth D
+//     - N local variables declared
+//     - M upvalues (captured variables from outer scopes)
+
+let parse = import "src/passes/frontend/parser.lx"
+let lower = import "src/passes/frontend/lower.lx"
+let anf = import "src/passes/frontend/anf.lx"
+let anfInline = import "src/passes/frontend/anf-inline.lx"
+let resolve = import "src/passes/frontend/resolve.lx"
+let lowerLoops = import "src/passes/backend/lower-loops.lx"
+let pipeline = import "src/passes/pipeline.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
+
+// Valid pass names
+let VALID_PASSES = ["parse", "lower", "anf", "lower-loops", "resolve", "anf-inline"]
+let DEFAULT_PASS = "anf-inline"
+
+fn pad(n) {
+  let s = ""
+  for let i = 0; i < n; i = i + 1 { s = s + " " }
+  s
+}
+
+fn dumpScalar(value, indent) {
+  let t = type(value)
+  if t == "string" {
+    println(pad(indent) + "\"" + value + "\"")
+  } else {
+    println(pad(indent) + str(value))
+  }
+}
+
+// Build metadata map from pipeline results
+fn buildMetadata(pipelineResult) {
+  let meta = .{
+    origin: .{},        // nodeId -> originNodeId
+    bindings: .{},      // nodeId -> binding info
+    scopes: .{},        // nodeId -> scope info
+  }
+
+  if !pipelineResult or !pipelineResult.passes { return meta }
+
+  let passes = pipelineResult.passes
+
+  // Collect origin tracking from the last pass that has it
+  // (Each pass maps new IDs to previous pass IDs, so we want the most recent)
+  let originPasses = ["anf-inline", "resolve", "lower-loops", "anf", "lower"]
+  for let i = 0; i < len(originPasses); i = i + 1 {
+    let passName = originPasses[i]
+    let passResult = passes[passName]
+    if passResult and passResult.origin {
+      meta.origin = passResult.origin
+      break
+    }
+  }
+
+  // Collect resolve metadata
+  let resolveResult = passes.resolve
+  if resolveResult and resolveResult.success {
+    if resolveResult.resolvedNames {
+      meta.bindings = resolveResult.resolvedNames
+    }
+    if resolveResult.scopeInfo {
+      meta.scopes = resolveResult.scopeInfo
+    }
+  }
+
+  meta
+}
+
+// Format binding info for display
+fn formatBinding(binding) {
+  if !binding { return nil }
+
+  if binding.kind == "local" {
+    let parts = ["local slot=" + str(binding.slot)]
+    if binding.declaredAt { push(parts, "decl=#" + str(binding.declaredAt)) }
+    if binding.depth != nil { push(parts, "depth=" + str(binding.depth)) }
+    return join(parts, " ")
+  }
+
+  if binding.kind == "upvalue" {
+    let parts = ["upvalue idx=" + str(binding.upvalueIndex)]
+    if binding.declaredAt { push(parts, "decl=#" + str(binding.declaredAt)) }
+    if binding.depth != nil { push(parts, "depth=" + str(binding.depth)) }
+    return join(parts, " ")
+  }
+
+  if binding.kind == "builtin" {
+    return "builtin name=" + (binding.name or "?")
+  }
+
+  // Unknown binding kind
+  nil
+}
+
+// Format scope info for display
+fn formatScope(scopeInfo) {
+  if !scopeInfo { return nil }
+
+  let parts = []
+  if scopeInfo.scopeType {
+    push(parts, scopeInfo.scopeType)
+  }
+  if scopeInfo.depth != nil {
+    push(parts, "depth=" + str(scopeInfo.depth))
+  }
+  if scopeInfo.locals {
+    push(parts, "locals=" + str(len(scopeInfo.locals)))
+  }
+  if scopeInfo.upvalues {
+    push(parts, "upvalues=" + str(len(scopeInfo.upvalues)))
+  }
+
+  len(parts) > 0 and join(parts, " ") or nil
+}
+
+fn dumpNode(node, indent, meta) {
+  if node == nil {
+    println(pad(indent) + "nil")
+    return
+  }
+
+  let t = type(node)
+  if t == "array" {
+    println(pad(indent) + "[")
+    for let i = 0; i < len(node); i = i + 1 {
+      dumpNode(node[i], indent + 2, meta)
+    }
+    println(pad(indent) + "]")
+    return
+  }
+  if t != "map" {
+    dumpScalar(node, indent)
+    return
+  }
+
+  if node.type == nil {
+    println(pad(indent) + "<map>")
+    return
+  }
+
+  let typeName = nameOf(NODE, node.type) or str(node.type)
+  let header = pad(indent) + typeName
+  if node.id != nil { header = header + " #" + str(node.id) }
+  if node.line != nil { header = header + " (L" + str(node.line) + ")" }
+  if node.anfSynthetic { header = header + " [synthetic]" }
+
+  // Add metadata annotations
+  if meta and node.id != nil {
+    // Show origin tracking
+    let origin = meta.origin and meta.origin[node.id]
+    if origin != nil {
+      header = header + " [origin: #" + str(origin) + "]"
+    }
+
+    // Show binding info for identifiers
+    if node.type == NODE.Identifier {
+      let binding = meta.bindings and meta.bindings[node.id]
+      let bindingStr = formatBinding(binding)
+      if bindingStr {
+        header = header + " [" + bindingStr + "]"
+      }
+    }
+
+    // Show scope info for scopes
+    let scopeInfo = meta.scopes and meta.scopes[node.id]
+    let scopeStr = formatScope(scopeInfo)
+    if scopeStr {
+      header = header + " [scope " + scopeStr + "]"
+    }
+  }
+
+  println(header)
+
+  if node.type == NODE.Identifier {
+    println(pad(indent + 2) + "name: " + node.name)
+    return
+  }
+
+  if node.value != nil {
+    println(pad(indent + 2) + "value:")
+    dumpNode(node.value, indent + 4, meta)
+  }
+
+  if node.name {
+    println(pad(indent + 2) + "name:")
+    dumpNode(node.name, indent + 4, meta)
+  }
+  if node.params {
+    println(pad(indent + 2) + "params:")
+    dumpNode(node.params, indent + 4, meta)
+  }
+  if node.body {
+    println(pad(indent + 2) + "body:")
+    dumpNode(node.body, indent + 4, meta)
+  }
+  if node.expressions {
+    println(pad(indent + 2) + "expressions:")
+    dumpNode(node.expressions, indent + 4, meta)
+  }
+  if node.left {
+    println(pad(indent + 2) + "left:")
+    dumpNode(node.left, indent + 4, meta)
+  }
+  if node.right {
+    println(pad(indent + 2) + "right:")
+    dumpNode(node.right, indent + 4, meta)
+  }
+  if node.operand {
+    println(pad(indent + 2) + "operand:")
+    dumpNode(node.operand, indent + 4, meta)
+  }
+  if node.expression {
+    println(pad(indent + 2) + "expression:")
+    dumpNode(node.expression, indent + 4, meta)
+  }
+  if node.condition {
+    println(pad(indent + 2) + "condition:")
+    dumpNode(node.condition, indent + 4, meta)
+  }
+  if node.then {
+    println(pad(indent + 2) + "then:")
+    dumpNode(node.then, indent + 4, meta)
+  }
+  if node.else {
+    println(pad(indent + 2) + "else:")
+    dumpNode(node.else, indent + 4, meta)
+  }
+  if node.init {
+    println(pad(indent + 2) + "init:")
+    dumpNode(node.init, indent + 4, meta)
+  }
+  if node.update {
+    println(pad(indent + 2) + "update:")
+    dumpNode(node.update, indent + 4, meta)
+  }
+  if node.callee {
+    println(pad(indent + 2) + "callee:")
+    dumpNode(node.callee, indent + 4, meta)
+  }
+  if node.args {
+    println(pad(indent + 2) + "args:")
+    dumpNode(node.args, indent + 4, meta)
+  }
+  if node.object {
+    println(pad(indent + 2) + "object:")
+    dumpNode(node.object, indent + 4, meta)
+  }
+  if node.index {
+    println(pad(indent + 2) + "index:")
+    dumpNode(node.index, indent + 4, meta)
+  }
+  if node.property {
+    println(pad(indent + 2) + "property:")
+    dumpNode(node.property, indent + 4, meta)
+  }
+  if node.target {
+    println(pad(indent + 2) + "target:")
+    dumpNode(node.target, indent + 4, meta)
+  }
+  if node.elements {
+    println(pad(indent + 2) + "elements:")
+    dumpNode(node.elements, indent + 4, meta)
+  }
+  if node.pairs {
+    println(pad(indent + 2) + "pairs:")
+    dumpNode(node.pairs, indent + 4, meta)
+  }
+  if node.path {
+    println(pad(indent + 2) + "path:")
+    dumpNode(node.path, indent + 4, meta)
+  }
+}
+
+fn printErrors(errors) {
+  if !errors or len(errors) == 0 { return }
+  for let i = 0; i < len(errors); i = i + 1 {
+    let err = errors[i]
+    if err.pos {
+      let file = err.pos.filename or err.filename
+      let prefix = file and join([file, ":", err.pos.line, ":", err.pos.col or 0], "") or
+        join([err.pos.line, ":", err.pos.col or 0], "")
+      groanln(join(["[", prefix, "] ", err.message], ""))
+    } else if err.line {
+      groanln(join(["[L", err.line, "] ", err.message], ""))
+    } else {
+      groanln(err.message)
+    }
+  }
+}
+
+fn parseArgs(argv) {
+  // Parse command line arguments
+  // Returns .{ path: "...", pass: "...", showHelp: bool } or .{ error: "..." }
+
+  let path = nil
+  let pass = DEFAULT_PASS
+  let showHelp = false
+
+  let i = 2  // Start after command name
+  for true {
+    if i >= len(argv) { break }
+
+    let arg = argv[i]
+    if arg == "--pass" {
+      i = i + 1
+      if i >= len(argv) {
+        return .{ error: "--pass requires a pass name" }
+      }
+      pass = argv[i]
+      i = i + 1
+    } else if arg == "--help-metadata" {
+      showHelp = true
+      i = i + 1
+    } else {
+      if path {
+        return .{ error: "Multiple file paths specified" }
+      }
+      path = arg
+      i = i + 1
+    }
+  }
+
+  if showHelp {
+    return .{ showHelp: true }
+  }
+
+  if !path {
+    return .{ error: "No file path specified" }
+  }
+
+  .{ path: path, pass: pass, showHelp: false }
+}
+
+fn printMetadataHelp() {
+  println("AST Metadata Guide")
+  println("==================")
+  println("")
+  println("The ast command enriches AST nodes with metadata from compilation passes.")
+  println("")
+  println("ORIGIN TRACKING (lower, anf, lower-loops passes)")
+  println("  [origin: #N]")
+  println("    This node was created from node #N in the previous pass.")
+  println("    Helps trace how nodes transform through the compilation pipeline.")
+  println("")
+  println("    Example: After ANF transform, you might see:")
+  println("      Identifier #33 [origin: #3]")
+  println("    This means identifier #33 in the ANF AST came from node #3 in the lowered AST.")
+  println("")
+  println("NAME BINDINGS (resolve pass)")
+  println("  Shows what each identifier resolves to:")
+  println("")
+  println("  [local slot=N decl=#X depth=D]")
+  println("    - Local variable stored at stack slot N")
+  println("    - Declared at node #X")
+  println("    - At scope depth D (0=global scope, 1=first nested scope, etc.)")
+  println("")
+  println("  [upvalue idx=N decl=#X depth=D]")
+  println("    - Captured variable (closure) at upvalue index N")
+  println("    - Originally declared at node #X")
+  println("    - Accessed from scope depth D")
+  println("")
+  println("  [builtin name=X]")
+  println("    - Built-in global function or value")
+  println("    - Examples: println, len, type, str")
+  println("")
+  println("SCOPE INFORMATION (resolve pass)")
+  println("  For Function and Block nodes:")
+  println("")
+  println("  [scope function depth=D locals=N upvalues=M]")
+  println("    - Function scope at depth D")
+  println("    - N local variables declared in this scope")
+  println("    - M upvalues (variables captured from outer scopes)")
+  println("")
+  println("  [scope block depth=D locals=N]")
+  println("    - Block scope at depth D")
+  println("    - N local variables")
+  println("")
+  println("EXAMPLES")
+  println("")
+  println("  Input code:")
+  println("    let x = 1")
+  println("    fn foo() { x }")
+  println("")
+  println("  With --pass resolve, the identifier 'x' inside foo might show:")
+  println("    Identifier #15 [upvalue idx=0 decl=#5 depth=1]")
+  println("")
+  println("  This means:")
+  println("    - It's a captured variable (upvalue)")
+  println("    - At upvalue index 0 in the closure")
+  println("    - Originally declared at node #5 (the 'let x' statement)")
+  println("    - Accessed from scope depth 1 (inside the function)")
+  println("")
+  println("PASS-SPECIFIC METADATA AVAILABILITY")
+  println("  parse:        No metadata (baseline AST)")
+  println("  lower:        Origin tracking")
+  println("  anf:          Origin tracking")
+  println("  lower-loops:  Origin tracking (currently disabled)")
+  println("  resolve:      Name bindings, scope info, plus origin from previous passes")
+  println("  anf-inline:   All metadata from resolve, plus any new origins")
+}
+
+fn buildPassList() {
+  // Build pass list similar to driver, but simplified for single-file compilation
+  [
+    .{
+      name: "parse",
+      mutatesAst: false,
+      provides: ["ast", "parseTree"],
+      run: fn(ctx, state) {
+        parse(state.source, state.path)
+      },
+    },
+    .{
+      name: "lower",
+      mutatesAst: false,
+      requires: ["ast"],
+      provides: ["loweredAst"],
+      run: fn(ctx, state) {
+        lower(state.ast, .{ startNodeId: state.nextNodeId })
+      },
+    },
+    .{
+      name: "anf",
+      mutatesAst: false,
+      requires: ["loweredAst"],
+      provides: ["anfAst", "loweredAst"],
+      run: fn(ctx, state) {
+        anf(state.ast, .{ startNodeId: state.nextNodeId })
+      },
+    },
+    .{
+      name: "lower-loops",
+      mutatesAst: false,
+      requires: ["anfAst"],
+      provides: ["loweredLoopsAst"],
+      enabled: fn(ctx, state) { false },  // Currently disabled
+      run: fn(ctx, state) {
+        lowerLoops(state.ast, .{ nextNodeId: state.nextNodeId })
+      },
+    },
+    .{
+      name: "resolve",
+      mutatesAst: false,
+      requires: ["ast"],
+      provides: ["resolution", "scopeInfo"],
+      run: fn(ctx, state) {
+        // Minimal resolve - no import handling for this debug command
+        resolve(state.ast, .{
+          importCache: .{},
+          compileModule: fn(path) {
+            .{
+              status: "failed",
+              success: false,
+              errors: ["Import not supported in ast command"]
+            }
+          },
+        })
+      },
+    },
+    .{
+      name: "anf-inline",
+      mutatesAst: true,
+      requires: ["anfAst", "resolution"],
+      provides: ["optimizedAst"],
+      run: fn(ctx, state) {
+        let resolveResult = state.passes.resolve
+        anfInline(state.ast, resolveResult)
+      },
+    },
+  ]
+}
+
+fn run(ctx) {
+  let args = parseArgs(ctx.argv)
+
+  if args.showHelp {
+    printMetadataHelp()
+    return
+  }
+
+  if args.error {
+    groanln("Error: " + args.error)
+    groanln("Usage: " + ctx.prog + " ast [--pass <pass-name>] <path>")
+    groanln("       " + ctx.prog + " ast --help-metadata")
+    groanln("")
+    groanln("Available passes: " + join(VALID_PASSES, ", "))
+    groanln("Default pass: " + DEFAULT_PASS)
+    Lx.exit(28)
+  }
+
+  let path = args.path
+  let passName = args.pass
+
+  // Validate pass name
+  let validPass = false
+  for let i = 0; i < len(VALID_PASSES); i = i + 1 {
+    if VALID_PASSES[i] == passName {
+      validPass = true
+      break
+    }
+  }
+
+  if !validPass {
+    groanln("Error: Invalid pass name '" + passName + "'")
+    groanln("Available passes: " + join(VALID_PASSES, ", "))
+    Lx.exit(28)
+  }
+
+  // Load source
+  let source = slurp(path)
+  if !source {
+    groanln("Failed to open " + path)
+    Lx.exit(2)
+  }
+
+  // Build context and state
+  let pipelineCtx = .{
+    debug: .{ stopAfter: passName }
+  }
+
+  let state = .{
+    path: path,
+    source: source,
+    ast: nil,
+    nextNodeId: 1,
+    passes: .{},
+  }
+
+  // Run passes
+  let passList = buildPassList()
+  let result = pipeline.runPasses(passList, pipelineCtx, state)
+
+  // Check for errors
+  if !result.success {
+    printErrors(result.passes[result.failedPass].errors)
+    Lx.exit(65)
+  }
+
+  // Build metadata from pipeline results
+  let meta = buildMetadata(result)
+
+  // Dump the AST with metadata
+  dumpNode(result.ast, 0, meta)
+}
+
+.{
+  name: "ast",
+  usage: "ast [--pass <pass-name>] <path>\n       ast --help-metadata",
+  summary: "Dump AST with metadata at different compilation stages (debug)",
+  run: run,
+}

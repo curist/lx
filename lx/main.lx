@@ -5,7 +5,7 @@ let runCmd = import "commands/run.lx"
 let evalCmd = import "commands/eval.lx"
 let replCmd = import "commands/repl.lx"
 let disasmCmd = import "commands/disasm.lx"
-let anfCmd = import "commands/anf.lx"
+let astCmd = import "commands/ast.lx"
 let checkCmd = import "commands/check.lx"
 let lspCmd = import "commands/lsp.lx"
 
@@ -13,7 +13,7 @@ fn isHelpArg(arg) {
   arg == "-h" or arg == "--help" or arg == "help"
 }
 
-let commands = [runCmd, evalCmd, replCmd, compileCmd, disasmCmd, anfCmd, checkCmd, lspCmd, versionCmd, helpCmd]
+let commands = [runCmd, evalCmd, replCmd, compileCmd, disasmCmd, astCmd, checkCmd, lspCmd, versionCmd, helpCmd]
 let commandsByName = .{}
 for let i = 0; i < len(commands); i = i + 1 {
   let c = commands[i]

@@ -1,0 +1,737 @@
+// Loop Lowering Pass - Materialize loop limits into local slots
+//
+// Purpose:
+// - Ensure numeric for-loop limits are identifiers (not expressions/literals)
+// - Enables fusion of loops like `for i = 0; i < len(arr); i = i + 1`
+//
+// Transformation:
+//   for let i = 0; i < expr; i = i + 1 { body }
+// →
+//   {
+//     let __loop_limit_N = expr
+//     for let i = 0; i < __loop_limit_N; i = i + 1 { body }
+//   }
+//
+// Pipeline placement: After ANF, before Codegen
+// - ANF has already normalized complex expressions
+// - This pass ensures opcode slot constraints are satisfied
+//
+// Output:
+// .{
+//   success: true,
+//   ast: <transformed AST>,
+//   origin: .{ [newNodeId]: oldNodeId },  // Track node provenance
+//   nextNodeId: <next available ID>,
+//   errors: [],
+// }
+
+let .{ NODE } = import "src/types.lx"
+
+// ============================================================================
+// Node Creation Helpers (following anf.lx pattern)
+// ============================================================================
+
+fn allocNodeId(gen) {
+  let id = gen.nextNodeId
+  gen.nextNodeId = gen.nextNodeId + 1
+  id
+}
+
+fn makeIdentifier(gen, templateNode, name) {
+  let id = allocNodeId(gen)
+  gen.origin[id] = templateNode.id
+  .{
+    type: NODE.Identifier,
+    id: id,
+    filename: templateNode.filename,
+    line: templateNode.line,
+    col: templateNode.col,
+    endLine: templateNode.endLine,
+    endCol: templateNode.endCol,
+    name: name,
+    value: name,
+    lexeme: name,
+  }
+}
+
+fn makeLet(gen, templateNode, nameNode, initNode) {
+  let id = allocNodeId(gen)
+  gen.origin[id] = templateNode.id
+  .{
+    type: NODE.Let,
+    id: id,
+    filename: templateNode.filename,
+    line: templateNode.line,
+    col: templateNode.col,
+    endLine: templateNode.endLine,
+    endCol: templateNode.endCol,
+    name: nameNode,
+    init: initNode,
+  }
+}
+
+fn makeBlock(gen, templateNode, expressions) {
+  let id = allocNodeId(gen)
+  gen.origin[id] = templateNode.id
+  .{
+    type: NODE.Block,
+    id: id,
+    filename: templateNode.filename,
+    line: templateNode.line,
+    col: templateNode.col,
+    endLine: templateNode.endLine,
+    endCol: templateNode.endCol,
+    expressions: expressions,
+  }
+}
+
+fn makeFor(gen, templateNode, initNode, condNode, updateNode, bodyNode) {
+  let id = allocNodeId(gen)
+  gen.origin[id] = templateNode.id
+  .{
+    type: NODE.For,
+    id: id,
+    filename: templateNode.filename,
+    line: templateNode.line,
+    col: templateNode.col,
+    endLine: templateNode.endLine,
+    endCol: templateNode.endCol,
+    init: initNode,
+    condition: condNode,
+    update: updateNode,
+    body: bodyNode,
+  }
+}
+
+fn makeBinary(gen, templateNode, leftNode, op, rightNode) {
+  let id = allocNodeId(gen)
+  gen.origin[id] = templateNode.id
+  .{
+    type: NODE.Binary,
+    id: id,
+    filename: templateNode.filename,
+    line: templateNode.line,
+    col: templateNode.col,
+    endLine: templateNode.endLine,
+    endCol: templateNode.endCol,
+    left: leftNode,
+    operator: op,
+    right: rightNode,
+  }
+}
+
+fn makeNil(gen, templateNode) {
+  let id = allocNodeId(gen)
+  gen.origin[id] = templateNode.id
+  .{
+    type: NODE.Nil,
+    id: id,
+    filename: templateNode.filename,
+    line: templateNode.line,
+    col: templateNode.col,
+    endLine: templateNode.endLine,
+    endCol: templateNode.endCol,
+    lexeme: "nil",
+  }
+}
+
+// ============================================================================
+// Deep Clone (for safely hoisting ANF lets without cached metadata)
+// ============================================================================
+
+fn cloneSpan(dst, src) {
+  dst.filename = src.filename
+  dst.line = src.line
+  dst.col = src.col
+  dst.endLine = src.endLine
+  dst.endCol = src.endCol
+}
+
+fn allocCloneId(gen, oldId) {
+  let id = allocNodeId(gen)
+  gen.origin[id] = oldId
+  id
+}
+
+fn cloneNode(gen, node) {
+  // Deep clone a node tree with fresh IDs, tracking origin.
+  // Allowlist approach: only copy known structural fields, never metadata.
+  // Fail loudly for unsupported node types.
+
+  if !node { return nil }
+
+  let t = node.type
+
+  if t == NODE.Identifier {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Identifier, id: id }
+    cloneSpan(out, node)
+    out.name = node.name
+    out.value = node.value
+    out.lexeme = node.lexeme
+    return out
+  }
+
+  if t == NODE.Number {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Number, id: id }
+    cloneSpan(out, node)
+    out.value = node.value
+    out.lexeme = node.lexeme
+    return out
+  }
+
+  if t == NODE.String {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.String, id: id }
+    cloneSpan(out, node)
+    out.value = node.value
+    out.lexeme = node.lexeme
+    return out
+  }
+
+  if t == NODE.Bool {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Bool, id: id }
+    cloneSpan(out, node)
+    out.value = node.value
+    out.lexeme = node.lexeme
+    return out
+  }
+
+  if t == NODE.Nil {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Nil, id: id }
+    cloneSpan(out, node)
+    out.lexeme = node.lexeme
+    return out
+  }
+
+  if t == NODE.Binary {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Binary, id: id }
+    cloneSpan(out, node)
+    out.left = cloneNode(gen, node.left)
+    out.right = cloneNode(gen, node.right)
+    out.operator = node.operator  // Token object or string; safe to reuse
+    return out
+  }
+
+  if t == NODE.Call {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Call, id: id }
+    cloneSpan(out, node)
+    out.callee = cloneNode(gen, node.callee)
+    let newArgs = []
+    for let i = 0; i < len(node.args or []); i = i + 1 {
+      push(newArgs, cloneNode(gen, node.args[i]))
+    }
+    out.args = newArgs
+    return out
+  }
+
+  if t == NODE.Let {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Let, id: id }
+    cloneSpan(out, node)
+    out.name = cloneNode(gen, node.name)  // Name is an Identifier node
+    out.init = cloneNode(gen, node.init)
+    return out
+  }
+
+  if t == NODE.Block {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Block, id: id }
+    cloneSpan(out, node)
+    // Do NOT copy anfSynthetic or other flags
+    let exprs = []
+    for let i = 0; i < len(node.expressions or []); i = i + 1 {
+      push(exprs, cloneNode(gen, node.expressions[i]))
+    }
+    out.expressions = exprs
+    return out
+  }
+
+  if t == NODE.Unary {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Unary, id: id }
+    cloneSpan(out, node)
+    out.operator = node.operator
+    out.operand = cloneNode(gen, node.operand)
+    return out
+  }
+
+  if t == NODE.Logical {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Logical, id: id }
+    cloneSpan(out, node)
+    out.left = cloneNode(gen, node.left)
+    out.right = cloneNode(gen, node.right)
+    out.operator = node.operator
+    return out
+  }
+
+  if t == NODE.Index {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Index, id: id }
+    cloneSpan(out, node)
+    out.object = cloneNode(gen, node.object)
+    out.index = cloneNode(gen, node.index)
+    return out
+  }
+
+  if t == NODE.Dot {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Dot, id: id }
+    cloneSpan(out, node)
+    out.object = cloneNode(gen, node.object)
+    out.property = node.property
+    return out
+  }
+
+  if t == NODE.Array {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Array, id: id }
+    cloneSpan(out, node)
+    let elems = []
+    for let i = 0; i < len(node.elements or []); i = i + 1 {
+      push(elems, cloneNode(gen, node.elements[i]))
+    }
+    out.elements = elems
+    return out
+  }
+
+  if t == NODE.Hashmap {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Hashmap, id: id }
+    cloneSpan(out, node)
+    let newKeys = []
+    let newVals = []
+    for let i = 0; i < len(node.keys or []); i = i + 1 {
+      push(newKeys, cloneNode(gen, node.keys[i]))
+    }
+    for let i = 0; i < len(node.values or []); i = i + 1 {
+      push(newVals, cloneNode(gen, node.values[i]))
+    }
+    out.keys = newKeys
+    out.values = newVals
+    return out
+  }
+
+  if t == NODE.Grouping {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Grouping, id: id }
+    cloneSpan(out, node)
+    out.expression = cloneNode(gen, node.expression)
+    return out
+  }
+
+  if t == NODE.Assignment {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Assignment, id: id }
+    cloneSpan(out, node)
+    out.target = cloneNode(gen, node.target)
+    out.value = cloneNode(gen, node.value)
+    return out
+  }
+
+  if t == NODE.Return {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Return, id: id }
+    cloneSpan(out, node)
+    out.value = cloneNode(gen, node.value)
+    return out
+  }
+
+  if t == NODE.If {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.If, id: id }
+    cloneSpan(out, node)
+    out.condition = cloneNode(gen, node.condition)
+    out.then = cloneNode(gen, node.then)
+    out.else = cloneNode(gen, node.else)
+    return out
+  }
+
+  if t == NODE.Function {
+    let id = allocCloneId(gen, node.id)
+    let out = .{ type: NODE.Function, id: id }
+    cloneSpan(out, node)
+    out.name = cloneNode(gen, node.name)
+    let newParams = []
+    for let i = 0; i < len(node.params or []); i = i + 1 {
+      push(newParams, cloneNode(gen, node.params[i]))
+    }
+    out.params = newParams
+    out.body = cloneNode(gen, node.body)
+    return out
+  }
+
+  // Unsupported node type - fail loudly
+  push(gen.errors, .{
+    message: "cloneNode: unsupported node type " + str(t),
+    nodeId: node.id,
+    nodeType: t,
+  })
+  return node  // Return original and record error
+}
+
+fn cloneLets(gen, lets) {
+  let out = []
+  for let i = 0; i < len(lets or []); i = i + 1 {
+    push(out, cloneNode(gen, lets[i]))
+  }
+  out
+}
+
+// ============================================================================
+// Pattern Matching (mirrors codegen.lx matchNumericForLoop)
+// ============================================================================
+
+fn extractConditionFromAnfBlock(block) {
+  // ANF may wrap condition in a synthetic block:
+  // { let $anf.0 = expr; i < $anf.0 }
+  // Extract the final Binary expression and the preceding Let statements
+  if !block or block.type != NODE.Block { return nil }
+  if !block.anfSynthetic { return nil }
+  if !block.expressions or len(block.expressions) == 0 { return nil }
+
+
+  // Last expression should be the Binary comparison
+  let lastIdx = len(block.expressions) - 1
+  let finalExpr = block.expressions[lastIdx]
+
+  if !finalExpr or finalExpr.type != NODE.Binary { return nil }
+
+  // Collect all preceding Let statements
+  let anfLets = []
+  for let i = 0; i < lastIdx; i = i + 1 {
+    let expr = block.expressions[i]
+    if expr.type != NODE.Let {
+      return nil  // Unexpected expression type in ANF block
+    }
+    push(anfLets, expr)
+  }
+
+
+  .{
+    condition: finalExpr,  // The actual i < $anf.0 comparison
+    anfLets: anfLets,      // [let $anf.0 = getLimit()]
+  }
+}
+
+fn shouldLowerLoop(node) {
+  // Returns true if this loop should be lowered
+  // Matches the same pattern as matchNumericForLoop in codegen
+
+  if !node or node.type != NODE.For { return false }
+  if !node.init or !node.condition or !node.update { return false }
+
+  // Match init: let i = <expr>
+  if node.init.type != NODE.Let { return false }
+  if !node.init.name or node.init.name.type != NODE.Identifier { return false }
+
+  // Match condition: i </<=/>/>= limit
+  // May be wrapped in ANF synthetic block
+  let hasAnfBlock = false
+  let cond = node.condition
+  if cond.type == NODE.Block and cond.anfSynthetic {
+    let extracted = extractConditionFromAnfBlock(cond)
+    if !extracted { return false }
+    cond = extracted.condition
+    hasAnfBlock = true  // Remember we have ANF block to hoist
+  }
+
+  if cond.type != NODE.Binary { return false }
+  let op = cond.operator and (cond.operator.lexeme or cond.operator)
+  if op != "<" and op != "<=" and op != ">" and op != ">=" { return false }
+
+  // Check left side is identifier i
+  if cond.left.type != NODE.Identifier { return false }
+  let i_name = node.init.name.value or node.init.name.name or node.init.name.lexeme
+  let left_name = cond.left.value or cond.left.name or cond.left.lexeme
+  if left_name != i_name { return false }
+
+  // Check if limit is already an identifier (skip lowering UNLESS we have ANF block to hoist)
+  if cond.right.type == NODE.Identifier and !hasAnfBlock {
+    return false
+  }
+
+  // Match update: i = i + K or i = i - K
+  if node.update.type != NODE.Assignment { return false }
+  if !node.update.target or node.update.target.type != NODE.Identifier { return false }
+  let update_target_name = node.update.target.value or node.update.target.name or node.update.target.lexeme
+  if update_target_name != i_name { return false }
+
+  let update_value = node.update.value
+  if update_value.type != NODE.Binary { return false }
+  let update_op = update_value.operator and (update_value.operator.lexeme or update_value.operator)
+  if update_op != "+" and update_op != "-" { return false }
+
+  if update_value.left.type != NODE.Identifier { return false }
+  let update_left_name = update_value.left.value or update_value.left.name or update_value.left.lexeme
+  if update_left_name != i_name { return false }
+
+  if update_value.right.type != NODE.Number { return false }
+
+  // Pattern matches - should lower
+  true
+}
+
+// ============================================================================
+// Loop Lowering Transformation
+// ============================================================================
+
+fn lowerLoop(node, gen) {
+  // Transform: for let i = init; i < expr; i = i + 1 { body }
+  // Into:      { let $loop_limit_N = expr; for let i = init; i < $loop_limit_N; ... { body } }
+  //
+  // Special case for ANF blocks:
+  //   for let i = init; { let $anf.0 = expr; i < $anf.0 }; i = i + 1 { body }
+  // → { let $anf.0 = expr; for let i = init; i < $anf.0; i = i + 1 { body } }
+
+  if !shouldLowerLoop(node) {
+    // Not a loop we should lower - return original unchanged
+    return node
+  }
+
+  // Check if condition is an ANF synthetic block
+  let anfExtracted = nil
+  let actualCond = node.condition
+  let hoistedStmts = []  // Statements to hoist outside loop
+
+  if node.condition.type == NODE.Block and node.condition.anfSynthetic {
+    anfExtracted = extractConditionFromAnfBlock(node.condition)
+    if anfExtracted {
+      actualCond = anfExtracted.condition
+      hoistedStmts = anfExtracted.anfLets  // Hoist ANF lets
+    }
+  }
+
+  // ANF case: hoist ANF lets (simple extraction, no cloning needed)
+  if anfExtracted {
+    // Input:  for init; { let $anf.0 = expr; i < $anf.0 }; update { body }
+    // Output: { let $anf.0 = expr; for init; i < $anf.0; update { body } }
+
+    // Create new For with extracted condition (not the synthetic block)
+    let newFor = makeFor(gen, node, node.init, anfExtracted.condition, node.update, node.body)
+
+    // Build block with hoisted lets + new For + explicit nil
+    let stmts = collect s in anfExtracted.anfLets { s }
+    push(stmts, newFor)
+    push(stmts, makeNil(gen, node))  // Ensure VALUE mode yields nil
+
+    // Create wrapper block and mark as expression-safe
+    let wrapper = makeBlock(gen, node, stmts)
+    wrapper.anfSynthetic = true  // Treat like ANF block for VALUE mode
+    return wrapper
+  }
+
+  // Literal/expression case - create new temp variable
+  if !actualCond or !actualCond.right {
+    // Safety check - should not happen if shouldLowerLoop passed
+    return node
+  }
+
+  let tempName = "$loop_limit_" + str(gen.limitCounter)
+  gen.limitCounter = gen.limitCounter + 1
+
+  // Create synthetic Let node for limit
+  let limitIdent = makeIdentifier(gen, actualCond, tempName)
+  let limitLet = makeLet(gen, actualCond, limitIdent, actualCond.right)
+
+  // Create new identifier reference for condition
+  let condLimitIdent = makeIdentifier(gen, actualCond.right, tempName)
+
+  // Create new condition with synthetic limit identifier
+  let newCond = makeBinary(gen, actualCond, actualCond.left, actualCond.operator, condLimitIdent)
+
+  // Create new For node with modified condition
+  let newFor = makeFor(gen, node, node.init, newCond, node.update, node.body)
+
+  // Build expressions array: limit let + new loop + explicit nil
+  let allStmts = []
+  push(allStmts, limitLet)
+  push(allStmts, newFor)
+  push(allStmts, makeNil(gen, node))  // Ensure VALUE mode yields nil
+
+  // Create wrapper block and mark as expression-safe
+  let wrapper = makeBlock(gen, node, allStmts)
+  wrapper.anfSynthetic = true  // Treat like ANF block for VALUE mode
+  wrapper
+}
+
+// ============================================================================
+// AST Traversal
+// ============================================================================
+
+fn walkFor(node, gen) {
+  // Only recurse into body (may contain nested loops)
+  // Don't recurse into init/condition/update - they're part of the loop lowering pattern
+  let body2 = walkExpr(node.body, gen)
+
+  // Rebuild For if body changed
+  let node2 = node
+  if body2 != node.body {
+    let id = allocNodeId(gen)
+    gen.origin[id] = node.id
+    node2 = .{
+      type: NODE.For,
+      id: id,
+      init: node.init,
+      condition: node.condition,
+      update: node.update,
+      body: body2,
+    }
+    cloneSpan(node2, node)
+  }
+
+  // Then apply lowering to the (possibly rebuilt) For
+  lowerLoop(node2, gen)
+}
+
+fn walkExpr(node, gen) {
+  if !node { return nil }
+
+  // Transform For loops
+  if node.type == NODE.For {
+    return walkFor(node, gen)
+  }
+
+  // Only recurse into container nodes that might contain For loops
+  // For all other nodes, return them unchanged to preserve node IDs
+
+  if node.type == NODE.Block {
+    // Check if any child expression changed
+    let newExprs = walkExprs(node.expressions, gen)
+
+    // Only create new Block if children changed
+    let anyChanged = false
+    for let i = 0; i < len(newExprs); i = i + 1 {
+      if newExprs[i] != node.expressions[i] {
+        anyChanged = true
+        break
+      }
+    }
+
+    if !anyChanged {
+      return node  // Return original if nothing changed
+    }
+
+    // Create new Block with updated children (preserve full span)
+    let id = allocNodeId(gen)
+    gen.origin[id] = node.id
+    let out = .{
+      type: NODE.Block,
+      id: id,
+      expressions: newExprs,
+    }
+    cloneSpan(out, node)
+    return out
+  }
+
+  if node.type == NODE.Function {
+    let newBody = walkExpr(node.body, gen)
+
+    if newBody == node.body {
+      return node  // Body unchanged, return original
+    }
+
+    let id = allocNodeId(gen)
+    gen.origin[id] = node.id
+    let out = .{
+      type: NODE.Function,
+      id: id,
+      name: node.name,    // REUSE original
+      params: node.params,  // REUSE original
+      body: newBody,
+    }
+    cloneSpan(out, node)
+    return out
+  }
+
+  if node.type == NODE.If {
+    let newThen = walkExpr(node.then, gen)
+    let newElse = walkExpr(node.else, gen)
+
+    if newThen == node.then and newElse == node.else {
+      return node  // Branches unchanged, return original
+    }
+
+    let id = allocNodeId(gen)
+    gen.origin[id] = node.id
+    let out = .{
+      type: NODE.If,
+      id: id,
+      condition: node.condition,  // REUSE original
+      then: newThen,
+      else: newElse,
+    }
+    cloneSpan(out, node)
+    return out
+  }
+
+  if node.type == NODE.Let {
+    let newInit = walkExpr(node.init, gen)
+
+    if newInit == node.init {
+      return node  // Init unchanged, return original
+    }
+
+    let id = allocNodeId(gen)
+    gen.origin[id] = node.id
+    let out = .{
+      type: NODE.Let,
+      id: id,
+      name: node.name,  // REUSE original
+      init: newInit,
+    }
+    cloneSpan(out, node)
+    return out
+  }
+
+  // For all other node types, return as-is
+  // (they either don't contain loops or we don't need to transform them)
+  node
+}
+
+fn walkExprs(exprs, gen) {
+  if !exprs { return [] }
+  collect e in exprs { walkExpr(e, gen) }
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+fn lowerLoops(ast, opts) {
+  // Require nextNodeId to avoid ID collisions
+  if !opts or !opts.nextNodeId {
+    return .{
+      success: false,
+      ast: ast,
+      origin: .{},
+      nextNodeId: ast.id + 1,
+      errors: [.{ message: "lowerLoops requires opts.nextNodeId from previous pass" }],
+    }
+  }
+
+  let gen = .{
+    nextNodeId: opts.nextNodeId,
+    origin: .{},
+    limitCounter: 0,  // Counter for unique temp names
+    errors: [],
+  }
+
+  let transformedAst = walkExpr(ast, gen)
+
+  .{
+    success: len(gen.errors) == 0,
+    ast: transformedAst,  // Return transformed AST
+    origin: gen.origin,
+    nextNodeId: gen.nextNodeId,
+    errors: gen.errors,
+  }
+}
+
+lowerLoops

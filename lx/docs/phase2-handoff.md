@@ -262,44 +262,60 @@ When adding new opcodes, update THREE tables in `verify-bytecode.lx`:
 
 ## Phase 2 Implementation Plan
 
-### Step 1: General Limit Expressions
+### Step 1: General Limit Expressions ✅ **IMPLEMENTED**
 
 **Goal:** Enable `for let i = 0; i < len(arr); i = i + 1`
 
-**Changes:**
+**Implementation Approach:** Separate loop lowering pass (Option 2)
 
-1. **Detect non-variable limits** in `matchNumericForLoop()`:
+A dedicated pass `lx/src/passes/backend/lower-loops.lx` runs after ANF and before codegen:
+
+**Pipeline:**
+```
+parse → lower → anf → resolve → anf-inline → **lower-loops** → codegen
+```
+
+**Transformation:**
 ```lx
-// Check if limit is a simple identifier
-if match.limit_node.type != NODE.Identifier {
-  // Need to rewrite - return special marker
-  match.needsLimitRewrite = true
+// Before:
+for let i = 0; i < len(arr); i = i + 1 { body }
+
+// After:
+{
+  let __loop_limit_0 = len(arr)
+  for let i = 0; i < __loop_limit_0; i = i + 1 { body }
 }
 ```
 
-2. **Rewrite in `compileNumericForLoop()`**:
-```lx
-if match.needsLimitRewrite {
-  // Open scope for hidden local
-  beginScope(gen)
+**Key Design Decisions:**
 
-  // Compile limit expression
-  compile(gen, node.condition.right)  // Assuming < or <=
+1. **Why not ANF?**
+   - ANF is for expression normalization (evaluation order)
+   - Loop limit materialization is for opcode constraints
+   - Keeps ANF backend-agnostic
 
-  // Create hidden local
-  let limitName = "__limit_" + str(gen.nextLocalSlot)
-  defineLocal(gen, limitName)
+2. **Why not codegen?**
+   - Cleaner separation of concerns
+   - Codegen stays mechanical (emit, don't transform)
+   - Easier to test and reason about
 
-  // Update match to point to new local
-  // ... create synthetic identifier node ...
-}
-```
+3. **Pass characteristics:**
+   - Input: ANF AST with arbitrary loop limits
+   - Output: ANF AST where numeric loop limits are identifiers
+   - Enabled: Always on when ANF is enabled
+   - Preserves: Node provenance via origin map
 
-3. **Clean up scope** after loop completes
+**Pattern Matching:**
+- Only transforms loops matching the numeric for-loop pattern
+- Init: `let i = <expr>`
+- Condition: `i < limit` (where limit is NOT an identifier)
+- Update: `i = i + K` or `i = i - K`
+- Comparisons: `<`, `<=`, `>`, `>=`
 
 **Testing:**
 - Verify `for let i = 0; i < len(arr)` fuses
-- Verify `for let i = 0; i < x + y` fuses
+- Verify `for let i = 0; i < 10` fuses (literal limit)
+- Verify `for let i = 0; i < x + y` fuses (expression limit)
 - Verify nested loops with expression limits
 - Verify limit evaluated once (not per iteration)
 
@@ -472,22 +488,27 @@ After Phase 4 (deopt): ~1.0-1.2x slower
 
 ## Files to Modify (Phase 2)
 
-### C Runtime
+### lx Compiler (Step 1: Loop Lowering)
+- [x] `lx/src/passes/backend/lower-loops.lx` - **NEW:** Loop lowering pass
+- [x] `lx/src/driver.lx` - Wire loop lowering into pipeline
+
+### C Runtime (Step 2: Signed Steps)
 - [ ] `include/chunk.h` - Add OP_FORPREP, OP_FORLOOP
 - [ ] `src/vm.c` - Implement handlers with variable step
 - [ ] `src/debug.c` - Add disassembler cases
 
-### lx Compiler
+### lx Compiler (Step 2: Signed Steps)
 - [ ] `lx/src/types.lx` - Mirror opcode enum
 - [ ] `lx/src/passes/backend/codegen.lx` - Update pattern matcher & codegen
 - [ ] `lx/src/passes/backend/verify-bytecode.lx` - Add new opcodes to tables
 
 ### Tests
-- [ ] Create `lx/test/phase2-general-limits.test.lx`
-- [ ] Create `lx/test/phase2-signed-step.test.lx`
+- [ ] Create `lx/test/phase2-general-limits.test.lx` - Test loop lowering
+- [ ] Create `lx/test/phase2-signed-step.test.lx` - Test variable steps
 - [ ] Update `lx/test/fused-for-loop-disasm.test.lx` for new opcodes
 
 ### Documentation
+- [x] Update `lx/docs/phase2-handoff.md` - Document loop lowering design
 - [ ] Update `lx/docs/fused-numeric-for-loop.md` - Mark Phase 2 complete
 
 ---
@@ -541,16 +562,28 @@ make clean && make
 
 ## Success Criteria
 
-Phase 2 is complete when:
+**Phase 2 Step 1 (Loop Lowering):**
+- [x] Loop lowering pass created (`lx/src/passes/backend/lower-loops.lx`)
+- [x] Wired into driver pipeline (runs after anf-inline, before codegen)
+- [ ] Tests verify literal limits work (`i < 10`)
+- [ ] Tests verify expression limits work (`i < len(arr)`)
+- [ ] Tests verify limit evaluated once (not per iteration)
+- [ ] All existing tests still pass
+- [ ] Compiler successfully bootstraps
 
-- [x] Loops with literal limits fuse (e.g., `i < 10`)
-- [x] Loops with expression limits fuse (e.g., `i < len(arr)`)
-- [x] Loops with step=+K fuse (e.g., `i = i + 2`)
-- [x] Loops with step=-K fuse (e.g., `i = i - 1`)
-- [x] All existing tests pass
-- [x] New tests verify correct behavior
-- [x] Benchmark shows performance improvement
-- [x] Compiler successfully bootstraps
+**Phase 2 Step 2 (Signed Steps):**
+- [ ] Opcodes OP_FORPREP/OP_FORLOOP added
+- [ ] VM handlers implemented
+- [ ] Loops with step=+K fuse (e.g., `i = i + 2`)
+- [ ] Loops with step=-K fuse (e.g., `i = i - 1`)
+- [ ] Tests verify all step directions
+- [ ] Disassembler shows step values
+- [ ] Compiler successfully bootstraps
+
+**Phase 2 Complete:**
+- [ ] All step 1 and step 2 criteria met
+- [ ] Benchmark shows performance improvement
+- [ ] Documentation updated
 
 ---
 

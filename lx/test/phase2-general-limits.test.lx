@@ -1,0 +1,274 @@
+// Phase 2 Step 1: General Limit Expressions Test Suite
+// Tests loop lowering pass that materializes non-identifier limits into locals
+
+let suite = (import "test/makeTestSuite.lx")()
+fn test(name, cb) { suite.defineTest("phase2-general-limits - " + name, cb) }
+
+// ============================================================================
+// Basic Functionality
+// ============================================================================
+
+test("literal limit - simple loop", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 10; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 45)  // 0+1+2+...+9
+})
+
+test("literal limit - empty loop", fn(assert) {
+  let count = 0
+  for let i = 5; i < 5; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 0)  // Never enters
+})
+
+test("expression limit - function call", fn(assert) {
+  let arr = [1, 2, 3, 4, 5]
+  let sum = 0
+  for let i = 0; i < len(arr); i = i + 1 {
+    sum = sum + arr[i]
+  }
+  assert.equal(sum, 15)
+})
+
+test("expression limit - arithmetic", fn(assert) {
+  let a = 5
+  let b = 10
+  let count = 0
+  for let i = 0; i < a + b; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 15)
+})
+
+test("expression limit - nested call", fn(assert) {
+  let result = []
+  for let i = 0; i < len(range(5)); i = i + 1 {
+    push(result, i)
+  }
+  assert.equal(len(result), 5)
+  assert.equal(result[0], 0)
+  assert.equal(result[4], 4)
+})
+
+// ============================================================================
+// Limit Evaluation Semantics
+// ============================================================================
+
+test("limit evaluated once - side effects", fn(assert) {
+  let evalCount = 0
+
+  fn getLimitWithSideEffect() {
+    evalCount = evalCount + 1
+    10
+  }
+
+  for let i = 0; i < getLimitWithSideEffect(); i = i + 1 {
+    // Body runs 10 times
+  }
+
+  // Limit should be evaluated exactly once (before loop)
+  assert.equal(evalCount, 1)
+})
+
+test("limit evaluated once - mutation doesn't affect loop", fn(assert) {
+  let limit = 5
+  let iterations = 0
+
+  for let i = 0; i < limit + 5; i = i + 1 {
+    iterations = iterations + 1
+    limit = 100  // This shouldn't affect loop limit
+  }
+
+  // Loop should run 10 times (original limit: 5 + 5)
+  assert.equal(iterations, 10)
+})
+
+// ============================================================================
+// Comparison Operators
+// ============================================================================
+
+test("literal limit with <= comparison", fn(assert) {
+  let sum = 0
+  for let i = 0; i <= 10; i = i + 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 55)  // 0+1+2+...+10 (includes 10)
+})
+
+test("literal limit with > comparison (countdown)", fn(assert) {
+  let sum = 0
+  for let i = 10; i > 0; i = i - 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 55)  // 10+9+8+...+1
+})
+
+test("literal limit with >= comparison", fn(assert) {
+  let sum = 0
+  for let i = 5; i >= 0; i = i - 1 {
+    sum = sum + i
+  }
+  assert.equal(sum, 15)  // 5+4+3+2+1+0 (includes 0)
+})
+
+test("expression limit with <= comparison", fn(assert) {
+  let arr = [1, 2, 3]
+  let iterations = 0
+  for let i = 0; i <= len(arr); i = i + 1 {
+    iterations = iterations + 1
+  }
+  assert.equal(iterations, 4)  // 0, 1, 2, 3 (includes len(arr))
+})
+
+// ============================================================================
+// Nested Loops
+// ============================================================================
+
+test("nested loops with expression limits", fn(assert) {
+  let outer = [1, 2, 3]
+  let inner = [4, 5]
+  let sum = 0
+
+  for let i = 0; i < len(outer); i = i + 1 {
+    for let j = 0; j < len(inner); j = j + 1 {
+      sum = sum + 1
+    }
+  }
+
+  assert.equal(sum, 6)  // 3 * 2
+})
+
+test("nested loops with literal limits", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 5; i = i + 1 {
+    for let j = 0; j < 3; j = j + 1 {
+      sum = sum + 1
+    }
+  }
+  assert.equal(sum, 15)
+})
+
+test("nested loops with mixed limits", fn(assert) {
+  let arr = [1, 2, 3]
+  let sum = 0
+
+  for let i = 0; i < len(arr); i = i + 1 {
+    for let j = 0; j < 10; j = j + 1 {
+      sum = sum + 1
+    }
+  }
+
+  assert.equal(sum, 30)  // 3 * 10
+})
+
+// ============================================================================
+// Control Flow
+// ============================================================================
+
+test("break with expression limit", fn(assert) {
+  let arr = [1, 2, 3, 4, 5]
+  let sum = 0
+
+  for let i = 0; i < len(arr); i = i + 1 {
+    if arr[i] == 3 {
+      break
+    }
+    sum = sum + arr[i]
+  }
+
+  assert.equal(sum, 3)  // 1 + 2 (stopped before 3)
+})
+
+test("continue with literal limit", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 10; i = i + 1 {
+    if i == 5 {
+      continue
+    }
+    sum = sum + i
+  }
+  assert.equal(sum, 40)  // 0+1+2+3+4+6+7+8+9 (skip 5)
+})
+
+// ============================================================================
+// Edge Cases
+// ============================================================================
+
+test("zero iterations - literal limit", fn(assert) {
+  let count = 0
+  for let i = 10; i < 5; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 0)
+})
+
+test("zero iterations - expression limit", fn(assert) {
+  let arr = []
+  let count = 0
+  for let i = 0; i < len(arr); i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 0)
+})
+
+test("single iteration - literal", fn(assert) {
+  let count = 0
+  for let i = 0; i < 1; i = i + 1 {
+    count = count + 1
+  }
+  assert.equal(count, 1)
+})
+
+test("large literal limit", fn(assert) {
+  let sum = 0
+  for let i = 0; i < 1000; i = i + 1 {
+    sum = sum + 1
+  }
+  assert.equal(sum, 1000)
+})
+
+// ============================================================================
+// Complex Expressions
+// ============================================================================
+
+test("limit with multiple operations", fn(assert) {
+  let a = 2
+  let b = 3
+  let c = 4
+  let count = 0
+
+  for let i = 0; i < a + b + c; i = i + 1 {
+    count = count + 1
+  }
+
+  assert.equal(count, 9)  // 2 + 3 + 4
+})
+
+test("limit with multiplication", fn(assert) {
+  let rows = 3
+  let cols = 4
+  let count = 0
+
+  for let i = 0; i < rows + cols; i = i + 1 {
+    count = count + 1
+  }
+
+  assert.equal(count, 7)  // 3 + 4
+})
+
+test("limit with conditional expression", fn(assert) {
+  let useSmall = true
+  let count = 0
+
+  // Note: This tests that the ternary operator result is materialized
+  for let i = 0; i < (useSmall and 5 or 10); i = i + 1 {
+    count = count + 1
+  }
+
+  assert.equal(count, 5)
+})
+
+suite.run()

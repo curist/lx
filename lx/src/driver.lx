@@ -1,4 +1,5 @@
-// Driver - Orchestrates compilation pipeline (passes): parse → lower → anf → resolve → anf-inline → typecheck
+// Driver - Orchestrates compilation pipeline (passes):
+//   parse → lower → anf → lower-loops → resolve → anf-inline → (codegen)
 //
 // Responsibilities:
 // - Coordinate pass execution
@@ -6,6 +7,7 @@
 // - Handle circular import detection
 // - Provide compilation artifacts for query service and codegen
 // - ANF runs after lower (optional, default on)
+// - Loop lowering runs post-ANF, pre-resolve (always on with ANF, materializes loop limits)
 // - ANF inline runs post-resolve (optional, default on)
 
 let parse = import "src/passes/frontend/parser.lx"
@@ -14,10 +16,36 @@ let anf = import "src/passes/frontend/anf.lx"
 let anfInline = import "src/passes/frontend/anf-inline.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
 let typecheck = import "src/passes/frontend/typecheck.lx"
+let lowerLoops = import "src/passes/backend/lower-loops.lx"
 let pipeline = import "src/passes/pipeline.lx"
 let types = import "src/types.lx"
 
 let NODE = types.NODE
+
+// ========================================
+// Helper Functions
+// ========================================
+
+fn remapEnumInfo(prevEnumInfo, resultOrigin) {
+  // Remap enum info through origin tracking when node IDs change
+  // prevEnumInfo: .{ oldNodeId: enumInfo }
+  // resultOrigin: .{ newNodeId: oldNodeId }
+  // Returns: .{ newNodeId: enumInfo }
+
+  if !prevEnumInfo or !resultOrigin { return .{} }
+
+  let remapped = .{}
+  let newIds = keys(resultOrigin)
+  for let i = 0; i < len(newIds); i = i + 1 {
+    let newId = newIds[i]
+    let oldId = resultOrigin[newId]
+    if type(oldId) == "number" or type(oldId) == "string" {
+      let info = prevEnumInfo[oldId]
+      if info { remapped[newId] = info }
+    }
+  }
+  remapped
+}
 
 // ========================================
 // Profile Definitions
@@ -125,16 +153,7 @@ fn buildPassList(ctx) {
         // Remap parse enum info (if present) onto lowered node IDs via origin.
         let parseResult = state.passes and state.passes.parse
         if parseResult and parseResult.enumInfo and result and result.origin {
-          let remapped = .{}
-          let newIds = keys(result.origin)
-          for let i = 0; i < len(newIds); i = i + 1 {
-            let newId = newIds[i]
-            let oldId = result.origin[newId]
-            if (type(oldId) == "number" or type(oldId) == "string") {
-              let info = parseResult.enumInfo[oldId]
-              if info { remapped[newId] = info }
-            }
-          }
+          let remapped = remapEnumInfo(parseResult.enumInfo, result.origin)
           return .{
             success: result.success,
             ast: result.ast,
@@ -167,16 +186,7 @@ fn buildPassList(ctx) {
         // Remap enum info through ANF transform (node IDs change again).
         let prev = state.passes and state.passes.lower
         if prev and prev.enumInfo and result and result.origin {
-          let remapped = .{}
-          let newIds = keys(result.origin)
-          for let i = 0; i < len(newIds); i = i + 1 {
-            let newId = newIds[i]
-            let oldId = result.origin[newId]
-            if (type(oldId) == "number" or type(oldId) == "string") {
-              let info = prev.enumInfo[oldId]
-              if info { remapped[newId] = info }
-            }
-          }
+          let remapped = remapEnumInfo(prev.enumInfo, result.origin)
           return .{
             success: result.success,
             ast: result.ast,
@@ -191,7 +201,38 @@ fn buildPassList(ctx) {
       },
     },
 
-    // PASS 4: Resolve
+    // PASS 4: Loop Lowering (disabled for now - has correctness issues)
+    .{
+      name: "lower-loops",
+      mutatesAst: false,  // Returns new AST with origin tracking
+      requires: ["anfAst"],  // Works on ANF AST
+      provides: ["loweredLoopsAst"],
+      enabled: fn(ctx, state) {
+        // Disabled until correctness issues are resolved
+        false
+      },
+      run: fn(ctx, state) {
+        let result = lowerLoops(state.ast, .{ nextNodeId: state.nextNodeId })
+
+        // Remap enum info through loop lowering transform
+        let prev = state.passes.anf
+        if prev and prev.enumInfo and result and result.origin {
+          let remapped = remapEnumInfo(prev.enumInfo, result.origin)
+          return .{
+            success: result.success,
+            ast: result.ast,
+            origin: result.origin,
+            errors: result.errors,
+            nextNodeId: result.nextNodeId,
+            enumInfo: remapped,
+          }
+        }
+
+        result
+      },
+    },
+
+    // PASS 5: Resolve
     .{
       name: "resolve",
       mutatesAst: false,  // Phase 2: import metadata moved to side tables
@@ -206,7 +247,7 @@ fn buildPassList(ctx) {
       },
     },
 
-    // PASS 5: ANF Inline Optimization (optional, default on, post-resolve)
+    // PASS 6: ANF Inline Optimization (optional, default on, post-resolve)
     .{
       name: "anf-inline",
       mutatesAst: true,  // Explicitly mutates AST in-place

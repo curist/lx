@@ -8,6 +8,7 @@
 
 let types = import "src/types.lx"
 let NODE = types.NODE
+let nodeUtils = import "src/passes/node-utils.lx"
 
 // ========================================
 // Error handling
@@ -32,106 +33,7 @@ fn allocNodeId(anf) {
 }
 
 fn copyNodeShallow(anf, node) {
-  let newId = allocNodeId(anf)
-  anf.origin[newId] = node.id
-  let newNode = .{
-    id: newId,
-    type: node.type,
-    filename: node.filename,
-    line: node.line,
-    col: node.col,
-    endLine: node.endLine,
-    endCol: node.endCol,
-  }
-
-  let t = node.type
-
-  // Leaf payload
-  if t == NODE.Number or t == NODE.String or t == NODE.Bool {
-    // Note: Bool.value can be false, so we must not use truthiness checks.
-    newNode.value = node.value
-    newNode.lexeme = node.lexeme
-  } else if t == NODE.Nil {
-    newNode.lexeme = node.lexeme
-  } else if t == NODE.Identifier {
-    newNode.name = node.name
-    newNode.lexeme = node.lexeme
-  }
-
-  // Common expression shapes
-  else if t == NODE.Binary or t == NODE.Logical {
-    newNode.left = node.left
-    newNode.operator = node.operator
-    newNode.right = node.right
-  } else if t == NODE.Unary {
-    newNode.operator = node.operator
-    newNode.operand = node.operand
-  } else if t == NODE.Grouping {
-    newNode.expression = node.expression
-  } else if t == NODE.Let {
-    newNode.name = node.name
-    newNode.init = node.init
-  } else if t == NODE.Block {
-    newNode.expressions = node.expressions
-    if node.anfSynthetic != nil { newNode.anfSynthetic = node.anfSynthetic }
-  } else if t == NODE.Function {
-    newNode.name = node.name
-    newNode.params = node.params
-    newNode.body = node.body
-  } else if t == NODE.Call {
-    newNode.callee = node.callee
-    newNode.args = node.args
-  } else if t == NODE.Arrow {
-    newNode.left = node.left
-    newNode.operator = node.operator
-    newNode.right = node.right
-  } else if t == NODE.If {
-    newNode.condition = node.condition
-    newNode.then = node.then
-    newNode.else = node.else
-  } else if t == NODE.For or t == NODE.Collect {
-    newNode.init = node.init
-    newNode.condition = node.condition
-    newNode.update = node.update
-    newNode.body = node.body
-  } else if t == NODE.ForIn or t == NODE.CollectIn {
-    newNode.valueBinder = node.valueBinder
-    newNode.indexBinder = node.indexBinder
-    newNode.iterable = node.iterable
-    newNode.body = node.body
-  } else if t == NODE.Return {
-    newNode.value = node.value
-  } else if t == NODE.Array {
-    newNode.elements = node.elements
-  } else if t == NODE.Hashmap {
-    newNode.pairs = node.pairs
-  } else if t == NODE.Index {
-    newNode.object = node.object
-    newNode.index = node.index
-  } else if t == NODE.Dot {
-    newNode.object = node.object
-    newNode.property = node.property
-  } else if t == NODE.Assignment {
-    newNode.target = node.target
-    newNode.value = node.value
-  } else if t == NODE.Import {
-    newNode.path = node.path
-  } else if t == NODE.IntrinsicCall {
-    newNode.intrinsic = node.intrinsic
-    newNode.args = node.args
-  }
-
-  // Slow path: preserve any additional fields on unknown node types.
-  else if type(node) == "map" {
-    let node_keys = keys(node)
-    for let i = 0; i < len(node_keys); i = i + 1 {
-      let key = node_keys[i]
-      if key == "id" { continue }
-      newNode[key] = node[key]
-    }
-  }
-
-  newNode
+  nodeUtils.copyNodeShallow(allocNodeId, anf, node)
 }
 
 fn makeIdentifier(anf, templateNode, name) {

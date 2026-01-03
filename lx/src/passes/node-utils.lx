@@ -1,0 +1,162 @@
+// Shared utilities for node copying across compiler passes
+
+let types = import "src/types.lx"
+let NODE = types.NODE
+
+// Hashmap of node type -> field copier function for shallow copying
+// Shallow copy means: copy node structure but reuse child references
+let shallowCopyHandlers = .{
+  [NODE.Number]: fn(newNode, node) {
+    newNode.value = node.value
+    newNode.lexeme = node.lexeme
+  },
+  [NODE.String]: fn(newNode, node) {
+    newNode.value = node.value
+    newNode.lexeme = node.lexeme
+  },
+  [NODE.Bool]: fn(newNode, node) {
+    newNode.value = node.value
+    newNode.lexeme = node.lexeme
+  },
+  [NODE.Nil]: fn(newNode, node) {
+    newNode.lexeme = node.lexeme
+  },
+  [NODE.Identifier]: fn(newNode, node) {
+    newNode.name = node.name
+    newNode.lexeme = node.lexeme
+  },
+  [NODE.Binary]: fn(newNode, node) {
+    newNode.left = node.left
+    newNode.operator = node.operator
+    newNode.right = node.right
+  },
+  [NODE.Logical]: fn(newNode, node) {
+    newNode.left = node.left
+    newNode.operator = node.operator
+    newNode.right = node.right
+  },
+  [NODE.Unary]: fn(newNode, node) {
+    newNode.operator = node.operator
+    newNode.operand = node.operand
+  },
+  [NODE.Grouping]: fn(newNode, node) {
+    newNode.expression = node.expression
+  },
+  [NODE.Let]: fn(newNode, node) {
+    newNode.name = node.name
+    newNode.init = node.init
+  },
+  [NODE.Block]: fn(newNode, node) {
+    newNode.expressions = node.expressions
+    if node.anfSynthetic != nil { newNode.anfSynthetic = node.anfSynthetic }
+  },
+  [NODE.Function]: fn(newNode, node) {
+    newNode.name = node.name
+    newNode.params = node.params
+    newNode.body = node.body
+  },
+  [NODE.Call]: fn(newNode, node) {
+    newNode.callee = node.callee
+    newNode.args = node.args
+  },
+  [NODE.Arrow]: fn(newNode, node) {
+    newNode.left = node.left
+    newNode.operator = node.operator
+    newNode.right = node.right
+  },
+  [NODE.If]: fn(newNode, node) {
+    newNode.condition = node.condition
+    newNode.then = node.then
+    newNode.else = node.else
+  },
+  [NODE.For]: fn(newNode, node) {
+    newNode.init = node.init
+    newNode.condition = node.condition
+    newNode.update = node.update
+    newNode.body = node.body
+  },
+  [NODE.Collect]: fn(newNode, node) {
+    newNode.init = node.init
+    newNode.condition = node.condition
+    newNode.update = node.update
+    newNode.body = node.body
+  },
+  [NODE.ForIn]: fn(newNode, node) {
+    newNode.valueBinder = node.valueBinder
+    newNode.indexBinder = node.indexBinder
+    newNode.iterable = node.iterable
+    newNode.body = node.body
+  },
+  [NODE.CollectIn]: fn(newNode, node) {
+    newNode.valueBinder = node.valueBinder
+    newNode.indexBinder = node.indexBinder
+    newNode.iterable = node.iterable
+    newNode.body = node.body
+  },
+  [NODE.Return]: fn(newNode, node) {
+    newNode.value = node.value
+  },
+  [NODE.Array]: fn(newNode, node) {
+    newNode.elements = node.elements
+  },
+  [NODE.Hashmap]: fn(newNode, node) {
+    newNode.pairs = node.pairs
+  },
+  [NODE.Index]: fn(newNode, node) {
+    newNode.object = node.object
+    newNode.index = node.index
+  },
+  [NODE.Dot]: fn(newNode, node) {
+    newNode.object = node.object
+    newNode.property = node.property
+  },
+  [NODE.Assignment]: fn(newNode, node) {
+    newNode.target = node.target
+    newNode.value = node.value
+  },
+  [NODE.Import]: fn(newNode, node) {
+    newNode.path = node.path
+  },
+  [NODE.IntrinsicCall]: fn(newNode, node) {
+    newNode.intrinsic = node.intrinsic
+    newNode.args = node.args
+  },
+}
+
+// Helper to copy a node shallowly
+// allocNodeIdFn: function that takes ctx and returns a new ID
+// ctx: pass context with .origin map
+// node: node to copy
+fn copyNodeShallow(allocNodeIdFn, ctx, node) {
+  let newId = allocNodeIdFn(ctx)
+  ctx.origin[newId] = node.id
+  let newNode = .{
+    id: newId,
+    type: node.type,
+    filename: node.filename,
+    line: node.line,
+    col: node.col,
+    endLine: node.endLine,
+    endCol: node.endCol,
+  }
+
+  let handler = shallowCopyHandlers[node.type]
+  if handler {
+    handler(newNode, node)
+  } else if type(node) == "map" {
+    // Slow path: preserve any additional fields on unknown node types
+    let node_keys = keys(node)
+    for let i = 0; i < len(node_keys); i = i + 1 {
+      let key = node_keys[i]
+      if key == "id" { continue }
+      newNode[key] = node[key]
+    }
+  }
+
+  newNode
+}
+
+.{
+  shallowCopyHandlers: shallowCopyHandlers,
+  copyNodeShallow: copyNodeShallow,
+}

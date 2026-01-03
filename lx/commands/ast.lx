@@ -777,15 +777,288 @@ fn printNodeTracking(nodeId, history) {
   }
 }
 
+// Build origin chain from one pass to another
+fn buildOriginChain(pipelineResult, fromPass, toPass) {
+  // Returns a map: fromNodeId -> [toNodeIds]
+  if !pipelineResult or !pipelineResult.passOrder { return .{} }
+
+  let chain = .{}  // Maps node ID to array of node IDs
+  let passOrder = pipelineResult.passOrder
+
+  // Find indices of from and to passes
+  let fromIdx = -1
+  let toIdx = -1
+  for let i = 0; i < len(passOrder); i = i + 1 {
+    if passOrder[i] == fromPass { fromIdx = i }
+    if passOrder[i] == toPass { toIdx = i }
+  }
+
+  if fromIdx == -1 or toIdx == -1 or fromIdx >= toIdx {
+    return .{}
+  }
+
+  // Initialize chain with identity mapping for fromPass nodes
+  let fromPassResult = pipelineResult.passes[fromPass]
+  if fromPassResult and fromPassResult.ast {
+    let fromAst = fromPassResult.ast
+    // Collect all node IDs from fromPass
+    let collectIds = nil
+    collectIds = fn collectIds(node) {
+      if !node { return }
+      let t = type(node)
+      if t == "array" {
+        for let i = 0; i < len(node); i = i + 1 {
+          collectIds(node[i])
+        }
+      } else if t == "map" and node.id {
+        chain[node.id] = [node.id]
+        // Recursively collect from children
+        if node.value { collectIds(node.value) }
+        if node.name { collectIds(node.name) }
+        if node.params { collectIds(node.params) }
+        if node.body { collectIds(node.body) }
+        if node.expressions { collectIds(node.expressions) }
+        if node.left { collectIds(node.left) }
+        if node.right { collectIds(node.right) }
+        if node.operand { collectIds(node.operand) }
+        if node.expression { collectIds(node.expression) }
+        if node.condition { collectIds(node.condition) }
+        if node.then { collectIds(node.then) }
+        if node.else { collectIds(node.else) }
+        if node.init { collectIds(node.init) }
+        if node.update { collectIds(node.update) }
+        if node.callee { collectIds(node.callee) }
+        if node.args { collectIds(node.args) }
+        if node.object { collectIds(node.object) }
+        if node.index { collectIds(node.index) }
+        if node.property { collectIds(node.property) }
+        if node.target { collectIds(node.target) }
+        if node.elements { collectIds(node.elements) }
+        if node.pairs { collectIds(node.pairs) }
+        if node.path { collectIds(node.path) }
+      }
+    }
+    collectIds(fromAst)
+  }
+
+  // Chain through intermediate passes
+  for let i = fromIdx + 1; i <= toIdx; i = i + 1 {
+    let passResult = pipelineResult.passes[passOrder[i]]
+    if passResult and passResult.origin {
+      let reverseOrigin = buildReverseOriginMap(passResult.origin)
+      let newChain = .{}
+
+      let oldIds = keys(chain)
+      for let j = 0; j < len(oldIds); j = j + 1 {
+        let oldId = oldIds[j]
+        let currentIds = chain[oldId]
+        let nextIds = []
+
+        for let k = 0; k < len(currentIds); k = k + 1 {
+          let id = currentIds[k]
+          let descendants = reverseOrigin[id]
+          if descendants {
+            for let m = 0; m < len(descendants); m = m + 1 {
+              push(nextIds, descendants[m])
+            }
+          }
+        }
+
+        if len(nextIds) > 0 {
+          newChain[oldId] = nextIds
+        }
+      }
+
+      chain = newChain
+    }
+  }
+
+  chain
+}
+
+// Compute diff between two passes
+fn computeDiff(pipelineResult, fromPass, toPass) {
+  let fromPassResult = pipelineResult.passes[fromPass]
+  let toPassResult = pipelineResult.passes[toPass]
+
+  if !fromPassResult or !toPassResult {
+    return .{ error: "One or both passes not found in pipeline" }
+  }
+
+  let fromAst = fromPassResult.ast
+  let toAst = toPassResult.ast
+
+  let originChain = buildOriginChain(pipelineResult, fromPass, toPass)
+
+  // Collect all nodes from both passes
+  let fromNodes = .{}
+  let toNodes = .{}
+
+  let collectNodes = fn collectNodes(node, map) {
+    if !node { return }
+    let t = type(node)
+    if t == "array" {
+      for let i = 0; i < len(node); i = i + 1 {
+        collectNodes(node[i], map)
+      }
+    } else if t == "map" and node.id {
+      map[node.id] = node
+      if node.value { collectNodes(node.value, map) }
+      if node.name { collectNodes(node.name, map) }
+      if node.params { collectNodes(node.params, map) }
+      if node.body { collectNodes(node.body, map) }
+      if node.expressions { collectNodes(node.expressions, map) }
+      if node.left { collectNodes(node.left, map) }
+      if node.right { collectNodes(node.right, map) }
+      if node.operand { collectNodes(node.operand, map) }
+      if node.expression { collectNodes(node.expression, map) }
+      if node.condition { collectNodes(node.condition, map) }
+      if node.then { collectNodes(node.then, map) }
+      if node.else { collectNodes(node.else, map) }
+      if node.init { collectNodes(node.init, map) }
+      if node.update { collectNodes(node.update, map) }
+      if node.callee { collectNodes(node.callee, map) }
+      if node.args { collectNodes(node.args, map) }
+      if node.object { collectNodes(node.object, map) }
+      if node.index { collectNodes(node.index, map) }
+      if node.property { collectNodes(node.property, map) }
+      if node.target { collectNodes(node.target, map) }
+      if node.elements { collectNodes(node.elements, map) }
+      if node.pairs { collectNodes(node.pairs, map) }
+      if node.path { collectNodes(node.path, map) }
+    }
+  }
+
+  collectNodes(fromAst, fromNodes)
+  collectNodes(toAst, toNodes)
+
+  // Find added nodes (in toPass but not descended from fromPass)
+  let descendantIds = .{}
+  let originIds = keys(originChain)
+  for let i = 0; i < len(originIds); i = i + 1 {
+    let descendants = originChain[originIds[i]]
+    for let j = 0; j < len(descendants); j = j + 1 {
+      descendantIds[descendants[j]] = true
+    }
+  }
+
+  let addedNodes = []
+  let toIds = keys(toNodes)
+  for let i = 0; i < len(toIds); i = i + 1 {
+    let id = toIds[i]
+    if !descendantIds[id] {
+      push(addedNodes, toNodes[id])
+    }
+  }
+
+  // Find removed nodes (in fromPass but no descendants in toPass)
+  let removedNodes = []
+  let fromIds = keys(fromNodes)
+  for let i = 0; i < len(fromIds); i = i + 1 {
+    let id = fromIds[i]
+    let descendants = originChain[id]
+    if !descendants or len(descendants) == 0 {
+      push(removedNodes, fromNodes[id])
+    }
+  }
+
+  // Find transformed nodes (same semantic node but different structure)
+  let transformedNodes = []
+  for let i = 0; i < len(fromIds); i = i + 1 {
+    let id = fromIds[i]
+    let descendants = originChain[id]
+    if descendants and len(descendants) > 1 {
+      // Node split into multiple
+      push(transformedNodes, .{
+        from: fromNodes[id],
+        to: collect did in descendants { toNodes[did] },
+        change: "split",
+      })
+    }
+  }
+
+  .{
+    added: addedNodes,
+    removed: removedNodes,
+    transformed: transformedNodes,
+    fromCount: len(fromIds),
+    toCount: len(toIds),
+  }
+}
+
+// Print diff between two passes
+fn printDiff(fromPass, toPass, diff) {
+  println("Changes from " + fromPass + " → " + toPass)
+  println("=======================================")
+  println("")
+
+  // Added nodes
+  if len(diff.added) > 0 {
+    println("Added nodes: " + str(len(diff.added)))
+    let limit = len(diff.added) > 10 and 10 or len(diff.added)
+    for let i = 0; i < limit; i = i + 1 {
+      let node = diff.added[i]
+      println("  + " + formatNodeForTracking(node) + " #" + str(node.id))
+    }
+    if len(diff.added) > 10 {
+      println("  ... and " + str(len(diff.added) - 10) + " more")
+    }
+    println("")
+  }
+
+  // Removed nodes
+  if len(diff.removed) > 0 {
+    println("Removed nodes: " + str(len(diff.removed)))
+    let limit = len(diff.removed) > 10 and 10 or len(diff.removed)
+    for let i = 0; i < limit; i = i + 1 {
+      let node = diff.removed[i]
+      println("  - " + formatNodeForTracking(node) + " #" + str(node.id))
+    }
+    if len(diff.removed) > 10 {
+      println("  ... and " + str(len(diff.removed) - 10) + " more")
+    }
+    println("")
+  }
+
+  // Transformed nodes
+  if len(diff.transformed) > 0 {
+    println("Transformed nodes: " + str(len(diff.transformed)))
+    let limit = len(diff.transformed) > 5 and 5 or len(diff.transformed)
+    for let i = 0; i < limit; i = i + 1 {
+      let t = diff.transformed[i]
+      println("  ~ " + formatNodeForTracking(t.from) + " #" + str(t.from.id))
+      println("    → split into " + str(len(t.to)) + " nodes")
+    }
+    if len(diff.transformed) > 5 {
+      println("  ... and " + str(len(diff.transformed) - 5) + " more")
+    }
+    println("")
+  }
+
+  // Statistics
+  println("Statistics:")
+  println("  " + fromPass + ": " + str(diff.fromCount) + " nodes")
+  println("  " + toPass + ": " + str(diff.toCount) + " nodes")
+  let delta = diff.toCount - diff.fromCount
+  if delta > 0 {
+    println("  Net change: +" + str(delta) + " nodes")
+  } else if delta < 0 {
+    println("  Net change: " + str(delta) + " nodes")
+  } else {
+    println("  Net change: no change")
+  }
+}
+
 fn parseArgs(argv) {
   // Parse command line arguments
-  // Returns .{ path: "...", pass: "...", showHelp: bool, summary: bool, trackNode: num } or .{ error: "..." }
+  // Returns .{ path: "...", pass: "...", showHelp: bool, summary: bool, trackNode: num, diff: .{from, to} } or .{ error: "..." }
 
   let path = nil
   let pass = DEFAULT_PASS
   let showHelp = false
   let summary = false
   let trackNode = nil
+  let diff = nil
 
   let i = 2  // Start after command name
   for true {
@@ -815,6 +1088,19 @@ fn parseArgs(argv) {
         return .{ error: "--track-node requires a positive integer node ID" }
       }
       i = i + 1
+    } else if arg == "--diff" {
+      i = i + 1
+      if i >= len(argv) {
+        return .{ error: "--diff requires two pass names (from and to)" }
+      }
+      let fromPass = argv[i]
+      i = i + 1
+      if i >= len(argv) {
+        return .{ error: "--diff requires two pass names (from and to)" }
+      }
+      let toPass = argv[i]
+      diff = .{ from: fromPass, to: toPass }
+      i = i + 1
     } else {
       if path {
         return .{ error: "Multiple file paths specified" }
@@ -832,7 +1118,7 @@ fn parseArgs(argv) {
     return .{ error: "No file path specified" }
   }
 
-  .{ path: path, pass: pass, showHelp: false, summary: summary, trackNode: trackNode }
+  .{ path: path, pass: pass, showHelp: false, summary: summary, trackNode: trackNode, diff: diff }
 }
 
 fn printMetadataHelp() {
@@ -987,6 +1273,7 @@ fn run(ctx) {
     groanln("Usage: " + ctx.prog + " ast [--pass <pass-name>] <path>")
     groanln("       " + ctx.prog + " ast --summary <path>")
     groanln("       " + ctx.prog + " ast --track-node <id> <path>")
+    groanln("       " + ctx.prog + " ast --diff <from-pass> <to-pass> <path>")
     groanln("       " + ctx.prog + " ast --help-metadata")
     groanln("")
     groanln("Available passes: " + join(VALID_PASSES, ", "))
@@ -997,19 +1284,69 @@ fn run(ctx) {
   let path = args.path
   let passName = args.pass
 
-  // Validate pass name
-  let validPass = false
-  for let i = 0; i < len(VALID_PASSES); i = i + 1 {
-    if VALID_PASSES[i] == passName {
-      validPass = true
-      break
-    }
-  }
+  // Validate diff passes if in diff mode
+  if args.diff {
+    let fromPass = args.diff.from
+    let toPass = args.diff.to
 
-  if !validPass {
-    groanln("Error: Invalid pass name '" + passName + "'")
-    groanln("Available passes: " + join(VALID_PASSES, ", "))
-    Lx.exit(28)
+    // Validate from pass
+    let validFrom = false
+    for let i = 0; i < len(VALID_PASSES); i = i + 1 {
+      if VALID_PASSES[i] == fromPass {
+        validFrom = true
+        break
+      }
+    }
+    if !validFrom {
+      groanln("Error: Invalid from pass '" + fromPass + "'")
+      groanln("Available passes: " + join(VALID_PASSES, ", "))
+      Lx.exit(28)
+    }
+
+    // Validate to pass
+    let validTo = false
+    for let i = 0; i < len(VALID_PASSES); i = i + 1 {
+      if VALID_PASSES[i] == toPass {
+        validTo = true
+        break
+      }
+    }
+    if !validTo {
+      groanln("Error: Invalid to pass '" + toPass + "'")
+      groanln("Available passes: " + join(VALID_PASSES, ", "))
+      Lx.exit(28)
+    }
+
+    // Check ordering
+    let fromIdx = -1
+    let toIdx = -1
+    for let i = 0; i < len(VALID_PASSES); i = i + 1 {
+      if VALID_PASSES[i] == fromPass { fromIdx = i }
+      if VALID_PASSES[i] == toPass { toIdx = i }
+    }
+    if fromIdx >= toIdx {
+      groanln("Error: from pass must come before to pass in pipeline")
+      groanln("Pass order: " + join(VALID_PASSES, " → "))
+      Lx.exit(28)
+    }
+
+    // For diff mode, we need to run up to toPass
+    passName = toPass
+  } else {
+    // Validate pass name for non-diff modes
+    let validPass = false
+    for let i = 0; i < len(VALID_PASSES); i = i + 1 {
+      if VALID_PASSES[i] == passName {
+        validPass = true
+        break
+      }
+    }
+
+    if !validPass {
+      groanln("Error: Invalid pass name '" + passName + "'")
+      groanln("Available passes: " + join(VALID_PASSES, ", "))
+      Lx.exit(28)
+    }
   }
 
   // Load source
@@ -1042,13 +1379,20 @@ fn run(ctx) {
     Lx.exit(65)
   }
 
-  // Summary mode, tracking mode, or AST dump mode
+  // Summary mode, tracking mode, diff mode, or AST dump mode
   if args.summary {
     let stats = buildSummaryStats(result)
     printSummary(stats)
   } else if args.trackNode {
     let history = trackNodeThroughPasses(args.trackNode, result)
     printNodeTracking(args.trackNode, history)
+  } else if args.diff {
+    let diff = computeDiff(result, args.diff.from, args.diff.to)
+    if diff.error {
+      groanln("Error: " + diff.error)
+      Lx.exit(1)
+    }
+    printDiff(args.diff.from, args.diff.to, diff)
   } else {
     // Build metadata from pipeline results
     let meta = buildMetadata(result)
@@ -1059,7 +1403,7 @@ fn run(ctx) {
 
 .{
   name: "ast",
-  usage: "ast [--pass <pass-name>] <path>\n       ast --summary <path>\n       ast --track-node <id> <path>\n       ast --help-metadata",
+  usage: "ast [--pass <pass-name>] <path>\n       ast --summary <path>\n       ast --track-node <id> <path>\n       ast --diff <from-pass> <to-pass> <path>\n       ast --help-metadata",
   summary: "Dump AST with metadata at different compilation stages (debug)",
   run: run,
 }

@@ -319,13 +319,210 @@ fn printErrors(errors) {
   }
 }
 
+// Count nodes in AST (recursively)
+fn countNodes(node) {
+  if !node { return 0 }
+
+  let t = type(node)
+  if t == "array" {
+    let total = 0
+    for let i = 0; i < len(node); i = i + 1 {
+      total = total + countNodes(node[i])
+    }
+    return total
+  }
+
+  if t != "map" or !node.type { return 0 }
+
+  // Count this node + all children
+  let count = 1
+
+  // Recursively count children
+  if node.value { count = count + countNodes(node.value) }
+  if node.name { count = count + countNodes(node.name) }
+  if node.params { count = count + countNodes(node.params) }
+  if node.body { count = count + countNodes(node.body) }
+  if node.expressions { count = count + countNodes(node.expressions) }
+  if node.left { count = count + countNodes(node.left) }
+  if node.right { count = count + countNodes(node.right) }
+  if node.operand { count = count + countNodes(node.operand) }
+  if node.expression { count = count + countNodes(node.expression) }
+  if node.condition { count = count + countNodes(node.condition) }
+  if node.then { count = count + countNodes(node.then) }
+  if node.else { count = count + countNodes(node.else) }
+  if node.init { count = count + countNodes(node.init) }
+  if node.update { count = count + countNodes(node.update) }
+  if node.callee { count = count + countNodes(node.callee) }
+  if node.args { count = count + countNodes(node.args) }
+  if node.object { count = count + countNodes(node.object) }
+  if node.index { count = count + countNodes(node.index) }
+  if node.property { count = count + countNodes(node.property) }
+  if node.target { count = count + countNodes(node.target) }
+  if node.elements { count = count + countNodes(node.elements) }
+  if node.pairs { count = count + countNodes(node.pairs) }
+  if node.path { count = count + countNodes(node.path) }
+
+  count
+}
+
+// Count synthetic nodes (nodes with anfSynthetic flag)
+fn countSyntheticNodes(node) {
+  if !node { return 0 }
+
+  let t = type(node)
+  if t == "array" {
+    let total = 0
+    for let i = 0; i < len(node); i = i + 1 {
+      total = total + countSyntheticNodes(node[i])
+    }
+    return total
+  }
+
+  if t != "map" or !node.type { return 0 }
+
+  let count = node.anfSynthetic and 1 or 0
+
+  // Recursively count in children
+  if node.value { count = count + countSyntheticNodes(node.value) }
+  if node.name { count = count + countSyntheticNodes(node.name) }
+  if node.params { count = count + countSyntheticNodes(node.params) }
+  if node.body { count = count + countSyntheticNodes(node.body) }
+  if node.expressions { count = count + countSyntheticNodes(node.expressions) }
+  if node.left { count = count + countSyntheticNodes(node.left) }
+  if node.right { count = count + countSyntheticNodes(node.right) }
+  if node.operand { count = count + countSyntheticNodes(node.operand) }
+  if node.expression { count = count + countSyntheticNodes(node.expression) }
+  if node.condition { count = count + countSyntheticNodes(node.condition) }
+  if node.then { count = count + countSyntheticNodes(node.then) }
+  if node.else { count = count + countSyntheticNodes(node.else) }
+  if node.init { count = count + countSyntheticNodes(node.init) }
+  if node.update { count = count + countSyntheticNodes(node.update) }
+  if node.callee { count = count + countSyntheticNodes(node.callee) }
+  if node.args { count = count + countSyntheticNodes(node.args) }
+  if node.object { count = count + countSyntheticNodes(node.object) }
+  if node.index { count = count + countSyntheticNodes(node.index) }
+  if node.property { count = count + countSyntheticNodes(node.property) }
+  if node.target { count = count + countSyntheticNodes(node.target) }
+  if node.elements { count = count + countSyntheticNodes(node.elements) }
+  if node.pairs { count = count + countSyntheticNodes(node.pairs) }
+  if node.path { count = count + countSyntheticNodes(node.path) }
+
+  count
+}
+
+// Build summary statistics for each pass
+fn buildSummaryStats(pipelineResult) {
+  if !pipelineResult or !pipelineResult.passOrder { return [] }
+
+  let stats = []
+  let previousNodeCount = 0
+
+  for let i = 0; i < len(pipelineResult.passOrder); i = i + 1 {
+    let passName = pipelineResult.passOrder[i]
+    let passResult = pipelineResult.passes[passName]
+
+    if !passResult { continue }
+
+    let ast = passResult.ast or pipelineResult.ast
+    let nodeCount = ast and countNodes(ast) or 0
+    let delta = nodeCount - previousNodeCount
+
+    let passStats = .{
+      name: passName,
+      nodeCount: nodeCount,
+      delta: delta,
+      success: passResult.success,
+    }
+
+    // Pass-specific metrics
+    if passName == "anf" and ast {
+      passStats.syntheticNodes = countSyntheticNodes(ast)
+    }
+
+    if passName == "resolve" and passResult.resolvedNames {
+      let locals = 0
+      let upvalues = 0
+      let builtins = 0
+      let bindings = passResult.resolvedNames
+      let ids = keys(bindings)
+      for let j = 0; j < len(ids); j = j + 1 {
+        let binding = bindings[ids[j]]
+        if binding.kind == "local" { locals = locals + 1 }
+        if binding.kind == "upvalue" { upvalues = upvalues + 1 }
+        if binding.kind == "builtin" { builtins = builtins + 1 }
+      }
+      passStats.locals = locals
+      passStats.upvalues = upvalues
+      passStats.builtins = builtins
+    }
+
+    if passName == "resolve" and passResult.scopeInfo {
+      let maxDepth = 0
+      let scopes = passResult.scopeInfo
+      let scopeIds = keys(scopes)
+      for let j = 0; j < len(scopeIds); j = j + 1 {
+        let scope = scopes[scopeIds[j]]
+        if scope.depth and scope.depth > maxDepth {
+          maxDepth = scope.depth
+        }
+      }
+      passStats.maxScopeDepth = maxDepth
+    }
+
+    push(stats, passStats)
+    previousNodeCount = nodeCount
+  }
+
+  stats
+}
+
+// Print summary statistics
+fn printSummary(stats) {
+  println("Compilation Pipeline Summary")
+  println("=============================")
+  println("")
+
+  for let i = 0; i < len(stats); i = i + 1 {
+    let s = stats[i]
+
+    // Pass name and node count
+    let line = s.name + ":"
+    println(line)
+
+    // Node count with delta
+    let nodeInfo = "  Nodes: " + str(s.nodeCount)
+    if s.delta > 0 {
+      nodeInfo = nodeInfo + " (+" + str(s.delta) + ")"
+    } else if s.delta < 0 {
+      nodeInfo = nodeInfo + " (" + str(s.delta) + ")"
+    }
+    println(nodeInfo)
+
+    // Pass-specific metrics
+    if s.syntheticNodes != nil {
+      println("  Synthetic temporaries: " + str(s.syntheticNodes))
+    }
+
+    if s.locals != nil {
+      println("  Bindings: " + str(s.locals) + " locals, " + str(s.upvalues) + " upvalues, " + str(s.builtins) + " builtins")
+    }
+
+    if s.maxScopeDepth != nil {
+      println("  Max scope depth: " + str(s.maxScopeDepth))
+    }
+
+    println("")
+  }
+}
+
 fn parseArgs(argv) {
   // Parse command line arguments
-  // Returns .{ path: "...", pass: "...", showHelp: bool } or .{ error: "..." }
+  // Returns .{ path: "...", pass: "...", showHelp: bool, summary: bool } or .{ error: "..." }
 
   let path = nil
   let pass = DEFAULT_PASS
   let showHelp = false
+  let summary = false
 
   let i = 2  // Start after command name
   for true {
@@ -341,6 +538,9 @@ fn parseArgs(argv) {
       i = i + 1
     } else if arg == "--help-metadata" {
       showHelp = true
+      i = i + 1
+    } else if arg == "--summary" {
+      summary = true
       i = i + 1
     } else {
       if path {
@@ -359,7 +559,7 @@ fn parseArgs(argv) {
     return .{ error: "No file path specified" }
   }
 
-  .{ path: path, pass: pass, showHelp: false }
+  .{ path: path, pass: pass, showHelp: false, summary: summary }
 }
 
 fn printMetadataHelp() {
@@ -512,6 +712,7 @@ fn run(ctx) {
   if args.error {
     groanln("Error: " + args.error)
     groanln("Usage: " + ctx.prog + " ast [--pass <pass-name>] <path>")
+    groanln("       " + ctx.prog + " ast --summary <path>")
     groanln("       " + ctx.prog + " ast --help-metadata")
     groanln("")
     groanln("Available passes: " + join(VALID_PASSES, ", "))
@@ -567,16 +768,21 @@ fn run(ctx) {
     Lx.exit(65)
   }
 
-  // Build metadata from pipeline results
-  let meta = buildMetadata(result)
-
-  // Dump the AST with metadata
-  dumpNode(result.ast, 0, meta)
+  // Summary mode or AST dump mode
+  if args.summary {
+    let stats = buildSummaryStats(result)
+    printSummary(stats)
+  } else {
+    // Build metadata from pipeline results
+    let meta = buildMetadata(result)
+    // Dump the AST with metadata
+    dumpNode(result.ast, 0, meta)
+  }
 }
 
 .{
   name: "ast",
-  usage: "ast [--pass <pass-name>] <path>\n       ast --help-metadata",
+  usage: "ast [--pass <pass-name>] <path>\n       ast --summary <path>\n       ast --help-metadata",
   summary: "Dump AST with metadata at different compilation stages (debug)",
   run: run,
 }

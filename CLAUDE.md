@@ -310,7 +310,8 @@ Common globals (from `globals.lx`):
 - `len(arr)` - array/string/hashmap length
 - `type(val)` - returns type string
 - `str(val)` - convert to string
-- `int(val)` - convert to integer
+- `tonumber(str)` - convert string to number (e.g., `tonumber("42")` → `42`)
+- `int(val)` - coerce double to integer (truncate decimal part)
 - `range(n)` or `range(string)` - create array [0..n-1] or UTF-8 character array
 - `map(arr, fn)` - map function
 - `fold(arr, init, fn)` - reduce/fold
@@ -318,6 +319,18 @@ Common globals (from `globals.lx`):
 - `push(arr, val)` - append to array
 - `keys(map)` - get hashmap keys
 - `join(arr, sep)` - join strings
+
+**Number conversion:**
+```lx
+// String to number: use tonumber()
+let n = tonumber("42")  // 42
+
+// Double to int: use int()
+let i = int(3.14)  // 3
+
+// ❌ WRONG - int() doesn't parse strings
+let x = int("42")  // Error!
+```
 
 ## Import System
 
@@ -394,6 +407,185 @@ make test
 make
 make test
 ```
+
+## Debugging Compiler Passes with `ast` Command
+
+The `ast` command is a powerful tool for debugging and understanding compilation passes. It provides multiple modes for inspecting AST transformations.
+
+### Quick Overview
+
+```bash
+# Dump AST with metadata (default: runs through anf-inline)
+./out/lx ast file.lx
+
+# Dump AST after a specific pass
+./out/lx ast --pass parse file.lx
+./out/lx ast --pass anf file.lx
+
+# Show pipeline summary (node counts, stats)
+./out/lx ast --summary file.lx
+
+# Track a specific node through all passes
+./out/lx ast --track-node 42 file.lx
+
+# Compare two passes (diff mode)
+./out/lx ast --diff parse anf file.lx
+
+# View metadata documentation
+./out/lx ast --help-metadata
+```
+
+### Metadata Annotations
+
+The ast command enriches nodes with metadata from compilation passes:
+
+**Origin tracking** (lower, anf, lower-loops):
+```
+Binary #80 [origin: #43]  # Node #80 came from node #43 in previous pass
+```
+
+**Name bindings** (resolve):
+```
+Identifier #50 [local slot=1 decl=#49 depth=2]     # Local variable
+Identifier #50 [upvalue idx=0 decl=#37 depth=0]    # Captured variable (closure)
+Identifier #51 [builtin name=println]              # Built-in function
+```
+
+**Scope information** (resolve):
+```
+Function #45 [scope function depth=1 locals=1 upvalues=1]
+Block #47 [scope block depth=2 locals=1]
+```
+
+### Use Cases
+
+**1. Understanding ANF Transformations**
+
+When ANF splits complex expressions into temporaries:
+```bash
+# See what ANF does to your code
+./out/lx ast --diff parse anf file.lx
+```
+
+Output shows which nodes split and how:
+```
+Transformed nodes: 9
+  ~ Binary (operator) #9
+    → split into 5 nodes (Let, Identifier, Block, Identifier, Binary)
+```
+
+**2. Tracking Node Transformations**
+
+When debugging why a specific node changed:
+```bash
+# First, find the node ID in parse output
+./out/lx ast --pass parse file.lx | grep -A2 "Binary"
+
+# Then track it through all passes
+./out/lx ast --track-node 9 file.lx
+```
+
+Shows the complete evolution:
+```
+[parse]
+  Binary (operator) #9
+  Line: 1
+
+[lower]
+  Binary (operator) #41
+  Line: 1
+
+[anf]
+  Split into 5 nodes:
+    - Let #95
+    - Identifier '$anf.2' #96
+    - Block [synthetic] #93
+```
+
+**3. Debugging Scope/Binding Issues**
+
+When variables aren't resolving correctly:
+```bash
+# Check what identifiers resolve to
+./out/lx ast --pass resolve file.lx | grep "Identifier.*name: x"
+```
+
+Output shows binding information:
+```
+Identifier #50 [upvalue idx=0 decl=#37 depth=0]
+  name: x
+```
+
+This tells you:
+- It's a captured variable (upvalue)
+- At upvalue index 0
+- Declared at node #37
+- Accessed from scope depth 0
+
+**4. Quick Pipeline Overview**
+
+To see what each pass does without verbose output:
+```bash
+./out/lx ast --summary file.lx
+```
+
+Shows concise statistics:
+```
+parse:
+  Nodes: 37 (+37)
+
+lower:
+  Nodes: 37
+
+anf:
+  Nodes: 61 (+24)
+  Synthetic temporaries: 3
+
+resolve:
+  Nodes: 61
+  Bindings: 8 locals, 1 upvalues, 3 builtins
+  Max scope depth: 4
+
+anf-inline:
+  Nodes: 61
+```
+
+**5. Debugging Pass Bugs**
+
+When a pass produces unexpected results:
+
+```bash
+# Compare before and after the buggy pass
+./out/lx ast --diff lower anf file.lx
+
+# Track a specific problematic node
+./out/lx ast --track-node 15 file.lx
+
+# See the full AST at the buggy pass
+./out/lx ast --pass anf file.lx
+```
+
+### Common Debugging Workflows
+
+**ANF not transforming correctly:**
+1. Use `--diff parse anf` to see what changed
+2. Use `--track-node N` to follow the problematic expression
+3. Look for `[synthetic]` nodes and verify they're correct
+
+**Variable binding issues:**
+1. Use `--pass resolve` to see binding metadata
+2. Look for `[local]`, `[upvalue]`, or `[builtin]` annotations
+3. Check scope depth and declaration node IDs
+
+**Pass adding unexpected nodes:**
+1. Use `--diff fromPass toPass` to see additions
+2. Look for "Added nodes" section
+3. Check if they're marked `[synthetic]`
+
+**Node disappearing:**
+1. Use `--track-node N` to see where it goes
+2. Look for "Node not found" messages
+3. Check if it was removed or merged
 
 ## Bootstrapping
 

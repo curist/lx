@@ -107,6 +107,9 @@ Notes:
 - `Lx.stdin.readAll() -> string` Read all stdin.
 - `Lx.stdin.readLine(prompt?: string) -> string | nil` Read one line from stdin.
 - `Lx.stdin.readBytes(n: number) -> string | nil` Read up to `n` bytes from stdin.
+- `Lx.stdin.readFd(n: number) -> string | nil` Read up to `n` bytes from stdin using fd I/O (works with `poll`).
+- `Lx.stdin.poll(timeoutMs: number) -> bool` Whether stdin is readable within `timeoutMs` (ms). Use `0` to poll and `-1` to wait forever.
+- `Lx.stdin.unbuffered() -> nil` Disable stdin stdio buffering (recommended if mixing `poll` with `readLine`/`readBytes`).
 - `Lx.stdout` - stdout helpers namespace.
 - `Lx.stdout.flush() -> nil` Flush stdout.
 - `Lx.globals() -> array[string | number]` List current global keys.

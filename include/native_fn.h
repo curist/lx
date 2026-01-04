@@ -6,6 +6,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1584,6 +1585,98 @@ static bool stdinReadLineNative(int argCount, Value *args) {
   return true;
 }
 
+static bool stdinUnbufferedNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdin.unbuffered takes 0 args.");
+    return false;
+  }
+  if (setvbuf(stdin, NULL, _IONBF, 0) != 0) {
+    args[-1] = CSTRING_VAL("Error: failed to disable stdin buffering.");
+    return false;
+  }
+  args[-1] = NIL_VAL;
+  return true;
+}
+
+static bool stdinPollNative(int argCount, Value *args) {
+  if (argCount != 1 || !IS_NUMBER(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdin.poll takes 1 arg (timeoutMs: number).");
+    return false;
+  }
+
+  double timeoutRaw = AS_NUMBER(args[0]);
+  if (!isfinite(timeoutRaw) || timeoutRaw != trunc(timeoutRaw)) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdin.poll timeoutMs must be an integer.");
+    return false;
+  }
+  if (timeoutRaw < -1) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdin.poll timeoutMs must be >= -1.");
+    return false;
+  }
+
+  int timeoutMs = (int)timeoutRaw;
+  struct pollfd pfd;
+  pfd.fd = STDIN_FILENO;
+  pfd.events = POLLIN;
+  pfd.revents = 0;
+
+  int rc = poll(&pfd, 1, timeoutMs);
+  if (rc < 0) {
+    args[-1] = CSTRING_VAL("Error: poll() failed.");
+    return false;
+  }
+
+  if (rc == 0) {
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+
+  // Treat any event as "ready"; caller can read and get EOF if needed.
+  args[-1] = BOOL_VAL(pfd.revents != 0);
+  return true;
+}
+
+static bool stdinReadFdNative(int argCount, Value *args) {
+  if (argCount != 1 || !IS_NUMBER(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdin.readFd takes 1 arg (n: number).");
+    return false;
+  }
+
+  double raw = AS_NUMBER(args[0]);
+  if (!isfinite(raw) || raw < 0 || raw != trunc(raw)) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdin.readFd n must be a non-negative integer.");
+    return false;
+  }
+
+  size_t n = (size_t)raw;
+  if (n == 0) {
+    args[-1] = OBJ_VAL(copyString("", 0));
+    return true;
+  }
+
+  char* buffer = (char*)malloc(n + 1);
+  if (buffer == NULL) {
+    args[-1] = CSTRING_VAL("Error: out of memory.");
+    return false;
+  }
+
+  ssize_t r = read(STDIN_FILENO, buffer, n);
+  if (r == 0) {
+    free(buffer);
+    args[-1] = NIL_VAL;
+    return true;
+  }
+  if (r < 0) {
+    free(buffer);
+    args[-1] = CSTRING_VAL("Error: read() failed.");
+    return false;
+  }
+
+  buffer[r] = '\0';
+  args[-1] = OBJ_VAL(takeString(buffer, (int)r));
+  return true;
+}
+
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
@@ -1686,6 +1779,9 @@ static void defineLxNatives() {
   defineTableFunction(&stdinTable->table, "readAll", stdinReadAllNative);
   defineTableFunction(&stdinTable->table, "readLine", stdinReadLineNative);
   defineTableFunction(&stdinTable->table, "readBytes", readNative);
+  defineTableFunction(&stdinTable->table, "readFd", stdinReadFdNative);
+  defineTableFunction(&stdinTable->table, "poll", stdinPollNative);
+  defineTableFunction(&stdinTable->table, "unbuffered", stdinUnbufferedNative);
   pop(); // stdin
 
   // Lx.stdout

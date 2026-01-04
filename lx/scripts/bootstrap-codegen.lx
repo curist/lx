@@ -9,14 +9,14 @@ let verify = import "src/passes/backend/verify-bytecode.lx"
 let ModuleResolution = import "src/module_resolution.lx"
 
 // Get entry file from command line args
-let args = Lx.argv()
-if !args or len(args) < 1 {
+// Lx.args: [lx, run, script, arg1, ...]
+if len(Lx.args) < 4 {
   groanln("Usage: lx run scripts/bootstrap-codegen.lx <entry-file>")
   groanln("Example: lx run scripts/bootstrap-codegen.lx lx/main.lx")
   Lx.exit(1)
 }
 
-let entryFile = args[0]
+let entryFile = Lx.args[3]
 println("=== Building " + entryFile + " with NEW codegen (PR3) ===")
 println("")
 

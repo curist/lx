@@ -189,6 +189,13 @@ fn depsFromCompileResult(result) {
 fn updateGraphForModule(state, path, result) {
   if !path { return }
 
+  // If compilation didn't succeed, keep the previous dep graph. This is both
+  // more stable during mid-edit parse errors and more conservative for
+  // subsequent invalidations.
+  if !result or result.status != "done" {
+    return
+  }
+
   // Remove old outgoing edges first
   let old = state.deps and state.deps[path] or nil
   if old and type(old) == "array" {
@@ -198,11 +205,6 @@ fn updateGraphForModule(state, path, result) {
         state.rdeps[dep][path] = nil
       }
     }
-  }
-
-  if !result or result.status != "done" {
-    if state.deps { state.deps[path] = nil }
-    return
   }
 
   let deps = depsFromCompileResult(result)
@@ -273,30 +275,23 @@ fn runWarmupSlice(state) {
 }
 
 fn invalidateSingle(state, path) {
-  // Invalidate just this single file, not its dependents.
+  // Invalidate just this single file (not its dependents).
+  //
+  // Keep the dep graph intact here; it will be updated when this module is
+  // recompiled (via updateDepGraphFromDriver/updateGraphForModule). This keeps
+  // invalidation fast on keystroke-level changes.
   if !path { return }
 
-  // Remove outgoing edges path -> dep
-  let deps = state.deps and state.deps[path] or nil
-  if deps and type(deps) == "array" {
-    for let j = 0; j < len(deps); j = j + 1 {
-      let dep = deps[j]
-      if state.rdeps and state.rdeps[dep] {
-        state.rdeps[dep][path] = nil
-      }
-    }
-  }
-
-  // Clear dependency info for this file
-  if state.deps { state.deps[path] = nil }
-
-  // Drop compiled module cache entry
+  // Drop compiled module cache entry (forces driver to reload from openDocs)
   if state.driver and state.driver.cache and state.driver.cache[path] {
     state.driver.cache[path] = nil
   }
 
-  // Clear from context cache
+  // Clear from query ctx cache; keep a stale copy for best-effort fallback
+  // (e.g. while the user is mid-edit and the file doesn't parse).
   if state.ctxCache and state.ctxCache[path] {
+    if !state.staleCtxCache { state.staleCtxCache = .{} }
+    state.staleCtxCache[path] = state.ctxCache[path]
     state.ctxCache[path] = nil
   }
 }
@@ -1243,9 +1238,12 @@ fn serve() {
       let changes = (msg.params and msg.params.contentChanges) or []
       if spec and len(changes) > 0 and changes[0].text != nil {
         state.openDocs[spec] = changes[0].text
-        // Invalidate just this file (not dependents) and recompile for real-time feedback
+        // Invalidate just this file (not dependents) and recompile the module.
+        // Avoid rebuilding the merged query context on every keystroke; it will be
+        // (re)built lazily on demand by hover/definition/completion.
         invalidateSingle(state, spec)
-        compileForSpec(state, spec)
+        if state.driver { state.driver.compileModule(spec) }
+        updateDepGraphFromDriver(state)
         publishDiagnosticsFromCache(state, spec)
       }
       warmupTick()

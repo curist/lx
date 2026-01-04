@@ -770,7 +770,7 @@ fn parse(src, filename) {
     let nextValue = 0
     if match(TOKEN.LEFT_PAREN) {
       consume(TOKEN.NUMBER, "Expect enum start value number.")
-      nextValue = int(parser.previous.literal)
+      nextValue = Math.floor(parser.previous.literal)
       if nextValue != parser.previous.literal {
         errorAt(parser.previous, "Enum start value must be an integer.")
       }
@@ -816,14 +816,14 @@ fn parse(src, filename) {
           consume(TOKEN.NUMBER, "Expect enum value number.")
           valueNode = NumberNode(filename, parser.previous)
           valueToken = parser.previous
-          nextValue = int(valueNode.value)
+          nextValue = Math.floor(valueNode.value)
           if nextValue != valueNode.value {
             errorAt(valueToken, "Enum value must be an integer.")
             return
           }
         }
 
-        let valueInt = int(valueNode.value)
+        let valueInt = Math.floor(valueNode.value)
         if valueInt != valueNode.value {
           // Defensive (auto values are always int).
           errorAt(valueToken, "Enum value must be an integer.")

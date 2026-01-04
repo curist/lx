@@ -9,7 +9,7 @@
       if num < 0 or num > 255 {
         return nil
       }
-      let x = int(num / 16)
+      let x = Math.floor(num / 16)
       let y = num % 16
       return join([map[x] or x, map[y] or y], "")
     }

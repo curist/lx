@@ -91,7 +91,7 @@ fn forEntry(entryPath) {
 
   .{
     resolve,
-    slurp: fn(path) { slurp(resolve(path)) },
+    slurp: fn(path) { Lx.fs.readFile(resolve(path)) },
     roots: fn() { roots }
   }
 }

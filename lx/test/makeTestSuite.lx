@@ -84,7 +84,7 @@ fn makeTestSuite() {
 
     let timeStr = if elapsed > 50 {
       if elapsed < 1000 {
-        " (" + str(int(elapsed)) + "ms)"
+        " (" + str(Math.floor(elapsed)) + "ms)"
       } else {
         " (" + str(elapsed / 1000) + "s)"
       }

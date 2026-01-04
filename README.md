@@ -86,7 +86,7 @@ let a = {
 // function is declared using `fn` keyword
 fn foo(bar, baz) { // args are comma seperated
   print(bar)  // print is a builtin function, that, prints
-  groan(baz)  // groan is a builtin function, that prints to stderr
+  Lx.stderr.print(baz)  // stderr print helper
 }
 
 // function are first-class citizen, so we can

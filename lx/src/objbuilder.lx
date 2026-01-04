@@ -185,7 +185,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
           handler(val.value)
         } else {
           // should be unreachable
-          groanln("Invalid obj handler type: ", val.kind)
+          Lx.stderr.println("Invalid obj handler type: ", val.kind)
           Lx.exit(55)
         }
       },
@@ -197,7 +197,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
         handler(val.value)
       } else {
         // should be unreachable
-        groanln("Invalid value handler type: ", val.kind)
+        Lx.stderr.println("Invalid value handler type: ", val.kind)
         Lx.exit(55)
       }
     })
@@ -309,7 +309,7 @@ fn objbuilder(main, debug) {
   writeBytesAt(obj, int32ToBytes(len(functions)), 8)
 
   return .{
-    dump: fn() { each(obj, _1(putc)) },
+    dump: fn() { each(obj, _1(Lx.stdout.putc)) },
     bytes: fn() { obj },
   }
 }

@@ -4,7 +4,7 @@ fn run(ctx) {
   let argsLength = len(ctx.argv)
   let usageMessage = "Usage: " + ctx.prog + " compile <path> [-o|--output <output>]"
   if argsLength < 3 {
-    groanln(usageMessage)
+    Lx.stderr.println(usageMessage)
     Lx.exit(28)
   }
 
@@ -15,7 +15,7 @@ fn run(ctx) {
     let arg = ctx.argv[i]
     if arg == "-o" or arg == "--output" {
       if i + 1 >= argsLength {
-        groanln(usageMessage)
+        Lx.stderr.println(usageMessage)
         Lx.exit(28)
       }
       outputPath = ctx.argv[i + 1]
@@ -26,7 +26,7 @@ fn run(ctx) {
     i = i + 1
   }
   if !path {
-    groanln(usageMessage)
+    Lx.stderr.println(usageMessage)
     Lx.exit(28)
   }
 
@@ -35,9 +35,9 @@ fn run(ctx) {
 
   if outputPath {
     let bytes = common.objbuilder(func, common.DEBUG_BUILD).bytes()
-    let ok = spit(outputPath, common.bytesToString(bytes))
+    let ok = Lx.fs.writeFile(outputPath, common.bytesToString(bytes))
     if ok != true {
-      groanln(ok or "Failed to write output.")
+      Lx.stderr.println(ok or "Failed to write output.")
       Lx.exit(74)
     }
   } else {

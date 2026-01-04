@@ -54,7 +54,7 @@ fn emit1(gen, b, line) {
   let ln = line or gen.currentLine or 1
   let nodeId = gen.currentNode and gen.currentNode.id or 0
 
-  push(chunk.bytecode, int(b))
+  push(chunk.bytecode, Math.floor(b))
   push(chunk.lines, ln)
   push(chunk.nodeIds, nodeId)
 }
@@ -65,10 +65,10 @@ fn emit2(gen, b1, b2, line) {
   let ln = line or gen.currentLine or 1
   let nodeId = gen.currentNode and gen.currentNode.id or 0
 
-  push(chunk.bytecode, int(b1))
+  push(chunk.bytecode, Math.floor(b1))
   push(chunk.lines, ln)
   push(chunk.nodeIds, nodeId)
-  push(chunk.bytecode, int(b2))
+  push(chunk.bytecode, Math.floor(b2))
   push(chunk.lines, ln)
   push(chunk.nodeIds, nodeId)
 }
@@ -79,13 +79,13 @@ fn emit3(gen, b1, b2, b3, line) {
   let ln = line or gen.currentLine or 1
   let nodeId = gen.currentNode and gen.currentNode.id or 0
 
-  push(chunk.bytecode, int(b1))
+  push(chunk.bytecode, Math.floor(b1))
   push(chunk.lines, ln)
   push(chunk.nodeIds, nodeId)
-  push(chunk.bytecode, int(b2))
+  push(chunk.bytecode, Math.floor(b2))
   push(chunk.lines, ln)
   push(chunk.nodeIds, nodeId)
-  push(chunk.bytecode, int(b3))
+  push(chunk.bytecode, Math.floor(b3))
   push(chunk.lines, ln)
   push(chunk.nodeIds, nodeId)
 }
@@ -97,7 +97,7 @@ fn emitBytes(gen, byte1, byte2, line) { emit2(gen, byte1, byte2, line) }
 fn emitLoop(gen, loopStart, line) {
   emit1(gen, OP.LOOP, line)
   let offset = len(gen.currentFunction.chunk.bytecode) - loopStart + 2
-  emit2(gen, int(offset / 256), offset % 256, line)
+  emit2(gen, Math.floor(offset / 256), offset % 256, line)
 }
 
 fn emitJump(gen, instruction, line) {
@@ -111,7 +111,7 @@ fn patchJump(gen, offset) {
   if jump > UINT16_MAX {
     addError(gen, gen.currentNode, "Too much code to jump over.")
   }
-  gen.currentFunction.chunk.bytecode[offset] = int(jump / 256)
+  gen.currentFunction.chunk.bytecode[offset] = Math.floor(jump / 256)
   gen.currentFunction.chunk.bytecode[offset + 1] = jump % 256
 }
 
@@ -319,7 +319,7 @@ fn patchBreaks(gen) {
     if jump > UINT16_MAX {
       addError(gen, gen.currentNode, "Too much code to jump over.")
     }
-    gen.currentFunction.chunk.bytecode[addr] = int(jump / 256)
+    gen.currentFunction.chunk.bytecode[addr] = Math.floor(jump / 256)
     gen.currentFunction.chunk.bytecode[addr + 1] = jump % 256
   }
 }
@@ -333,7 +333,7 @@ fn patchContinues(gen) {
     if jump > UINT16_MAX {
       addError(gen, gen.currentNode, "Loop body too large.")
     }
-    gen.currentFunction.chunk.bytecode[addr] = int(jump / 256)
+    gen.currentFunction.chunk.bytecode[addr] = Math.floor(jump / 256)
     gen.currentFunction.chunk.bytecode[addr + 1] = jump % 256
   }
 }
@@ -351,7 +351,7 @@ fn compileLiteral(gen, node) {
     emitByte(gen, node.value and OP.TRUE or OP.FALSE, node.line)
   } else if node.type == NODE.Number {
     let value = node.value
-    if value >= 0 and value < 256 and int(value) == value {
+    if value >= 0 and value < 256 and Math.floor(value) == value {
       emitBytes(gen, OP.CONST_BYTE, value, node.line)
     } else {
       emitConstant(gen, NUMBER_VAL(value), node.line)
@@ -952,7 +952,7 @@ fn matchNumericForLoop(gen, node) {
   }
   // Verify it's an integer value (not a float)
   let init_value = node.init.init.value
-  if init_value != int(init_value) {
+  if init_value != Math.floor(init_value) {
     return nil
   }
 
@@ -1002,9 +1002,9 @@ fn matchNumericForLoop(gen, node) {
   // Extract step value (must be integer constant)
   if update_value.right.type != NODE.Number { return nil }
   let step_value = update_value.right.value
-  if step_value != int(step_value) { return nil }
+  if step_value != Math.floor(step_value) { return nil }
 
-  let step_int = int(step_value)
+  let step_int = Math.floor(step_value)
 
   // Apply sign based on operator
   if update_op == "-" {
@@ -1169,12 +1169,12 @@ fn compileNumericForLoop(gen, node, match, mode) {
   }
 
   let backJump = len(gen.currentFunction.chunk.bytecode) + 2 - loopBodyStart
-  emit2(gen, int(backJump / 256), backJump % 256, node.line)
+  emit2(gen, Math.floor(backJump / 256), backJump % 256, node.line)
 
   // Patch exit jump from FORPREP
   let instruction_length = match.use_fast_path and 6 or 7
   let exitOffset = len(gen.currentFunction.chunk.bytecode) - (prepOffset + instruction_length)
-  gen.currentFunction.chunk.bytecode[exitJumpHi] = int(exitOffset / 256)
+  gen.currentFunction.chunk.bytecode[exitJumpHi] = Math.floor(exitOffset / 256)
   gen.currentFunction.chunk.bytecode[exitJumpHi + 1] = exitOffset % 256
 
   // Cleanup (same as regular compileFor)

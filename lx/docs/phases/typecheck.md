@@ -158,7 +158,7 @@ Lua-like semantics:
 Resolver marks unknown/global names as `kind: "builtin"`.
 
 Typechecking assigns concrete types to many builtins via `builtinTypeByName`:
-- Native builtins from `include/native_fn.h` (e.g. `int`, `tonumber`, `len`, `keys`, `push/pop/concat`, `Date`, `Lx`, …)
+- Native builtins from `include/native_fn.h` (e.g. `Math.floor`, `tonumber`, `len`, `keys`, `push/pop/concat`, `Date`, `Lx`, …)
 - Prelude helpers from `globals.lx` (e.g. `_1/_2/_3`, `map`, `fold`, `sort`, …)
 
 Anything not recognized still defaults to `Any`.

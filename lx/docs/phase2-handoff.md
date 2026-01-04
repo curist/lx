@@ -4,7 +4,7 @@
 
 **Completed:**
 - ✅ **Phase 1** - MVP Fusion (step=+1, integer literal init, variable limits)
-- ✅ **Phase 3** - Fixnum-first numeric producers (len/int/tonumber/range return fixnums)
+- ✅ **Phase 3** - Fixnum-first numeric producers (len/Math.floor/tonumber/range return fixnums)
 
 **Next:**
 - ⏭ **Phase 2** - Generalize loop semantics (arbitrary limit expressions, signed constant step)
@@ -425,17 +425,17 @@ Should show:
 
 In `compileNumericForLoop()`:
 ```lx
-groanln("[FUSE] Attempting fusion for loop at line", node.line)
-groanln("[FUSE] Match:", match)
-groanln("[FUSE] i_slot=", i_slot, "limit_slot=", limit_slot)
+Lx.stderr.println("[FUSE] Attempting fusion for loop at line", node.line)
+Lx.stderr.println("[FUSE] Match:", match)
+Lx.stderr.println("[FUSE] i_slot=", i_slot, "limit_slot=", limit_slot)
 ```
 
 ### 3. Check Slot Numbering
 
 ```lx
-groanln("gen.nextLocalSlot =", gen.nextLocalSlot)
-groanln("loopContinueSlot =", loopContinueSlot)
-groanln("i_slot < loopContinueSlot?", i_slot < loopContinueSlot)
+Lx.stderr.println("gen.nextLocalSlot =", gen.nextLocalSlot)
+Lx.stderr.println("loopContinueSlot =", loopContinueSlot)
+Lx.stderr.println("i_slot < loopContinueSlot?", i_slot < loopContinueSlot)
 ```
 
 ### 4. Verify Bytecode

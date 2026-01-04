@@ -50,7 +50,7 @@ Break statement in middle of loop block (not tail position)
 ```lx
 // In tests
 fn parseFixture(path) {
-  let src = slurp(path)
+  let src = Lx.fs.readFile(path)
   parse(src, path)
 }
 

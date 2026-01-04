@@ -186,12 +186,12 @@ fn selectAssignmentSuper(gen, node, mode) {
 
   let imm = value.right.value
   if imm < 0 or imm >= 256 { return nil }
-  if int(imm) != imm { return nil }
+  if Math.floor(imm) != imm { return nil }
 
   .{
     kind: "ADD_LOCAL_IMM",
     targetId: node.target.id,
-    imm: int(imm),
+    imm: Math.floor(imm),
   }
 }
 

@@ -26,7 +26,7 @@ let CLASS = .{
 let BUILTIN_RET_CLASS = .{
   len: CLASS.NUM_INT,
   ord: CLASS.NUM_INT,
-  int: CLASS.NUM_INT,
+  ["Math.floor"]: CLASS.NUM_INT,
   str: CLASS.STR,
 }
 
@@ -40,7 +40,7 @@ fn dotPropertyName(node) {
 fn isIntegralNumber(n) {
   // Treat NaN as non-integer for the purposes of integer-context reasoning.
   if n != n { return false }
-  int(n) == n
+  Math.floor(n) == n
 }
 
 fn isNum(cls) {
@@ -436,6 +436,19 @@ fn analyze(ast, resolveResult, opts) {
           let name = builtinByDeclId[binding.declaredAt]
           if name {
             let cls = BUILTIN_RET_CLASS[name]
+            if cls { return record(node, cls) }
+          }
+        }
+      }
+
+      // Namespaced builtins (e.g. `Math.floor(x)`).
+      if node.callee and node.callee.type == NODE.Dot and node.callee.object and node.callee.object.type == NODE.Identifier {
+        let baseBinding = resolvedNames[node.callee.object.id]
+        if baseBinding and baseBinding.kind == "builtin" {
+          let propName = dotPropertyName(node.callee)
+          if propName {
+            let fq = baseBinding.name + "." + propName
+            let cls = BUILTIN_RET_CLASS[fq]
             if cls { return record(node, cls) }
           }
         }

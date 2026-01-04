@@ -181,9 +181,9 @@ fn runPasses(passList, ctx, state) {
   if !validation.valid {
     // Dependency validation failed - return as synthetic failed pass
     // This ensures errors.collectErrors() can surface validation errors
-    groanln("Pipeline dependency validation failed:")
+    Lx.stderr.println("Pipeline dependency validation failed:")
     for let i = 0; i < len(validation.errors); i = i + 1 {
-      groanln("  " + validation.errors[i])
+      Lx.stderr.println("  " + validation.errors[i])
     }
     return .{
       status: "failed",

@@ -242,7 +242,7 @@ Opcodes:
 Update natives to return fixnum when integral and in range:
 
 * `tonumber()`
-* `int()`
+* `Math.floor()`
 * `len()`
 * (optional) other integer-valued APIs
 
@@ -325,4 +325,3 @@ Select via:
 
   * Phase 1 error is acceptable for MVP
   * Phase 4 should introduce bailout to preserve semantics without fatal errors
-

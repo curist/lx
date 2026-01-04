@@ -5,7 +5,7 @@ fn test(name, cb) { suite.defineTest("fixnum-natives - " + name, cb) }
 // We can't directly check the internal representation, but we can verify
 // that fixnum values work correctly in fused loops
 fn isIntegral(n) {
-  n == int(n)
+  n == Math.floor(n)
 }
 
 test("len() returns correct values", fn(assert) {
@@ -15,12 +15,12 @@ test("len() returns correct values", fn(assert) {
   assert.equal(len(""), 0)
 })
 
-test("int() returns integer part", fn(assert) {
-  assert.equal(int(42.7), 42)
-  assert.equal(int(42.2), 42)
-  assert.equal(int(-42.7), -42)
-  assert.equal(int(0.9), 0)
-  assert.truthy(isIntegral(int(42.7)))
+test("Math.floor() floors numbers", fn(assert) {
+  assert.equal(Math.floor(42.7), 42)
+  assert.equal(Math.floor(42.2), 42)
+  assert.equal(Math.floor(-42.7), -43)
+  assert.equal(Math.floor(0.9), 0)
+  assert.truthy(isIntegral(Math.floor(42.7)))
 })
 
 test("tonumber() returns integers for integral strings", fn(assert) {
@@ -68,8 +68,8 @@ test("tonumber() result can be used as loop limit", fn(assert) {
   assert.equal(sum, 45)  // 0+1+2+...+9
 })
 
-test("int() result can be used as loop limit", fn(assert) {
-  let n = int(10.9)
+test("Math.floor() result can be used as loop limit", fn(assert) {
+  let n = Math.floor(10.9)
   let sum = 0
   for let i = 0; i < n; i = i + 1 {
     sum = sum + i
@@ -116,7 +116,7 @@ test("tonumber() with negative integers", fn(assert) {
   assert.equal(n, -500)
 
   let sum = 0
-  let limit = int(-1 * n)  // Convert to positive
+  let limit = Math.floor(-1 * n)  // Convert to positive
   for let i = 0; i < limit; i = i + 1 {
     sum = sum + 1
   }

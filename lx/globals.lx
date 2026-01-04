@@ -138,7 +138,7 @@ fn sort(arr, compare) {
     return out
   }
 
-  let mid = int(length / 2)
+  let mid = Math.floor(length / 2)
   let left = []
   let right = []
   for let i = 0; i < mid; i = i + 1 { push(left, arr[i]) }

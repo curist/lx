@@ -11,8 +11,8 @@ let ModuleResolution = import "src/module_resolution.lx"
 // Get entry file from command line args
 // Lx.args: [lx, run, script, arg1, ...]
 if len(Lx.args) < 4 {
-  groanln("Usage: lx run scripts/bootstrap-codegen.lx <entry-file>")
-  groanln("Example: lx run scripts/bootstrap-codegen.lx lx/main.lx")
+  Lx.stderr.println("Usage: lx run scripts/bootstrap-codegen.lx <entry-file>")
+  Lx.stderr.println("Example: lx run scripts/bootstrap-codegen.lx lx/main.lx")
   Lx.exit(1)
 }
 
@@ -69,9 +69,9 @@ for let i = 0; i < len(filename); i = i + 1 {
 }
 
 let outputPath = "/tmp/" + basename + ".lxobj"
-let ok = spit(outputPath, byteString)
+let ok = Lx.fs.writeFile(outputPath, byteString)
 if ok != true {
-  groanln(ok or "Failed to write output.")
+  Lx.stderr.println(ok or "Failed to write output.")
   Lx.exit(1)
 }
 

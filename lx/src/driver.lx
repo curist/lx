@@ -267,8 +267,8 @@ fn make(opts) {
 
   if !profileDefaults {
     // Unknown profile - error
-    groanln("Error: Unknown profile '" + profileName + "'")
-    groanln("Available profiles: default, tooling, O0, query, resolve")
+    Lx.stderr.println("Error: Unknown profile '" + profileName + "'")
+    Lx.stderr.println("Available profiles: default, tooling, O0, query, resolve")
     return nil
   }
 

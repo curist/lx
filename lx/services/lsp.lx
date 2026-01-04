@@ -127,7 +127,7 @@ fn uriEncodePath(path) {
     if isSafe {
       push(out, ch)
     } else {
-      let hi = int(c / 16)
+      let hi = Math.floor(c / 16)
       let lo = c - hi * 16
       push(out, "%")
       push(out, hexDigit(hi))
@@ -594,7 +594,7 @@ fn readMessage() {
       if k == "content-length" {
         let n = tonumber(trimSpaces(parts[1]))
         if n != nil {
-          contentLength = int(n)
+          contentLength = Math.floor(n)
         }
       }
     }
@@ -1076,7 +1076,7 @@ fn serve() {
       let spec = ks[i]
       let deadline = state.pendingCompile[spec]
       if deadline == nil { continue }
-      let dt = int(deadline - t)
+      let dt = Math.floor(deadline - t)
       if dt < 0 { dt = 0 }
       if best == nil or dt < best { best = dt }
     }
@@ -1118,7 +1118,7 @@ fn serve() {
       return openDocs[path]
     }
     if !state.resolver {
-      groanln("LSP: No resolver initialized, cannot load:", path)
+      Lx.stderr.println("LSP: No resolver initialized, cannot load:", path)
       return nil
     }
     state.resolver.slurp(path)
@@ -1214,7 +1214,7 @@ fn serve() {
     let parsed = jsonParse(body)
     if !parsed.ok {
       // No request id available; best-effort log.
-      groanln("lsp: json parse error:", parsed.message, "at", parsed.index)
+      Lx.stderr.println("lsp: json parse error:", parsed.message, "at", parsed.index)
       continue
     }
 

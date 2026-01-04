@@ -370,10 +370,11 @@ let ModuleResolution = import "src/module_resolution.lx"
 
 fn testDisasm(name, source, expectedOpcodes) {
   let testPath = "/tmp/phase2b-disasm.lx"
-  exec("cat > " + testPath, .{ input: source })
+  Lx.fs.writeFile(testPath, source)
 
   // Compile and get disassembly
-  exec("./out/lx disasm " + testPath, .{ capture: true })
+  let result = Lx.proc.exec("./out/lx disasm " + testPath)
+  let disasm = result.out
   // Would need to parse output and verify opcodes
   println("✓ " + name)
 }

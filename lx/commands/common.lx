@@ -117,7 +117,7 @@ fn slurpUserPath(path, entryPath) {
   // Prefer reading literal filesystem paths when they exist relative to CWD
   // (e.g. `out/foo.lxobj`), otherwise fall back to module resolution (`cmd/...`).
   if Lx and Lx.fs and Lx.fs.exists and Lx.fs.exists(path) {
-    return slurp(path)
+    return Lx.fs.readFile(path)
   }
   let resolver = ModuleResolution.forEntry(entryPath or path)
   resolver.slurp(path)
@@ -125,13 +125,13 @@ fn slurpUserPath(path, entryPath) {
 
 fn printRuntimeError(err) {
   if !err {
-    groanln("Runtime error.")
+    Lx.stderr.println("Runtime error.")
     return
   }
   if err.message {
-    groanln(err.message)
+    Lx.stderr.println(err.message)
   } else {
-    groanln(err)
+    Lx.stderr.println(err)
     return
   }
 
@@ -140,9 +140,9 @@ fn printRuntimeError(err) {
   for let i = 0; i < len(stack); i = i + 1 {
     let f = stack[i] or .{}
     let file = f.file or "[unknown]"
-    let line = int(f.line or 0)
+    let line = Math.floor(f.line or 0)
     let name = f.name or "script"
-    groanln("[" + file + " L" + str(line) + "] in " + name + "()")
+    Lx.stderr.println("[" + file + " L" + str(line) + "] in " + name + "()")
   }
 }
 
@@ -158,4 +158,3 @@ fn printRuntimeError(err) {
   objbuilder,
   printRuntimeError,
 }
-

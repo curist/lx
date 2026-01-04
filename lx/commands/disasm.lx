@@ -2,7 +2,7 @@ let common = import "commands/common.lx"
 
 fn run(ctx) {
   if len(ctx.argv) < 3 {
-    groanln("Usage: " + ctx.prog + " disasm <lxobj|lxfile>")
+    Lx.stderr.println("Usage: " + ctx.prog + " disasm <lxobj|lxfile>")
     Lx.exit(28)
   }
 

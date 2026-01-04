@@ -79,7 +79,7 @@ fn freshTypeVar(checker) {
 fn builtinTypeByName(checker, name) {
   // Basic I/O (variadic-ish): model as 0-arg fn returning Nil so calls with
   // extra args are allowed by the call solver.
-  if name == "print" or name == "println" or name == "groan" or name == "groanln" or name == "putc" {
+  if name == "print" or name == "println" {
     return typeFunction([], typeNil())
   }
 
@@ -89,11 +89,8 @@ fn builtinTypeByName(checker, name) {
   if name == "tolower" { return typeFunction([typeString()], typeString()) }
   if name == "toupper" { return typeFunction([typeString()], typeString()) }
   if name == "tonumber" { return typeFunction([typeString()], typeNumber()) }
-  if name == "int" { return typeFunction([typeNumber()], typeNumber()) }
   if name == "chr" { return typeFunction([typeNumber()], typeString()) }
   if name == "ord" { return typeFunction([typeString()], typeNumber()) }
-  if name == "random" { return typeFunction([], typeNumber()) }
-  if name == "sqrt" { return typeFunction([typeNumber()], typeNumber()) }
   if name == "type" { return typeFunction([typeAny()], typeString()) }
   if name == "nameOf" { return .{ kind: "Function", params: [typeAny(), typeAny()], return: typeOption(typeString()), builtinName: "nameOf" } }
 
@@ -127,22 +124,19 @@ fn builtinTypeByName(checker, name) {
   if name == "read" { return typeFunction([typeNumber()], typeOption(typeString())) }
 
   // Shell/process helpers (keep coarse types to avoid modeling filesystem).
-  if name == "system" { return typeFunction([typeString()], typeNumber()) }
-  if name == "slurp" { return typeFunction([typeString()], typeString()) }
-
-  // Returns a small record: { code: Number, out: String }
-  if name == "exec" {
-    return typeFunction([typeString()], typeRecord(.{
-      code: typeNumber(),
-      out: typeString(),
-    }))
-  }
-
   // Namespaced builtins: model as records so `Date.now()` / `Lx.args` typecheck.
+  if name == "Math" {
+    return typeRecord(.{
+      floor: typeFunction([typeNumber()], typeNumber()),
+      sqrt: typeFunction([typeNumber()], typeNumber()),
+      random: typeFunction([], typeNumber()),
+    })
+  }
   if name == "Date" {
     return typeRecord(.{
       RFC3339: typeString(),
       now: typeFunction([], typeNumber()),
+      nanotime: typeFunction([], typeNumber()),
       // format(ts, fmt?) -> String; model required arg only, extra args allowed.
       format: typeFunction([typeNumber()], typeString()),
       parse: typeFunction([typeString(), typeString()], typeNumber()),
@@ -151,8 +145,9 @@ fn builtinTypeByName(checker, name) {
   if name == "Lx" {
     return typeRecord(.{
       args: typeArray(typeString()),
+      env: typeMap(typeString(), typeString()),
       version: typeString(),
-      globals: typeFunction([], typeArray(typeString())),
+      globals: typeFunction([], typeArray(typeAny())),
       doubleToUint8Array: typeFunction([typeNumber()], typeArray(typeNumber())),
       isLxObj: typeFunction([typeAny()], typeBool()),
       loadObj: typeFunction([typeAny()], typeAny()),
@@ -162,13 +157,42 @@ fn builtinTypeByName(checker, name) {
         error: typeAny(),
       })),
       error: typeFunction([typeAny()], typeNil()),
+      fs: typeRecord(.{
+        cwd: typeFunction([], typeString()),
+        exists: typeFunction([typeString()], typeBool()),
+        stat: typeFunction([typeString()], typeOption(typeAny())),
+        realpath: typeFunction([typeString()], typeOption(typeString())),
+        readFile: typeFunction([typeString()], typeString()),
+        writeFile: typeFunction([typeString(), typeString()], typeBool()),
+      }),
+      path: typeRecord(.{
+        join: typeFunction([], typeString()),
+        dirname: typeFunction([typeString()], typeString()),
+        basename: typeFunction([typeString()], typeString()),
+      }),
       stdout: typeRecord(.{
+        flush: typeFunction([], typeNil()),
+        putc: typeFunction([], typeNil()),
+      }),
+      stderr: typeRecord(.{
+        print: typeFunction([], typeNil()),
+        println: typeFunction([], typeNil()),
         flush: typeFunction([], typeNil()),
       }),
       stdin: typeRecord(.{
         readAll: typeFunction([], typeString()),
         readLine: typeFunction([], typeOption(typeString())),
         readBytes: typeFunction([typeNumber()], typeOption(typeString())),
+        readFd: typeFunction([typeNumber()], typeOption(typeString())),
+        poll: typeFunction([typeNumber()], typeBool()),
+        unbuffered: typeFunction([], typeNil()),
+      }),
+      proc: typeRecord(.{
+        system: typeFunction([typeString()], typeNumber()),
+        exec: typeFunction([typeString()], typeRecord(.{
+          code: typeNumber(),
+          out: typeString(),
+        })),
       }),
       // exit(code?) -> Nil; model as 0-arg fn so `Lx.exit()` works, and extra args are allowed.
       exit: typeFunction([], typeNil()),
@@ -1753,7 +1777,7 @@ fn finalizeIndexables(checker) {
   for let i = 0; i < len(ids); i = i + 1 {
     let id = ids[i]
     // Defensively ensure we use numeric ids as stored by typeVarBindings.
-    if type(id) == "string" { id = int(tonumber(id) or 0) }
+    if type(id) == "string" { id = Math.floor(tonumber(id) or 0) }
 
     let t = deref(checker, checker.typeVarBindings[id])
     if t and t.kind == "Indexable" {

@@ -2,7 +2,7 @@ let common = import "commands/common.lx"
 
 fn run(ctx) {
   if !Lx or !Lx.stdin or !Lx.stdin.readLine or !Lx.pcall or !Lx.loadObj {
-    groanln("repl: missing required runtime APIs (Lx.stdin.readLine, Lx.pcall, Lx.loadObj)")
+    Lx.stderr.println("repl: missing required runtime APIs (Lx.stdin.readLine, Lx.pcall, Lx.loadObj)")
     Lx.exit(70)
   }
 
@@ -10,8 +10,8 @@ fn run(ctx) {
   for true {
     let line = Lx.stdin.readLine("> ")
     if !line { break }
-    if line == "\n" or line == "" { continue }
-    if line == ":q\n" or line == ":q" or line == ":quit\n" or line == ":quit" { break }
+    if line == "" { continue }
+    if line == ":q" or line == ":quit" { break }
 
     iter = iter + 1
     let path = "[LX REPL " + str(iter) + "]"

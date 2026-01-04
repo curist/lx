@@ -310,11 +310,11 @@ fn printErrors(errors) {
       let file = err.pos.filename or err.filename
       let prefix = file and join([file, ":", err.pos.line, ":", err.pos.col or 0], "") or
         join([err.pos.line, ":", err.pos.col or 0], "")
-      groanln(join(["[", prefix, "] ", err.message], ""))
+      Lx.stderr.println(join(["[", prefix, "] ", err.message], ""))
     } else if err.line {
-      groanln(join(["[L", err.line, "] ", err.message], ""))
+      Lx.stderr.println(join(["[L", err.line, "] ", err.message], ""))
     } else {
-      groanln(err.message)
+      Lx.stderr.println(err.message)
     }
   }
 }
@@ -1273,15 +1273,15 @@ fn run(ctx) {
   }
 
   if args.error {
-    groanln("Error: " + args.error)
-    groanln("Usage: " + ctx.prog + " ast [--pass <pass-name>] <path>")
-    groanln("       " + ctx.prog + " ast --summary <path>")
-    groanln("       " + ctx.prog + " ast --track-node <id> <path>")
-    groanln("       " + ctx.prog + " ast --diff <from-pass> <to-pass> <path>")
-    groanln("       " + ctx.prog + " ast --help-metadata")
-    groanln("")
-    groanln("Available passes: " + join(VALID_PASSES, ", "))
-    groanln("Default pass: " + DEFAULT_PASS)
+    Lx.stderr.println("Error: " + args.error)
+    Lx.stderr.println("Usage: " + ctx.prog + " ast [--pass <pass-name>] <path>")
+    Lx.stderr.println("       " + ctx.prog + " ast --summary <path>")
+    Lx.stderr.println("       " + ctx.prog + " ast --track-node <id> <path>")
+    Lx.stderr.println("       " + ctx.prog + " ast --diff <from-pass> <to-pass> <path>")
+    Lx.stderr.println("       " + ctx.prog + " ast --help-metadata")
+    Lx.stderr.println("")
+    Lx.stderr.println("Available passes: " + join(VALID_PASSES, ", "))
+    Lx.stderr.println("Default pass: " + DEFAULT_PASS)
     Lx.exit(28)
   }
 
@@ -1302,8 +1302,8 @@ fn run(ctx) {
       }
     }
     if !validFrom {
-      groanln("Error: Invalid from pass '" + fromPass + "'")
-      groanln("Available passes: " + join(VALID_PASSES, ", "))
+      Lx.stderr.println("Error: Invalid from pass '" + fromPass + "'")
+      Lx.stderr.println("Available passes: " + join(VALID_PASSES, ", "))
       Lx.exit(28)
     }
 
@@ -1316,8 +1316,8 @@ fn run(ctx) {
       }
     }
     if !validTo {
-      groanln("Error: Invalid to pass '" + toPass + "'")
-      groanln("Available passes: " + join(VALID_PASSES, ", "))
+      Lx.stderr.println("Error: Invalid to pass '" + toPass + "'")
+      Lx.stderr.println("Available passes: " + join(VALID_PASSES, ", "))
       Lx.exit(28)
     }
 
@@ -1329,8 +1329,8 @@ fn run(ctx) {
       if VALID_PASSES[i] == toPass { toIdx = i }
     }
     if fromIdx >= toIdx {
-      groanln("Error: from pass must come before to pass in pipeline")
-      groanln("Pass order: " + join(VALID_PASSES, " → "))
+      Lx.stderr.println("Error: from pass must come before to pass in pipeline")
+      Lx.stderr.println("Pass order: " + join(VALID_PASSES, " → "))
       Lx.exit(28)
     }
 
@@ -1347,16 +1347,16 @@ fn run(ctx) {
     }
 
     if !validPass {
-      groanln("Error: Invalid pass name '" + passName + "'")
-      groanln("Available passes: " + join(VALID_PASSES, ", "))
+      Lx.stderr.println("Error: Invalid pass name '" + passName + "'")
+      Lx.stderr.println("Available passes: " + join(VALID_PASSES, ", "))
       Lx.exit(28)
     }
   }
 
   // Load source
-  let source = slurp(path)
+  let source = Lx.fs.readFile(path)
   if !source {
-    groanln("Failed to open " + path)
+    Lx.stderr.println("Failed to open " + path)
     Lx.exit(2)
   }
 
@@ -1393,7 +1393,7 @@ fn run(ctx) {
   } else if args.diff {
     let diff = computeDiff(result, args.diff.from, args.diff.to)
     if diff.error {
-      groanln("Error: " + diff.error)
+      Lx.stderr.println("Error: " + diff.error)
       Lx.exit(1)
     }
     printDiff(args.diff.from, args.diff.to, diff)

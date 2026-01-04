@@ -4,17 +4,17 @@ let ModuleResolution = import "src/module_resolution.lx"
 
 fn run(ctx) {
   if len(ctx.argv) < 3 {
-    groanln("Usage: " + ctx.prog + " check <entry>")
+    Lx.stderr.println("Usage: " + ctx.prog + " check <entry>")
     Lx.exit(28)
   }
 
   let entry = ctx.argv[2]
   if !entry {
-    groanln("Usage: " + ctx.prog + " check <entry>")
+    Lx.stderr.println("Usage: " + ctx.prog + " check <entry>")
     Lx.exit(28)
   }
   if ctx.argv[3] {
-    groanln("Usage: " + ctx.prog + " check <entry>")
+    Lx.stderr.println("Usage: " + ctx.prog + " check <entry>")
     Lx.exit(28)
   }
 
@@ -26,13 +26,13 @@ fn run(ctx) {
   })
 
   if !d {
-    groanln("Failed to initialize driver.")
+    Lx.stderr.println("Failed to initialize driver.")
     Lx.exit(70)
   }
 
   let result = d.compileModule(entry)
   if !result {
-    groanln("Internal error: compileModule returned nil.")
+    Lx.stderr.println("Internal error: compileModule returned nil.")
     Lx.exit(70)
   }
 
@@ -57,18 +57,18 @@ fn run(ctx) {
     }
   }
 
-  groanln("Typecheck summary:")
-  groanln("  entry: " + entry)
-  groanln("  modules: " + str(total))
-  groanln("  fatal failures: " + str(fatalFailures))
-  groanln("  typecheck failures: " + str(typeFailures))
+  Lx.stderr.println("Typecheck summary:")
+  Lx.stderr.println("  entry: " + entry)
+  Lx.stderr.println("  modules: " + str(total))
+  Lx.stderr.println("  fatal failures: " + str(fatalFailures))
+  Lx.stderr.println("  typecheck failures: " + str(typeFailures))
 
   for let i = 0; i < len(d.compiledModules); i = i + 1 {
     let path = d.compiledModules[i]
     let r = d.cache[path]
     if !r or r.status == "done" { continue }
-    groanln("")
-    groanln("== " + path + " (" + (r.status or "unknown") + ") ==")
+    Lx.stderr.println("")
+    Lx.stderr.println("== " + path + " (" + (r.status or "unknown") + ") ==")
     errors.printErrors(errors.collectErrors(r), r)
   }
 
@@ -79,8 +79,8 @@ fn run(ctx) {
     let tc = r.passes and r.passes.typecheck
     if !tc or tc.success != false { continue }
 
-    groanln("")
-    groanln("== " + path + " (typecheck) ==")
+    Lx.stderr.println("")
+    Lx.stderr.println("== " + path + " (typecheck) ==")
     errors.printErrors(tc.errors or [], r)
   }
 
@@ -96,4 +96,3 @@ fn run(ctx) {
   summary: "Typecheck an entry module (dev)",
   run: run,
 }
-

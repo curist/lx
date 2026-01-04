@@ -26,9 +26,9 @@ for let i = 0; i < len(commands); i = i + 1 {
 
 fn handleUnknown(ctx, cmdName) {
   if cmdName {
-    groanln(ctx.prog + " " + cmdName + ": unknown command")
+    Lx.stderr.println(ctx.prog + " " + cmdName + ": unknown command")
   }
-  groanln("Run '" + ctx.prog + " help' for usage.")
+  Lx.stderr.println("Run '" + ctx.prog + " help' for usage.")
   Lx.exit(28)
 }
 

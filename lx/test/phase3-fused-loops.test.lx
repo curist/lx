@@ -1,7 +1,7 @@
 let suite = (import "test/makeTestSuite.lx")()
 fn test(name, cb) { suite.defineTest("phase3-fused-loops - " + name, cb) }
 
-// Phase 3: Loops with len(), int(), tonumber() limits should now be fused
+// Phase 3: Loops with len(), Math.floor(), tonumber() limits should now be fused
 // These tests verify that fixnum-returning natives enable more loop fusion
 
 test("loop with len() limit executes correctly", fn(assert) {
@@ -23,8 +23,8 @@ test("loop with tonumber() limit executes correctly", fn(assert) {
   assert.equal(sum, 100)
 })
 
-test("loop with int() limit executes correctly", fn(assert) {
-  let limit = int(99.9)
+test("loop with Math.floor() limit executes correctly", fn(assert) {
+  let limit = Math.floor(99.9)
   let sum = 0
   for let i = 0; i < limit; i = i + 1 {
     sum = sum + 1
@@ -87,16 +87,16 @@ test("tonumber() with large integer", fn(assert) {
   assert.equal(count, 10000)
 })
 
-test("int() with negative truncation", fn(assert) {
-  let limit = int(-5.7)  // Should be -5
+test("Math.floor() with negative numbers", fn(assert) {
+  let limit = Math.floor(-5.7)  // Should be -6
   let result = limit
-  assert.equal(result, -5)
+  assert.equal(result, -6)
 })
 
-test("combined: len + range + int", fn(assert) {
+test("combined: len + range + Math.floor", fn(assert) {
   let arr = range(10)
   let n = len(arr)
-  let half = int(n / 2)
+  let half = Math.floor(n / 2)
 
   let sum = 0
   for let i = 0; i < half; i = i + 1 {

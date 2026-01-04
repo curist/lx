@@ -176,7 +176,7 @@ fn printErrors(errors, result) {
 
   for let i = 0; i < len(errors); i = i + 1 {
     let err = errors[i]
-    groanln(formatError(err, result))
+    Lx.stderr.println(formatError(err, result))
   }
 }
 

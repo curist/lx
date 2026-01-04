@@ -11,4 +11,4 @@ println("fib(", x, "):", fib(x))
 println("time:", Date.now() - start)
 println()
 
-println(int(123.456))
+println(Math.floor(123.456))

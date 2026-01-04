@@ -7,7 +7,7 @@ fn register(test) {
   let deref = helpers.deref
 
   test("typecheck - numeric/string conversion builtins", fn(assert) {
-    let result = parseAndTypecheck("{ int(123.456)\ntonumber(\"123.456\") }")
+    let result = parseAndTypecheck("{ Math.floor(123.456)\ntonumber(\"123.456\") }")
     assert.truthy(result.success)
     if !result.success { return }
     assert.equal(deref(result, getExprType(result, 0)).kind, "Number")

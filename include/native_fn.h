@@ -127,6 +127,16 @@ static bool stdoutFlushNative(int argCount, Value *args) {
   return true;
 }
 
+static bool stderrFlushNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.stderr.flush takes 0 args.");
+    return false;
+  }
+  fflush(stderr);
+  args[-1] = NIL_VAL;
+  return true;
+}
+
 static bool putcNative(int argCount, Value *args) {
   for (int i = 0; i < argCount; i++) {
     printf("%c", (int)AS_NUMBER(args[i]));
@@ -152,7 +162,7 @@ static bool groanlnNative(int argCount, Value *args) {
   return true;
 }
 
-static bool intNative(int argCount, Value *args) {
+static bool mathFloorNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
     return false;
@@ -163,14 +173,26 @@ static bool intNative(int argCount, Value *args) {
     return false;
   }
   double num = AS_NUMBER(arg);
-  int64_t integer = (int64_t)num;
+  if (!isfinite(num)) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a finite number.");
+    return false;
+  }
 
-  // Return fixnum if the truncated value fits in fixnum range
+  double floored = floor(num);
+  if (floored < (double)INT64_MIN || floored > (double)INT64_MAX) {
+    args[-1] = NUMBER_VAL(floored);
+    return true;
+  }
+
+  int64_t integer = (int64_t)floored;
+
+  // Return fixnum if the floored value fits in fixnum range.
   if (fixnumFitsInt64(integer)) {
     args[-1] = FIXNUM_VAL(integer);
-  } else {
-    args[-1] = NUMBER_VAL((double)integer);
+    return true;
   }
+
+  args[-1] = NUMBER_VAL((double)integer);
   return true;
 }
 
@@ -917,17 +939,6 @@ static bool substrNative(int argCount, Value *args) {
   return true;
 }
 
-static bool getlineNative(int argCount, Value *args) {
-  char line[8192];
-  char *read = NULL;
-  if (!(read = fgets(line, sizeof(line), stdin))) {
-    args[-1] = NIL_VAL;
-  } else {
-    args[-1] = OBJ_VAL(copyString(read, (int)strlen(read) - 1));
-  }
-  return true;
-}
-
 static bool readNative(int argCount, Value *args) {
   if (argCount < 1 || !IS_NUMBER(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
@@ -1581,6 +1592,10 @@ static bool stdinReadLineNative(int argCount, Value *args) {
     return true;
   }
 
+  // Strip trailing newline (and optional CR) for line-oriented reads.
+  if (n > 0 && line[n - 1] == '\n') n--;
+  if (n > 0 && line[n - 1] == '\r') n--;
+  line[n] = '\0';
   args[-1] = OBJ_VAL(takeString(line, (int)n));
   return true;
 }
@@ -1753,6 +1768,8 @@ static void defineLxNatives() {
   defineTableFunction(&fs->table, "exists", fsExistsNative);
   defineTableFunction(&fs->table, "stat", fsStatNative);
   defineTableFunction(&fs->table, "realpath", fsRealpathNative);
+  defineTableFunction(&fs->table, "readFile", slurpNative);
+  defineTableFunction(&fs->table, "writeFile", spitNative);
   pop(); // fs
 
   // Lx.path
@@ -1793,7 +1810,33 @@ static void defineLxNatives() {
   pop();
   pop();
   defineTableFunction(&stdoutTable->table, "flush", stdoutFlushNative);
+  defineTableFunction(&stdoutTable->table, "putc", putcNative);
   pop(); // stdout
+
+  // Lx.stderr
+  ObjHashmap* stderrTable = newHashmap();
+  push(OBJ_VAL(stderrTable)); // root
+  push(CSTRING_VAL("stderr"));
+  push(OBJ_VAL(stderrTable));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+  defineTableFunction(&stderrTable->table, "print", groanNative);
+  defineTableFunction(&stderrTable->table, "println", groanlnNative);
+  defineTableFunction(&stderrTable->table, "flush", stderrFlushNative);
+  pop(); // stderr
+
+  // Lx.proc
+  ObjHashmap* proc = newHashmap();
+  push(OBJ_VAL(proc)); // root
+  push(CSTRING_VAL("proc"));
+  push(OBJ_VAL(proc));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+  defineTableFunction(&proc->table, "exec", execNative);
+  defineTableFunction(&proc->table, "system", systemNative);
+  pop(); // proc
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array",
@@ -1828,15 +1871,26 @@ static void defineDateNatives() {
   pop();
 }
 
+static void defineMathNatives() {
+  push(CSTRING_VAL("Math"));
+  push(OBJ_VAL(newHashmap()));
+  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
+
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "floor", mathFloorNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "sqrt", sqrtNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "random", randomNative);
+
+  pop();
+  pop();
+}
+
 void defineBuiltinNatives() {
   defineLxNatives();
   defineDateNatives();
+  defineMathNatives();
 
   defineNative("print", printNative);
   defineNative("println", printlnNative);
-  defineNative("putc", putcNative);
-  defineNative("groan", groanNative);
-  defineNative("groanln", groanlnNative);
   defineNative("str", strNative);
   defineNative("join", joinNative);
   defineNative("split", splitNative);
@@ -1844,11 +1898,8 @@ void defineBuiltinNatives() {
   defineNative("tolower", tolowerNative);
   defineNative("toupper", toupperNative);
   defineNative("tonumber", tonumberNative);
-  defineNative("int", intNative);
   defineNative("chr", chrNative);
   defineNative("ord", ordNative);
-  defineNative("random", randomNative);
-  defineNative("sqrt", sqrtNative);
   defineNative("keys", keysNative);
   defineNative("nameOf", nameOfNative);
   defineNative("len", lenNative);
@@ -1858,12 +1909,5 @@ void defineBuiltinNatives() {
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
   defineNative("lines", linesNative);
-  defineNative("getline", getlineNative);
-  defineNative("read", readNative);
-
-  defineNative("exec", execNative);
-  defineNative("system", systemNative);
-  defineNative("slurp", slurpNative);
-  defineNative("spit", spitNative);
 }
 #endif

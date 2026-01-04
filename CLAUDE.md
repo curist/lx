@@ -60,8 +60,8 @@ type(enum { A })   // "enum"
 
 **Debugging tip:**
 ```lx
-groanln("Type of node:", type(node))  // Always check actual type string first
-// groanln print to stderr
+Lx.stderr.println("Type of node:", type(node))  // Always check actual type string first
+// Lx.stderr.println prints to stderr
 ```
 
 ### Hashmap Literals
@@ -306,12 +306,10 @@ let msg = "Hello " + name
 
 Common globals (from `globals.lx`):
 - `println(...)`, `print(...)`
-- `groanln(...)`, `groan(...)`
-- `len(arr)` - array/string/hashmap length
+- `len(x)` - array/string length
 - `type(val)` - returns type string
 - `str(val)` - convert to string
 - `tonumber(str)` - convert string to number (e.g., `tonumber("42")` → `42`)
-- `int(val)` - coerce double to integer (truncate decimal part)
 - `range(n)` or `range(string)` - create array [0..n-1] or UTF-8 character array
 - `map(arr, fn)` - map function
 - `fold(arr, init, fn)` - reduce/fold
@@ -319,17 +317,19 @@ Common globals (from `globals.lx`):
 - `push(arr, val)` - append to array
 - `keys(map)` - get hashmap keys
 - `join(arr, sep)` - join strings
+- `Math.floor(n)` - floor to integer
+- `Lx.stderr.print(...)`, `Lx.stderr.println(...)`
 
 **Number conversion:**
 ```lx
 // String to number: use tonumber()
 let n = tonumber("42")  // 42
 
-// Double to int: use int()
-let i = int(3.14)  // 3
+// Double to int: use Math.floor()
+let i = Math.floor(3.14)  // 3
 
-// ❌ WRONG - int() doesn't parse strings
-let x = int("42")  // Error!
+// ❌ WRONG - Math.floor() doesn't parse strings
+let x = Math.floor("42")  // Error!
 ```
 
 ## Import System

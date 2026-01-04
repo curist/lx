@@ -9,8 +9,8 @@ fn run(ctx) {
   }
 
   if !src or src == "" {
-    groanln("Usage: " + ctx.prog + " eval <expression>")
-    groanln("  or pipe input via stdin: echo 'println(42)' | " + ctx.prog + " eval")
+    Lx.stderr.println("Usage: " + ctx.prog + " eval <expression>")
+    Lx.stderr.println("  or pipe input via stdin: echo 'println(42)' | " + ctx.prog + " eval")
     Lx.exit(64)
   }
 

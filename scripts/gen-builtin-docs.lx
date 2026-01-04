@@ -1,11 +1,25 @@
 // Generate bundled builtin hover docs from repo docs + native header.
 //
 // Source of truth:
-// - `lx/README.md` section: "## Builtin Native Functions"
+// - `API.md` section: "## Builtin Native Functions"
 // - `include/native_fn.h` for builtin names that exist (undocumented placeholders)
 //
 // Output:
 // - `lx/services/builtins_docs_data.lx` (checked into repo, embedded into lxlx bytecode)
+
+fn readFile(path) {
+  if Lx and Lx.fs and Lx.fs.readFile {
+    return Lx.fs.readFile(path)
+  }
+  slurp(path)
+}
+
+fn writeFile(path, content) {
+  if Lx and Lx.fs and Lx.fs.writeFile {
+    return Lx.fs.writeFile(path, content)
+  }
+  spit(path, content)
+}
 
 fn stringLess(a, b) {
   if !a and b { return true }
@@ -87,7 +101,7 @@ fn parseSigToName(sig) {
   i == 0 and nil or slice(s, 0, i)
 }
 
-fn parseReadmeDocs(md) {
+fn parseNativeDocs(md, sourcePath) {
   let docs = .{}
   if !md {
     return docs
@@ -146,7 +160,7 @@ fn parseReadmeDocs(md) {
       signature: sig,
       description: (desc and desc != "" and desc) or nil,
       markdown: markdown,
-      source: "lx/README.md",
+      source: sourcePath,
     }
   }
 
@@ -160,7 +174,7 @@ fn parseNativeFnBuiltins(text) {
   }
 
   let lines = split(text, "\n")
-  let scope = nil  // "Lx" | "Date" | nil
+  let scope = nil  // "Lx" | "Date" | "Math" | nil
   let prefix = nil // e.g. "Lx.fs"
 
   for let i = 0; i < len(lines); i = i + 1 {
@@ -177,6 +191,11 @@ fn parseNativeFnBuiltins(text) {
       prefix = "Date"
       continue
     }
+    if startsWith(line, "static void defineMathNatives") {
+      scope = "Math"
+      prefix = "Math"
+      continue
+    }
     if startsWith(line, "void defineBuiltinNatives") {
       scope = nil
       prefix = nil
@@ -187,6 +206,8 @@ fn parseNativeFnBuiltins(text) {
     if startsWith(line, "// Lx.path") { prefix = "Lx.path"; continue }
     if startsWith(line, "// Lx.stdin") { prefix = "Lx.stdin"; continue }
     if startsWith(line, "// Lx.stdout") { prefix = "Lx.stdout"; continue }
+    if startsWith(line, "// Lx.stderr") { prefix = "Lx.stderr"; continue }
+    if startsWith(line, "// Lx.proc") { prefix = "Lx.proc"; continue }
 
     // Global builtins: defineNative("print", ...)
     if startsWith(line, "defineNative(") {
@@ -218,6 +239,8 @@ fn parseNativeFnBuiltins(text) {
         names[prefix + "." + member] = true
       } else if scope == "Date" {
         names["Date." + member] = true
+      } else if scope == "Math" {
+        names["Math." + member] = true
       } else if scope == "Lx" {
         names["Lx." + member] = true
       }
@@ -358,16 +381,22 @@ fn writeBuiltinsDocs(docs, nativeNames, preludeNames) {
   push(out, "}")
   push(out, "")
 
-  spit("lx/services/builtins_docs_data.lx", join(out, "\n"))
+  writeFile("lx/services/builtins_docs_data.lx", join(out, "\n"))
 }
 
 fn main() {
-  let readme = slurp("lx/README.md")
-  let header = slurp("include/native_fn.h")
-  let globals = slurp("lx/globals.lx")
+  let api = readFile("API.md")
+  let header = readFile("include/native_fn.h")
+  let globals = readFile("lx/globals.lx")
 
-  let docs = parseReadmeDocs(readme)
+  let docs = parseNativeDocs(api, "API.md")
   let nativeNames = parseNativeFnBuiltins(header)
+  // Include documented native entries (e.g. `Lx.args`, `Date.RFC3339`) even when
+  // they are created via tableSet (not defineTableFunction/defineNative).
+  let docKeys = keys(docs)
+  for let i = 0; i < len(docKeys); i = i + 1 {
+    nativeNames[docKeys[i]] = true
+  }
   let preludeNames = parseGlobalsExports(globals)
 
   writeBuiltinsDocs(docs, nativeNames, preludeNames)

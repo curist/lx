@@ -13,11 +13,11 @@ fn padRight(s, width) {
 }
 
 fn printGeneralHelp(ctx) {
-  groanln("Usage:")
-  groanln("")
-  groanln("  " + ctx.prog + " <command> [arguments]")
-  groanln("")
-  groanln("Commands:")
+  Lx.stderr.println("Usage:")
+  Lx.stderr.println("")
+  Lx.stderr.println("  " + ctx.prog + " <command> [arguments]")
+  Lx.stderr.println("")
+  Lx.stderr.println("Commands:")
 
   let cmds = ctx.commands or []
   let maxLen = 0
@@ -33,24 +33,24 @@ fn printGeneralHelp(ctx) {
     let summary = c.summary or ""
     let left = padRight(c.name, colWidth)
     if len(c.name) >= colWidth { left = c.name + "  " }
-    groanln("  " + left + summary)
+    Lx.stderr.println("  " + left + summary)
   }
 }
 
 fn printCommandHelp(ctx, cmdName) {
   let cmd = ctx.commandsByName and ctx.commandsByName[cmdName]
   if !cmd {
-    groanln(ctx.prog + " help " + cmdName + ": unknown command")
-    groanln("Run '" + ctx.prog + " help' for usage.")
+    Lx.stderr.println(ctx.prog + " help " + cmdName + ": unknown command")
+    Lx.stderr.println("Run '" + ctx.prog + " help' for usage.")
     Lx.exit(28)
   }
 
-  groanln("Usage:")
-  groanln("")
-  groanln("  " + ctx.prog + " " + (cmd.usage or cmd.name))
+  Lx.stderr.println("Usage:")
+  Lx.stderr.println("")
+  Lx.stderr.println("  " + ctx.prog + " " + (cmd.usage or cmd.name))
   if cmd.summary {
-    groanln("")
-    groanln(cmd.summary)
+    Lx.stderr.println("")
+    Lx.stderr.println(cmd.summary)
   }
 }
 
@@ -68,4 +68,3 @@ fn run(ctx) {
   summary: "Print this helpful page",
   run: run,
 }
-

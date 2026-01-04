@@ -761,8 +761,14 @@ fn publishDiagnosticsForSpec(state, spec, diags) {
     if ld { push(out, ld) }
   }
 
+  let uri = if state.resolver {
+    pathToUri(state.resolver.resolve(spec))
+  } else {
+    pathToUri(spec)
+  }
+
   sendNotification("textDocument/publishDiagnostics", .{
-    uri: specifierToUri(spec),
+    uri: uri,
     diagnostics: out,
   })
 }

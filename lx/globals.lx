@@ -33,23 +33,6 @@ fn foldr(arr, acc, cb) {
   acc
 }
 
-fn take(arr, n) {
-  let result = []
-  let length = len(arr)
-  for let i = 0; i < length and i < n; i = i + 1 {
-    push(result, arr[i])
-  }
-  result
-}
-
-fn drop(arr, n) {
-  let result = []
-  let length = len(arr)
-  for let i = n; i < length; i = i + 1 {
-    push(result, arr[i])
-  }
-  result
-}
 
 fn max(a, b) { if a > b { a } else { b } }
 fn min(a, b) { if a < b { a } else { b } }
@@ -112,8 +95,6 @@ return .{
   each,
   fold,
   foldr,
-  take,
-  drop,
   max,
   min,
   sort,

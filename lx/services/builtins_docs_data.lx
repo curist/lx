@@ -585,7 +585,6 @@ let NATIVE_NAMES = .{
 let PRELUDE_NAMES = .{
   ["_1"]: true,
   ["_2"]: true,
-  ["drop"]: true,
   ["each"]: true,
   ["first"]: true,
   ["fold"]: true,
@@ -594,7 +593,6 @@ let PRELUDE_NAMES = .{
   ["max"]: true,
   ["min"]: true,
   ["sort"]: true,
-  ["take"]: true,
 }
 
 .{

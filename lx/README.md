@@ -45,8 +45,6 @@ Native builtins are documented in `../API.md` (this is the source of truth for e
 - `fold(arr: array, acc, cb: fn(acc, x, i, abort) -> acc) -> any` Left fold.
 - `foldr(arr: array, acc, cb: fn(acc, x, i, abort) -> acc) -> any` Right fold.
 - Prefer `collect` expressions for mapping/filtering arrays.
-- `take(arr: array, n: number) -> array` Prefix.
-- `drop(arr: array, n: number) -> array` Suffix.
 - `max(a, b) -> any` Maximum of two values.
 - `min(a, b) -> any` Minimum of two values.
 - `sort(arr: array, less: fn(a, b) -> bool) -> array` Stable-ish merge sort returning a new array.

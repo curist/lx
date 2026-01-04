@@ -7,25 +7,6 @@ test("each", fn(assert) {
   assert.equal(a, 10)
 })
 
-test("take", fn(assert) {
-  let r = range(1000)->take(10)
-  assert.equal(len(r), 10)
-
-  r = range(10)->take(1000)
-  assert.equal(len(r), 10)
-
-  r = []->take(1000)
-  assert.equal(len(r), 0)
-})
-
-test("drop", fn(assert) {
-  let r = range(1000)->drop(10)
-  assert.equal(len(r), 990)
-
-  r = range(10)->drop(1000)
-  assert.equal(len(r), 0)
-})
-
 test("contains", fn(assert) {
   assert.equal(contains([], "foo"), false)
   assert.equal(contains(["foo"], "foo"), true)

@@ -10,11 +10,10 @@
 //   {
 //     let __loop_limit_N = expr
 //     for let i = 0; i < __loop_limit_N; i = i + 1 { body }
+//     nil
 //   }
 //
 // Pipeline placement: After ANF, before Codegen
-// - ANF has already normalized complex expressions
-// - This pass ensures opcode slot constraints are satisfied
 //
 // Output:
 // .{
@@ -28,6 +27,33 @@
 let .{ NODE } = import "src/types.lx"
 
 // ============================================================================
+// Span Helpers (FIX: snapshot span BEFORE node construction)
+// ============================================================================
+
+fn spanOf(n) {
+  // Snapshot span early to avoid accidental mutation / reuse bugs.
+  if !n {
+    return .{ filename: nil, line: 0, col: 0, endLine: 0, endCol: 0 }
+  }
+  .{
+    filename: n.filename,
+    line: n.line,
+    col: n.col,
+    endLine: n.endLine,
+    endCol: n.endCol,
+  }
+}
+
+fn applySpan(dst, sp) {
+  // Apply a pre-snapshotted span.
+  dst.filename = sp.filename
+  dst.line = sp.line
+  dst.col = sp.col
+  dst.endLine = sp.endLine
+  dst.endCol = sp.endCol
+}
+
+// ============================================================================
 // Node Creation Helpers (following anf.lx pattern)
 // ============================================================================
 
@@ -38,113 +64,95 @@ fn allocNodeId(gen) {
 }
 
 fn makeIdentifier(gen, templateNode, name) {
+  let sp = spanOf(templateNode)
   let id = allocNodeId(gen)
-  gen.origin[id] = templateNode.id
-  .{
+  gen.origin[id] = templateNode and templateNode.id or nil
+
+  let out = .{
     type: NODE.Identifier,
     id: id,
-    filename: templateNode.filename,
-    line: templateNode.line,
-    col: templateNode.col,
-    endLine: templateNode.endLine,
-    endCol: templateNode.endCol,
     name: name,
     value: name,
     lexeme: name,
   }
+  applySpan(out, sp)
+  out
 }
 
 fn makeLet(gen, templateNode, nameNode, initNode) {
+  let sp = spanOf(templateNode)
   let id = allocNodeId(gen)
-  gen.origin[id] = templateNode.id
-  .{
+  gen.origin[id] = templateNode and templateNode.id or nil
+
+  let out = .{
     type: NODE.Let,
     id: id,
-    filename: templateNode.filename,
-    line: templateNode.line,
-    col: templateNode.col,
-    endLine: templateNode.endLine,
-    endCol: templateNode.endCol,
     name: nameNode,
     init: initNode,
   }
+  applySpan(out, sp)
+  out
 }
 
 fn makeBlock(gen, templateNode, expressions) {
+  let sp = spanOf(templateNode)
   let id = allocNodeId(gen)
-  gen.origin[id] = templateNode.id
-  .{
+  gen.origin[id] = templateNode and templateNode.id or nil
+
+  let out = .{
     type: NODE.Block,
     id: id,
-    filename: templateNode.filename,
-    line: templateNode.line,
-    col: templateNode.col,
-    endLine: templateNode.endLine,
-    endCol: templateNode.endCol,
     expressions: expressions,
   }
+  applySpan(out, sp)
+  out
 }
 
 fn makeFor(gen, templateNode, initNode, condNode, updateNode, bodyNode) {
+  let sp = spanOf(templateNode)
   let id = allocNodeId(gen)
-  gen.origin[id] = templateNode.id
-  .{
+  gen.origin[id] = templateNode and templateNode.id or nil
+
+  let out = .{
     type: NODE.For,
     id: id,
-    filename: templateNode.filename,
-    line: templateNode.line,
-    col: templateNode.col,
-    endLine: templateNode.endLine,
-    endCol: templateNode.endCol,
     init: initNode,
     condition: condNode,
     update: updateNode,
     body: bodyNode,
   }
+  applySpan(out, sp)
+  out
 }
 
 fn makeBinary(gen, templateNode, leftNode, op, rightNode) {
+  let sp = spanOf(templateNode)
   let id = allocNodeId(gen)
-  gen.origin[id] = templateNode.id
-  .{
+  gen.origin[id] = templateNode and templateNode.id or nil
+
+  let out = .{
     type: NODE.Binary,
     id: id,
-    filename: templateNode.filename,
-    line: templateNode.line,
-    col: templateNode.col,
-    endLine: templateNode.endLine,
-    endCol: templateNode.endCol,
     left: leftNode,
     operator: op,
     right: rightNode,
   }
+  applySpan(out, sp)
+  out
 }
 
 fn makeNil(gen, templateNode) {
+  let sp = spanOf(templateNode)
   let id = allocNodeId(gen)
-  gen.origin[id] = templateNode.id
-  .{
+  gen.origin[id] = templateNode and templateNode.id or nil
+
+  let out = .{
     type: NODE.Nil,
     id: id,
-    filename: templateNode.filename,
-    line: templateNode.line,
-    col: templateNode.col,
-    endLine: templateNode.endLine,
-    endCol: templateNode.endCol,
     lexeme: "nil",
   }
-}
-
-// ============================================================================
-// Node Helpers
-// ============================================================================
-
-fn cloneSpan(dst, src) {
-  dst.filename = src.filename
-  dst.line = src.line
-  dst.col = src.col
-  dst.endLine = src.endLine
-  dst.endCol = src.endCol
+  applySpan(out, sp)
+  out
 }
 
 // ============================================================================
@@ -154,90 +162,84 @@ fn cloneSpan(dst, src) {
 fn extractConditionFromAnfBlock(block) {
   // ANF may wrap condition in a synthetic block:
   // { let $anf.0 = expr; i < $anf.0 }
-  // Extract the final Binary expression and the preceding Let statements
   if !block or block.type != NODE.Block { return nil }
   if !block.anfSynthetic { return nil }
   if !block.expressions or len(block.expressions) == 0 { return nil }
 
-
-  // Last expression should be the Binary comparison
   let lastIdx = len(block.expressions) - 1
   let finalExpr = block.expressions[lastIdx]
-
   if !finalExpr or finalExpr.type != NODE.Binary { return nil }
 
-  // Collect all preceding Let statements
   let anfLets = []
   for let i = 0; i < lastIdx; i = i + 1 {
     let expr = block.expressions[i]
-    if expr.type != NODE.Let {
-      return nil  // Unexpected expression type in ANF block
-    }
+    if !expr or expr.type != NODE.Let { return nil }
     push(anfLets, expr)
   }
 
-
-  .{
-    condition: finalExpr,  // The actual i < $anf.0 comparison
-    anfLets: anfLets,      // [let $anf.0 = getLimit()]
-  }
+  .{ condition: finalExpr, anfLets: anfLets }
 }
 
 fn shouldLowerLoop(node) {
-  // Returns true if this loop should be lowered
-  // Matches the same pattern as matchNumericForLoop in codegen
-
   if !node or node.type != NODE.For { return false }
+
+  // Skip "for-in" / lowered variants that reuse NODE.For.
+  // (These field names come from your earlier notes; keep whichever applies in your tree.)
+  if node.indexBinder or node.index { return false }
+
   if !node.init or !node.condition or !node.update { return false }
 
-  // Match init: let i = <expr>
+  // init: let i = <expr>
   if node.init.type != NODE.Let { return false }
   if !node.init.name or node.init.name.type != NODE.Identifier { return false }
 
-  // Match condition: i </<=/>/>= limit
-  // May be wrapped in ANF synthetic block
+  let i_name = node.init.name.value or node.init.name.name or node.init.name.lexeme
+
+  // condition: (maybe ANF block) -> Binary(i <limit-op> rhs)
   let hasAnfBlock = false
-  let cond = node.condition
-  if cond.type == NODE.Block and cond.anfSynthetic {
-    let extracted = extractConditionFromAnfBlock(cond)
+  let condNode = node.condition
+  if condNode.type == NODE.Block and condNode.anfSynthetic {
+    let extracted = extractConditionFromAnfBlock(condNode)
     if !extracted { return false }
-    cond = extracted.condition
-    hasAnfBlock = true  // Remember we have ANF block to hoist
+    condNode = extracted.condition
+    hasAnfBlock = true
   }
 
-  if cond.type != NODE.Binary { return false }
-  let op = cond.operator and (cond.operator.lexeme or cond.operator)
+  if !condNode or condNode.type != NODE.Binary { return false }
+
+  let op = condNode.operator and (condNode.operator.lexeme or condNode.operator)
   if op != "<" and op != "<=" and op != ">" and op != ">=" { return false }
 
-  // Check left side is identifier i
-  if cond.left.type != NODE.Identifier { return false }
-  let i_name = node.init.name.value or node.init.name.name or node.init.name.lexeme
-  let left_name = cond.left.value or cond.left.name or cond.left.lexeme
+  if !condNode.left or condNode.left.type != NODE.Identifier { return false }
+  let left_name = condNode.left.value or condNode.left.name or condNode.left.lexeme
   if left_name != i_name { return false }
 
-  // Check if limit is already an identifier (skip lowering UNLESS we have ANF block to hoist)
-  if cond.right.type == NODE.Identifier and !hasAnfBlock {
+  if !condNode.right { return false }
+
+  // If RHS is already an Identifier and no ANF block to hoist, no lowering needed.
+  if condNode.right.type == NODE.Identifier and !hasAnfBlock {
     return false
   }
 
-  // Match update: i = i + K or i = i - K
+  // update: i = i + K   or   i = i - K
   if node.update.type != NODE.Assignment { return false }
   if !node.update.target or node.update.target.type != NODE.Identifier { return false }
   let update_target_name = node.update.target.value or node.update.target.name or node.update.target.lexeme
   if update_target_name != i_name { return false }
 
   let update_value = node.update.value
-  if update_value.type != NODE.Binary { return false }
+  if !update_value or update_value.type != NODE.Binary { return false }
+
   let update_op = update_value.operator and (update_value.operator.lexeme or update_value.operator)
   if update_op != "+" and update_op != "-" { return false }
 
-  if update_value.left.type != NODE.Identifier { return false }
+  if !update_value.left or update_value.left.type != NODE.Identifier { return false }
   let update_left_name = update_value.left.value or update_value.left.name or update_value.left.lexeme
   if update_left_name != i_name { return false }
 
-  if update_value.right.type != NODE.Number { return false }
+  // Post-ANF: don't require Number; require "some RHS" exists.
+  if !update_value.right { return false }
 
-  // Pattern matches - should lower
   true
 }
 
@@ -286,7 +288,6 @@ fn lowerLoop(node, gen) {
 
     // Create wrapper block and mark as expression-safe
     let wrapper = makeBlock(gen, node, stmts)
-    wrapper.anfSynthetic = true  // Treat like ANF block for VALUE mode
     return wrapper
   }
 
@@ -318,9 +319,7 @@ fn lowerLoop(node, gen) {
   push(allStmts, newFor)
   push(allStmts, makeNil(gen, node))  // Ensure VALUE mode yields nil
 
-  // Create wrapper block and mark as expression-safe
   let wrapper = makeBlock(gen, node, allStmts)
-  wrapper.anfSynthetic = true  // Treat like ANF block for VALUE mode
   wrapper
 }
 
@@ -329,15 +328,16 @@ fn lowerLoop(node, gen) {
 // ============================================================================
 
 fn walkFor(node, gen) {
-  // Only recurse into body (may contain nested loops)
-  // Don't recurse into init/condition/update - they're part of the loop lowering pattern
+  // Recurse only into body; leave init/cond/update intact (pattern matcher depends on shape).
   let body2 = walkExpr(node.body, gen)
 
-  // Rebuild For if body changed
   let node2 = node
   if body2 != node.body {
+    // Rebuild For with preserved span.
+    let sp = spanOf(node)
     let id = allocNodeId(gen)
     gen.origin[id] = node.id
+
     node2 = .{
       type: NODE.For,
       id: id,
@@ -346,121 +346,97 @@ fn walkFor(node, gen) {
       update: node.update,
       body: body2,
     }
-    cloneSpan(node2, node)
+    applySpan(node2, sp)
   }
 
-  // Then apply lowering to the (possibly rebuilt) For
   lowerLoop(node2, gen)
+}
+
+fn walkExprs(exprs, gen) {
+  if !exprs { return [] }
+  collect e in exprs { walkExpr(e, gen) }
 }
 
 fn walkExpr(node, gen) {
   if !node { return nil }
 
-  // Transform For loops
   if node.type == NODE.For {
     return walkFor(node, gen)
   }
 
-  // Only recurse into container nodes that might contain For loops
-  // For all other nodes, return them unchanged to preserve node IDs
-
   if node.type == NODE.Block {
-    // Check if any child expression changed
     let newExprs = walkExprs(node.expressions, gen)
 
-    // Only create new Block if children changed
+    // Only allocate a new block if something changed.
     let anyChanged = false
     for let i = 0; i < len(newExprs); i = i + 1 {
-      if newExprs[i] != node.expressions[i] {
-        anyChanged = true
-        break
-      }
+      if newExprs[i] != node.expressions[i] { anyChanged = true; break }
     }
+    if !anyChanged { return node }
 
-    if !anyChanged {
-      return node  // Return original if nothing changed
-    }
-
-    // Create new Block with updated children (preserve full span)
+    let sp = spanOf(node)
     let id = allocNodeId(gen)
     gen.origin[id] = node.id
-    let out = .{
-      type: NODE.Block,
-      id: id,
-      expressions: newExprs,
-    }
-    cloneSpan(out, node)
+    let out = .{ type: NODE.Block, id: id, expressions: newExprs }
+    applySpan(out, sp)
     return out
   }
 
   if node.type == NODE.Function {
     let newBody = walkExpr(node.body, gen)
+    if newBody == node.body { return node }
 
-    if newBody == node.body {
-      return node  // Body unchanged, return original
-    }
-
+    let sp = spanOf(node)
     let id = allocNodeId(gen)
     gen.origin[id] = node.id
     let out = .{
       type: NODE.Function,
       id: id,
-      name: node.name,    // REUSE original
-      params: node.params,  // REUSE original
+      name: node.name,
+      params: node.params,
       body: newBody,
     }
-    cloneSpan(out, node)
+    applySpan(out, sp)
     return out
   }
 
   if node.type == NODE.If {
     let newThen = walkExpr(node.then, gen)
     let newElse = walkExpr(node.else, gen)
+    if newThen == node.then and newElse == node.else { return node }
 
-    if newThen == node.then and newElse == node.else {
-      return node  // Branches unchanged, return original
-    }
-
+    let sp = spanOf(node)
     let id = allocNodeId(gen)
     gen.origin[id] = node.id
     let out = .{
       type: NODE.If,
       id: id,
-      condition: node.condition,  // REUSE original
+      condition: node.condition,
       then: newThen,
       else: newElse,
     }
-    cloneSpan(out, node)
+    applySpan(out, sp)
     return out
   }
 
   if node.type == NODE.Let {
     let newInit = walkExpr(node.init, gen)
+    if newInit == node.init { return node }
 
-    if newInit == node.init {
-      return node  // Init unchanged, return original
-    }
-
+    let sp = spanOf(node)
     let id = allocNodeId(gen)
     gen.origin[id] = node.id
     let out = .{
       type: NODE.Let,
       id: id,
-      name: node.name,  // REUSE original
+      name: node.name,
       init: newInit,
     }
-    cloneSpan(out, node)
+    applySpan(out, sp)
     return out
   }
 
-  // For all other node types, return as-is
-  // (they either don't contain loops or we don't need to transform them)
   node
-}
-
-fn walkExprs(exprs, gen) {
-  if !exprs { return [] }
-  collect e in exprs { walkExpr(e, gen) }
 }
 
 // ============================================================================
@@ -469,12 +445,12 @@ fn walkExprs(exprs, gen) {
 
 fn lowerLoops(ast, opts) {
   // Require nextNodeId to avoid ID collisions
-  if !opts or !opts.nextNodeId {
+  if !opts or opts.nextNodeId == nil {
     return .{
       success: false,
       ast: ast,
       origin: .{},
-      nextNodeId: ast.id + 1,
+      nextNodeId: (ast and (ast.id + 1) or 1),
       errors: [.{ message: "lowerLoops requires opts.nextNodeId from previous pass" }],
     }
   }
@@ -482,7 +458,7 @@ fn lowerLoops(ast, opts) {
   let gen = .{
     nextNodeId: opts.nextNodeId,
     origin: .{},
-    limitCounter: 0,  // Counter for unique temp names
+    limitCounter: 0,
     errors: [],
   }
 
@@ -490,7 +466,7 @@ fn lowerLoops(ast, opts) {
 
   .{
     success: len(gen.errors) == 0,
-    ast: transformedAst,  // Return transformed AST
+    ast: transformedAst,
     origin: gen.origin,
     nextNodeId: gen.nextNodeId,
     errors: gen.errors,

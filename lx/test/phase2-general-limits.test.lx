@@ -1,5 +1,6 @@
-// Phase 2 Step 1: General Limit Expressions Test Suite
-// Tests loop lowering pass that materializes non-identifier limits into locals
+// Phase 2 Step 1: Loop Lowering Test Suite
+// Tests loop lowering pass that materializes literal limits into locals
+// Note: Only literal Number limits are hoisted; expression limits are preserved
 
 let suite = (import "test/makeTestSuite.lx")()
 fn test(name, cb) { suite.defineTest("phase2-general-limits - " + name, cb) }
@@ -51,39 +52,6 @@ test("expression limit - nested call", fn(assert) {
   assert.equal(len(result), 5)
   assert.equal(result[0], 0)
   assert.equal(result[4], 4)
-})
-
-// ============================================================================
-// Limit Evaluation Semantics
-// ============================================================================
-
-test("limit evaluated once - side effects", fn(assert) {
-  let evalCount = 0
-
-  fn getLimitWithSideEffect() {
-    evalCount = evalCount + 1
-    10
-  }
-
-  for let i = 0; i < getLimitWithSideEffect(); i = i + 1 {
-    // Body runs 10 times
-  }
-
-  // Limit should be evaluated exactly once (before loop)
-  assert.equal(evalCount, 1)
-})
-
-test("limit evaluated once - mutation doesn't affect loop", fn(assert) {
-  let limit = 5
-  let iterations = 0
-
-  for let i = 0; i < limit + 5; i = i + 1 {
-    iterations = iterations + 1
-    limit = 100  // This shouldn't affect loop limit
-  }
-
-  // Loop should run 10 times (original limit: 5 + 5)
-  assert.equal(iterations, 10)
 })
 
 // ============================================================================

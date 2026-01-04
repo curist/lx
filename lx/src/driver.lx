@@ -201,14 +201,16 @@ fn buildPassList(ctx) {
       },
     },
 
-    // PASS 4: Loop Lowering (disabled for now - has correctness issues)
+    // PASS 4: Loop Lowering (only transforms loops with literal limits)
     .{
       name: "lower-loops",
       mutatesAst: false,  // Returns new AST with origin tracking
       requires: ["anfAst"],  // Works on ANF AST
       provides: ["loweredLoopsAst"],
       enabled: fn(ctx, state) {
-        // Disabled until correctness issues are resolved
+        // Requires ANF pass to be enabled (lower-loops depends on anfAst)
+        if ctx.opts and ctx.opts.withAnf == false { return false }
+        // currently fail to bootstrap lx compiler, disable for now
         false
       },
       run: fn(ctx, state) {

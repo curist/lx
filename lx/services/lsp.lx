@@ -810,7 +810,22 @@ fn handleDefinition(state, msg) {
     return nil
   }
 
-  let spec = pathToSpecifier(absPath)
+  let spec = if state.resolver {
+    let roots = state.resolver.roots()
+    let base = roots and roots.projectRoot or nil
+    if base {
+      let prefix = base + "/"
+      if startsWith(absPath, prefix) {
+        sliceFrom(absPath, len(prefix))
+      } else {
+        absPath
+      }
+    } else {
+      absPath
+    }
+  } else {
+    absPath
+  }
 
   let ctxResult = compileForSpec(state, spec)
   if !ctxResult or !ctxResult.success or !ctxResult.ctx {
@@ -825,7 +840,12 @@ fn handleDefinition(state, msg) {
   }
 
   let target = r.target
-  .{ uri: specifierToUri(target.filename), range: toLspRange(target) }
+  let targetUri = if state.resolver {
+    pathToUri(state.resolver.resolve(target.filename))
+  } else {
+    pathToUri(target.filename)
+  }
+  .{ uri: targetUri, range: toLspRange(target) }
 }
 
 fn handleHover(state, msg) {
@@ -839,7 +859,22 @@ fn handleHover(state, msg) {
     return nil
   }
 
-  let spec = pathToSpecifier(absPath)
+  let spec = if state.resolver {
+    let roots = state.resolver.roots()
+    let base = roots and roots.projectRoot or nil
+    if base {
+      let prefix = base + "/"
+      if startsWith(absPath, prefix) {
+        sliceFrom(absPath, len(prefix))
+      } else {
+        absPath
+      }
+    } else {
+      absPath
+    }
+  } else {
+    absPath
+  }
   let ctxResult = compileForSpec(state, spec)
   if !ctxResult or !ctxResult.success or !ctxResult.ctx {
     return nil

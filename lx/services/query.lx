@@ -1683,7 +1683,10 @@ fn compileWithDriver(driver, filepath, opts) {
 
 fn compileWithOpts(filepath, opts) {
   let withTypecheck = !(opts and opts.withTypecheck == false)
-  let loadSource = (opts and opts.loadSource) or fn(path) { ModuleResolution.slurpPath(path) }
+  let loadSource = (opts and opts.loadSource) or fn(path) {
+    let resolver = ModuleResolution.forEntry(filepath)
+    resolver.slurp(path)
+  }
 
   // Create driver that loads from filesystem
   let driver = Driver.make(.{

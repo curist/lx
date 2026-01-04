@@ -16,7 +16,8 @@ fn compileAndQuery(source, filename) {
   let driver = Driver.make(.{
     loadSource: fn(path) {
       if path == filename { return source }
-      return ModuleResolution.slurpPath(path)
+      let resolver = ModuleResolution.forEntry("test/query.test.lx")
+      return resolver.slurp(path)
     },
     withTypecheck: true,
     withAnf: false,  // Query tests need non-ANF AST (imports not hoisted, etc.)
@@ -523,7 +524,8 @@ test("query - goto enum member across import", fn(assert) {
   }
 
   // Find the `ELSE` position in `TOKEN.ELSE` in the use file.
-  let src = ModuleResolution.slurpPath(useFile)
+  let resolver = ModuleResolution.forEntry("test/query.test.lx")
+  let src = resolver.slurp(useFile)
   let lines = split(src, "\n")
   let line = nil
   let col = nil
@@ -538,7 +540,7 @@ test("query - goto enum member across import", fn(assert) {
   assert.truthy(line != nil and col != nil, "Should find TOKEN.ELSE span in fixture")
 
   // Find the enum member definition span in src/types.lx.
-  let typesSrc = ModuleResolution.slurpPath(typesFile)
+  let typesSrc = resolver.slurp(typesFile)
   let tlines = split(typesSrc, "\n")
   let defLine = nil
   let defCol = nil
@@ -592,7 +594,8 @@ test("query - goto through module export record to function decl", fn(assert) {
   }
 
   // Find the `foo` position in `A.foo()` in the use file.
-  let src = ModuleResolution.slurpPath(useFile)
+  let resolver = ModuleResolution.forEntry("test/query.test.lx")
+  let src = resolver.slurp(useFile)
   let lines = split(src, "\n")
   let line = nil
   let col = nil
@@ -607,7 +610,7 @@ test("query - goto through module export record to function decl", fn(assert) {
   assert.truthy(line != nil and col != nil, "Should find A.foo span in fixture")
 
   // Find the function name span in the exported module file.
-  let modSrc = ModuleResolution.slurpPath(modFile)
+  let modSrc = resolver.slurp(modFile)
   let mlines = split(modSrc, "\n")
   let defLine = nil
   let defCol = nil

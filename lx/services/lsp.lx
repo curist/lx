@@ -155,23 +155,8 @@ fn pathToUri(path) {
   startsWith(path, "file://") and path or ("file://" + uriEncodePath(path))
 }
 
-fn pathToSpecifier(path) {
-  let roots = ModuleResolution.roots()
-  let base = roots and roots.projectRoot or nil
-  if !base {
-    return path
-  }
-
-  let prefix = base + "/"
-  if startsWith(path, prefix) {
-    return sliceFrom(path, len(prefix))
-  }
-  path
-}
-
-fn specifierToUri(specifier) {
-  pathToUri(ModuleResolution.resolvePath(specifier))
-}
+// DEPRECATED: These functions are now defined inside serve()
+// to have access to the resolver instance
 
 // ------------------------------------------------------------
 // Caching + invalidation
@@ -915,12 +900,6 @@ fn handleHover(state, msg) {
 
 fn serve() {
   let openDocs = .{}
-  let loadSource = fn(path) {
-    if openDocs[path] != nil {
-      return openDocs[path]
-    }
-    ModuleResolution.slurpPath(path)
-  }
 
   let state = .{
     openDocs: openDocs,
@@ -938,13 +917,57 @@ fn serve() {
     nextProgressTokenId: 1,
     pendingRequests: .{},
     nextRequestId: 1,
-    driver: Driver.make(.{
-      profile: "query",
-      loadSource: loadSource,
-      withTypecheck: false,
-      withImportLower: false,
-    }),
+    workspaceRoot: nil,
+    resolver: nil,
   }
+
+  fn ensureResolver(entryPath) {
+    if !state.resolver and entryPath {
+      state.resolver = ModuleResolution.forEntry(entryPath)
+    }
+  }
+
+  fn pathToSpecifier(path) {
+    if !state.resolver {
+      return path
+    }
+    let roots = state.resolver.roots()
+    let base = roots and roots.projectRoot or nil
+    if !base {
+      return path
+    }
+
+    let prefix = base + "/"
+    if startsWith(path, prefix) {
+      return sliceFrom(path, len(prefix))
+    }
+    path
+  }
+
+  fn specifierToUri(specifier) {
+    if !state.resolver {
+      return pathToUri(specifier)
+    }
+    pathToUri(state.resolver.resolve(specifier))
+  }
+
+  let loadSource = fn(path) {
+    if openDocs[path] != nil {
+      return openDocs[path]
+    }
+    if !state.resolver {
+      groanln("LSP: No resolver initialized, cannot load:", path)
+      return nil
+    }
+    state.resolver.slurp(path)
+  }
+
+  state.driver = Driver.make(.{
+    profile: "query",
+    loadSource: loadSource,
+    withTypecheck: false,
+    withImportLower: false,
+  })
 
   fn startWarmupProgressIfNeeded() {
     if !state.supportsWorkDoneProgress { return }
@@ -1037,6 +1060,18 @@ fn serve() {
       let win = caps and caps.window or .{}
       state.supportsWorkDoneProgress = win and win.workDoneProgress == true
 
+      // Capture workspace root for module resolution
+      let rootUri = msg.params and msg.params.rootUri or nil
+      if rootUri {
+        let rootPath = uriToPath(rootUri)
+        if rootPath {
+          state.workspaceRoot = rootPath
+          // Create a resolver using a sentinel entry in the workspace
+          // This allows module resolution to work before any file is opened
+          ensureResolver(Lx.path.join(rootPath, "main.lx"))
+        }
+      }
+
       sendResponse(id, .{
         capabilities: .{
           definitionProvider: true,
@@ -1066,6 +1101,7 @@ fn serve() {
     if method == "textDocument/didOpen" {
       let td = (msg.params and msg.params.textDocument) or .{}
       let abs = uriToPath(td.uri)
+      ensureResolver(abs)
       let spec = abs and pathToSpecifier(abs) or nil
       if spec and td.text != nil {
         state.openDocs[spec] = td.text
@@ -1193,6 +1229,4 @@ fn serve() {
   jsonStringify,
   uriToPath,
   pathToUri,
-  pathToSpecifier,
-  specifierToUri,
 }

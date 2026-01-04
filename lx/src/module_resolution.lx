@@ -87,7 +87,7 @@ fn forEntry(entryPath) {
   // Return a resolver instance
   let resolver = .{}
 
-  resolver.resolvePath = fn(path) {
+  resolver.resolve = fn(path) {
     if !path {
       return path
     }
@@ -102,8 +102,8 @@ fn forEntry(entryPath) {
     Lx.path.join(roots.projectRoot, path)
   }
 
-  resolver.slurpPath = fn(path) {
-    slurp(resolver.resolvePath(path))
+  resolver.slurp = fn(path) {
+    slurp(resolver.resolve(path))
   }
 
   resolver.roots = fn() { roots }
@@ -111,52 +111,6 @@ fn forEntry(entryPath) {
   resolver
 }
 
-// Backward compatibility: use the path itself to determine project root
-fn resolvePath(path) {
-  if !path {
-    return path
-  }
-  if _isAbs(path) {
-    return path
-  }
-
-  // Use the path itself to find the project root
-  let resolver = forEntry(path)
-  resolver.resolvePath(path)
-}
-
-fn slurpPath(path) {
-  if !path {
-    return nil
-  }
-  if _isAbs(path) {
-    return slurp(path)
-  }
-
-  // Use the path itself to find the project root
-  let resolver = forEntry(path)
-  resolver.slurpPath(path)
-}
-
-fn roots() {
-  // For backward compatibility, use cwd
-  let cwd = Lx.fs.cwd()
-  _computeRoots(cwd)
-}
-
-fn makeLoadSource(sourceOverride, overridePath) {
-  fn(path) {
-    if sourceOverride and path == overridePath {
-      return sourceOverride
-    }
-    slurpPath(path)
-  }
-}
-
 .{
-  forEntry: forEntry,
-  roots: roots,
-  resolvePath: resolvePath,
-  slurpPath: slurpPath,
-  makeLoadSource: makeLoadSource,
+  forEntry,
 }

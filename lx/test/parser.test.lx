@@ -12,7 +12,8 @@ fn first(result) {
 
 // Helper to parse from fixture file
 fn parseFixture(path) {
-  let src = ModuleResolution.slurpPath(path)
+  let resolver = ModuleResolution.forEntry("test/parser.test.lx")
+  let src = resolver.slurp(path)
   parse(src, path)
 }
 

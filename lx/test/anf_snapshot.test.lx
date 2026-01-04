@@ -30,7 +30,8 @@ test("snapshot - anf ast", fn(assert) {
   let result = buildSnapshot(cases)
   assert.truthy(result.success)
 
-  let snapshot = ModuleResolution.slurpPath("test/snapshots/anf.ast.txt")
+  let resolver = ModuleResolution.forEntry("test/anf_snapshot.test.lx")
+  let snapshot = resolver.slurp("test/snapshots/anf.ast.txt")
   if snapshot != result.text {
     println("Snapshot mismatch for anf ast")
     println("Expected:")

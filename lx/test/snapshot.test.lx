@@ -53,11 +53,12 @@ fn formatType(result, t, depth) {
 }
 
 test("snapshot - demo_compiler.lx types", fn(assert) {
-  let source = ModuleResolution.slurpPath("test/fixtures/demo_compiler.lx")
+  let resolver = ModuleResolution.forEntry("test/snapshot.test.lx")
+  let source = resolver.slurp("test/fixtures/demo_compiler.lx")
   let result = helpers.parseAndTypecheck(source)
 
   // Load expected snapshot
-  let snapshot = ModuleResolution.slurpPath("test/snapshots/demo_compiler.types.txt")
+  let snapshot = resolver.slurp("test/snapshots/demo_compiler.types.txt")
 
   // Build actual output
   let lines = []

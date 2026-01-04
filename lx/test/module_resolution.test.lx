@@ -4,11 +4,12 @@ let test = suite.defineTest
 let ModuleResolution = import "src/module_resolution.lx"
 
 test("ModuleResolution", fn(assert) {
-  let resolved = ModuleResolution.resolvePath("../benchmarks/lx/sum_loop.lx")
+  let resolver = ModuleResolution.forEntry("test/module_resolution.test.lx")
+  let resolved = resolver.resolve("../benchmarks/lx/sum_loop.lx")
   assert.truthy(resolved)
   assert.equal(Lx.fs.exists(resolved), true)
 
-  let source = ModuleResolution.slurpPath("../benchmarks/lx/sum_loop.lx")
+  let source = resolver.slurp("../benchmarks/lx/sum_loop.lx")
   assert.truthy(source)
   assert.truthy(len(source) > 0)
 })

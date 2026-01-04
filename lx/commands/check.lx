@@ -22,7 +22,7 @@ fn run(ctx) {
   let d = driver.make(.{
     profile: "tooling",
     withTypecheck: true,
-    loadSource: fn(p) { resolver.slurpPath(p) },
+    loadSource: fn(p) { resolver.slurp(p) },
   })
 
   if !d {

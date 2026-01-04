@@ -12,7 +12,7 @@ let resolver = ModuleResolution.forEntry("lx/globals.lx")
 let d = driver.make(.{
   profile: "default",
   withTypecheck: false,
-  loadSource: fn(path) { resolver.slurpPath(path) },
+  loadSource: fn(path) { resolver.slurp(path) },
 })
 
 // Codegen with recursive module compilation

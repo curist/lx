@@ -15,7 +15,8 @@ let NODE = types.NODE
 
 // Helper to parse from fixture file
 fn parseFixture(path) {
-  let src = ModuleResolution.slurpPath(path)
+  let resolver = ModuleResolution.forEntry("test/resolve.test.lx")
+  let src = resolver.slurp(path)
   parse(src, path)
 }
 
@@ -684,7 +685,8 @@ fn makeDriver() {
       } else {
         // Default: read from file system
         // Any new fixture file in test/fixtures/imports/ will be automatically loaded
-        return ModuleResolution.slurpPath(path)
+        let resolver = ModuleResolution.forEntry("test/resolve.test.lx")
+        return resolver.slurp(path)
       }
     },
     withTypecheck: false,  // Resolve tests don't need typecheck

@@ -3,7 +3,8 @@ let types = import "src/types.lx"
 let ModuleResolution = import "src/module_resolution.lx"
 let TOKEN = types.TOKEN
 
-let scanner = initScanner(ModuleResolution.slurpPath("test/stub/sink.lx"))
+let resolver = ModuleResolution.forEntry("test/stub/sink.lx")
+let scanner = initScanner(resolver.slurp("test/stub/sink.lx"))
 
 for true {
   let tok = scanner.scanToken()

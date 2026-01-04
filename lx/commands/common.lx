@@ -11,7 +11,7 @@ let DEBUG_BUILD = true
 
 fn loadSource(path, sourceOverride, overridePath, resolver) {
   if sourceOverride and path == overridePath { return sourceOverride }
-  resolver.slurpPath(path)
+  resolver.slurp(path)
 }
 
 fn makeDriverWithSource(sourceOverride, overridePath, entryPath) {
@@ -120,7 +120,7 @@ fn slurpUserPath(path, entryPath) {
     return slurp(path)
   }
   let resolver = ModuleResolution.forEntry(entryPath or path)
-  resolver.slurpPath(path)
+  resolver.slurp(path)
 }
 
 fn printRuntimeError(err) {

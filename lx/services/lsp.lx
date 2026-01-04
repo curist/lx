@@ -1023,6 +1023,64 @@ fn serve() {
     nextRequestId: 1,
     workspaceRoot: nil,
     resolver: nil,
+    pendingCompile: .{},
+    debounceMs: 100,
+  }
+
+  // If supported, disable stdio buffering so `Lx.stdin.poll()` and the
+  // line-based stdin readers stay consistent (no read-ahead buffering).
+  if Lx and Lx.stdin and Lx.stdin.unbuffered {
+    Lx.stdin.unbuffered()
+  }
+
+  fn nowMs() {
+    Date.now()
+  }
+
+  fn scheduleCompile(state, spec) {
+    if !state or !spec { return }
+    if !state.pendingCompile { state.pendingCompile = .{} }
+    state.pendingCompile[spec] = nowMs() + (state.debounceMs or 0)
+  }
+
+  fn flushCompileNow(state, spec) {
+    if !state or !spec { return }
+    if state.pendingCompile { state.pendingCompile[spec] = nil }
+    if state.openDocs and state.openDocs[spec] == nil { return }
+    if state.driver { state.driver.compileModule(spec) }
+    updateDepGraphFromDriver(state)
+    publishDiagnosticsFromCache(state, spec)
+  }
+
+  fn flushDueCompiles(state) {
+    if !state or !state.pendingCompile { return }
+    let ks = keys(state.pendingCompile)
+    if !ks or len(ks) == 0 { return }
+    let t = nowMs()
+    for let i = 0; i < len(ks); i = i + 1 {
+      let spec = ks[i]
+      let deadline = state.pendingCompile[spec]
+      if deadline != nil and deadline <= t {
+        flushCompileNow(state, spec)
+      }
+    }
+  }
+
+  fn nextCompileTimeoutMs(state) {
+    if !state or !state.pendingCompile { return nil }
+    let ks = keys(state.pendingCompile)
+    if !ks or len(ks) == 0 { return nil }
+    let t = nowMs()
+    let best = nil
+    for let i = 0; i < len(ks); i = i + 1 {
+      let spec = ks[i]
+      let deadline = state.pendingCompile[spec]
+      if deadline == nil { continue }
+      let dt = int(deadline - t)
+      if dt < 0 { dt = 0 }
+      if best == nil or dt < best { best = dt }
+    }
+    best
   }
 
   fn ensureResolver(entryPath) {
@@ -1136,6 +1194,20 @@ fn serve() {
   }
 
   for true {
+    // Run any scheduled work before waiting for the next message.
+    flushDueCompiles(state)
+
+    // If the runtime supports polling, wait with a timeout so we can debounce
+    // didChange compilation without threads.
+    if Lx and Lx.stdin and Lx.stdin.poll {
+      let timeout = nextCompileTimeoutMs(state)
+      let ready = Lx.stdin.poll(timeout == nil and -1 or timeout)
+      if !ready {
+        warmupTick()
+        continue
+      }
+    }
+
     let body = readMessage()
     if !body { break }
 
@@ -1212,6 +1284,7 @@ fn serve() {
       let spec = abs and pathToSpecifier(abs) or nil
       if spec and td.text != nil {
         state.openDocs[spec] = td.text
+        if state.pendingCompile { state.pendingCompile[spec] = nil }
         let invalidated = invalidate(state, spec)
         for let i = 0; i < len(invalidated); i = i + 1 {
           let p = invalidated[i]
@@ -1242,9 +1315,7 @@ fn serve() {
         // Avoid rebuilding the merged query context on every keystroke; it will be
         // (re)built lazily on demand by hover/definition/completion.
         invalidateSingle(state, spec)
-        if state.driver { state.driver.compileModule(spec) }
-        updateDepGraphFromDriver(state)
-        publishDiagnosticsFromCache(state, spec)
+        scheduleCompile(state, spec)
       }
       warmupTick()
       continue
@@ -1255,6 +1326,7 @@ fn serve() {
       let abs = uriToPath(td.uri)
       let spec = abs and pathToSpecifier(abs) or nil
       if spec {
+        if state.pendingCompile { state.pendingCompile[spec] = nil }
         // Some clients include `text` with didSave; if present, keep it.
         if msg.params and msg.params.text != nil {
           state.openDocs[spec] = msg.params.text
@@ -1294,6 +1366,7 @@ fn serve() {
       let spec = abs and pathToSpecifier(abs) or nil
       if spec {
         state.openDocs[spec] = nil
+        if state.pendingCompile { state.pendingCompile[spec] = nil }
         invalidate(state, spec)
         publishDiagnosticsForSpec(state, spec, [])
       }
@@ -1301,6 +1374,12 @@ fn serve() {
     }
 
     if method == "textDocument/definition" {
+      let td = (msg.params and msg.params.textDocument) or .{}
+      let abs = uriToPath(td.uri)
+      let spec = abs and pathToSpecifier(abs) or nil
+      if spec and state.pendingCompile and state.pendingCompile[spec] != nil {
+        flushCompileNow(state, spec)
+      }
       let loc = handleDefinition(state, msg)
       if id != nil {
         sendResponse(id, loc)
@@ -1310,6 +1389,12 @@ fn serve() {
     }
 
     if method == "textDocument/hover" {
+      let td = (msg.params and msg.params.textDocument) or .{}
+      let abs = uriToPath(td.uri)
+      let spec = abs and pathToSpecifier(abs) or nil
+      if spec and state.pendingCompile and state.pendingCompile[spec] != nil {
+        flushCompileNow(state, spec)
+      }
       let h = handleHover(state, msg)
       if id != nil {
         sendResponse(id, h)
@@ -1319,6 +1404,12 @@ fn serve() {
     }
 
     if method == "textDocument/completion" {
+      let td = (msg.params and msg.params.textDocument) or .{}
+      let abs = uriToPath(td.uri)
+      let spec = abs and pathToSpecifier(abs) or nil
+      if spec and state.pendingCompile and state.pendingCompile[spec] != nil {
+        flushCompileNow(state, spec)
+      }
       let items = handleCompletion(state, msg)
       if id != nil {
         sendResponse(id, items)

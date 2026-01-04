@@ -16,7 +16,7 @@ fn compileAndQuery(source, filename) {
   let driver = Driver.make(.{
     loadSource: fn(path) {
       if path == filename { return source }
-      let resolver = ModuleResolution.forEntry("test/query.test.lx")
+      let resolver = ModuleResolution.forEntry(Lx.args[2])
       return resolver.slurp(path)
     },
     withTypecheck: true,
@@ -524,7 +524,7 @@ test("query - goto enum member across import", fn(assert) {
   }
 
   // Find the `ELSE` position in `TOKEN.ELSE` in the use file.
-  let resolver = ModuleResolution.forEntry("test/query.test.lx")
+  let resolver = ModuleResolution.forEntry(Lx.args[2])
   let src = resolver.slurp(useFile)
   let lines = split(src, "\n")
   let line = nil
@@ -594,7 +594,7 @@ test("query - goto through module export record to function decl", fn(assert) {
   }
 
   // Find the `foo` position in `A.foo()` in the use file.
-  let resolver = ModuleResolution.forEntry("test/query.test.lx")
+  let resolver = ModuleResolution.forEntry(Lx.args[2])
   let src = resolver.slurp(useFile)
   let lines = split(src, "\n")
   let line = nil
@@ -632,6 +632,168 @@ test("query - goto through module export record to function decl", fn(assert) {
   assert.equal(gotoResult.target.filename, modFile, "Goto should land in module file")
   assert.equal(gotoResult.target.line, defLine, "Goto line should match fn foo")
   assert.equal(gotoResult.target.col, defCol, "Goto col should match fn foo identifier")
+})
+
+// ========================================
+// Completion Tests
+// ========================================
+
+test("query - completion for enum members", fn(assert) {
+  let source = "let Status = enum { Success, Error, Pending }\nlet s = Status.S"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Complete on the "S" after "Status." (line 2, col 15)
+  let complResult = query.queryCompletion(result.ctx, "test.lx", 2, 15)
+  assert.truthy(complResult.success, "Completion should succeed")
+  assert.truthy(complResult.completions, "Should return completions")
+  assert.equal(len(complResult.completions), 3, "Should have 3 enum members")
+
+  // Check that all enum members are present
+  let labels = collect c in complResult.completions { c.label }
+  fn stringLess(a, b) {
+    for let i = 0; i < len(a) and i < len(b); i = i + 1 {
+      if ord(a[i]) < ord(b[i]) { return true }
+      if ord(a[i]) > ord(b[i]) { return false }
+    }
+    len(a) < len(b)
+  }
+  labels = labels->sort(stringLess)
+  assert.equal(labels[0], "Error", "Should include Error")
+  assert.equal(labels[1], "Pending", "Should include Pending")
+  assert.equal(labels[2], "Success", "Should include Success")
+
+  // Check that they're marked as enum members
+  assert.equal(complResult.completions[0].kind, "enumMember", "Should be enumMember kind")
+})
+
+test("query - completion for object properties", fn(assert) {
+  let source = "let config = .{ host: \"localhost\", port: 8080, timeout: 30 }\nlet p = config.h"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Complete on "h" after "config." (line 2, col 15)
+  let complResult = query.queryCompletion(result.ctx, "test.lx", 2, 15)
+  assert.truthy(complResult.success, "Completion should succeed")
+  assert.truthy(complResult.completions, "Should return completions")
+  assert.equal(len(complResult.completions), 3, "Should have 3 properties")
+
+  // Check that all properties are present
+  let labels = collect c in complResult.completions { c.label }
+  fn stringLess(a, b) {
+    for let i = 0; i < len(a) and i < len(b); i = i + 1 {
+      if ord(a[i]) < ord(b[i]) { return true }
+      if ord(a[i]) > ord(b[i]) { return false }
+    }
+    len(a) < len(b)
+  }
+  labels = labels->sort(stringLess)
+  assert.equal(labels[0], "host", "Should include host")
+  assert.equal(labels[1], "port", "Should include port")
+  assert.equal(labels[2], "timeout", "Should include timeout")
+
+  // Check that they're marked as properties
+  assert.equal(complResult.completions[0].kind, "property", "Should be property kind")
+})
+
+test("query - completion includes builtins", fn(assert) {
+  let source = "let x = 42"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Complete at end of file (line 1, col 10)
+  let complResult = query.queryCompletion(result.ctx, "test.lx", 1, 10)
+  assert.truthy(complResult.success, "Completion should succeed")
+  assert.truthy(complResult.completions, "Should return completions")
+  assert.truthy(len(complResult.completions) > 0, "Should have completions")
+
+  // Check that builtins are included
+  let labels = collect c in complResult.completions { c.label }
+  let hasPrintln = false
+  let hasLen = false
+  for let i = 0; i < len(labels); i = i + 1 {
+    if labels[i] == "println" { hasPrintln = true }
+    if labels[i] == "len" { hasLen = true }
+  }
+  assert.truthy(hasPrintln, "Should include println builtin")
+  assert.truthy(hasLen, "Should include len builtin")
+})
+
+test("query - completion includes local variables", fn(assert) {
+  let source = "let x = 42\nlet y = 10\nlet z = x"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Complete on "x" after "let z = " (line 3, col 8)
+  let complResult = query.queryCompletion(result.ctx, "test.lx", 3, 8)
+  assert.truthy(complResult.success, "Completion should succeed")
+  assert.truthy(complResult.completions, "Should return completions")
+
+  // Check that local variables are included
+  let labels = collect c in complResult.completions { c.label }
+  let hasX = false
+  let hasY = false
+  for let i = 0; i < len(labels); i = i + 1 {
+    if labels[i] == "x" { hasX = true }
+    if labels[i] == "y" { hasY = true }
+  }
+  assert.truthy(hasX, "Should include x variable")
+  assert.truthy(hasY, "Should include y variable")
+})
+
+test("query - completion includes function names", fn(assert) {
+  let source = "fn greet() { \"hello\" }\nfn add(a, b) { a + b }\nlet x = g"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Complete on "g" after "let x = " (line 3, col 8)
+  let complResult = query.queryCompletion(result.ctx, "test.lx", 3, 8)
+  assert.truthy(complResult.success, "Completion should succeed")
+
+  // Check that functions are included
+  let labels = collect c in complResult.completions { c.label }
+  let hasGreet = false
+  let hasAdd = false
+  for let i = 0; i < len(labels); i = i + 1 {
+    if labels[i] == "greet" { hasGreet = true }
+    if labels[i] == "add" { hasAdd = true }
+  }
+  assert.truthy(hasGreet, "Should include greet function")
+  assert.truthy(hasAdd, "Should include add function")
+})
+
+test("query - completion for nested object properties", fn(assert) {
+  let source = "let obj = .{ inner: .{ x: 1, y: 2 } }\nlet val = obj.inner.x"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Complete on "x" after "obj.inner." (line 2, col 20)
+  let complResult = query.queryCompletion(result.ctx, "test.lx", 2, 20)
+  assert.truthy(complResult.success, "Completion should succeed")
+  assert.equal(len(complResult.completions), 2, "Should have 2 properties")
+
+  let labels = collect c in complResult.completions { c.label }
+  fn stringLess(a, b) {
+    for let i = 0; i < len(a) and i < len(b); i = i + 1 {
+      if ord(a[i]) < ord(b[i]) { return true }
+      if ord(a[i]) > ord(b[i]) { return false }
+    }
+    len(a) < len(b)
+  }
+  labels = labels->sort(stringLess)
+  assert.equal(labels[0], "x", "Should include x")
+  assert.equal(labels[1], "y", "Should include y")
+})
+
+test("query - completion on empty object returns no results", fn(assert) {
+  let source = "let obj = .{}\nlet val = obj.x"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Complete on "x" after "obj." (line 2, col 14)
+  let complResult = query.queryCompletion(result.ctx, "test.lx", 2, 14)
+  assert.truthy(complResult.success, "Completion should succeed")
+  assert.equal(len(complResult.completions), 0, "Empty object should have no completions")
 })
 
 suite.run()

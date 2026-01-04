@@ -939,6 +939,74 @@ fn handleHover(state, msg) {
   }
 }
 
+fn handleCompletion(state, msg) {
+  let params = msg.params or .{}
+  let td = params.textDocument or .{}
+  let uri = td.uri
+  let pos = params.position or .{}
+
+  let absPath = uriToPath(uri)
+  if !absPath {
+    return nil
+  }
+
+  let spec = if state.resolver {
+    let roots = state.resolver.roots()
+    let base = roots and roots.projectRoot or nil
+    if base {
+      let prefix = base + "/"
+      if startsWith(absPath, prefix) {
+        sliceFrom(absPath, len(prefix))
+      } else {
+        absPath
+      }
+    } else {
+      absPath
+    }
+  } else {
+    absPath
+  }
+
+  let ctxResult = compileForSpec(state, spec)
+  if !ctxResult or !ctxResult.success or !ctxResult.ctx {
+    return nil
+  }
+
+  let ln = (pos.line or 0) + 1
+  let col = pos.character or 0
+
+  let r = query.queryCompletion(ctxResult.ctx, spec, ln, col)
+  if !r or !r.success {
+    return nil
+  }
+
+  // Map completion kinds to LSP CompletionItemKind values
+  // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#completionItemKind
+  fn toLspCompletionKind(kind) {
+    if kind == "function" { return 3 }
+    if kind == "variable" { return 6 }
+    if kind == "property" { return 10 }
+    if kind == "enumMember" { return 20 }
+    1  // Text fallback
+  }
+
+  let items = []
+  let completions = r.completions or []
+  for let i = 0; i < len(completions); i = i + 1 {
+    let c = completions[i]
+    let item = .{
+      label: c.label,
+      kind: toLspCompletionKind(c.kind),
+    }
+    if c.type {
+      item.detail = c.type
+    }
+    push(items, item)
+  }
+
+  items
+}
+
 fn serve() {
   let openDocs = .{}
 
@@ -1117,6 +1185,9 @@ fn serve() {
         capabilities: .{
           definitionProvider: true,
           hoverProvider: true,
+          completionProvider: .{
+            triggerCharacters: ["."],
+          },
           textDocumentSync: .{ openClose: true, change: 1, save: .{ includeText: true } },
         },
         serverInfo: .{ name: "lx", version: (Lx and Lx.version) or "dev" },
@@ -1244,6 +1315,15 @@ fn serve() {
       let h = handleHover(state, msg)
       if id != nil {
         sendResponse(id, h)
+      }
+      warmupTick()
+      continue
+    }
+
+    if method == "textDocument/completion" {
+      let items = handleCompletion(state, msg)
+      if id != nil {
+        sendResponse(id, items)
       }
       warmupTick()
       continue

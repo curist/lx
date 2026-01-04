@@ -6,6 +6,7 @@
 // Read-only: no inference, no unification, just table lookups + span selection.
 
 let types = import "src/types.lx"
+let builtinsData = import "services/builtins_docs_data.lx"
 
 let NODE = types.NODE
 
@@ -1707,6 +1708,203 @@ fn compileFast(filepath) {
 }
 
 // ========================================
+// Completion Support
+// ========================================
+
+fn buildCompletionIndex(ctx) {
+  if !ctx or !ctx.nodes {
+    return .{ declarationsByFile: .{}, builtins: .{} }
+  }
+
+  if ctx._completionIndex {
+    return ctx._completionIndex
+  }
+
+  let index = .{
+    declarationsByFile: .{},
+    builtins: .{},
+  }
+
+  // O(n) scan through all nodes
+  let nodeKeys = keys(ctx.nodes)
+  for let i = 0; i < len(nodeKeys); i = i + 1 {
+    let nodeId = nodeKeys[i]
+    let n = ctx.nodes[nodeId]
+    if !n or type(n) != "map" { continue }
+
+    let fname = n.filename or ""
+
+    // Collect let declarations
+    if n.type == NODE.Let and n.name and n.name.name {
+      if !index.declarationsByFile[fname] {
+        index.declarationsByFile[fname] = []
+      }
+      push(index.declarationsByFile[fname], .{
+        name: n.name.name,
+        kind: "variable",
+        declNode: n,
+      })
+    }
+
+    // Collect named functions
+    if n.type == NODE.Function and n.name and n.name.name {
+      if !index.declarationsByFile[fname] {
+        index.declarationsByFile[fname] = []
+      }
+      push(index.declarationsByFile[fname], .{
+        name: n.name.name,
+        kind: "function",
+        declNode: n,
+      })
+    }
+  }
+
+  // Collect builtins from builtins data
+  if builtinsData {
+    // Add native builtins
+    if builtinsData.NATIVE_NAMES {
+      let nativeKeys = keys(builtinsData.NATIVE_NAMES)
+      for let i = 0; i < len(nativeKeys); i = i + 1 {
+        index.builtins[nativeKeys[i]] = true
+      }
+    }
+    // Add prelude builtins
+    if builtinsData.PRELUDE_NAMES {
+      let preludeKeys = keys(builtinsData.PRELUDE_NAMES)
+      for let i = 0; i < len(preludeKeys); i = i + 1 {
+        index.builtins[preludeKeys[i]] = true
+      }
+    }
+  }
+
+  ctx._completionIndex = index
+  index
+}
+
+fn isEnumType(ty) {
+  ty and ty.kind == "Enum"
+}
+
+fn completeDotProperties(ctx, dotNode, filename, line, col) {
+  let completions = []
+
+  // Resolve the object expression
+  let record = resolveExprToRecord(ctx, dotNode.object, .{})
+
+  if record and record.pairs {
+    // Check if it's an enum by looking at the type
+    let recordType = ctx.types[nodeKeyFor(ctx, record)]
+    let kind = isEnumType(recordType) and "enumMember" or "property"
+
+    // Extract field names from pairs
+    for let i = 0; i < len(record.pairs); i = i + 1 {
+      let pair = record.pairs[i]
+      let fieldName = propNameFromNode(pair.key)
+      if fieldName {
+        // Get type info if available
+        let ty = pair.value and ctx.types[nodeKeyFor(ctx, pair.value)]
+        push(completions, .{
+          label: fieldName,
+          kind: kind,
+          type: ty and formatTypeWithBindings(ctx, ty) or nil,
+        })
+      }
+    }
+  }
+
+  .{ success: true, completions }
+}
+
+fn completeIdentifiers(ctx, filename, line, col) {
+  let index = buildCompletionIndex(ctx)
+  let completions = []
+  let seen = .{}  // Track seen labels for deduplication
+
+  // 1. Add declarations from current file (highest priority)
+  let fileDecls = index.declarationsByFile[filename] or []
+  for let i = 0; i < len(fileDecls); i = i + 1 {
+    let decl = fileDecls[i]
+    if !seen[decl.name] {
+      seen[decl.name] = true
+      // Get type info if available
+      let ty = decl.declNode and ctx.types[nodeKeyFor(ctx, decl.declNode)]
+      push(completions, .{
+        label: decl.name,
+        kind: decl.kind,
+        type: ty and formatTypeWithBindings(ctx, ty) or nil,
+      })
+    }
+  }
+
+  // 2. Add declarations from imported modules (reachable files)
+  let fileNames = keys(index.declarationsByFile)
+  for let i = 0; i < len(fileNames); i = i + 1 {
+    let fname = fileNames[i]
+    if fname == filename { continue }
+    let decls = index.declarationsByFile[fname]
+    for let j = 0; j < len(decls); j = j + 1 {
+      let decl = decls[j]
+      if !seen[decl.name] {
+        seen[decl.name] = true
+        // Only include top-level declarations from other files
+        // (Could filter by import graph in the future)
+        let ty = decl.declNode and ctx.types[nodeKeyFor(ctx, decl.declNode)]
+        push(completions, .{
+          label: decl.name,
+          kind: decl.kind,
+          type: ty and formatTypeWithBindings(ctx, ty) or nil,
+        })
+      }
+    }
+  }
+
+  // 3. Add builtins (lowest priority - shadowed by locals)
+  let builtinNames = keys(index.builtins)
+  builtinNames = builtinNames->sort(stringLess)
+  for let i = 0; i < len(builtinNames); i = i + 1 {
+    let name = builtinNames[i]
+    if !seen[name] {
+      seen[name] = true
+      push(completions, .{
+        label: name,
+        kind: "function",
+      })
+    }
+  }
+
+  .{ success: true, completions }
+}
+
+fn queryCompletion(ctx, filename, line, col) {
+  validateCtxOnce(ctx)
+
+  let sel = nodeAtPosWithTies(ctx, filename, line, col)
+  let n = sel.node
+
+  if !n {
+    // No node found - provide identifier completions
+    return completeIdentifiers(ctx, filename, line, col)
+  }
+
+  // Check if we're completing a dot property
+  if n.type == NODE.Dot {
+    return completeDotProperties(ctx, n, filename, line, col)
+  }
+
+  // Check if we're on a property within a dot expression
+  // This handles cases where cursor is on the property identifier
+  if n.type == NODE.Identifier or n.type == NODE.String {
+    let dotNode = findDotByPropertyNode(ctx, n)
+    if dotNode {
+      return completeDotProperties(ctx, dotNode, filename, line, col)
+    }
+  }
+
+  // Default: complete identifiers
+  return completeIdentifiers(ctx, filename, line, col)
+}
+
+// ========================================
 // Module Exports
 // ========================================
 
@@ -1722,4 +1920,5 @@ fn compileFast(filepath) {
   queryHover,
   queryGotoDefinition,
   queryDiagnostics,
+  queryCompletion,
 }

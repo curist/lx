@@ -7,13 +7,14 @@ This document contains important information for AI assistants working with the 
 1. **`type()` returns `"map"` not `"hashmap"`** ⚠️ MOST COMMON MISTAKE
 2. **Imports are relative to project root** - determined by `.lxroot` marker file
 3. **No `this` keyword** - explicitly reference objects
-4. **Forward declarations required** for mutual recursion (until Phase 10+)
-5. **Closure capture by value** for primitives - use objects for mutable state
-6. **No string interpolation** - use concatenation
-7. **No `++`/`--` operators** - use `i = i + 1`
-8. **Hashmaps use `.{ }` syntax** - dot prefix required
-9. **Opcode/object changes may require bootstrapping** - see Bootstrapping section below
-10. **`nameOf()` expects an `enum`** - it no longer accepts generic maps/records
+4. **Functions are hoisted** - mutual recursion is allowed, but you can't call a hoisted function before the block's hoisted function group is complete
+5. **Closures capture locals via upvalues** - loop-variable captures can share the same slot; create a fresh `let` per iteration when you need per-iteration capture
+6. **Implicit return + expressions** - functions/blocks return the last expression; most constructs (blocks/if/enum/etc.) are expressions
+7. **No string interpolation** - use concatenation
+8. **No `++`/`--` operators** - use `i = i + 1`
+9. **Hashmaps use `.{ }` syntax** - dot prefix required
+10. **Opcode/object changes may require bootstrapping** - see Bootstrapping section below
+11. **`nameOf()` expects an `enum`** - it no longer accepts generic maps/records
 
 ## Communication Guidelines
 
@@ -31,14 +32,17 @@ Usage:
 
   ./out/lx <command> [arguments]
 
-The commands are:
-  run          Run source or lxobj
-  eval         Evaluate expression
-  repl         Start REPL
-  compile      Compile source to lxobj (-o/--output <output>)
-  disasm       Disassemble lxobj or lx source
-  version      Print version
-  help         Print this helpful page
+Commands:
+  run      Run source or lxobj
+  eval     Evaluate expression (arg or stdin)
+  repl     Start REPL (use :q to quit)
+  compile  Compile source to lxobj (-o/--output <output>)
+  disasm   Disassemble lxobj or lx source
+  ast      Dump AST with metadata at different compilation stages (debug)
+  check    Typecheck an entry module (dev)
+  lsp      Start LSP server on stdio
+  version  Print version
+  help     Print this helpful page
 ```
 
 ## Type System
@@ -282,11 +286,21 @@ collect i in [1, 2, 3, 4, 5] {
 // Result: [2, 4] (collected before break at i=3)
 ```
 
+**Skipping emission with `continue`:**
+- Using `continue` in a collect expression skips emitting a value for that iteration
+```lx
+collect i in [1, 2, 3, 4] {
+  if i == 2 { continue }
+  i
+}
+// Result: [1, 3, 4]
+```
+
 ### Operators
 
 **Arrow operator `->`** for method chaining:
 ```lx
-result = value->map(fn(x) { x + 1 })->filter(fn(x) { x > 5 })
+println(Color->nameOf(Color.Green))
 ```
 
 ### String Building
@@ -599,6 +613,8 @@ Regenerate headers when you modify:
 - Bytecode format or opcodes
 - Object file format
 
+If you made **non-backward-compatible opcode/bytecode changes**, the normal `make` flow can break because the embedded compiler bytecode may no longer run on the updated VM. In that case, follow the bootstrap flow in `lx/scripts/README.md` (use `lx/scripts/bootstrap-codegen.lx` to produce fresh bytecode first, then build the C VM with those headers).
+
 ### How to Bootstrap
 
 **Normal build** (uses system `lx` compiler):
@@ -621,17 +637,17 @@ make test
 ```
 
 **What happens during bootstrapping:**
-1. `scripts/build-lxlx.sh` runs `lx run lx/scripts/build-lxlx-driver.lx`
-2. Driver compiles `lx/main.lx` and all dependencies
-3. Generates `out/lxlx-new.lxobj` bytecode
-4. Converts to C header format in `include/lx/lxlx.h`
-5. Same process for `lxglobals.h`
-6. C compiler links headers into `out/lx` binary
+1. `scripts/build-lxlx.sh` (and `scripts/build-globals.sh`) refresh bundled builtin docs (`scripts/gen-builtin-docs.lx`)
+2. They compile `lx/main.lx` / `lx/globals.lx`:
+   - Fast path: `./out/lx compile ... > out/{lxlx,lxglobals}-new.lxobj`
+   - Fallback path (non-repo `lx`): `lx run lx/scripts/bootstrap-codegen.lx ...` → `/tmp/{main,globals}.lxobj` (then copied into `out/`)
+3. They convert the `.lxobj` into a C header via `xxd -i` (`include/lx/lxlx.h`, `include/lx/lxglobals.h`)
+4. The C build links those headers into the `./out/lx` binary
 
 **Debugging bootstrap issues:**
 ```bash
 # Test build script directly
-lx run lx/scripts/build-lxlx-driver.lx > out/test.lxobj
+lx run lx/scripts/bootstrap-codegen.lx lx/main.lx
 
 # Use new compiler to compile a simple file
 ./out/lx run /tmp/test.lx
@@ -651,11 +667,14 @@ lx run lx/scripts/build-lxlx-driver.lx > out/test.lxobj
 Build scripts in `lx/scripts/` must use `forEntry()` with correct paths:
 
 ```lx
-// ✅ CORRECT - Full path from repo root
+// ✅ CORRECT (from repo root)
 let resolver = ModuleResolution.forEntry("lx/main.lx")
 
-// ❌ WRONG - Will find wrong project root
+// ✅ CORRECT (from within `lx/`)
 let resolver = ModuleResolution.forEntry("main.lx")
+
+// ❌ WRONG - Wrong prefix (path doubling)
+let resolver = ModuleResolution.forEntry("lx/lx/main.lx")
 ```
 
 The resolver finds `.lxroot` by walking up from the entry file's directory.

@@ -20,15 +20,28 @@ Use these scripts when:
 ### `bootstrap-codegen.lx`
 Generic script that compiles any lx entry file using the NEW codegen from `src/passes/backend/codegen.lx`.
 
-**Usage:**
+**Usage (from repo root):**
 ```bash
+lx run lx/scripts/bootstrap-codegen.lx <entry-file>
+```
+
+**Examples (from repo root):**
+```bash
+lx run lx/scripts/bootstrap-codegen.lx lx/main.lx      # Outputs to /tmp/main.lxobj
+lx run lx/scripts/bootstrap-codegen.lx lx/globals.lx   # Outputs to /tmp/globals.lxobj
+```
+
+**Usage (from `lx/`):**
+```bash
+cd lx
 lx run scripts/bootstrap-codegen.lx <entry-file>
 ```
 
-**Examples:**
+**Examples (from `lx/`):**
 ```bash
-lx run scripts/bootstrap-codegen.lx lx/main.lx      # Outputs to /tmp/main.lxobj
-lx run scripts/bootstrap-codegen.lx lx/globals.lx   # Outputs to /tmp/globals.lxobj
+cd lx
+lx run scripts/bootstrap-codegen.lx main.lx      # Outputs to /tmp/main.lxobj
+lx run scripts/bootstrap-codegen.lx globals.lx   # Outputs to /tmp/globals.lxobj
 ```
 
 **Features:**

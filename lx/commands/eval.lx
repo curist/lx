@@ -15,7 +15,10 @@ fn run(ctx) {
   }
 
   let path = "[LX EVAL]"
-  let d = common.makeDriverWithSource(src, path)
+  // Use a synthetic entry path rooted at CWD so `.lxroot` discovery and imports
+  // behave like running a normal entry file from the current directory.
+  let entryPath = Lx.path.join(Lx.fs.cwd(), "eval.lx")
+  let d = common.makeDriverWithSource(src, path, entryPath)
   let func = common.compileWithDriver(d, path)
   if !func { Lx.exit(65) }
 

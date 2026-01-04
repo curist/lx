@@ -12,6 +12,9 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `join(values: array, sep: string) -> string` Join stringified values with a separator.
 - `split(s: string, sep: string) -> array[string]` Split by substring; when `sep == ""`, splits into chars.
 - `substr(s: string, start: number, length: number) -> string` Substring by byte offset; if `length <= 0`, returns `""`.
+- `startsWith(s: string, prefix: string) -> bool` String prefix test.
+- `endsWith(s: string, suffix: string) -> bool` String suffix test.
+- `contains(haystack: array | string, needle) -> bool` Membership test for arrays/strings.
 - `tolower(s: string) -> string` Lowercase ASCII.
 - `toupper(s: string) -> string` Uppercase ASCII.
 - `tonumber(s: string) -> number` Parse a string to a number (float).

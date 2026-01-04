@@ -358,6 +358,20 @@ let DOCS = .{
     markdown: "`concat(a: array, b: array) -> array`\nNew array with elements of `a` followed by `b`.",
     source: "API.md",
   },
+  ["contains"]: .{
+    name: "contains",
+    signature: "contains(haystack: array | string, needle) -> bool",
+    description: "Membership test for arrays/strings.",
+    markdown: "`contains(haystack: array | string, needle) -> bool`\nMembership test for arrays/strings.",
+    source: "API.md",
+  },
+  ["endsWith"]: .{
+    name: "endsWith",
+    signature: "endsWith(s: string, suffix: string) -> bool",
+    description: "String suffix test.",
+    markdown: "`endsWith(s: string, suffix: string) -> bool`\nString suffix test.",
+    source: "API.md",
+  },
   ["join"]: .{
     name: "join",
     signature: "join(values: array, sep: string) -> string",
@@ -440,6 +454,13 @@ let DOCS = .{
     signature: "split(s: string, sep: string) -> array[string]",
     description: "Split by substring; when `sep == \"\"`, splits into chars.",
     markdown: "`split(s: string, sep: string) -> array[string]`\nSplit by substring; when `sep == \"\"`, splits into chars.",
+    source: "API.md",
+  },
+  ["startsWith"]: .{
+    name: "startsWith",
+    signature: "startsWith(s: string, prefix: string) -> bool",
+    description: "String prefix test.",
+    markdown: "`startsWith(s: string, prefix: string) -> bool`\nString prefix test.",
     source: "API.md",
   },
   ["str"]: .{
@@ -538,6 +559,8 @@ let NATIVE_NAMES = .{
   ["Math.sqrt"]: true,
   ["chr"]: true,
   ["concat"]: true,
+  ["contains"]: true,
+  ["endsWith"]: true,
   ["join"]: true,
   ["keys"]: true,
   ["len"]: true,
@@ -550,6 +573,7 @@ let NATIVE_NAMES = .{
   ["push"]: true,
   ["range"]: true,
   ["split"]: true,
+  ["startsWith"]: true,
   ["str"]: true,
   ["substr"]: true,
   ["tolower"]: true,
@@ -561,10 +585,8 @@ let NATIVE_NAMES = .{
 let PRELUDE_NAMES = .{
   ["_1"]: true,
   ["_2"]: true,
-  ["contains"]: true,
   ["drop"]: true,
   ["each"]: true,
-  ["endsWith"]: true,
   ["first"]: true,
   ["fold"]: true,
   ["foldr"]: true,
@@ -572,7 +594,6 @@ let PRELUDE_NAMES = .{
   ["max"]: true,
   ["min"]: true,
   ["sort"]: true,
-  ["startsWith"]: true,
   ["take"]: true,
 }
 

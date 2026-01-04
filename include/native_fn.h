@@ -939,6 +939,124 @@ static bool substrNative(int argCount, Value *args) {
   return true;
 }
 
+static bool startsWithNative(int argCount, Value *args) {
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: startsWith takes 2 args.");
+    return false;
+  }
+  if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+
+  ObjString *s = AS_STRING(args[0]);
+  ObjString *prefix = AS_STRING(args[1]);
+  if (prefix->length > s->length) {
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+
+  args[-1] = BOOL_VAL(memcmp(s->chars, prefix->chars, prefix->length) == 0);
+  return true;
+}
+
+static bool endsWithNative(int argCount, Value *args) {
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: endsWith takes 2 args.");
+    return false;
+  }
+  if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+
+  ObjString *s = AS_STRING(args[0]);
+  ObjString *suffix = AS_STRING(args[1]);
+  if (suffix->length > s->length) {
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+
+  size_t start = s->length - suffix->length;
+  args[-1] =
+      BOOL_VAL(memcmp(s->chars + start, suffix->chars, suffix->length) == 0);
+  return true;
+}
+
+static bool containsNative(int argCount, Value *args) {
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: contains takes 2 args.");
+    return false;
+  }
+
+  Value haystack = args[0];
+  Value needle = args[1];
+
+  if (IS_STRING(haystack)) {
+    if (!IS_STRING(needle)) {
+      args[-1] = BOOL_VAL(false);
+      return true;
+    }
+
+    ObjString *s = AS_STRING(haystack);
+    ObjString *t = AS_STRING(needle);
+
+    if (t->length == 0) {
+      args[-1] = BOOL_VAL(true);
+      return true;
+    }
+    if (t->length > s->length) {
+      args[-1] = BOOL_VAL(false);
+      return true;
+    }
+
+    // If the needle has any incomplete UTF-8 codepoint (under our simplistic
+    // utf8CharLength-based splitting), it can never match, since the old lx
+    // implementation used `range(needle)` which drops an incomplete trailing
+    // codepoint and thus can never equal the original needle.
+    for (size_t i = 0; i < t->length;) {
+      uint8_t charlen = utf8CharLength((uint8_t)t->chars[i]);
+      if (i + charlen > t->length) {
+        args[-1] = BOOL_VAL(false);
+        return true;
+      }
+      i += charlen;
+    }
+
+    // Match only at UTF-8 character boundaries (similar to the old lx
+    // implementation which used `range()` over chars).
+    for (size_t i = 0; i < s->length;) {
+      if (i + t->length <= s->length &&
+          memcmp(s->chars + i, t->chars, t->length) == 0) {
+        args[-1] = BOOL_VAL(true);
+        return true;
+      }
+
+      uint8_t charlen = utf8CharLength((uint8_t)s->chars[i]);
+      if (i + charlen > s->length) break;
+      i += charlen;
+    }
+
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+
+  if (IS_ARRAY(haystack)) {
+    ValueArray *array = &AS_ARRAY(haystack);
+    for (int i = 0; i < array->count; i++) {
+      if (valuesEqual(array->values[i], needle)) {
+        args[-1] = BOOL_VAL(true);
+        return true;
+      }
+    }
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+
+  args[-1] = CSTRING_VAL("Error: contains expects array or string.");
+  return false;
+}
+
 static bool readNative(int argCount, Value *args) {
   if (argCount < 1 || !IS_NUMBER(args[0])) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
@@ -1895,6 +2013,9 @@ void defineBuiltinNatives() {
   defineNative("join", joinNative);
   defineNative("split", splitNative);
   defineNative("substr", substrNative);
+  defineNative("startsWith", startsWithNative);
+  defineNative("endsWith", endsWithNative);
+  defineNative("contains", containsNative);
   defineNative("tolower", tolowerNative);
   defineNative("toupper", toupperNative);
   defineNative("tonumber", tonumberNative);

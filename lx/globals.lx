@@ -33,37 +33,6 @@ fn foldr(arr, acc, cb) {
   acc
 }
 
-fn contains(arr, target) {
-  if type(arr) != "string" {
-    let contains = false
-    each(arr, fn(x, _, _, abort) {
-      if x == target {
-        contains = true
-        abort()
-      }
-    })
-    return contains
-  }
-  // handle string contains
-  if type(target) != "string" {
-    return false
-  }
-  if len(target) == 0 {
-    return true
-  }
-  let s = range(arr)
-  let slen = len(s)
-  // using range to handle utf-8 string length correctly
-  let tlen = len(range(target))
-  // inefficient, i know
-  for let i = 0; i < slen; i = i + 1 {
-    if s->drop(i)->take(tlen)->join("") == target {
-      return true
-    }
-  }
-  false
-}
-
 fn take(arr, n) {
   let result = []
   let length = len(arr)
@@ -80,20 +49,6 @@ fn drop(arr, n) {
     push(result, arr[i])
   }
   result
-}
-
-fn startsWith(s, prefix) {
-  if type(s) != "string" or type(prefix) != "string" { return false }
-  if len(prefix) > len(s) { return false }
-  range(s)->take(len(prefix))->join("") == prefix
-}
-
-fn endsWith(s, suffix) {
-  if type(s) != "string" or type(suffix) != "string" { return false }
-  let slen = len(s)
-  let sfxlen = len(suffix)
-  if sfxlen > slen { return false }
-  range(s)->drop(slen - sfxlen)->join("") == suffix
 }
 
 fn max(a, b) { if a > b { a } else { b } }
@@ -157,11 +112,8 @@ return .{
   each,
   fold,
   foldr,
-  contains,
   take,
   drop,
-  startsWith,
-  endsWith,
   max,
   min,
   sort,

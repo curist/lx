@@ -4,7 +4,6 @@ let object = import "src/object.lx"
 // let globals = import "globals.lx"
 // let each = globals.each
 // let fold = globals.fold
-// let map = globals.map
 
 let VERSION = 1
 
@@ -85,7 +84,7 @@ fn doubleToBytes(num) {
 fn stringToBytes(s) {
   fold(range(s), [], fn(bytes, c) {
     if len(c) > 1 {
-      concat(bytes, map(range(len(c)), fn(i) { ord(c[i]) }))
+      concat(bytes, collect i in range(len(c)) { ord(c[i]) })
     } else {
       push(bytes, ord(c))
     }

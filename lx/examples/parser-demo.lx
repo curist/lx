@@ -37,7 +37,7 @@ if result2.success {
 }
 
 // Example 3: Complex expression with arrow operator
-let code3 = "[1, 2, 3]->map(fn(x) { x * 2 })"
+let code3 = "[1, 2, 3]->fold(0, fn(acc, x) { acc + x })"
 let result3 = parse(code3, "demo.lx")
 
 if result3.success {

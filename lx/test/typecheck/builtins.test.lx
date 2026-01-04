@@ -204,7 +204,7 @@ fn register(test) {
 
   test("typecheck - globals.lx prelude builtins", fn(assert) {
     let result = parseAndTypecheck("{
-      map([1, 2], fn(x, i, arr) { x + i })
+      collect x, i in [1, 2] { x + i }
       fold([1, 2], 0, fn(acc, x, i, abort) { acc + x + i })
       _2(fn(a, b) { a + b })(1, 2)
       sort([3, 1, 2], fn(a, b) { a < b })
@@ -227,10 +227,10 @@ fn register(test) {
     assert.equal(deref(result, getExprType(result, 4)).kind, "Bool")
   })
 
-  test("typecheck - map preserves element types per use-site", fn(assert) {
+  test("typecheck - collect preserves element types per use-site", fn(assert) {
     let result = parseAndTypecheck("{
-      let n = map([1, 2, 3], fn(x) { x })[0]
-      let s = map([\"a\", \"b\"], fn(x) { x })[0]
+      let n = (collect x in [1, 2, 3] { x })[0]
+      let s = (collect x in [\"a\", \"b\"] { x })[0]
       n
       s
     }")

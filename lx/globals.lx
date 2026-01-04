@@ -33,22 +33,6 @@ fn foldr(arr, acc, cb) {
   acc
 }
 
-fn map(arr, cb) {
-  let result = []
-  let length = len(arr)
-  for let i = 0; i < length; i = i + 1 {
-    push(result, cb(arr[i], i, arr))
-  }
-  result
-}
-
-fn filter(arr, cb) {
-  fold(arr, [], fn(acc, x, i) {
-    if cb(x, i, arr) { push(acc, x) }
-    acc
-  })
-}
-
 fn contains(arr, target) {
   if type(arr) != "string" {
     let contains = false
@@ -173,8 +157,6 @@ return .{
   each,
   fold,
   foldr,
-  map,
-  filter,
   contains,
   take,
   drop,

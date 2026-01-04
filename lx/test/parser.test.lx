@@ -605,16 +605,16 @@ test("parser - demo example 2: function with body", fn(assert) {
 })
 
 test("parser - demo example 3: arrow with lambda", fn(assert) {
-  let result = parse("[1, 2, 3]->map(fn(x) { x * 2 })", "demo.lx")
+  let result = parse("[1, 2, 3]->fold(0, fn(acc, x) { acc + x })", "demo.lx")
   assert.truthy(result.success)
 
   let expr = first(result)
   assert.equal(expr.type, NODE.Arrow)
   assert.equal(expr.left.type, NODE.Array)
   assert.equal(expr.right.type, NODE.Call)
-  assert.equal(expr.right.callee.name, "map")
-  assert.equal(len(expr.right.args), 1)
-  assert.equal(expr.right.args[0].type, NODE.Function)
+  assert.equal(expr.right.callee.name, "fold")
+  assert.equal(len(expr.right.args), 2)
+  assert.equal(expr.right.args[1].type, NODE.Function)
 })
 
 test("parser - demo example 4: error handling", fn(assert) {

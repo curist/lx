@@ -44,8 +44,7 @@ Native builtins are documented in `../API.md` (this is the source of truth for e
 - `each(arr: array, cb: fn(x, i, arr, abort)) -> nil` Iterate; call `abort()` to stop early.
 - `fold(arr: array, acc, cb: fn(acc, x, i, abort) -> acc) -> any` Left fold.
 - `foldr(arr: array, acc, cb: fn(acc, x, i, abort) -> acc) -> any` Right fold.
-- `map(arr: array, cb: fn(x, i, arr) -> y) -> array` Map to a new array.
-- `filter(arr: array, cb: fn(x, i, arr) -> bool) -> array` Filter into a new array.
+- Prefer `collect` expressions for mapping/filtering arrays.
 - `contains(haystack: array | string, needle) -> bool` Membership test for arrays/strings.
 - `take(arr: array, n: number) -> array` Prefix.
 - `drop(arr: array, n: number) -> array` Suffix.

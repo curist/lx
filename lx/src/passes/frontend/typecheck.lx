@@ -240,17 +240,6 @@ fn builtinTypeByName(checker, name) {
     let cb = typeFunction([acc, t, typeNumber(), abort], acc)
     return typeFunction([typeArray(t), acc, cb], acc)
   }
-  if name == "map" {
-    let t = freshTypeVar(checker)
-    let r = freshTypeVar(checker)
-    let cb = typeFunction([t, typeNumber(), typeArray(t)], r)
-    return typeFunction([typeArray(t), cb], typeArray(r))
-  }
-  if name == "filter" {
-    let t = freshTypeVar(checker)
-    let cb = typeFunction([t, typeNumber(), typeArray(t)], typeAny())
-    return typeFunction([typeArray(t), cb], typeArray(t))
-  }
   if name == "take" or name == "drop" {
     let t = freshTypeVar(checker)
     return typeFunction([typeArray(t), typeNumber()], typeArray(t))

@@ -49,6 +49,7 @@ Imports resolve relative to a **project root** discovered by walking up from the
 ## Style / Idioms (lx)
 
 - Prefer `collect` for array building/transforms: `collect x in xs { f(x) }` (and `collect let i = ... { ... }`); `continue` skips emitting and `break` returns the collection built so far; avoid `map`/`filter` (likely to be removed from the prelude).
+- Prefer `collect` for array building/transforms: `collect x in xs { f(x) }` (and `collect let i = ... { ... }`); `continue` skips emitting and `break` returns the collection built so far; avoid `map`/`filter` (not in the prelude).
 - Use hashmap shorthand fields when the key matches the variable: `.{ x, y }` ≈ `.{ x: x, y: y }`.
 - Use let-destructuring to pull fields out of maps/modules: `let .{ OP, NODE: node } = types`.
 - Prefer chaining with `->` for pipelines: `Color->nameOf(Color.Green)`, `Lx.globals()->each(_1(print))`.

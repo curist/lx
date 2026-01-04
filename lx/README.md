@@ -102,6 +102,7 @@ Notes:
 - `Lx.path` - path helpers namespace.
 - `Lx.path.join(...segments: string) -> string` Join path segments.
 - `Lx.path.dirname(path: string) -> string` Parent directory.
+- `Lx.path.basename(path: string) -> string` Filename component (last segment after final `/`).
 - `Lx.stdin` - stdin helpers namespace.
 - `Lx.stdin.readAll() -> string` Read all stdin.
 - `Lx.stdin.readLine(prompt?: string) -> string | nil` Read one line from stdin.

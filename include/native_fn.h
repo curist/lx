@@ -544,6 +544,77 @@ static bool pathDirnameNative(int argCount, Value *args) {
   return true;
 }
 
+static bool pathBasenameNative(int argCount, Value *args) {
+  // Roughly matches POSIX basename semantics:
+  // basename("") => "."
+  // basename("a") => "a"
+  // basename("a/b") => "b"
+  // basename("/a") => "a"
+  // basename("/") => "/"
+  // basename("a/b/") => "b"
+  if (argCount < 1 || !IS_STRING(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.path.basename takes 1 string arg.");
+    return false;
+  }
+
+  ObjString* inStr = AS_STRING(args[0]);
+  const char* in = inStr->chars;
+  size_t len = inStr->length;
+
+  if (len == 0) {
+    args[-1] = CSTRING_VAL(".");
+    return true;
+  }
+
+  // Strip trailing slashes (but keep a single leading slash).
+  size_t end = len;
+  while (end > 1 && in[end - 1] == '/') {
+    end--;
+  }
+
+  // If the path is all slashes, basename is "/".
+  if (end == 1 && in[0] == '/') {
+    args[-1] = CSTRING_VAL("/");
+    return true;
+  }
+
+  // Find last '/' before end.
+  ssize_t lastSlash = -1;
+  for (ssize_t i = (ssize_t)end - 1; i >= 0; i--) {
+    if (in[i] == '/') {
+      lastSlash = i;
+      break;
+    }
+  }
+
+  // If no slash found, the entire string is the basename.
+  if (lastSlash < 0) {
+    char* out = (char*)malloc(end + 1);
+    if (out == NULL) {
+      args[-1] = CSTRING_VAL("Error: out of memory.");
+      return false;
+    }
+    memcpy(out, in, end);
+    out[end] = '\0';
+    args[-1] = OBJ_VAL(takeString(out, (int)end));
+    return true;
+  }
+
+  // Extract the part after the last slash.
+  size_t start = (size_t)lastSlash + 1;
+  size_t outLen = end - start;
+
+  char* out = (char*)malloc(outLen + 1);
+  if (out == NULL) {
+    args[-1] = CSTRING_VAL("Error: out of memory.");
+    return false;
+  }
+  memcpy(out, in + start, outLen);
+  out[outLen] = '\0';
+  args[-1] = OBJ_VAL(takeString(out, (int)outLen));
+  return true;
+}
+
 static uint8_t utf8CharLength(uint8_t val) {
   if (val < 128) {
     return 1;
@@ -1601,6 +1672,7 @@ static void defineLxNatives() {
   pop();
   defineTableFunction(&path->table, "join", pathJoinNative);
   defineTableFunction(&path->table, "dirname", pathDirnameNative);
+  defineTableFunction(&path->table, "basename", pathBasenameNative);
   pop(); // path
 
   // Lx.stdin

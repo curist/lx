@@ -70,6 +70,52 @@ fn normalizeErrors(passName, errors) {
 }
 
 // ========================================
+// Helper: Convert pass name to opt key
+// ========================================
+
+fn passNameToOptKey(passName) {
+  // Convert pass name to opt key: "anf-inline" → "withAnfInline"
+  // Pattern: "with" + PascalCase(passName with dashes removed)
+
+  if !passName { return nil }
+
+  // Split by dash and capitalize each word
+  let parts = []
+  let current = ""
+  for let i = 0; i < len(passName); i = i + 1 {
+    let ch = passName[i]
+    if ch == "-" {
+      if len(current) > 0 {
+        push(parts, current)
+        current = ""
+      }
+    } else {
+      current = current + ch
+    }
+  }
+  if len(current) > 0 {
+    push(parts, current)
+  }
+
+  // Capitalize first letter of each part
+  let result = "with"
+  for let i = 0; i < len(parts); i = i + 1 {
+    let part = parts[i]
+    if len(part) > 0 {
+      // Capitalize first letter
+      let first = toupper(part[0])
+      let rest = ""
+      for let j = 1; j < len(part); j = j + 1 {
+        rest = rest + part[j]
+      }
+      result = result + first + rest
+    }
+  }
+
+  result
+}
+
+// ========================================
 // Run Passes
 // ========================================
 
@@ -86,17 +132,47 @@ fn runPasses(passList, ctx, state) {
 
   // Build enabled pass list for validation
   let enabledPasses = []
+  let provided = .{}  // Track capabilities provided by enabled passes
+
   for let i = 0; i < len(passList); i = i + 1 {
     let p = passList[i]
     if !p or !p.name or !p.run { continue }
 
-    // Check if pass is enabled (default: true)
-    let enabled = true
-    if p.enabled {
+    // Check if pass is disabled via opts (e.g., ctx.opts.withAnf == false)
+    let optKey = passNameToOptKey(p.name)
+    let disabledByOpt = ctx and ctx.opts and optKey and ctx.opts[optKey] == false
+    if disabledByOpt {
+      continue
+    }
+
+    // Check if requirements are satisfied by earlier enabled passes
+    let requirementsMet = true
+    if p.requires {
+      for let j = 0; j < len(p.requires); j = j + 1 {
+        let req = p.requires[j]
+        if !provided[req] {
+          requirementsMet = false
+          break
+        }
+      }
+    }
+
+    // Only check enabled if requirements are met
+    let enabled = requirementsMet
+    if enabled and p.enabled {
       enabled = p.enabled(ctx, state)
     }
+
     if enabled {
       push(enabledPasses, p)
+
+      // Register capabilities this pass provides
+      if p.provides {
+        for let k = 0; k < len(p.provides); k = k + 1 {
+          let cap = p.provides[k]
+          provided[cap] = true
+        }
+      }
     }
   }
 

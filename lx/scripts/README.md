@@ -17,21 +17,28 @@ Use these scripts when:
 
 ## The Scripts
 
-### `build-lxlx-driver.lx`
-Compiles `main.lx` (the lx compiler CLI entrypoint) using the NEW codegen from `src/passes/backend/codegen.lx`.
+### `bootstrap-codegen.lx`
+Generic script that compiles any lx entry file using the NEW codegen from `src/passes/backend/codegen.lx`.
 
+**Usage:**
+```bash
+lx run scripts/bootstrap-codegen.lx <entry-file>
+```
+
+**Examples:**
+```bash
+lx run scripts/bootstrap-codegen.lx lx/main.lx      # Outputs to /tmp/main.lxobj
+lx run scripts/bootstrap-codegen.lx lx/globals.lx   # Outputs to /tmp/globals.lxobj
+```
+
+**Features:**
 - Uses `profile: "default"` (all passes including ANF inline optimization)
 - Recursively compiles all imported modules
 - Runs bytecode verification on all functions
-- Outputs to `out/lxlx-new.lxobj`
+- Outputs to `/tmp/{basename}.lxobj` (e.g., `lx/main.lx` → `/tmp/main.lxobj`)
 - Codegen uses the most optimized AST available: anf-inline → anf → lower
 
-### `build-globals-driver.lx`
-Compiles `globals.lx` (standard library) using the NEW codegen from `src/passes/backend/codegen.lx`.
-
-- Uses `profile: "default"` (all passes including ANF inline optimization)
-- Codegen uses the most optimized AST available: anf-inline → anf → lower
-- Outputs to `out/lxglobals-new.lxobj`
+**Note:** The shell scripts `scripts/build-lxlx.sh` and `scripts/build-globals.sh` in the repo root call this script and copy the output to the appropriate locations.
 
 ## Bootstrap Process
 
@@ -51,8 +58,8 @@ If `$LX` points at the in-repo compiler (`out/lx`), the build scripts use a fast
 - `$LX compile ...` (fast, uses the already-built compiler)
 
 Otherwise, they use the driver pipeline (safer across opcode/object changes):
-- `$LX run lx/scripts/build-lxlx-driver.lx`
-- `$LX run lx/scripts/build-globals-driver.lx`
+- `$LX run lx/scripts/bootstrap-codegen.lx lx/main.lx`
+- `$LX run lx/scripts/bootstrap-codegen.lx lx/globals.lx`
 
 This keeps the normal workflow fast while still handling incompatible opcode/object changes.
 
@@ -76,17 +83,19 @@ Edit `src/vm.c`:
 - `lx/src/passes/backend/verify-bytecode.lx` - Update STACK_MIN, STACK_EFFECTS, OPERAND_SIZES tables
 - Update any tests that reference specific opcodes
 
-### 4. Rebuild embedded bytecode using drivers
+### 4. Rebuild embedded bytecode using bootstrap-codegen
 
-Run the drivers with your **system lx** (the old version):
+Run the bootstrap script with your **system lx** (the old version):
 
 ```bash
 # From lx-lang/ directory
-lx run scripts/build-lxlx-driver.lx
-lx run scripts/build-globals-driver.lx
+lx run lx/scripts/bootstrap-codegen.lx lx/main.lx
+lx run lx/scripts/bootstrap-codegen.lx lx/globals.lx
 ```
 
-**Why this works:** The old VM can still execute the driver scripts (they're just normal lx code). The drivers use the NEW codegen to produce bytecode with the new opcodes.
+This outputs to `/tmp/main.lxobj` and `/tmp/globals.lxobj`.
+
+**Why this works:** The old VM can still execute the bootstrap script (it's just normal lx code). The script uses the NEW codegen to produce bytecode with the new opcodes.
 
 ### 5. Install the new bytecode
 
@@ -94,12 +103,12 @@ Convert the .lxobj files to C headers and install them (or just run `make prepar
 
 ```bash
 # From lx-lang/ directory (parent of lx/)
-xxd -i out/lxlx-new.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxlx.h
+xxd -i < /tmp/main.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxlx.h
 
-xxd -i out/lxglobals-new.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxglobals.h
+xxd -i < /tmp/globals.lxobj | sed 's/unsigned char/static const unsigned char/; s/unsigned int/static const unsigned int/' > include/lx/lxglobals.h
 ```
 
-**Note:** Adjust paths if running from different directory.
+**Note:** The shell scripts `scripts/build-lxlx.sh` and `scripts/build-globals.sh` handle this automatically.
 
 ### 6. Build the compiler without prepare step
 
@@ -140,11 +149,11 @@ This process was used in commit `1c82b07` to remove legacy dual-stack opcodes:
 1. Removed `NEW_LOCAL` and `POP_LOCAL` from `types.lx` and `chunk.h`
 2. Removed handlers from `vm.c` dispatch table
 3. Updated `debug.c`, `verify-bytecode.lx`, tests
-4. Ran `lx run scripts/build-lxlx-driver.lx` (with system lx)
-5. Ran `lx run scripts/build-globals-driver.lx` (with system lx)
+4. Ran `lx run lx/scripts/bootstrap-codegen.lx lx/main.lx` (with system lx)
+5. Ran `lx run lx/scripts/bootstrap-codegen.lx lx/globals.lx` (with system lx)
 6. Installed new bytecode to `include/lx/lxlx.h` and `include/lx/lxglobals.h`
 7. Built compiler with `cc src/*.c -o out/lx -Iinclude -O2 -std=c11`
-8. All 364 tests passed
+8. All tests passed
 
 ## Troubleshooting
 

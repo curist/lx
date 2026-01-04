@@ -25,10 +25,12 @@ echo "const uint8_t lxlx_bytecode[] = {" >> $TARGET
 # Otherwise, use the driver pipeline to avoid bootstrapping mismatches.
 if [[ "$LX" == *"/out/lx" || "$LX" == "out/lx" || "$LX" == "./out/lx" ]]; then
   if ! $LX compile lx/main.lx > "$OBJ"; then
-    $LX run lx/scripts/build-lxlx-driver.lx > /dev/null
+    $LX run lx/scripts/bootstrap-codegen.lx lx/main.lx
+    cp /tmp/main.lxobj "$OBJ"
   fi
 else
-  $LX run lx/scripts/build-lxlx-driver.lx > /dev/null
+  $LX run lx/scripts/bootstrap-codegen.lx lx/main.lx
+  cp /tmp/main.lxobj "$OBJ"
 fi
 xxd -i < "$OBJ" >> $TARGET
 echo "};" >> $TARGET

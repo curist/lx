@@ -18,9 +18,7 @@ let resolve = import "src/passes/frontend/resolve.lx"
 let typecheck = import "src/passes/frontend/typecheck.lx"
 let lowerLoops = import "src/passes/backend/lower-loops.lx"
 let pipeline = import "src/passes/pipeline.lx"
-let types = import "src/types.lx"
-
-let NODE = types.NODE
+let .{ NODE } = import "src/types.lx"
 
 // ========================================
 // Helper Functions
@@ -142,11 +140,7 @@ fn buildPassList(ctx) {
       mutatesAst: false,
       requires: ["ast"],
       provides: ["loweredAst"],
-      enabled: fn(ctx, state) {
-        if !ctx.opts { return true }
-        if ctx.opts.withLower == false { return false }
-        true
-      },
+      // enabled: auto-checked via ctx.opts.withLower by pipeline
       run: fn(ctx, state) {
         let result = lower(state.ast, .{ startNodeId: state.nextNodeId })
 
@@ -174,12 +168,7 @@ fn buildPassList(ctx) {
       mutatesAst: false,
       requires: ["loweredAst"],
       provides: ["anfAst", "loweredAst"],  // ANF is a refinement, still satisfies loweredAst contracts
-      enabled: fn(ctx, state) {
-        // Explicit boolean: default to true if opts missing
-        if !ctx.opts { return true }
-        if ctx.opts.withAnf == false { return false }
-        true
-      },
+      // enabled: auto-checked via ctx.opts.withAnf by pipeline
       run: fn(ctx, state) {
         let result = anf(state.ast, .{ startNodeId: state.nextNodeId })
 
@@ -205,11 +194,9 @@ fn buildPassList(ctx) {
     .{
       name: "lower-loops",
       mutatesAst: false,  // Returns new AST with origin tracking
-      requires: ["anfAst"],  // Works on ANF AST
+      requires: ["anfAst"],  // Works on ANF AST (pipeline auto-checks this)
       provides: ["loweredLoopsAst"],
       enabled: fn(ctx, state) {
-        // Requires ANF pass to be enabled (lower-loops depends on anfAst)
-        if ctx.opts and ctx.opts.withAnf == false { return false }
         // currently fail to bootstrap lx compiler, disable for now
         false
       },
@@ -253,15 +240,9 @@ fn buildPassList(ctx) {
     .{
       name: "anf-inline",
       mutatesAst: true,  // Explicitly mutates AST in-place
-      requires: ["anfAst", "resolution"],
+      requires: ["anfAst", "resolution"],  // Pipeline auto-checks these requirements
       provides: ["optimizedAst"],
-      enabled: fn(ctx, state) {
-        // Only run if both ANF and ANF-inline are enabled
-        if !ctx.opts { return true }
-        if ctx.opts.withAnf == false { return false }
-        if ctx.opts.withAnfInline == false { return false }
-        true
-      },
+      // enabled: auto-checked via ctx.opts.withAnfInline by pipeline
       run: fn(ctx, state) {
         let resolveResult = state.passes.resolve
         anfInline(state.ast, resolveResult)
@@ -555,9 +536,128 @@ fn make(opts) {
 }
 
 // ========================================
+// Codegen Helper
+// ========================================
+
+fn codegenModule(compileResult, codegen, verify, opts) {
+  // Helper for build scripts to codegen a compiled module
+  // Takes:
+  //   - compileResult: result from driver.compileModule()
+  //   - codegen: codegen pass function
+  //   - verify: verification pass function
+  //   - opts: .{ codegenModule: fn, enumInfo: ... (optional) }
+  // Returns:
+  //   .{ success: true, function: fn, metrics: ..., bytesEmitted: ... }
+  //   or .{ success: false, errors: [...] }
+
+  if !compileResult or compileResult.status != "done" {
+    return .{
+      success: false,
+      errors: ["Compilation failed or incomplete"],
+    }
+  }
+
+  let passes = compileResult.passes or .{}
+
+  // Select AST (prefer anf-inline → anf → lower)
+  let ast = (passes["anf-inline"] and passes["anf-inline"].ast) or
+            (passes.anf and passes.anf.ast) or
+            (passes.lower and passes.lower.ast)
+
+  if !ast {
+    return .{
+      success: false,
+      errors: ["No AST available in compilation result"],
+    }
+  }
+
+  // Select enumInfo (allow override via opts)
+  let enumInfo = (opts and opts.enumInfo) or
+                 (passes.anf and passes.anf.enumInfo) or
+                 (passes.lower and passes.lower.enumInfo) or
+                 (passes.parse and passes.parse.enumInfo) or
+                 .{}
+
+  // Run codegen
+  let cg = codegen(ast, passes.resolve, .{
+    codegenModule: opts and opts.codegenModule,
+    enumInfo: enumInfo,
+  })
+
+  if !cg or !cg.success or (cg.errors and len(cg.errors) > 0) {
+    return .{
+      success: false,
+      errors: cg and cg.errors or ["Codegen returned nil"],
+    }
+  }
+
+  // Verify bytecode
+  let verifyResult = verify.verifyFunction(cg.function)
+  if !verifyResult or !verifyResult.success {
+    return .{
+      success: false,
+      errors: ["Bytecode verification failed"],
+    }
+  }
+
+  // Success
+  .{
+    success: true,
+    function: cg.function,
+    metrics: cg.metrics,
+    bytesEmitted: cg.bytesEmitted,
+  }
+}
+
+// ========================================
+// Codegen Handler Factory
+// ========================================
+
+fn _makeCodegenHandler(driver, codegen, verify, cache) {
+  // Private implementation - takes cache as parameter
+  // Returns a handler function that compiles + codegens with caching
+
+  let handler = nil
+
+  handler = fn(modulePath) {
+    // Check cache first
+    let cached = cache[modulePath]
+    if cached { return cached }
+
+    // Compile module (uses driver's compilation cache)
+    let compileResult = driver.compileModule(modulePath)
+    if !compileResult or compileResult.status != "done" {
+      return nil
+    }
+
+    // Codegen + verify
+    let result = codegenModule(compileResult, codegen, verify, .{
+      codegenModule: handler,  // Recursive calls use same handler/cache
+    })
+
+    if !result or !result.success {
+      return nil
+    }
+
+    // Cache the bytecode function
+    cache[modulePath] = result.function
+    result.function
+  }
+
+  handler
+}
+
+fn makeCodegenHandler(driver, codegen, verify) {
+  // Public API - creates handler with fresh internal cache
+  // Usage:
+  //   let codegenModule = driver.makeCodegenHandler(d, codegen, verify)
+  //   let mainFunc = codegenModule("main.lx")
+
+  _makeCodegenHandler(driver, codegen, verify, .{})
+}
+
+// ========================================
 // Module Exports
 // ========================================
 
-.{
-  make: make
-}
+.{ make, makeCodegenHandler }

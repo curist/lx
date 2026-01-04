@@ -148,6 +148,13 @@ let DOCS = .{
     markdown: "`Lx.path`\npath helpers namespace.",
     source: "lx/README.md",
   },
+  ["Lx.path.basename"]: .{
+    name: "Lx.path.basename",
+    signature: "Lx.path.basename(path: string) -> string",
+    description: "Filename component (last segment after final `/`).",
+    markdown: "`Lx.path.basename(path: string) -> string`\nFilename component (last segment after final `/`).",
+    source: "lx/README.md",
+  },
   ["Lx.path.dirname"]: .{
     name: "Lx.path.dirname",
     signature: "Lx.path.dirname(path: string) -> string",
@@ -578,6 +585,7 @@ let NATIVE_NAMES = .{
   ["Lx.globals"]: true,
   ["Lx.isLxObj"]: true,
   ["Lx.loadObj"]: true,
+  ["Lx.path.basename"]: true,
   ["Lx.path.dirname"]: true,
   ["Lx.path.join"]: true,
   ["Lx.pcall"]: true,

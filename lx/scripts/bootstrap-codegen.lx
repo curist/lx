@@ -1,0 +1,80 @@
+// Generic bootstrap codegen script
+// Usage: lx run scripts/bootstrap-codegen.lx <entry-file>
+// Example: lx run scripts/bootstrap-codegen.lx lx/main.lx
+// Output: /tmp/main.lxobj
+
+let driver = import "src/driver.lx"
+let codegen = import "src/passes/backend/codegen.lx"
+let verify = import "src/passes/backend/verify-bytecode.lx"
+let ModuleResolution = import "src/module_resolution.lx"
+
+// Get entry file from command line args
+let args = Lx.argv()
+if !args or len(args) < 1 {
+  groanln("Usage: lx run scripts/bootstrap-codegen.lx <entry-file>")
+  groanln("Example: lx run scripts/bootstrap-codegen.lx lx/main.lx")
+  Lx.exit(1)
+}
+
+let entryFile = args[0]
+println("=== Building " + entryFile + " with NEW codegen (PR3) ===")
+println("")
+
+// Create driver
+let resolver = ModuleResolution.forEntry(entryFile)
+let d = driver.make(.{
+  profile: "default",
+  withTypecheck: false,
+  loadSource: fn(path) { resolver.slurp(path) },
+})
+
+// Codegen with recursive module compilation
+println("=== Compiling " + entryFile + " and all dependencies ===")
+
+let codegenModule = driver.makeCodegenHandler(d, codegen, verify)
+let mainFunction = codegenModule(Lx.path.basename(entryFile))
+if !mainFunction {
+  println("Codegen failed")
+  Lx.exit(1)
+}
+
+println("Codegen successful")
+println("")
+println("=== Verification ===")
+println("Bytecode verification PASSED")
+println("")
+
+// Build object
+println("=== Building Object ===")
+let objbuilder = import "src/objbuilder.lx"
+let hexBytes = objbuilder(mainFunction, false).bytes()
+println("Object size: " + str(len(hexBytes)) + " bytes")
+
+// Convert byte numbers to string
+let byteString = ""
+for let i = 0; i < len(hexBytes); i = i + 1 {
+  byteString = byteString + chr(hexBytes[i])
+}
+
+// Output to /tmp/{basename}.lxobj
+let filename = Lx.path.basename(entryFile)
+
+// Strip extension from filename
+let basename = ""
+for let i = 0; i < len(filename); i = i + 1 {
+  if filename[i] == "." {
+    break
+  }
+  basename = basename + filename[i]
+}
+
+let outputPath = "/tmp/" + basename + ".lxobj"
+let ok = spit(outputPath, byteString)
+if ok != true {
+  groanln(ok or "Failed to write output.")
+  Lx.exit(1)
+}
+
+println("Saved to " + outputPath)
+println("")
+println("SUCCESS: " + entryFile + " bytecode built with NEW codegen")

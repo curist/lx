@@ -1,8 +1,5 @@
 // Module resolution helpers.
 //
-// The compiler driver passes import specifiers through unchanged; this module
-// maps those specifiers to concrete filesystem paths.
-//
 // Resolution strategy:
 // - Given an entry file, start searching for `.lxroot` from the entry file's
 //   directory, walking up the parent directories.
@@ -16,13 +13,11 @@
 //
 // Usage:
 //   let resolver = ModuleResolution.forEntry("src/main.lx")
-//   resolver.slurpPath("utils/helpers.lx")
+//   resolver.slurp("utils/helpers.lx")
 
 let _cache = .{}  // Map of baseDir -> {projectRoot}
 
-fn _isAbs(path) {
-  path and len(path) > 0 and path[0] == "/"
-}
+fn _isAbs(path) { path and path[0] == "/" }
 
 fn _computeRoots(baseDir) {
   // Check cache first
@@ -63,9 +58,7 @@ fn _computeRoots(baseDir) {
 
   let projectRoot = found or baseDir
 
-  let roots = .{
-    projectRoot: projectRoot,
-  }
+  let roots = .{ projectRoot }
 
   _cache[baseDir] = roots
   roots
@@ -84,14 +77,8 @@ fn forEntry(entryPath) {
   // Compute roots for this entry
   let roots = _computeRoots(baseDir)
 
-  // Return a resolver instance
-  let resolver = .{}
-
-  resolver.resolve = fn(path) {
-    if !path {
-      return path
-    }
-    if _isAbs(path) {
+  fn resolve(path) {
+    if !path or _isAbs(path) {
       return path
     }
     if !roots or !roots.projectRoot {
@@ -102,15 +89,11 @@ fn forEntry(entryPath) {
     Lx.path.join(roots.projectRoot, path)
   }
 
-  resolver.slurp = fn(path) {
-    slurp(resolver.resolve(path))
+  .{
+    resolve,
+    slurp: fn(path) { slurp(resolve(path)) },
+    roots: fn() { roots }
   }
-
-  resolver.roots = fn() { roots }
-
-  resolver
 }
 
-.{
-  forEntry,
-}
+.{ forEntry }

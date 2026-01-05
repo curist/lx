@@ -757,8 +757,9 @@ static bool strNative(int argCount, Value *args) {
     return false;
   }
   char *s = NULL;
-  tostring(&s, args[0]);
-  args[-1] = CSTRING_VAL(s);
+  int slen = tostring(&s, args[0]);
+  if (slen < 0) slen = 0;
+  args[-1] = OBJ_VAL(copyString(s, slen));
   free(s);
   return true;
 }
@@ -786,29 +787,62 @@ static bool joinNative(int argCount, Value *args) {
   size_t seplen = AS_STRING(args[1])->length;
 
   // First pass: calculate total length needed
-  // Store string representations to avoid converting twice
-  char **strings = malloc(sizeof(char*) * array->count);
-  if (strings == NULL) {
+  // Store parts and lengths. For strings, use their raw bytes (no allocation);
+  // for non-strings, allocate a stringified representation.
+  const char **parts = malloc(sizeof(char*) * array->count);
+  size_t *lengths = malloc(sizeof(size_t) * array->count);
+  char **owned = malloc(sizeof(char*) * array->count);
+  if (parts == NULL || lengths == NULL || owned == NULL) {
+    free(parts);
+    free(lengths);
+    free(owned);
     args[-1] = CSTRING_VAL("Error: Malloc failed.");
     return false;
   }
 
   size_t total_length = 0;
   for (int i = 0; i < array->count; i++) {
-    int slen = tostring(&strings[i], array->values[i]);
-    total_length += slen;
+    owned[i] = NULL;
+    Value v = array->values[i];
+    if (IS_STRING(v)) {
+      ObjString* s = AS_STRING(v);
+      parts[i] = s->chars;
+      lengths[i] = (size_t)s->length;
+    } else {
+      char* tmp = NULL;
+      int slen = tostring(&tmp, v);
+      if (slen < 0) slen = 0;
+      parts[i] = tmp;
+      lengths[i] = (size_t)slen;
+      owned[i] = tmp;
+    }
+
+    total_length += lengths[i];
     if (i > 0) {
       total_length += seplen;
     }
   }
 
   // Single allocation for final result
+  if (total_length > (size_t)INT_MAX) {
+    for (int i = 0; i < array->count; i++) {
+      free(owned[i]);
+    }
+    free(parts);
+    free(lengths);
+    free(owned);
+    args[-1] = CSTRING_VAL("Error: Joined string too long.");
+    return false;
+  }
+
   char *result = malloc(total_length + 1);
   if (result == NULL) {
     for (int i = 0; i < array->count; i++) {
-      free(strings[i]);
+      free(owned[i]);
     }
-    free(strings);
+    free(parts);
+    free(lengths);
+    free(owned);
     args[-1] = CSTRING_VAL("Error: Malloc failed.");
     return false;
   }
@@ -820,15 +854,16 @@ static bool joinNative(int argCount, Value *args) {
       memcpy(result + offset, sep, seplen);
       offset += seplen;
     }
-    size_t slen = strlen(strings[i]);
-    memcpy(result + offset, strings[i], slen);
-    offset += slen;
-    free(strings[i]);
+    memcpy(result + offset, parts[i], lengths[i]);
+    offset += lengths[i];
+    free(owned[i]);
   }
   result[total_length] = '\0';
-  free(strings);
+  free(parts);
+  free(lengths);
+  free(owned);
 
-  args[-1] = CSTRING_VAL(result);
+  args[-1] = OBJ_VAL(copyString(result, (int)total_length));
   free(result);
   return true;
 }
@@ -1136,7 +1171,11 @@ static bool execNative(int argCount, Value *args) {
   pop();
   push(CSTRING_VAL("out"));
   if (result != NULL) {
-    push(CSTRING_VAL(result));
+    if (result_size > (size_t)INT_MAX) {
+      push(CSTRING_VAL("Error: exec output too large."));
+    } else {
+      push(OBJ_VAL(copyString(result, (int)result_size)));
+    }
     free(result);
   } else {
     push(CSTRING_VAL(""));

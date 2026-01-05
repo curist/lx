@@ -40,9 +40,6 @@ if !mainFunction {
 
 println("Codegen successful")
 println("")
-println("=== Verification ===")
-println("Bytecode verification PASSED")
-println("")
 
 // Build object
 println("=== Building Object ===")
@@ -51,10 +48,7 @@ let hexBytes = objbuilder(mainFunction, false).bytes()
 println("Object size: " + str(len(hexBytes)) + " bytes")
 
 // Convert byte numbers to string
-let byteString = ""
-for let i = 0; i < len(hexBytes); i = i + 1 {
-  byteString = byteString + chr(hexBytes[i])
-}
+let byteString = collect byte in hexBytes { chr(byte) }->join("")
 
 // Output to /tmp/{basename}.lxobj
 let filename = Lx.path.basename(entryFile)

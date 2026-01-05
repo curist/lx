@@ -48,6 +48,17 @@ test("lines", fn(assert) {
   assert.equal(splitted[2], "c")
 })
 
+test("join preserves NUL", fn(assert) {
+  let s = join([chr(0), chr(1), "a"], "")
+  assert.equal(len(s), 3)
+
+  assert.equal(s[0], chr(0))
+  assert.equal(s[1], chr(1))
+  assert.equal(s[2], "a")
+
+  assert.equal(len(str(chr(0))), 1)
+})
+
 test("nameOf", fn(assert) {
   let Color = enum { Red, Green = 3, Blue }
   assert.equal(nameOf(Color, Color.Red), "Red")

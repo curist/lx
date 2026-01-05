@@ -213,7 +213,11 @@ void writeObject(Writer* writer, Value value) {
       writerPrintf(writer, "<native fn: %s>", AS_NATIVE(value)->name->chars);
       break;
     case OBJ_STRING:
-      writerPrintf(writer, "%s", AS_CSTRING(value));
+      {
+        ObjString* s = AS_STRING(value);
+        writerWrite(writer, s->chars, (size_t)s->length);
+        break;
+      }
       break;
     case OBJ_UPVALUE:
       writerWrite(writer, "upvalue", 7);

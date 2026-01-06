@@ -104,6 +104,10 @@ typedef enum {
   OP_FORPREP,             // Numeric for loop prepare (arbitrary signed step)
   OP_FORLOOP,             // Numeric for loop iterate (arbitrary signed step)
 
+  // Superinstructions (appended to avoid renumbering existing opcodes)
+  OP_GET_PROPERTY,        // GET_LOCAL + CONSTANT + GET_BY_INDEX (property access)
+  OP_SET_PROPERTY,        // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX
+
   OP_RETURN = 0xff,
 } OpCode;
 

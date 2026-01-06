@@ -1466,6 +1466,131 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_GET_PROPERTY: {
+        // Superinstruction: GET_LOCAL + CONSTANT + GET_BY_INDEX
+        uint8_t objSlot = READ_BYTE();
+        uint8_t constIdx = READ_BYTE();
+
+        Value object = slots[objSlot];
+        Value key = frame->closure->function->chunk.constants.values[constIdx];
+
+        if (!IS_ENUM(object) && !IS_HASHMAP(object) && !IS_ARRAY(object) && !IS_STRING(object)) {
+          runtimeError("Only array / hashmap / string / enum can get value by index.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        Value result;
+        if (IS_ARRAY(object)) {
+          if (!IS_NUMBER(key)) {
+            runtimeError("Can only use number index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          int index = (int)AS_NUMBER(key);
+          if ((double)index != AS_NUMBER(key)) {
+            runtimeError("Can only use integer index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+
+          ValueArray* array = &AS_ARRAY(object);
+          if (index >= 0 && index < array->count) {
+            result = array->values[index];
+          } else {
+            result = NIL_VAL;
+          }
+        } else if (IS_ENUM(object)) {
+          if (!IS_NUMBER(key) && !IS_STRING(key)) {
+            runtimeError("Enum key type must be number or string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* table = &AS_ENUM_FORWARD(object);
+          if (!tableGet(table, key, &result)) {
+            result = NIL_VAL;
+          }
+        } else {
+          if (IS_HASHMAP(object)) {
+            if (!IS_NUMBER(key) && !IS_STRING(key)) {
+              runtimeError("Hashmap key type must be number or string.");
+              return INTERPRET_RUNTIME_ERROR;
+            }
+            Value value;
+            Table* table = &AS_HASHMAP(object);
+            if (!tableGet(table, key, &value)) {
+              result = NIL_VAL;
+            } else {
+              result = value;
+            }
+          } else {
+            // String
+            if (!IS_NUMBER(key)) {
+              runtimeError("String index type must be a number.");
+              return INTERPRET_RUNTIME_ERROR;
+            }
+            ObjString* s = AS_STRING(object);
+            char* ch = NULL;
+            size_t index = (size_t)AS_NUMBER(key);
+            if (index < s->length) {
+              ch = &s->chars[index];
+            }
+            if (ch != NULL) {
+              result = OBJ_VAL(copyString(ch, 1));
+            } else {
+              result = NIL_VAL;
+            }
+          }
+        }
+        push(result);
+        break;
+      }
+
+      case OP_SET_PROPERTY: {
+        // Superinstruction: GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX
+        uint8_t objSlot = READ_BYTE();
+        uint8_t constIdx = READ_BYTE();
+        uint8_t valSlot = READ_BYTE();
+
+        Value object = slots[objSlot];
+        Value key = frame->closure->function->chunk.constants.values[constIdx];
+        Value value = slots[valSlot];
+
+        if (IS_ENUM(object)) {
+          runtimeError("Enum is immutable.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        if (!IS_HASHMAP(object) && !IS_ARRAY(object)) {
+          runtimeError("Only array or hashmap can set value by index.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        if (IS_ARRAY(object)) {
+          if (!IS_NUMBER(key)) {
+            runtimeError("Can only use number index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          int index = (int)AS_NUMBER(key);
+          if ((double)index != AS_NUMBER(key)) {
+            runtimeError("Can only use integer index to access array.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+
+          ValueArray* array = &AS_ARRAY(object);
+          if (index >= 0 && index < array->count) {
+            array->values[index] = value;
+          } else {
+            value = NIL_VAL;
+          }
+          push(value);
+        } else {
+          if (!IS_NUMBER(key) && !IS_STRING(key)) {
+            runtimeError("Hashmap key type must be number or string.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          Table* table = &AS_HASHMAP(object);
+          tableSet(table, key, value);
+          push(value);
+        }
+        break;
+      }
+
       case OP_COALESCE_CONST: {
         // Replace TOS with constant if TOS is falsy (defaulting/fallback operation)
         uint8_t constantIdx = READ_BYTE();

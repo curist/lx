@@ -112,6 +112,8 @@ let STACK_MIN = .{
   [OP.STORE_LOCAL]:        1,  // SET_LOCAL + POP: needs value to store
   [OP.GETI]:  0,    // GET_LOCAL×2 + GET_BY_INDEX: reads all from local slots
   [OP.SETI]:  0,    // GET_LOCAL×3 + SET_BY_INDEX: reads all from local slots
+  [OP.GET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_BY_INDEX: reads from local slot
+  [OP.SET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX: reads from local slots
 
   // Fused numeric for loops
   [OP.FORPREP_1]:          0,  // Operates on locals only
@@ -205,6 +207,8 @@ let STACK_EFFECTS = .{
   [OP.STORE_LOCAL]:       -1,   // SET_LOCAL + POP: net -1
   [OP.GETI]:  1,     // GET_LOCAL×2 + GET_BY_INDEX: net +1 (2 pushes, GET_BY_INDEX is -1)
   [OP.SETI]:  1,     // GET_LOCAL×3 + SET_BY_INDEX: net +1 (3 pushes, SET_BY_INDEX is -2)
+  [OP.GET_PROPERTY]:  1,     // GET_LOCAL + CONSTANT + GET_BY_INDEX: net +1
+  [OP.SET_PROPERTY]:  1,     // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX: net +1
 
   // Fused numeric for loops (stack-neutral, operate on locals)
   [OP.FORPREP_1]:          0,
@@ -362,6 +366,8 @@ let INSTRUCTION_LENGTHS = .{
   [OP.STORE_LOCAL]:        2,  // opcode + slot
   [OP.GETI]:    3,  // opcode + arr_slot + idx_slot
   [OP.SETI]:    4,  // opcode + arr_slot + idx_slot + val_slot
+  [OP.GET_PROPERTY]:  3,  // opcode + obj_slot + const_idx
+  [OP.SET_PROPERTY]:  4,  // opcode + obj_slot + const_idx + val_slot
 
   // Fused numeric for loops
   [OP.FORPREP_1]:          6,  // opcode + i_slot + limit_slot + cmp_kind + offset[2]

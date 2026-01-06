@@ -186,6 +186,10 @@ let OP = enum {
   FORPREP,          // Numeric for loop prepare (arbitrary signed step)
   FORLOOP,          // Numeric for loop iterate (arbitrary signed step)
 
+  // Superinstructions (appended to avoid renumbering existing opcodes)
+  GET_PROPERTY,     // GET_LOCAL + CONSTANT + GET_BY_INDEX (property access)
+  SET_PROPERTY,     // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX
+
   RETURN = 255,
 }
 

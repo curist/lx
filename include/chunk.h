@@ -27,7 +27,6 @@ typedef enum {
   // Stack manipulation
   OP_POP,
   OP_DUP,
-  OP_SWAP,
 
   // Variables
   OP_GET_LOCAL,

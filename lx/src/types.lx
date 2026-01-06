@@ -109,7 +109,6 @@ let OP = enum {
   // Stack manipulation
   POP,
   DUP,
-  SWAP,
 
   // Variables
   GET_LOCAL,

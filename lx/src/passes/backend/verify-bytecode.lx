@@ -95,7 +95,6 @@ let STACK_MIN = .{
   [OP.BIT_RSHIFT]:    2,
   [OP.GET_BY_INDEX]:  2,
   [OP.APPEND]:        2,
-  [OP.SWAP]:          2,
 
   // GET/SET_BY_CONST: key from constant pool
   [OP.GET_BY_CONST]:      1,  // pop object, push result
@@ -166,7 +165,6 @@ let STACK_EFFECTS = .{
   [OP.SET_UPVALUE_LONG]: 0,
   [OP.DEFINE_GLOBAL]: 0,   // Peek value, define global, leave on stack
   [OP.DEFINE_GLOBAL_LONG]: 0,
-  [OP.SWAP]:          0,
   [OP.NOP]:           0,
   [OP.CLOSE_UPVALUE]: 0,   // Closes upvalue + pops from value stack
   [OP.COALESCE_CONST]: 0,  // Conditionally replaces TOS, always leaves 1 value
@@ -338,7 +336,6 @@ let INSTRUCTION_LENGTHS = .{
   [OP.EQUAL]:         1,
   [OP.POP]:           1,
   [OP.DUP]:           1,
-  [OP.SWAP]:          1,
   [OP.GET_BY_INDEX]:  1,
   [OP.SET_BY_INDEX]:  1,
   [OP.GET_BY_CONST]:  2,  // opcode + 1-byte constIdx

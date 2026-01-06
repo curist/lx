@@ -14,22 +14,16 @@ if len(Lx.args) < 4 {
 }
 
 let entryFile = Lx.args[3]
-println("=== Building " + entryFile + " with NEW codegen (PR3) ===")
-println("")
 
 // Compile with proper error reporting
-println("=== Compiling " + entryFile + " and all dependencies ===")
+println("Compiling " + entryFile)
 let mainFunction = common.compilePathToFunction(entryFile, nil)
 if !mainFunction {
-  Lx.stderr.println("Compilation failed - see errors above")
+  Lx.stderr.println("Compilation failed")
   Lx.exit(65)
 }
 
-println("Codegen successful")
-println("")
-
 // Build object
-println("=== Building Object ===")
 let hexBytes = common.objbuilder(mainFunction, false).bytes()
 println("Object size: " + str(len(hexBytes)) + " bytes")
 
@@ -54,5 +48,4 @@ if ok != true {
 }
 
 println("Saved to " + outputPath)
-println("")
-println("SUCCESS: " + entryFile + " bytecode built with NEW codegen")
+println()

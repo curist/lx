@@ -91,7 +91,10 @@ fn forEntry(entryPath) {
 
   .{
     resolve,
-    slurp: fn(path) { Lx.fs.readFile(resolve(path)) },
+    slurp: fn(path) {
+      let result = Lx.pcall(fn() { Lx.fs.readFile(resolve(path)) })
+      if !result.error { result.value } else { nil }
+    },
     roots: fn() { roots }
   }
 }

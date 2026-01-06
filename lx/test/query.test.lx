@@ -796,4 +796,91 @@ test("query - completion on empty object returns no results", fn(assert) {
   assert.equal(len(complResult.completions), 0, "Empty object should have no completions")
 })
 
+// ========================================
+// Issue Reproduction Tests
+// ========================================
+
+test("query - diagnostic on failed module import", fn(assert) {
+  // Test that when an import fails, we get a proper diagnostic
+  let source = "let mod = import \"nonexistent.lx\"\nmod"
+  let result = compileAndQuery(source, "test.lx")
+
+  // Compilation should fail
+  assert.equal(result.success, false, "Should fail with missing import")
+
+  // Should get diagnostics with proper location
+  let diags = query.queryDiagnostics(result)
+  println("Diags type:", type(diags))
+  println("Diags length:", len(diags))
+  if len(diags) > 0 {
+    println("First diag:", diags[0])
+  }
+  assert.truthy(len(diags) > 0, "Should have diagnostics for failed import")
+  assert.truthy(diags[0].filename, "Diagnostic should have filename")
+  assert.truthy(diags[0].line > 0, "Diagnostic should have line number")
+  assert.truthy(diags[0].message, "Diagnostic should have message")
+})
+
+test("query - module import should not stop at destructuring", fn(assert) {
+  // Create fixture for destructuring import test
+  let modSource = ".{ foo: 1, bar: 2, baz: 3 }"
+  let useSource = "let mod = import \"destructure-target.lx\"\nlet .{ foo, bar } = mod\nfoo + bar"
+
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "test-destructure.lx" { return useSource }
+      if path == "destructure-target.lx" { return modSource }
+      let resolver = ModuleResolution.forEntry(Lx.args[2])
+      return resolver.slurp(path)
+    },
+    withTypecheck: true,
+    withAnf: false,
+  })
+
+  let result = driver.compileModule("test-destructure.lx")
+  assert.equal(result.status, "done", "Should compile successfully")
+
+  let initResult = query.queryInit(
+    result.passes.lower.ast,
+    result.passes.resolve,
+    result.passes.typecheck,
+    .{ buildIndex: true }
+  )
+
+  // Hover on 'foo' usage should work (line 3, col 0)
+  let hoverResult = query.queryHover(initResult.ctx, "test-destructure.lx", 3, 0)
+  assert.truthy(hoverResult.success, "Hover should work on destructured import binding")
+
+  // Goto on 'foo' usage should work
+  let gotoResult = query.queryGotoDefinition(initResult.ctx, "test-destructure.lx", 3, 0)
+  assert.truthy(gotoResult.success, "Goto should work on destructured import binding")
+})
+
+test("query - duplicated declaration span info is correct", fn(assert) {
+  // Test that duplicate declaration errors have correct span info
+  let source = "let x = 1\nlet x = 2"
+  let result = compileAndQuery(source, "test.lx")
+
+  // Should fail with duplicate declaration error
+  assert.equal(result.success, false, "Should fail with duplicate declaration")
+
+  let diags = query.queryDiagnostics(result)
+  assert.truthy(len(diags) > 0, "Should have diagnostics for duplicate declaration")
+
+  // Check that the diagnostic points to the second declaration (line 2)
+  let foundDup = false
+  for let i = 0; i < len(diags); i = i + 1 {
+    let d = diags[i]
+    if d.message and (len(split(d.message, "duplicate")) > 1 or len(split(d.message, "Duplicate")) > 1) {
+      foundDup = true
+      assert.equal(d.filename, "test.lx", "Duplicate diagnostic should have correct filename")
+      assert.equal(d.line, 2, "Duplicate diagnostic should point to second declaration")
+      assert.truthy(d.col >= 0, "Duplicate diagnostic should have valid column")
+      assert.truthy(d.endLine > 0, "Duplicate diagnostic should have endLine")
+      assert.truthy(d.endCol > 0, "Duplicate diagnostic should have endCol")
+    }
+  }
+  assert.truthy(foundDup, "Should find duplicate declaration diagnostic")
+})
+
 suite.run()

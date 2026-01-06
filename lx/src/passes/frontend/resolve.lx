@@ -477,6 +477,15 @@ fn isInFunction(scope) {
           return nil
         }
 
+        // Check if cached import compilation failed
+        if cached.status == "failed" {
+          let errMsg = "Failed to import module: " + path
+          if cached.passes and cached.passes.parse and cached.passes.parse.errors and len(cached.passes.parse.errors) > 0 {
+            errMsg = errMsg + " (" + cached.passes.parse.errors[0] + ")"
+          }
+          addError(resolver, node.id, errMsg)
+        }
+
         // Store import metadata in side table (consistent with non-cached path)
         let importInfo = .{ importResult: cached }
         let typeInfo = extractImportType(cached)
@@ -494,6 +503,15 @@ fn isInFunction(scope) {
     // Compile module via callback if provided
     if resolver.compileModule {
       let result = resolver.compileModule(path)
+
+      // Check if import compilation failed
+      if result and result.status == "failed" {
+        let errMsg = "Failed to import module: " + path
+        if result.passes and result.passes.parse and result.passes.parse.errors and len(result.passes.parse.errors) > 0 {
+          errMsg = errMsg + " (" + result.passes.parse.errors[0] + ")"
+        }
+        addError(resolver, node.id, errMsg)
+      }
 
       // Store import metadata in side table
       let importInfo = .{ importResult: result }
@@ -620,6 +638,10 @@ let resolveExprHandlers = .{
     resolveExpr(resolver, node.expression, context)
   },
   [NODE.Let]: fn(resolver, node, context) {
+    // Add name node to nodes map so diagnostics can find it
+    if node.name and node.name.id {
+      resolver.nodes[node.name.id] = node.name
+    }
     let name = node.name.name
     let local = declareLocal(resolver, name, "var", node.name.id)
     if node.init {

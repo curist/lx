@@ -1487,17 +1487,33 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_IS_EVEN: {
-        // Test if TOS integer is even (hot-path for x % 2 == 0)
-        // Uses same truncation semantics as OP_MOD for consistency
-        Value value = pop();
-        if (!IS_NUMBER(value)) {
-          runtimeError("Operand must be a number.");
+      case OP_MOD_CONST_BYTE: {
+        // TOS = TOS % imm8 (specialized modulo with constant)
+        uint8_t modulus = READ_BYTE();
+        int64_t a;
+        if (!valueToInt64Exact(pop(), &a, "Operand of %")) return INTERPRET_RUNTIME_ERROR;
+        if (modulus == 0) {
+          runtimeError("Division by zero.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        double num = AS_NUMBER(value);
-        int intVal = (int)num;  // Truncate to int like MOD does
-        push(BOOL_VAL((intVal & 1) == 0));
+        int64_t r = a % modulus;
+        if (!pushInt64AsNumber(r, "%")) return INTERPRET_RUNTIME_ERROR;
+        break;
+      }
+
+      case OP_EQ_CONST_BYTE: {
+        // TOS = (TOS == imm8) (specialized equality with constant)
+        uint8_t constant = READ_BYTE();
+        Value value = pop();
+        // Fast path for fixnum comparison
+        if (IS_FIXNUM(value)) {
+          push(BOOL_VAL(AS_FIXNUM(value) == (int64_t)constant));
+        } else if (IS_NUMBER(value)) {
+          push(BOOL_VAL(AS_NUMBER(value) == (double)constant));
+        } else {
+          // For non-numeric values, they're never equal to a numeric constant
+          push(BOOL_VAL(false));
+        }
         break;
       }
 

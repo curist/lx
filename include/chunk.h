@@ -96,7 +96,8 @@ typedef enum {
   // Special/optimization
   OP_COALESCE_CONST,      // Replace TOS with constant if TOS is falsy
   OP_COALESCE_CONST_LONG,
-  OP_IS_EVEN,             // Test if TOS integer is even (hot-path for % 2 == 0)
+  OP_MOD_CONST_BYTE,      // TOS = TOS % imm8 (specialized for constant modulo)
+  OP_EQ_CONST_BYTE,       // TOS = (TOS == imm8) (specialized for constant equality)
 
   // Fused numeric for loops (appended to avoid renumbering existing opcodes)
   OP_FORPREP_1,           // Numeric for loop prepare (step=1)

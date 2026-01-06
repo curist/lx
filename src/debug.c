@@ -291,8 +291,10 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return constantInstruction("OP_COALESCE_CONST", chunk, offset);
     case OP_COALESCE_CONST_LONG:
       return constantLongInstruction("OP_COALESCE_CONST_LONG", chunk, offset);
-    case OP_IS_EVEN:
-      return simpleInstruction("OP_IS_EVEN", offset);
+    case OP_MOD_CONST_BYTE:
+      return byteInstruction("OP_MOD_CONST_BYTE", chunk, offset);
+    case OP_EQ_CONST_BYTE:
+      return byteInstruction("OP_EQ_CONST_BYTE", chunk, offset);
     case OP_FORPREP_1:
       return forLoopInstruction("OP_FORPREP_1", 1, chunk, offset);
     case OP_FORLOOP_1:

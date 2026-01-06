@@ -503,7 +503,7 @@ fn compileUnary(gen, node) {
 }
 
 fn compileBinary(gen, node) {
-  // Note: Pattern optimizations like (x % 2 == 0) → IS_EVEN
+  // Note: Pattern optimizations (x % N → MOD_CONST_BYTE, x == M → EQ_CONST_BYTE)
   // are done in ANF phase, not here, to work correctly with ANF transformations
 
   compileValue(gen, node.left)
@@ -617,15 +617,26 @@ fn compileIntrinsicCall(gen, node) {
       compileValue(gen, args[i])
     }
     emitByte(gen, OP.APPEND, node.line)
-  } else if node.intrinsic == "is_even" {
-    // is_even expects 1 arg: value
+  } else if node.intrinsic == "mod_const" {
+    // mod_const expects 1 arg: value, plus modulus field
     if len(args) != 1 {
-      addError(gen, node, "Internal error: is_even expects 1 arg, got " + str(len(args)))
+      addError(gen, node, "Internal error: mod_const expects 1 arg, got " + str(len(args)))
       emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
       return
     }
     compileValue(gen, args[0])
-    emitByte(gen, OP.IS_EVEN, node.line)
+    emitByte(gen, OP.MOD_CONST_BYTE, node.line)
+    emitByte(gen, node.modulus, node.line)
+  } else if node.intrinsic == "eq_const" {
+    // eq_const expects 1 arg: value, plus compareTo field
+    if len(args) != 1 {
+      addError(gen, node, "Internal error: eq_const expects 1 arg, got " + str(len(args)))
+      emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+      return
+    }
+    compileValue(gen, args[0])
+    emitByte(gen, OP.EQ_CONST_BYTE, node.line)
+    emitByte(gen, node.compareTo, node.line)
   } else {
     addError(gen, node, "Unknown intrinsic: " + node.intrinsic)
     emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline

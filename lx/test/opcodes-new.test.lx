@@ -31,21 +31,21 @@ test("OP_COALESCE_CONST: empty string or const returns empty string", fn(assert)
   assert.equal(result, "", "Empty string is truthy, should not coalesce")
 })
 
-test("OP_IS_EVEN: even numbers", fn(assert) {
+test("OP_MOD_CONST_BYTE + OP_EQ_CONST_BYTE: even numbers", fn(assert) {
   assert.truthy(0 % 2 == 0, "0 is even")
   assert.truthy(2 % 2 == 0, "2 is even")
   assert.truthy(42 % 2 == 0, "42 is even")
   assert.truthy(-4 % 2 == 0, "-4 is even")
 })
 
-test("OP_IS_EVEN: odd numbers", fn(assert) {
+test("OP_MOD_CONST_BYTE + OP_EQ_CONST_BYTE: odd numbers", fn(assert) {
   assert.truthy(!(1 % 2 == 0), "1 is odd")
   assert.truthy(!(3 % 2 == 0), "3 is odd")
   assert.truthy(!(99 % 2 == 0), "99 is odd")
   assert.truthy(!(-3 % 2 == 0), "-3 is odd")
 })
 
-test("OP_IS_EVEN: loop with even check", fn(assert) {
+test("OP_MOD_CONST_BYTE + OP_EQ_CONST_BYTE: loop with even check", fn(assert) {
   let evens = []
   for let i = 0; i < 10; i = i + 1 {
     if i % 2 == 0 {
@@ -55,6 +55,32 @@ test("OP_IS_EVEN: loop with even check", fn(assert) {
   assert.equal(len(evens), 5, "Should find 5 even numbers")
   assert.equal(evens[0], 0, "First even is 0")
   assert.equal(evens[4], 8, "Fifth even is 8")
+})
+
+test("OP_MOD_CONST_BYTE + OP_EQ_CONST_BYTE: divisibility by 3", fn(assert) {
+  assert.truthy(0 % 3 == 0, "0 divisible by 3")
+  assert.truthy(3 % 3 == 0, "3 divisible by 3")
+  assert.truthy(9 % 3 == 0, "9 divisible by 3")
+  assert.truthy(!(4 % 3 == 0), "4 not divisible by 3")
+  assert.truthy(!(5 % 3 == 0), "5 not divisible by 3")
+})
+
+test("OP_MOD_CONST_BYTE + OP_EQ_CONST_BYTE: divisibility by 5", fn(assert) {
+  assert.truthy(0 % 5 == 0, "0 divisible by 5")
+  assert.truthy(5 % 5 == 0, "5 divisible by 5")
+  assert.truthy(10 % 5 == 0, "10 divisible by 5")
+  assert.truthy(!(4 % 5 == 0), "4 not divisible by 5")
+  assert.truthy(!(7 % 5 == 0), "7 not divisible by 5")
+})
+
+test("OP_MOD_CONST_BYTE + OP_EQ_CONST_BYTE: fizzbuzz pattern", fn(assert) {
+  let count = 0
+  for let i = 1; i <= 15; i = i + 1 {
+    if i % 3 == 0 and i % 5 == 0 {
+      count = count + 1
+    }
+  }
+  assert.equal(count, 1, "Should find 1 fizzbuzz (15) in range 1-15")
 })
 
 suite.run()

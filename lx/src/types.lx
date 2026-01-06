@@ -178,7 +178,8 @@ let OP = enum {
   // Special/optimization
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy
   COALESCE_CONST_LONG,
-  IS_EVEN,          // Test if TOS integer is even (hot-path for % 2 == 0)
+  MOD_CONST_BYTE,   // TOS = TOS % imm8 (specialized for constant modulo)
+  EQ_CONST_BYTE,    // TOS = (TOS == imm8) (specialized for constant equality)
 
   // Fused numeric for loops (appended to avoid renumbering existing opcodes)
   FORPREP_1,        // Numeric for loop prepare (step=1)

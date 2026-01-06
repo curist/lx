@@ -23,8 +23,8 @@ if !mainFunction {
   Lx.exit(65)
 }
 
-// Build object
-let hexBytes = common.objbuilder(mainFunction, false).bytes()
+// Build object (no compression until objloader.c is updated)
+let hexBytes = common.objbuilder(mainFunction, false, false).bytes()
 println("Object size: " + str(len(hexBytes)) + " bytes")
 
 // Output to /tmp/{basename}.lxobj

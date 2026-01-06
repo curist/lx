@@ -34,14 +34,14 @@ fn run(ctx) {
   if !func { Lx.exit(65) }
 
   if outputPath {
-    let bytes = common.objbuilder(func, common.DEBUG_BUILD).bytes()
+    let bytes = common.objbuilder(func, common.DEBUG_BUILD, true).bytes()
     let ok = Lx.fs.writeFile(outputPath, common.bytesToString(bytes))
     if ok != true {
       Lx.stderr.println(ok or "Failed to write output.")
       Lx.exit(74)
     }
   } else {
-    common.objbuilder(func, common.DEBUG_BUILD).dump()
+    common.objbuilder(func, common.DEBUG_BUILD, true).dump()
   }
 }
 

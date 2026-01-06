@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <stdlib.h>
+#include <zlib.h>
 
 #include "debug.h"
 #include "objloader.h"
@@ -10,28 +12,56 @@
 ValueArray functions;
 ChunkIndexes chunkIndexes;
 
-// obj layout
-// LX:        2
-// VERSION:   1
-// FLAGS:     1 , 8 bits
-//     0000 0001 -> debug
-// OBJSIZE:   4 little endian
-// CHUNKS:    4 little endian
-// MAIN_ID:   4 little endian
-// TBD:       32 - (2+1+1+4+4+4) = 16
-// # chunk layout
-// CHUNK_SIZE: 4 little endian
-//    CHUNK_TYPE: 1: 0 as REF, 1 as actual
-//    CHUNK_ID: 4 little endian
-//       REF_TARGET: 4, little endian, function id
-//    FUNCTION_ARITY: 1
-//     UPVALUE_COUNT: 1
-//   CHUNK_NAME_SIZE: 2 little endian
-//        CHUNK_NAME: string, vary length, aka function name
-// CODE_SECTION: same as v0
-// CONST_SECTION: same as v0
-//   OBJ: FUNCTION payload is 4-byte function id
-// DEBUG_SECTION: same as v0
+// Filepath table for v2 format
+typedef struct {
+  ObjString** paths;
+  int count;
+} FilepathTable;
+
+static FilepathTable filepathTable;
+
+// lxobj layout v2
+//
+// HEADER (32 bytes):
+//   MAGIC:               2  ('L','X')
+//   VERSION:             1  (2)
+//   FLAGS:               1
+//     bit0 (0x01): debug sections present
+//     bit1 (0x02): payload is zlib-compressed
+//   OBJSIZE:             4  u32 LE (total file size: header + stored payload)
+//   CHUNKS:              4  u32 LE (number of chunks)
+//   MAIN_ID:             4  u32 LE (entry chunk id)
+//   CRC32:               4  u32 LE (CRC32 of *uncompressed* payload bytes)
+//   FILEPATH_TABLE_SIZE: 4  u32 LE (bytes of filepath table; 0 if !debug)
+//   RESERVED:            8
+//
+// PAYLOAD (immediately after header; may be compressed):
+//   FILEPATH_TABLE (present iff debug && FILEPATH_TABLE_SIZE > 0):
+//     COUNT:             2  u16 LE
+//     repeated COUNT times:
+//       LENGTH:          2  u16 LE
+//       STRING:          LENGTH bytes (utf-8 / raw bytes)
+//   CHUNK_STREAM:
+//     repeated CHUNKS times:
+//       CHUNK_SIZE:      4  u32 LE (bytes following this field)
+//       CHUNK_TYPE:      1  (0=REF, 1=ACTUAL)
+//       CHUNK_ID:        4  u32 LE
+//       if REF:
+//         REF_TARGET:    4  u32 LE (chunk id)
+//       if ACTUAL:
+//         ARITY:         1  u8
+//         UPVALUE_COUNT: 1  u8
+//         NAME_LEN:      2  u16 LE
+//         NAME:          NAME_LEN bytes
+//         CODE_SIZE:     4  u32 LE
+//         CODE:          CODE_SIZE bytes
+//         CONST_SEC_SIZE:4  u32 LE
+//         CONST_COUNT:   2  u16 LE
+//         CONSTS:        variable (tagged values)
+//         if debug:
+//           DEBUG_SIZE:  4  u32 LE
+//           FILEPATH_INDEX: 2 u16 LE (index into filepath table)
+//           LINE_RLE:    repeated records of (REPEAT:1 u8, LINE:2 u16 LE)
 
 double readDouble(const uint8_t* bytes) {
   double n = 0;
@@ -89,9 +119,13 @@ bool objIsValid(uint8_t* bytes) {
     return false;
   }
   uint8_t version = bytes[2];
-  if (version != 1) {
+  if (version != 1 && version != 2) {
     fprintf(stderr, "Invalid lxobj: unsupported version %u.\n", version);
     return false;
+  }
+  if (version == 2) {
+    // let loadObj handle real validation
+    return true;
   }
   uint8_t flags = bytes[3];
   bool debug = (flags & 0b00000001) > 0;
@@ -215,7 +249,69 @@ void freeChunkIndexes(ChunkIndexes* array) {
   initChunkIndexes(array);
 }
 
-ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
+// Decompress payload for v2 format
+static uint8_t* decompressPayload(uint8_t* compressed, size_t compressedLen, size_t* uncompressedLen) {
+  // Start with reasonable buffer and grow if needed
+  *uncompressedLen = compressedLen * 3;
+  uint8_t* uncompressed = NULL;
+  int result;
+
+  for (int attempts = 0; attempts < 5; attempts++) {
+    uncompressed = malloc(*uncompressedLen);
+    if (!uncompressed) {
+      fprintf(stderr, "Failed to allocate decompression buffer\n");
+      return NULL;
+    }
+
+    uLongf destLen = *uncompressedLen;
+    result = uncompress(uncompressed, &destLen, compressed, compressedLen);
+    *uncompressedLen = destLen;
+
+    if (result == Z_OK) return uncompressed;
+
+    free(uncompressed);
+    if (result != Z_BUF_ERROR) {
+      fprintf(stderr, "Decompression failed: %d\n", result);
+      return NULL;
+    }
+
+    *uncompressedLen *= 2;
+  }
+
+  fprintf(stderr, "Decompression failed after retries\n");
+  return NULL;
+}
+
+// Parse filepath table from v2 format
+static bool parseFilepathTable(uint8_t* bytes, size_t tableSize) {
+  if (tableSize < 2) {
+    filepathTable.count = 0;
+    filepathTable.paths = NULL;
+    return true;
+  }
+
+  uint8_t* ptr = bytes;
+  size_t count = getShortSize(ptr);
+  ptr += 2;
+
+  filepathTable.count = count;
+  filepathTable.paths = malloc(sizeof(ObjString*) * count);
+  if (!filepathTable.paths) {
+    fprintf(stderr, "Failed to allocate filepath table\n");
+    return false;
+  }
+
+  for (size_t i = 0; i < count; i++) {
+    size_t len = getShortSize(ptr);
+    ptr += 2;
+    filepathTable.paths[i] = copyString((char*)ptr, len);
+    ptr += len;
+  }
+
+  return true;
+}
+
+ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags, uint8_t version) {
   bool debug = (flags & 0b00000001) > 0;
 
   ObjFunction* func = newFunction();
@@ -256,10 +352,22 @@ ObjFunction* loadFunction(uint8_t* bytes, uint8_t flags) {
     // size_t debugLinesSize = getSize(ptr);
     ptr += 4;
 
-    size_t filenameSize = getShortSize(ptr);
-    ptr += 2;
-    func->filename = copyString((char*)ptr, filenameSize);
-    ptr += filenameSize;
+    // v2 uses filepath index, v1 uses full filepath string
+    if (version == 2) {
+      size_t filepathIndex = getShortSize(ptr);
+      ptr += 2;
+      if (filepathIndex < (size_t)filepathTable.count) {
+        func->filename = filepathTable.paths[filepathIndex];
+      } else {
+        fprintf(stderr, "Invalid filepath index: %zu\n", filepathIndex);
+        func->filename = copyString("[unknown]", 9);
+      }
+    } else {
+      size_t filenameSize = getShortSize(ptr);
+      ptr += 2;
+      func->filename = copyString((char*)ptr, filenameSize);
+      ptr += filenameSize;
+    }
     // ptr is now at the start of line numbers!!!
 
     uint8_t repeatTimes = ptr[0];
@@ -354,11 +462,60 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
   initValueArray(&functions);
   initChunkIndexes(&chunkIndexes);
 
+  uint8_t version = bytes[2];
   uint8_t flags = bytes[3];
+  bool debug = (flags & 0b00000001) > 0;
+  bool compressed = (flags & 0b00000010) > 0;
   int mainId = (int)getSize(&bytes[12]);
-
   size_t chunks_count = getSize(&bytes[8]);
-  uint8_t* chunk_start = &bytes[32];
+
+  // For v2: handle decompression and filepath table
+  uint8_t* payload = &bytes[32];
+  size_t payloadSize = getSize(&bytes[4]) - 32;
+  uint8_t* allocatedPayload = NULL;
+
+  if (version == 2) {
+    uint32_t expectedCrc = getSize(&bytes[16]);
+    size_t filepathTableSize = getSize(&bytes[20]);
+
+    // Decompress if needed
+    if (compressed) {
+      size_t uncompressedSize;
+      allocatedPayload = decompressPayload(payload, payloadSize, &uncompressedSize);
+      if (!allocatedPayload) {
+        fprintf(stderr, "Failed to decompress payload\n");
+        return NULL;
+      }
+      payload = allocatedPayload;
+      payloadSize = uncompressedSize;
+    }
+
+    // Validate CRC32
+    uLong actualCrc = crc32(0L, Z_NULL, 0);
+    actualCrc = crc32(actualCrc, payload, payloadSize);
+    if (actualCrc != expectedCrc) {
+      fprintf(stderr, "CRC32 mismatch: expected %u, got %lu\n", expectedCrc, actualCrc);
+      if (allocatedPayload) free(allocatedPayload);
+      return NULL;
+    }
+
+    // Parse filepath table
+    if (debug && filepathTableSize > 0) {
+      if (!parseFilepathTable(payload, filepathTableSize)) {
+        if (allocatedPayload) free(allocatedPayload);
+        return NULL;
+      }
+    } else {
+      filepathTable.count = 0;
+      filepathTable.paths = NULL;
+    }
+  }
+
+  // Find start of chunks (after filepath table for v2)
+  uint8_t* chunk_start = payload;
+  if (version == 2 && debug) {
+    chunk_start += getSize(&bytes[20]); // Skip filepath table
+  }
 
   uint8_t shared_module_count = 0;
 
@@ -376,8 +533,11 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
       writeValueArrayAt(&functions, chunkId, NUMBER_VAL(targetId));
       shared_module_count++;
     } else {
-      ObjFunction* func = loadFunction(ptr, flags);
-      if (func == NULL) return NULL;
+      ObjFunction* func = loadFunction(ptr, flags, version);
+      if (func == NULL) {
+        if (allocatedPayload) free(allocatedPayload);
+        return NULL;
+      }
       if (chunkId == mainId) main = func;
       writeValueArrayAt(&functions, chunkId, OBJ_VAL(func));
     }
@@ -423,5 +583,16 @@ ObjFunction* loadObj(uint8_t* bytes, bool printCode) {
 
   freeValueArray(&functions);
   freeChunkIndexes(&chunkIndexes);
+
+  // Cleanup v2 resources
+  if (allocatedPayload) {
+    free(allocatedPayload);
+  }
+  if (version == 2 && filepathTable.paths) {
+    free(filepathTable.paths);
+    filepathTable.paths = NULL;
+    filepathTable.count = 0;
+  }
+
   return main;
 }

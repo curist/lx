@@ -1,55 +1,55 @@
 let .{ ValueType } = import "src/types.lx"
 let .{ ObjType } = import "src/object.lx"
 
-let VERSION = 1
+let VERSION = 2
 
 let ChunkType = .{
   REF: 0,
   ACTUAL: 1,
 }
 
-// obj layout
-// LX:        2
-// VERSION:   1
-// FLAGS:     1 , 8 bits
-//     0000 0001 -> debug
-// OBJSIZE:   4 little endian
-// CHUNKS:    4 little endian
-// MAIN_ID:   4 little endian
-// TBD:       32 - (2+1+1+4+4+4) = 16
-// # chunk layout
-// CHUNK_SIZE: 4 little endian
-//    CHUNK_TYPE: 1: 0 as REF, 1 as actual
-//    CHUNK_ID: 4 little endian
-//       REF_TARGET: 4, little endian, function id
-//    FUNCTION_ARITY: 1
-//     UPVALUE_COUNT: 1
-//   CHUNK_NAME_SIZE: 2 little endian
-//        CHUNK_NAME: string, vary length, aka function name
-// CODE_SECTION: ?
-//      SIZE: 4 little endian
-//      CODE: various length
-//            CODE_SECTION guaranteed to be followed by 5 bytes of CONST_SECTION header
-// CONST_SECTION: follow right after a CODE_SECTION
-//      SIZE: 4  let's leave size here, so it's possible for us to jump to next chunk
-//      CONST_COUNT: 1
-//   every const is like
-//      TYPE:  1
-//      VALUE: 1 bit type + type dependent layout(length)
-//        BOOL:   1 + 1
-//        NIL:    1
-//        NUMBER: 1 + 8 (double)
-//        OBJ:    1 + 1 (obj type) + obj type dependent layout(length)
-//          STRING:   4 little endian size + actual string
-//          FUNCTION: 4-byte function id
-// DEBUG_SECTION:
-//      SIZE: 4 little endian
-//      FILEPATH_LENGTH: 2 file path length
-//      FILEPATH: vary length
-//      TOKEN_LINE_NUMBER: 1 + 2 byte, each
-//                first byte represent repeat times for line #
-//                next 2 bytes is the actual line number
-//                (which means we would only support line no. up to 65535)
+// lxobj layout v2
+//
+// HEADER (32 bytes):
+//   MAGIC:               2  ('L','X')
+//   VERSION:             1  (2)
+//   FLAGS:               1
+//     bit0 (0x01): debug sections present
+//     bit1 (0x02): payload is zlib-compressed
+//   OBJSIZE:             4  u32 LE (total file size: header + stored payload)
+//   CHUNKS:              4  u32 LE (number of chunks)
+//   MAIN_ID:             4  u32 LE (entry chunk id)
+//   CRC32:               4  u32 LE (CRC32 of *uncompressed* payload bytes)
+//   FILEPATH_TABLE_SIZE: 4  u32 LE (bytes of filepath table; 0 if !debug)
+//   RESERVED:            8
+//
+// PAYLOAD (immediately after header; may be compressed):
+//   FILEPATH_TABLE (present iff debug && FILEPATH_TABLE_SIZE > 0):
+//     COUNT:             2  u16 LE
+//     repeated COUNT times:
+//       LENGTH:          2  u16 LE
+//       STRING:          LENGTH bytes (utf-8 / raw bytes)
+//   CHUNK_STREAM:
+//     repeated CHUNKS times:
+//       CHUNK_SIZE:      4  u32 LE (bytes following this field)
+//       CHUNK_TYPE:      1  (0=REF, 1=ACTUAL)
+//       CHUNK_ID:        4  u32 LE
+//       if REF:
+//         REF_TARGET:    4  u32 LE (chunk id)
+//       if ACTUAL:
+//         ARITY:         1  u8
+//         UPVALUE_COUNT: 1  u8
+//         NAME_LEN:      2  u16 LE
+//         NAME:          NAME_LEN bytes
+//         CODE_SIZE:     4  u32 LE
+//         CODE:          CODE_SIZE bytes
+//         CONST_SEC_SIZE:4  u32 LE
+//         CONST_COUNT:   2  u16 LE
+//         CONSTS:        variable (tagged values)
+//         if debug:
+//           DEBUG_SIZE:  4  u32 LE
+//           FILEPATH_INDEX: 2 u16 LE (index into filepath table)
+//           LINE_RLE:    repeated records of (REPEAT:1 u8, LINE:2 u16 LE)
 
 fn int32ToBytes(num) {
   // always return 4 bytes as numbers
@@ -61,6 +61,25 @@ fn int32ToBytes(num) {
   bytes[2] = num & 255
   num = num >> 8
   bytes[3] = num & 255
+  return bytes
+}
+
+fn uint32ToBytes(num) {
+  let n = Math.floor(num)
+
+  // if you ever allow negative inputs, normalize into [0, 2^32)
+  if n < 0 {
+    n = n + 4294967296
+  }
+
+  let bytes = [0, 0, 0, 0]
+  bytes[0] = n % 256
+  n = Math.floor(n / 256)
+  bytes[1] = n % 256
+  n = Math.floor(n / 256)
+  bytes[2] = n % 256
+  n = Math.floor(n / 256)
+  bytes[3] = n % 256
   return bytes
 }
 
@@ -95,10 +114,13 @@ fn setFlags(options) {
   if options.debug {
     flags = flags + 1
   }
+  if options.compress {
+    flags = flags + 2  // bit 1
+  }
   return flags
 }
 
-fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
+fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId, filepathIndex) {
   let chunk = func.chunk
   let funcName = func.name
   let filename = chunk.filename
@@ -202,9 +224,8 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
     obj = concat(obj, int32ToBytes(0))
     let debugLines = []
 
-    let filePathStringLength = uint16ToLEBytes(len(filename))
-    debugLines = concat(debugLines, filePathStringLength)
-    debugLines = concat(debugLines, stringToBytes(filename))
+    // Store filepath index instead of full path
+    debugLines = concat(debugLines, uint16ToLEBytes(filepathIndex))
 
     let lastLineNumber = -1
     let runningLength = 0
@@ -241,8 +262,8 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
   return .{ obj }
 }
 
-fn objbuilder(main, debug) {
-  let flags = .{ debug }
+fn objbuilder(main, debug, compress) {
+  let flags = .{ debug, compress }
   let functions = []
   fn ensureFunctionId(func) {
     for func_, i in functions {
@@ -255,36 +276,83 @@ fn objbuilder(main, debug) {
   let mainId = ensureFunctionId(main)
 
   // Magic bytes: "LX" in ASCII (76, 88)
-  let obj = [76, 88, VERSION, setFlags(flags)]
-  obj = concat(obj, int32ToBytes(0))  // size placeholder
-  obj = concat(obj, int32ToBytes(0))  // chunks placeholder
-  obj = concat(obj, int32ToBytes(mainId))
+  let header = [76, 88, VERSION, setFlags(flags)]
+  header = concat(header, int32ToBytes(0))  // size placeholder (offset 4)
+  header = concat(header, int32ToBytes(0))  // chunks placeholder (offset 8)
+  header = concat(header, int32ToBytes(mainId))  // main ID (offset 12)
+  header = concat(header, int32ToBytes(0))  // CRC32 placeholder (offset 16)
+  header = concat(header, int32ToBytes(0))  // filepath table size placeholder (offset 20)
 
-  let fillRest = 32 - len(obj)
-  for _ in range(fillRest) { push(obj, 0) }
+  // Reserved space (8 bytes)
+  for _ in range(8) { push(header, 0) }
 
+  // Filepath indexing (lazy, stable)
+  let filepathMap = .{}    // filename -> index
+  let filepathList = []    // index -> filename
+
+  fn ensureFilepathIndex(filename) {
+    if !debug { return 0 }
+    let idx = filepathMap[filename]
+    if idx == nil {
+      idx = len(filepathList)
+      filepathMap[filename] = idx
+      push(filepathList, filename)
+    }
+    return idx
+  }
+
+  // Build chunks first (functions may grow here)
+  let chunksBytes = []
   let builtModuleCache = .{}
 
-  // NOTE: functions length will grow when we build chunks
   for let i = 0; i < len(functions); i = i + 1 {
     let func = functions[i]
-    let chunkObj = buildChunkObj(func, i, flags, builtModuleCache, ensureFunctionId)
-    obj = concat(obj, chunkObj.obj)
+    let filename = func.chunk.filename
+    let fpIndex = ensureFilepathIndex(filename)
+
+    let chunkObj = buildChunkObj(func, i, flags, builtModuleCache, ensureFunctionId, fpIndex)
+    chunksBytes = concat(chunksBytes, chunkObj.obj)
 
     let isModule = func.name == ""
-
-    if isModule and builtModuleCache[func.chunk.filename] == nil {
-      // just built a not cached module chunk
-      builtModuleCache[func.chunk.filename] = i
+    if isModule and builtModuleCache[filename] == nil {
+      builtModuleCache[filename] = i
     }
   }
 
-  // update obj size
-  let totalSize = len(obj)
-  writeBytesAt(obj, int32ToBytes(totalSize), 4)
+  // Now build filepath table (index order)
+  let filepathTable = []
+  if debug {
+    filepathTable = concat(filepathTable, uint16ToLEBytes(len(filepathList)))
+    for let i = 0; i < len(filepathList); i = i + 1 {
+      let filename = filepathList[i]
+      filepathTable = concat(filepathTable, uint16ToLEBytes(len(filename)))
+      filepathTable = concat(filepathTable, stringToBytes(filename))
+    }
+  }
 
-  // update chunks count
-  writeBytesAt(obj, int32ToBytes(len(functions)), 8)
+  // Payload = table + chunks
+  let payload = concat(filepathTable, chunksBytes)
+
+  // Calculate CRC32 of uncompressed payload (if zlib available)
+  let crc32 = Lx.zlib.crc32(payload)
+  writeBytesAt(header, uint32ToBytes(crc32), 16)
+
+  // Update filepath table size
+  writeBytesAt(header, int32ToBytes(len(filepathTable)), 20)
+
+  // Update chunks count
+  writeBytesAt(header, int32ToBytes(len(functions)), 8)
+
+  // Compress payload if requested (and zlib available)
+  if compress {
+    payload = Lx.zlib.deflate(payload)
+  }
+
+  // Combine header and payload
+  let obj = concat(header, payload)
+
+  // Update total obj size
+  writeBytesAt(obj, int32ToBytes(len(obj)), 4)
 
   return .{
     dump: fn() {

@@ -82,6 +82,10 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `Lx.proc` - process helpers namespace.
 - `Lx.proc.exec(cmd: string) -> {code,out}` Run a shell command and capture stdout.
 - `Lx.proc.system(cmd: string) -> number` Run a shell command (inherits stdio), returning exit code.
+- `Lx.zlib` - compression helpers namespace.
+- `Lx.zlib.deflate(data: array[number]) -> array[number]` Compress a byte array using zlib deflate (compatible with gzip).
+- `Lx.zlib.inflate(data: array[number]) -> array[number]` Decompress a zlib-compressed byte array.
+- `Lx.zlib.crc32(data: array[number]) -> number` Calculate CRC32 checksum of a byte array (unsigned 32-bit integer).
 - `Lx.globals() -> array[string | number]` List current global keys.
 - `Lx.doubleToUint8Array(x: number) -> array[number]` Convert a float64 to 8 bytes (little-endian).
 - `Lx.isLxObj(bytes: string | array[number]) -> bool` checks whether a byte buffer looks like an lxobj.

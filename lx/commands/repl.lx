@@ -26,7 +26,7 @@ fn run(ctx) {
       func.chunk.bytecode = [common.OP.NIL, common.OP.RETURN]
     }
 
-    let bytes = common.objbuilder(func, false).bytes()
+    let bytes = common.objbuilder(func, false, false).bytes()
     let program = Lx.loadObj(bytes, false)
 
     let r = Lx.pcall(program)

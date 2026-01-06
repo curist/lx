@@ -22,7 +22,7 @@ fn run(ctx) {
   let func = common.compileWithDriver(d, path)
   if !func { Lx.exit(65) }
 
-  let bytes = common.objbuilder(func, false).bytes()
+  let bytes = common.objbuilder(func, false, false).bytes()
   let program = Lx.loadObj(bytes, false)
   let result = program()
   println(result)

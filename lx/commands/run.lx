@@ -17,7 +17,7 @@ fn run(ctx) {
   let func = common.compilePathToFunction(path, data)
   if !func { Lx.exit(65) }
 
-  let bytes = common.objbuilder(func, common.DEBUG_BUILD).bytes()
+  let bytes = common.objbuilder(func, common.DEBUG_BUILD, true).bytes()
   let program = Lx.loadObj(bytes, false)
   program()
 }

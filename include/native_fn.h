@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #include "lx/lxversion.h"
 
@@ -1531,10 +1532,12 @@ static bool doubleToUint8ArrayNative(int argCount, Value *args) {
   u.value = AS_NUMBER(args[0]);
 
   ObjArray *array = newArray();
-  args[-1] = OBJ_VAL(array);
+  push(OBJ_VAL(array));
   for (int i = 0; i < 8; i++) {
     writeValueArray(&array->array, NUMBER_VAL(u.bytes[i]));
   }
+  args[-1] = OBJ_VAL(array);
+  pop();
   return true;
 }
 
@@ -1553,6 +1556,152 @@ static bool lxErrorNative(int argCount, Value *args) {
   return false;
 }
 
+// Lx.zlib.deflate(data: Array[Number]) -> Array[Number]
+// Compress byte array using zlib deflate
+static bool zlibDeflateNative(int argCount, Value *args) {
+  if (argCount < 1 || !IS_ARRAY(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.zlib.deflate requires an array of bytes");
+    return false;
+  }
+
+  ValueArray input = AS_ARRAY(args[0]);
+  size_t inputLen = input.count;
+
+  // Convert lx array to uint8_t buffer
+  uint8_t* inputBuf = ALLOCATE(uint8_t, inputLen);
+  for (size_t i = 0; i < inputLen; i++) {
+    if (!IS_NUMBER(input.values[i])) {
+      FREE_ARRAY(uint8_t, inputBuf, inputLen);
+      args[-1] = CSTRING_VAL("Error: array must contain only numbers");
+      return false;
+    }
+    inputBuf[i] = (uint8_t)AS_NUMBER(input.values[i]);
+  }
+
+  // Calculate max compressed size
+  uLongf compressedLen = compressBound(inputLen);
+  uint8_t* compressedBuf = ALLOCATE(uint8_t, compressedLen);
+
+  // Compress
+  int result = compress2(compressedBuf, &compressedLen, inputBuf, inputLen, Z_DEFAULT_COMPRESSION);
+  FREE_ARRAY(uint8_t, inputBuf, inputLen);
+
+  if (result != Z_OK) {
+    FREE_ARRAY(uint8_t, compressedBuf, compressedLen);
+    args[-1] = CSTRING_VAL("Error: zlib compression failed");
+    return false;
+  }
+
+  // Convert to lx array
+  ObjArray* output = newArray();
+  push(OBJ_VAL(output));
+  for (size_t i = 0; i < compressedLen; i++) {
+    writeValueArray(&output->array, NUMBER_VAL(compressedBuf[i]));
+  }
+  args[-1] = OBJ_VAL(output);
+  pop();
+
+  FREE_ARRAY(uint8_t, compressedBuf, compressedLen);
+  return true;
+}
+
+// Lx.zlib.inflate(data: Array[Number]) -> Array[Number]
+// Decompress byte array using zlib inflate
+static bool zlibInflateNative(int argCount, Value *args) {
+  if (argCount < 1 || !IS_ARRAY(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.zlib.inflate requires an array of bytes");
+    return false;
+  }
+
+  ValueArray input = AS_ARRAY(args[0]);
+  size_t inputLen = input.count;
+
+  // Convert lx array to uint8_t buffer
+  uint8_t* inputBuf = ALLOCATE(uint8_t, inputLen);
+  for (size_t i = 0; i < inputLen; i++) {
+    if (!IS_NUMBER(input.values[i])) {
+      FREE_ARRAY(uint8_t, inputBuf, inputLen);
+      args[-1] = CSTRING_VAL("Error: array must contain only numbers");
+      return false;
+    }
+    inputBuf[i] = (uint8_t)AS_NUMBER(input.values[i]);
+  }
+
+  // Start with a reasonable buffer size and grow if needed
+  uLongf cap = inputLen * 3; // Initial capacity
+  uint8_t* uncompressedBuf = NULL;
+  int result;
+  uLongf outLen;
+
+  // Retry with larger buffer if needed
+  for (int attempts = 0; attempts < 5; attempts++) {
+    uncompressedBuf = ALLOCATE(uint8_t, cap);
+    outLen = cap; // Pass capacity as max output size
+    result = uncompress(uncompressedBuf, &outLen, inputBuf, inputLen);
+
+    if (result == Z_OK) break;
+
+    FREE_ARRAY(uint8_t, uncompressedBuf, cap); // Free with allocated capacity
+    uncompressedBuf = NULL;
+    if (result != Z_BUF_ERROR) break;
+
+    // Try with larger buffer
+    cap *= 2;
+  }
+
+  FREE_ARRAY(uint8_t, inputBuf, inputLen);
+
+  if (result != Z_OK) {
+    if (uncompressedBuf) FREE_ARRAY(uint8_t, uncompressedBuf, cap);
+    args[-1] = CSTRING_VAL("Error: zlib decompression failed");
+    return false;
+  }
+
+  // Convert to lx array (use outLen = actual decompressed size)
+  ObjArray* output = newArray();
+  push(OBJ_VAL(output));
+  for (size_t i = 0; i < outLen; i++) {
+    writeValueArray(&output->array, NUMBER_VAL(uncompressedBuf[i]));
+  }
+  args[-1] = OBJ_VAL(output);
+  pop();
+
+  FREE_ARRAY(uint8_t, uncompressedBuf, cap); // Free with allocated capacity
+  return true;
+}
+
+// Lx.zlib.crc32(data: Array[Number]) -> Number
+// Calculate CRC32 checksum of byte array
+static bool zlibCrc32Native(int argCount, Value *args) {
+  if (argCount < 1 || !IS_ARRAY(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.zlib.crc32 requires an array of bytes");
+    return false;
+  }
+
+  ValueArray input = AS_ARRAY(args[0]);
+  size_t inputLen = input.count;
+
+  // Convert lx array to uint8_t buffer
+  uint8_t* inputBuf = ALLOCATE(uint8_t, inputLen);
+  for (size_t i = 0; i < inputLen; i++) {
+    if (!IS_NUMBER(input.values[i])) {
+      FREE_ARRAY(uint8_t, inputBuf, inputLen);
+      args[-1] = CSTRING_VAL("Error: array must contain only numbers");
+      return false;
+    }
+    inputBuf[i] = (uint8_t)AS_NUMBER(input.values[i]);
+  }
+
+  // Calculate CRC32
+  uLong crc = crc32(0L, Z_NULL, 0);
+  crc = crc32(crc, inputBuf, inputLen);
+
+  FREE_ARRAY(uint8_t, inputBuf, inputLen);
+
+  args[-1] = NUMBER_VAL((double)crc);
+  return true;
+}
+
 static inline uint32_t readU32le(const uint8_t* bytes) {
   return (uint32_t)bytes[0]
       | ((uint32_t)bytes[1] << 8)
@@ -1565,8 +1714,8 @@ static inline bool lxObjHeaderLooksValid(const uint8_t* bytes, size_t len) {
   // objIsValid() reads from fixed offsets; make sure it can't read OOB.
   if (len < 32) return false;
   if (!(bytes[0] == 'L' && bytes[1] == 'X')) return false;
-  // Version is currently 1.
-  if (bytes[2] != 1) return false;
+  // Accept version 1 or 2.
+  if (bytes[2] != 1 && bytes[2] != 2) return false;
   uint32_t objSize = readU32le(bytes + 4);
   return objSize == (uint32_t)len;
 }
@@ -1873,12 +2022,13 @@ static bool reverseNative(int argCount, Value *args) {
 
   ValueArray *input = &AS_ARRAY(args[0]);
   ObjArray *result = newArray();
-  args[-1] = OBJ_VAL(result);
-
+  push(OBJ_VAL(result));
   // Copy elements in reverse order
   for (int i = input->count - 1; i >= 0; i--) {
     writeValueArray(&result->array, input->values[i]);
   }
+  args[-1] = OBJ_VAL(result);
+  pop();
 
   return true;
 }
@@ -1953,12 +2103,14 @@ static bool sliceNative(int argCount, Value *args) {
 
   size_t length = endIndex - startIndex;
   ObjArray *result = newArray();
-  args[-1] = OBJ_VAL(result);
+  push(OBJ_VAL(result));
 
   // Copy elements from start to end (exclusive)
   for (size_t i = 0; i < length; i++) {
     writeValueArray(&result->array, input->values[startIndex + i]);
   }
+  args[-1] = OBJ_VAL(result);
+  pop();
 
   return true;
 }
@@ -2108,6 +2260,19 @@ static void defineLxNatives() {
   defineTableFunction(&proc->table, "exec", execNative);
   defineTableFunction(&proc->table, "system", systemNative);
   pop(); // proc
+
+  // Lx.zlib
+  ObjHashmap* zlib = newHashmap();
+  push(OBJ_VAL(zlib)); // root
+  push(CSTRING_VAL("zlib"));
+  push(OBJ_VAL(zlib));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+  defineTableFunction(&zlib->table, "deflate", zlibDeflateNative);
+  defineTableFunction(&zlib->table, "inflate", zlibInflateNative);
+  defineTableFunction(&zlib->table, "crc32", zlibCrc32Native);
+  pop(); // zlib
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array",

@@ -7,7 +7,7 @@ DATE = $(shell date "+%Y.%m.%d")
 CFLAGS += -D_XOPEN_SOURCE=700
 CFLAGS += -Wall -Wextra -Werror -Wno-unused-parameter
 CFLAGS += -Iinclude
-CFLAGS += -lm
+CFLAGS += -lm -lz
 ifeq ($(MODE),debug)
 	CFLAGS += -DDEBUG -O0
 else

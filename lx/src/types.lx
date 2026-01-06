@@ -88,7 +88,6 @@ let KEYWORDS = fold([
 let OP = enum {
   // Control flow
   NOP,
-  RETURN,
   JUMP,
   JUMP_IF_TRUE,
   JUMP_IF_FALSE,
@@ -186,6 +185,8 @@ let OP = enum {
   FORLOOP_1,        // Numeric for loop iterate (step=1)
   FORPREP,          // Numeric for loop prepare (arbitrary signed step)
   FORLOOP,          // Numeric for loop iterate (arbitrary signed step)
+
+  RETURN = 255,
 }
 
 let ValueType = enum { BOOL, NIL, NUMBER, OBJ }

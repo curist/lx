@@ -6,7 +6,6 @@
 typedef enum {
   // Control flow
   OP_NOP,
-  OP_RETURN,
   OP_JUMP,
   OP_JUMP_IF_TRUE,
   OP_JUMP_IF_FALSE,
@@ -104,6 +103,8 @@ typedef enum {
   OP_FORLOOP_1,           // Numeric for loop iterate (step=1)
   OP_FORPREP,             // Numeric for loop prepare (arbitrary signed step)
   OP_FORLOOP,             // Numeric for loop iterate (arbitrary signed step)
+
+  OP_RETURN = 0xff,
 } OpCode;
 
 typedef struct {

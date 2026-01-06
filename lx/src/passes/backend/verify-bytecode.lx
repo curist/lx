@@ -16,8 +16,7 @@
 // - SET_LOCAL: effect=-1 (consumes value, updates local)
 //              → Future: effect=0 (updates stack slot in-place)
 
-let types = import "src/types.lx"
-let OP = types.OP
+let .{ OP } = import "src/types.lx"
 
 // ========================================
 // Stack Effect Tables

@@ -599,7 +599,6 @@ let NATIVE_NAMES = .{
 }
 
 let PRELUDE_NAMES = .{
-  ["_1"]: true,
   ["each"]: true,
   ["first"]: true,
   ["fold"]: true,

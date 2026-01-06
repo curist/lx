@@ -164,12 +164,6 @@ let partial = collect i in range(10) {
 // arrow chaining, `->`, which passes lhs as first arg of rhs
 each(Lx.globals(), fn(x) { print(x) }) // could be rewritten as
 Lx.globals()->each(fn(x) { print(x) })
-
-// Lx has a builtin function defined as `_1`
-fn _1(cb) { fn(x) { cb(x) } }
-// so we could also write above line like below
-Lx.globals()->each(_1(print))
-
 ```
 
 ## Builtin functions

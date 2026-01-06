@@ -1,8 +1,4 @@
-let types = import "src/types.lx"
-let TOKEN = types.TOKEN
-
-// let globals = import "globals.lx"
-// let fold = globals.fold
+let .{ TOKEN, KEYWORDS } = import "src/types.lx"
 
 fn initScanner(src) {
   let state = .{
@@ -219,7 +215,7 @@ fn initScanner(src) {
   fn identifier() {
     for isAlpha(peek()) or isDigit(peek()) { advance() }
     let lexeme = getLexeme()
-    let isKeyword = types.KEYWORDS[lexeme]
+    let isKeyword = KEYWORDS[lexeme]
 
     Token(isKeyword and TOKEN[toupper(lexeme)] or TOKEN.IDENTIFIER)
   }

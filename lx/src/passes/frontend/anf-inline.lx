@@ -28,7 +28,7 @@
 //   - Every removed let had a remembered single-use site
 //   - Replacement succeeded
 
-let NODE = (import "src/types.lx").NODE
+let .{ NODE } = import "src/types.lx"
 
 // ------------------------------------------------------------
 // Helpers

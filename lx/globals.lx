@@ -1,20 +1,12 @@
-fn _1(cb) { fn(x) { cb(x) } }
-
 fn first(coll) { coll[0] }
 fn last(coll) { coll[len(coll) - 1] }
 
 fn each(arr, cb) {
-  let length = len(arr)
-  for let i = 0; i < length; i = i + 1 {
-    cb(arr[i], i, arr )
-  }
+  for x in arr { cb(x) }
 }
 
 fn fold(arr, acc, cb) {
-  let length = len(arr)
-  for let i = 0; i < length; i = i + 1 {
-    acc = cb(acc, arr[i], i)
-  }
+  for x, i in arr { acc = cb(acc, x, i) }
   acc
 }
 
@@ -72,7 +64,6 @@ fn sort(arr, compare) {
 }
 
 return .{
-  _1,
   first,
   last,
   each,

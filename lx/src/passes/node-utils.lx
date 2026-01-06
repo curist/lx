@@ -1,7 +1,6 @@
 // Shared utilities for node copying across compiler passes
 
-let types = import "src/types.lx"
-let NODE = types.NODE
+let .{ NODE } = import "src/types.lx"
 
 // Hashmap of node type -> field copier function for shallow copying
 // Shallow copy means: copy node structure but reuse child references

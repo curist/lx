@@ -326,7 +326,6 @@ Common globals (from `globals.lx`):
 - `tonumber(str)` - convert string to number (e.g., `tonumber("42")` → `42`)
 - `range(n)` or `range(string)` - create array [0..n-1] or UTF-8 character array
 - `fold(arr, init, fn)` - reduce/fold
-- `each(arr, fn)` - forEach
 - `push(arr, val)` - append to array
 - `keys(map)` - get hashmap keys
 - `join(arr, sep)` - join strings

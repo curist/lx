@@ -37,7 +37,6 @@ Native builtins are documented in `../API.md` (this is the source of truth for e
 
 ### Prelude builtins (`lx/globals.lx`)
 
-- `_1(cb: fn) -> fn` Wrap a callback as a unary function (ignores extra args).
 - `first(coll: array | string) -> any` First element/char.
 - `last(coll: array | string) -> any` Last element/char.
 - `each(arr: array, cb: fn(x, i, arr, abort)) -> nil` Iterate; call `abort()` to stop early.

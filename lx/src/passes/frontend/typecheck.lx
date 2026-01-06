@@ -17,7 +17,7 @@
 //   then refines function bodies once and finalizes remaining constraints to Any.
 
 let helper = import "src/passes/frontend/typecheck-helper.lx"
-let NODE = (import "src/types.lx").NODE
+let .{ NODE } = import "src/types.lx"
 let DEBUG = false
 
 // ========================================================

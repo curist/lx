@@ -61,30 +61,15 @@ let TOKEN = enum(100) {
   EOF = 999,
 }
 
-let KEYWORDS = fold([
-  "and",
-  "or",
-  "if",
-  "else",
-  "fn",
-  "for",
-  "nil",
-  "return",
-  "true",
-  "false",
-  "let",
-  "enum",
-  "break",
-  "continue",
-  "import",
-  "in",
-  "collect",
-], .{}, fn(acc, kw) {
-  acc[kw] = true
+let KEYWORDS = keys(TOKEN)->fold(.{}, fn(acc, k) {
+  let index = TOKEN[k]
+  if index >= 400 and index < 500 {
+    acc[tolower(k)] = true
+  }
   acc
 })
 
-// XXX: need to keep this in sync with clox
+// NOTE: need to keep this in sync with clox
 let OP = enum {
   // Control flow
   NOP,

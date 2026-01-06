@@ -1,6 +1,6 @@
 let a = collect x in range(11) { x * x }
 
-each(a, _1(print))
+each(a, print)
 
 (collect x in range(101) { x * x })
   ->fold(0, fn(a, b) { a + b })

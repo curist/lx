@@ -1,14 +1,7 @@
-let types = import "src/types.lx"
-let object = import "src/object.lx"
-
-// let globals = import "globals.lx"
-// let each = globals.each
-// let fold = globals.fold
+let .{ ValueType } = import "src/types.lx"
+let .{ ObjType } = import "src/object.lx"
 
 let VERSION = 1
-
-let ValueType = types.ValueType
-let ObjType = object.ObjType
 
 let ChunkType = .{
   REF: 0,
@@ -130,9 +123,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
     // update chunk total size
     writeBytesAt(obj, int32ToBytes(len(obj) - 4), 0)
 
-    return .{
-      obj: obj,
-    }
+    return .{ obj }
   }
 
   push(obj, ChunkType.ACTUAL)
@@ -178,8 +169,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
         constants = concat(constants, double)
       },
       [ValueType.OBJ]: fn(val) {
-        let handler = objTypeHandlers[val.kind]
-        if handler {
+        if let handler = objTypeHandlers[val.kind] {
           push(constants, val.kind)
           handler(val.value)
         } else {
@@ -189,9 +179,8 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
         }
       },
     }
-    each(chunk.constants, fn(val) {
-      let handler = constTypeHandlers[val.kind]
-      if handler {
+    for val in chunk.constants {
+      if let handler = constTypeHandlers[val.kind] {
         push(constants, val.kind)
         handler(val.value)
       } else {
@@ -199,7 +188,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
         Lx.stderr.println("Invalid value handler type: ", val.kind)
         Lx.exit(55)
       }
-    })
+    }
   }
 
   // update constants section size (2 bytes for count + constants data)
@@ -226,7 +215,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
       lastLineNumber = -1
       runningLength = 0
     }
-    each(chunk.lines, fn(line) {
+    for line in chunk.lines {
       if line == lastLineNumber {
         runningLength = runningLength + 1
       } else {
@@ -237,7 +226,7 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
       if runningLength == 255 {
         emitDebugLines(line)
       }
-    })
+    }
     // emit remaing lines
     emitDebugLines(lastLineNumber)
 
@@ -249,26 +238,15 @@ fn buildChunkObj(func, funcId, flags, builtModuleCache, ensureFunctionId) {
   // update chunk total size
   writeBytesAt(obj, int32ToBytes(len(obj) - 4), 0)
 
-  return .{
-    obj: obj,
-  }
-}
-
-fn hexToBytes(hex) {
-  let mapping = .{
-    ["0"]: 0, ["1"]: 1, ["2"]: 2, ["3"]: 3, ["4"]: 4,
-    ["5"]: 5, ["6"]: 6, ["7"]: 7, ["8"]: 8, ["9"]: 9,
-    a: 10, b: 11, c: 12, d: 13, e: 14, f: 15,
-  }
-  return mapping[hex[0]] * 16 + mapping[hex[1]]
+  return .{ obj }
 }
 
 fn objbuilder(main, debug) {
   let flags = .{ debug }
   let functions = []
   fn ensureFunctionId(func) {
-    for let i = 0; i < len(functions); i = i + 1 {
-      if functions[i] == func { return i }
+    for func_, i in functions {
+      if func_ == func { return i }
     }
     push(functions, func)
     len(functions) - 1
@@ -283,10 +261,11 @@ fn objbuilder(main, debug) {
   obj = concat(obj, int32ToBytes(mainId))
 
   let fillRest = 32 - len(obj)
-  each(range(fillRest), fn() { push(obj, 0) })
+  for _ in range(fillRest) { push(obj, 0) }
 
   let builtModuleCache = .{}
 
+  // NOTE: functions length will grow when we build chunks
   for let i = 0; i < len(functions); i = i + 1 {
     let func = functions[i]
     let chunkObj = buildChunkObj(func, i, flags, builtModuleCache, ensureFunctionId)
@@ -308,7 +287,10 @@ fn objbuilder(main, debug) {
   writeBytesAt(obj, int32ToBytes(len(functions)), 8)
 
   return .{
-    dump: fn() { each(obj, _1(Lx.stdout.putc)) },
+    dump: fn() {
+      let putc = Lx.stdout.putc
+      for b in obj { putc(b) }
+    },
     bytes: fn() { obj },
   }
 }

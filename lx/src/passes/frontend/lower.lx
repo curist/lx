@@ -6,9 +6,7 @@
 // IMPORTANT: Lower MUST NOT introduce synthetic nodes.
 // Missing else branches remain as nil (not normalized to empty blocks).
 
-let types = import "src/types.lx"
-let TOKEN = types.TOKEN
-let NODE = types.NODE
+let .{ TOKEN, NODE } = import "src/types.lx"
 let nodeUtils = import "src/passes/node-utils.lx"
 
 // ========================================

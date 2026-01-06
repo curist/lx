@@ -6,8 +6,7 @@
 //
 // IMPORTANT: ANF MUST NOT mutate input AST nodes.
 
-let types = import "src/types.lx"
-let NODE = types.NODE
+let .{ NODE } = import "src/types.lx"
 let nodeUtils = import "src/passes/node-utils.lx"
 
 // ========================================

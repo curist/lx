@@ -1,8 +1,3 @@
-fn min2(a, b) {
-  if a < b { return a }
-  b
-}
-
 // Repeatedly scans `items`, removing the ones `trySolve(item)` can solve.
 // Returns the remaining (unsolved) items once no progress is made.
 fn solveWorklist(items, trySolve, opts) {
@@ -81,9 +76,9 @@ fn scc(nodes, edgesFor) {
 
       if indexBy[w] == nil {
         strongConnect(w)
-        lowBy[v] = min2(lowBy[v], lowBy[w])
+        lowBy[v] = min(lowBy[v], lowBy[w])
       } else if onStack[w] {
-        lowBy[v] = min2(lowBy[v], indexBy[w])
+        lowBy[v] = min(lowBy[v], indexBy[w])
       }
     }
 
@@ -179,7 +174,7 @@ fn sccTopo(nodes, edgesFor) {
 }
 
 .{
-  solveWorklist: solveWorklist,
-  scc: scc,
-  sccTopo: sccTopo,
+  solveWorklist,
+  scc,
+  sccTopo,
 }

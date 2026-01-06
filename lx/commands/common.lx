@@ -110,11 +110,7 @@ fn compilePathToFunction(path, sourceOverride) {
 }
 
 fn bytesToString(bytes) {
-  let byteString = ""
-  for let i = 0; i < len(bytes); i = i + 1 {
-    byteString = byteString + chr(bytes[i])
-  }
-  byteString
+  collect byte in bytes { chr(byte) }->join("")
 }
 
 fn slurpUserPath(path, entryPath) {

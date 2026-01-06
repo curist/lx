@@ -3,10 +3,7 @@
 // Example: lx run scripts/bootstrap-codegen.lx lx/main.lx
 // Output: /tmp/main.lxobj
 
-let driver = import "src/driver.lx"
-let codegen = import "src/passes/backend/codegen.lx"
-let verify = import "src/passes/backend/verify-bytecode.lx"
-let ModuleResolution = import "src/module_resolution.lx"
+let common = import "commands/common.lx"
 
 // Get entry file from command line args
 // Lx.args: [lx, run, script, arg1, ...]
@@ -20,22 +17,12 @@ let entryFile = Lx.args[3]
 println("=== Building " + entryFile + " with NEW codegen (PR3) ===")
 println("")
 
-// Create driver
-let resolver = ModuleResolution.forEntry(entryFile)
-let d = driver.make(.{
-  profile: "default",
-  withTypecheck: false,
-  loadSource: fn(path) { resolver.slurp(path) },
-})
-
-// Codegen with recursive module compilation
+// Compile with proper error reporting
 println("=== Compiling " + entryFile + " and all dependencies ===")
-
-let codegenModule = driver.makeCodegenHandler(d, codegen, verify)
-let mainFunction = codegenModule(Lx.path.basename(entryFile))
+let mainFunction = common.compilePathToFunction(entryFile, nil)
 if !mainFunction {
-  println("Codegen failed")
-  Lx.exit(1)
+  Lx.stderr.println("Compilation failed - see errors above")
+  Lx.exit(65)
 }
 
 println("Codegen successful")
@@ -43,12 +30,8 @@ println("")
 
 // Build object
 println("=== Building Object ===")
-let objbuilder = import "src/objbuilder.lx"
-let hexBytes = objbuilder(mainFunction, false).bytes()
+let hexBytes = common.objbuilder(mainFunction, false).bytes()
 println("Object size: " + str(len(hexBytes)) + " bytes")
-
-// Convert byte numbers to string
-let byteString = collect byte in hexBytes { chr(byte) }->join("")
 
 // Output to /tmp/{basename}.lxobj
 let filename = Lx.path.basename(entryFile)
@@ -63,10 +46,11 @@ for let i = 0; i < len(filename); i = i + 1 {
 }
 
 let outputPath = "/tmp/" + basename + ".lxobj"
+let byteString = common.bytesToString(hexBytes)
 let ok = Lx.fs.writeFile(outputPath, byteString)
 if ok != true {
   Lx.stderr.println(ok or "Failed to write output.")
-  Lx.exit(1)
+  Lx.exit(74)
 }
 
 println("Saved to " + outputPath)

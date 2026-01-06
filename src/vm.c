@@ -363,14 +363,14 @@ void freeVM() {
 static bool call(ObjClosure* closure, int argCount) {
   int arity = closure->function->arity;
 
-  if (argCount < arity) {
-    runtimeError("Expected %d arguments but got %d.", arity, argCount);
-    return false;
-  }
-
   if (vm.frameCount == FRAMES_MAX) {
     runtimeError("Stack overflow.");
     return false;
+  }
+
+  // push nil for insufficient args passed
+  for (int i = 0; i < arity - argCount; i++) {
+    push(NIL_VAL);
   }
 
   // Discard extra args from value stack

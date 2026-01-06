@@ -177,14 +177,14 @@ static void runtimeError(const char* format, ...) {
 }
 
 static bool valueToInt64Exact(Value value, int64_t* out, const char* context) {
-  if (!IS_NUMBER(value)) {
-    runtimeError("%s must be a number.", context);
-    return false;
-  }
-
   if (IS_FIXNUM(value)) {
     *out = AS_FIXNUM(value);
     return true;
+  }
+
+  if (!IS_NUMBER(value)) {
+    runtimeError("%s must be a number.", context);
+    return false;
   }
 
   double num = AS_NUMBER(value);

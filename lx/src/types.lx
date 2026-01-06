@@ -165,6 +165,10 @@ let OP = enum {
   LENGTH,
   GET_BY_INDEX,
   SET_BY_INDEX,
+  GET_BY_CONST,        // GET_BY_INDEX with key from constant pool
+  GET_BY_CONST_LONG,
+  SET_BY_CONST,        // SET_BY_INDEX with key from constant pool
+  SET_BY_CONST_LONG,
   ASSOC,
   APPEND,
 

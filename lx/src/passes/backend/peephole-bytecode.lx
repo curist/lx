@@ -1,0 +1,139 @@
+// Peephole Bytecode Optimization Pass
+// Responsibility: Semantics-preserving bytecode-to-bytecode rewrites
+//
+// This pass performs pattern-based optimizations on bytecode:
+// - CONSTANT + GET_BY_INDEX → GET_BY_CONST
+// - CONSTANT + SET_BY_INDEX → SET_BY_CONST
+//
+// Future optimizations could include:
+// - Superinstruction formation
+// - Dead code elimination
+// - Short-circuit fusions
+
+let .{ OP } = import "src/types.lx"
+let verify = import "src/passes/backend/verify-bytecode.lx"
+
+fn peephole(chunk) {
+  let bytecode = chunk.bytecode
+  let lines = chunk.lines
+  let nodeIds = chunk.nodeIds
+  let constants = chunk.constants
+
+  let newBytecode = []
+  let newLines = []
+  let newNodeIds = []
+
+  let i = 0
+  for i < len(bytecode) {
+    let op = bytecode[i]
+
+    // Pattern: CONSTANT + GET_BY_INDEX → GET_BY_CONST
+    if (op == OP.CONSTANT or op == OP.CONSTANT_LONG) and i + 2 < len(bytecode) {
+      let isLong = op == OP.CONSTANT_LONG
+      let constIdx
+      let nextOpPos
+
+      if isLong {
+        // CONSTANT_LONG uses 2 bytes for index
+        constIdx = bytecode[i + 1] * 256 + bytecode[i + 2]
+        nextOpPos = i + 3
+      } else {
+        // CONSTANT uses 1 byte
+        constIdx = bytecode[i + 1]
+        nextOpPos = i + 2
+      }
+
+      if nextOpPos < len(bytecode) {
+        let nextOp = bytecode[nextOpPos]
+
+        // Rewrite CONSTANT + GET_BY_INDEX → GET_BY_CONST
+        if nextOp == OP.GET_BY_INDEX {
+          // Use the line/nodeId from the GET_BY_INDEX instruction (the semantic operation)
+          let targetLine = lines[nextOpPos]
+          let targetNodeId = nodeIds[nextOpPos]
+
+          if constIdx < 256 {
+            push(newBytecode, OP.GET_BY_CONST)
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+            push(newBytecode, constIdx)
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+          } else {
+            push(newBytecode, OP.GET_BY_CONST_LONG)
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+            push(newBytecode, Math.floor(constIdx / 256))
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+            push(newBytecode, constIdx % 256)
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+          }
+
+          i = nextOpPos + 1
+          continue
+        }
+
+        // Rewrite CONSTANT + SET_BY_INDEX → SET_BY_CONST
+        if nextOp == OP.SET_BY_INDEX {
+          let targetLine = lines[nextOpPos]
+          let targetNodeId = nodeIds[nextOpPos]
+
+          if constIdx < 256 {
+            push(newBytecode, OP.SET_BY_CONST)
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+            push(newBytecode, constIdx)
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+          } else {
+            push(newBytecode, OP.SET_BY_CONST_LONG)
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+            push(newBytecode, Math.floor(constIdx / 256))
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+            push(newBytecode, constIdx % 256)
+            push(newLines, targetLine)
+            push(newNodeIds, targetNodeId)
+          }
+
+          i = nextOpPos + 1
+          continue
+        }
+      }
+    }
+
+    // No match: copy entire instruction as-is (including all operand bytes)
+    let instrLen = verify.instructionLength(chunk, i)
+    if !instrLen {
+      // Failed to decode instruction - copy single byte and continue
+      push(newBytecode, op)
+      push(newLines, lines[i])
+      push(newNodeIds, nodeIds[i])
+      i = i + 1
+    } else {
+      // Copy all bytes of this instruction
+      for let j = 0; j < instrLen; j = j + 1 {
+        push(newBytecode, bytecode[i + j])
+        push(newLines, lines[i + j])
+        push(newNodeIds, nodeIds[i + j])
+      }
+      i = i + instrLen
+    }
+  }
+
+  // Return modified chunk
+  .{
+    filename: chunk.filename,
+    bytecode: newBytecode,
+    constants: constants,
+    lines: newLines,
+    nodeIds: newNodeIds,
+    constantsCache: chunk.constantsCache,
+    importConstCache: chunk.importConstCache,
+  }
+}
+
+.{ peephole }

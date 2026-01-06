@@ -562,6 +562,113 @@ inline static void concatenate() {
   push(OBJ_VAL(result));
 }
 
+// Helper: Get value by index (shared logic for all get-by-index operations)
+// Returns true on success, false on error (error message already set)
+static bool getByIndexImpl(Value object, Value key, Value* out) {
+  if (!IS_ENUM(object) && !IS_HASHMAP(object) && !IS_ARRAY(object) && !IS_STRING(object)) {
+    runtimeError("Only array / hashmap / string can get value by index.");
+    return false;
+  }
+
+  if (IS_ARRAY(object)) {
+    if (!IS_NUMBER(key)) {
+      runtimeError("Can only use number index to access array.");
+      return false;
+    }
+    int index = (int)AS_NUMBER(key);
+    if ((double)index != AS_NUMBER(key)) {
+      runtimeError("Can only use integer index to access array.");
+      return false;
+    }
+
+    ValueArray* array = &AS_ARRAY(object);
+    if (index >= 0 && index < array->count) {
+      *out = array->values[index];
+    } else {
+      *out = NIL_VAL;
+    }
+  } else if (IS_ENUM(object)) {
+    if (!IS_NUMBER(key) && !IS_STRING(key)) {
+      runtimeError("Enum key type must be number or string.");
+      return false;
+    }
+    Table* table = &AS_ENUM_FORWARD(object);
+    if (!tableGet(table, key, out)) {
+      *out = NIL_VAL;
+    }
+  } else if (IS_HASHMAP(object)) {
+    if (!IS_NUMBER(key) && !IS_STRING(key)) {
+      runtimeError("Hashmap key type must be number or string.");
+      return false;
+    }
+    Table* table = &AS_HASHMAP(object);
+    if (!tableGet(table, key, out)) {
+      *out = NIL_VAL;
+    }
+  } else {
+    // String
+    if (!IS_NUMBER(key)) {
+      runtimeError("String index type must be a number.");
+      return false;
+    }
+    ObjString* s = AS_STRING(object);
+    char* ch = NULL;
+    size_t index = (size_t)AS_NUMBER(key);
+    if (index < s->length) {
+      ch = &s->chars[index];
+    }
+    if (ch != NULL) {
+      *out = OBJ_VAL(copyString(ch, 1));
+    } else {
+      *out = NIL_VAL;
+    }
+  }
+  return true;
+}
+
+// Helper: Set value by index (shared logic for all set-by-index operations)
+// Returns true on success, false on error (error message already set)
+static bool setByIndexImpl(Value object, Value key, Value value, Value* out) {
+  if (IS_ENUM(object)) {
+    runtimeError("Enum is immutable.");
+    return false;
+  }
+  if (!IS_HASHMAP(object) && !IS_ARRAY(object)) {
+    runtimeError("Only array or hashmap can set value by index.");
+    return false;
+  }
+
+  if (IS_ARRAY(object)) {
+    if (!IS_NUMBER(key)) {
+      runtimeError("Can only use number index to access array.");
+      return false;
+    }
+    int index = (int)AS_NUMBER(key);
+    if ((double)index != AS_NUMBER(key)) {
+      runtimeError("Can only use integer index to access array.");
+      return false;
+    }
+
+    ValueArray* array = &AS_ARRAY(object);
+    if (index >= 0 && index < array->count) {
+      array->values[index] = value;
+      *out = value;
+    } else {
+      *out = NIL_VAL;
+    }
+  } else {
+    // Hashmap
+    if (!IS_NUMBER(key) && !IS_STRING(key)) {
+      runtimeError("Hashmap key type must be number or string.");
+      return false;
+    }
+    Table* table = &AS_HASHMAP(object);
+    tableSet(table, key, value);
+    *out = value;
+  }
+  return true;
+}
+
 static InterpretResult runUntil(int stopFrameCount) {
   CallFrame* frame = &vm.frames[vm.frameCount - 1];
   ObjClosure* closure = frame->closure;
@@ -786,122 +893,63 @@ static InterpretResult runUntil(int stopFrameCount) {
       }
 
       case OP_GET_BY_INDEX: {
-        if (!IS_ENUM(peek(1)) && !IS_HASHMAP(peek(1)) && !IS_ARRAY(peek(1)) && !IS_STRING(peek(1))) {
-          runtimeError("Only array / hashmap / string can get value by index.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        Value key = peek(0);
-
-        if (IS_ARRAY(peek(1))) {
-          if (!IS_NUMBER(key)) {
-            runtimeError("Can only use number index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          int index = (int)AS_NUMBER(key);
-          if ((double)index != AS_NUMBER(key)) {
-            runtimeError("Can only use integer index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-
-          ValueArray* array = &AS_ARRAY(peek(1));
-          Value value = NIL_VAL;
-          if (index >= 0 && index < array->count) {
-            value = array->values[index];
-          }
-          pop(); // key
-          pop(); // container
-          push(value);
-
-        } else if (IS_ENUM(peek(1))) {
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            runtimeError("Enum key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_ENUM_FORWARD(peek(1));
-          Value value;
-          if (!tableGet(table, key, &value)) value = NIL_VAL;
-          pop(); // key
-          pop(); // container
-          push(value);
-
-        } else if (IS_HASHMAP(peek(1))) {
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            runtimeError("Hashmap key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_HASHMAP(peek(1));
-          Value value;
-          if (!tableGet(table, key, &value)) value = NIL_VAL;
-          pop(); // key
-          pop(); // container
-          push(value);
-
-        } else {
-          // string
-          if (!IS_NUMBER(key)) {
-            runtimeError("String index type must be a number.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          ObjString* s = AS_STRING(peek(1));
-          char* ch = NULL;
-          size_t index = (size_t)AS_NUMBER(key);
-          if (index < s->length) {
-            ch = &s->chars[index];
-          }
-          pop(); // key
-          pop(); // string
-          if (ch != NULL) push(OBJ_VAL(copyString(ch, 1)));
-          else            push(NIL_VAL);
-        }
+        Value key = pop();
+        Value object = pop();
+        Value result;
+        if (!getByIndexImpl(object, key, &result)) return INTERPRET_RUNTIME_ERROR;
+        push(result);
         break;
       }
 
       case OP_SET_BY_INDEX: {
-        if (IS_ENUM(peek(2))) {
-          runtimeError("Enum is immutable.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        if (!IS_HASHMAP(peek(2)) && !IS_ARRAY(peek(2))) {
-          runtimeError("Only array or hashmap can set value by index.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        Value key = peek(1);
-        Value value = peek(0);
+        Value value = pop();
+        Value key = pop();
+        Value object = pop();
+        Value result;
+        if (!setByIndexImpl(object, key, value, &result)) return INTERPRET_RUNTIME_ERROR;
+        push(result);
+        break;
+      }
 
-        if (IS_ARRAY(peek(2))) {
-          if (!IS_NUMBER(key)) {
-            runtimeError("Can only use number index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          int index = (int)AS_NUMBER(key);
-          if ((double)index != AS_NUMBER(key)) {
-            runtimeError("Can only use integer index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
+      case OP_GET_BY_CONST: {
+        uint8_t constIdx = READ_BYTE();
+        Value object = pop();
+        Value key = frame->closure->function->chunk.constants.values[constIdx];
+        Value result;
+        if (!getByIndexImpl(object, key, &result)) return INTERPRET_RUNTIME_ERROR;
+        push(result);
+        break;
+      }
 
-          ValueArray* array = &AS_ARRAY(peek(2));
-          if (index >= 0 && index < array->count) {
-            array->values[index] = value;
-          } else {
-            value = NIL_VAL;
-          }
-          pop(); // value
-          pop(); // key
-          pop(); // container
-          push(value);
+      case OP_GET_BY_CONST_LONG: {
+        uint16_t constIdx = READ_SHORT();
+        Value object = pop();
+        Value key = frame->closure->function->chunk.constants.values[constIdx];
+        Value result;
+        if (!getByIndexImpl(object, key, &result)) return INTERPRET_RUNTIME_ERROR;
+        push(result);
+        break;
+      }
 
-        } else {
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            runtimeError("Hashmap key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_HASHMAP(peek(2));
-          tableSet(table, key, value);
-          pop(); // value
-          pop(); // key
-          pop(); // container
-          push(value);
-        }
+      case OP_SET_BY_CONST: {
+        uint8_t constIdx = READ_BYTE();
+        Value value = pop();
+        Value object = pop();
+        Value key = frame->closure->function->chunk.constants.values[constIdx];
+        Value result;
+        if (!setByIndexImpl(object, key, value, &result)) return INTERPRET_RUNTIME_ERROR;
+        push(result);
+        break;
+      }
+
+      case OP_SET_BY_CONST_LONG: {
+        uint16_t constIdx = READ_SHORT();
+        Value value = pop();
+        Value object = pop();
+        Value key = frame->closure->function->chunk.constants.values[constIdx];
+        Value result;
+        if (!setByIndexImpl(object, key, value, &result)) return INTERPRET_RUNTIME_ERROR;
+        push(result);
         break;
       }
 
@@ -1353,66 +1401,8 @@ static InterpretResult runUntil(int stopFrameCount) {
 
         Value object = slots[arrSlot];
         Value key = slots[idxSlot];
-
-        if (!IS_ENUM(object) && !IS_HASHMAP(object) && !IS_ARRAY(object) && !IS_STRING(object)) {
-          runtimeError("Only array / hashmap / string / enum can get value by index.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-
         Value result;
-        if (IS_ARRAY(object)) {
-          if (!IS_NUMBER(key)) {
-            runtimeError("Can only use number index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          int index = (int)AS_NUMBER(key);
-          if ((double)index != AS_NUMBER(key)) {
-            runtimeError("Can only use integer index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-
-          ValueArray* array = &AS_ARRAY(object);
-          if (index >= 0 && index < array->count) {
-            result = array->values[index];
-          } else {
-            result = NIL_VAL;
-          }
-        } else if (IS_ENUM(object)) {
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            runtimeError("Enum key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_ENUM_FORWARD(object);
-          if (!tableGet(table, key, &result)) {
-            result = NIL_VAL;
-          }
-        } else if (IS_HASHMAP(object)) {
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            runtimeError("Hashmap key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_HASHMAP(object);
-          if (!tableGet(table, key, &result)) {
-            result = NIL_VAL;
-          }
-        } else {
-          // String
-          if (!IS_NUMBER(key)) {
-            runtimeError("String index type must be a number.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          ObjString* s = AS_STRING(object);
-          char* ch = NULL;
-          size_t index = (size_t)AS_NUMBER(key);
-          if (index < s->length) {
-            ch = &s->chars[index];
-          }
-          if (ch != NULL) {
-            result = OBJ_VAL(copyString(ch, 1));
-          } else {
-            result = NIL_VAL;
-          }
-        }
+        if (!getByIndexImpl(object, key, &result)) return INTERPRET_RUNTIME_ERROR;
         push(result);
         break;
       }
@@ -1426,43 +1416,9 @@ static InterpretResult runUntil(int stopFrameCount) {
         Value object = slots[arrSlot];
         Value key = slots[idxSlot];
         Value value = slots[valSlot];
-
-        if (IS_ENUM(object)) {
-          runtimeError("Enum is immutable.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        if (!IS_HASHMAP(object) && !IS_ARRAY(object)) {
-          runtimeError("Only array or hashmap can set value by index.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-
-        if (IS_ARRAY(object)) {
-          if (!IS_NUMBER(key)) {
-            runtimeError("Can only use number index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          int index = (int)AS_NUMBER(key);
-          if ((double)index != AS_NUMBER(key)) {
-            runtimeError("Can only use integer index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-
-          ValueArray* array = &AS_ARRAY(object);
-          if (index >= 0 && index < array->count) {
-            array->values[index] = value;
-          } else {
-            value = NIL_VAL;
-          }
-          push(value);
-        } else {
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            runtimeError("Hashmap key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_HASHMAP(object);
-          tableSet(table, key, value);
-          push(value);
-        }
+        Value result;
+        if (!setByIndexImpl(object, key, value, &result)) return INTERPRET_RUNTIME_ERROR;
+        push(result);
         break;
       }
 
@@ -1473,71 +1429,8 @@ static InterpretResult runUntil(int stopFrameCount) {
 
         Value object = slots[objSlot];
         Value key = frame->closure->function->chunk.constants.values[constIdx];
-
-        if (!IS_ENUM(object) && !IS_HASHMAP(object) && !IS_ARRAY(object) && !IS_STRING(object)) {
-          runtimeError("Only array / hashmap / string / enum can get value by index.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-
         Value result;
-        if (IS_ARRAY(object)) {
-          if (!IS_NUMBER(key)) {
-            runtimeError("Can only use number index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          int index = (int)AS_NUMBER(key);
-          if ((double)index != AS_NUMBER(key)) {
-            runtimeError("Can only use integer index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-
-          ValueArray* array = &AS_ARRAY(object);
-          if (index >= 0 && index < array->count) {
-            result = array->values[index];
-          } else {
-            result = NIL_VAL;
-          }
-        } else if (IS_ENUM(object)) {
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            runtimeError("Enum key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_ENUM_FORWARD(object);
-          if (!tableGet(table, key, &result)) {
-            result = NIL_VAL;
-          }
-        } else {
-          if (IS_HASHMAP(object)) {
-            if (!IS_NUMBER(key) && !IS_STRING(key)) {
-              runtimeError("Hashmap key type must be number or string.");
-              return INTERPRET_RUNTIME_ERROR;
-            }
-            Value value;
-            Table* table = &AS_HASHMAP(object);
-            if (!tableGet(table, key, &value)) {
-              result = NIL_VAL;
-            } else {
-              result = value;
-            }
-          } else {
-            // String
-            if (!IS_NUMBER(key)) {
-              runtimeError("String index type must be a number.");
-              return INTERPRET_RUNTIME_ERROR;
-            }
-            ObjString* s = AS_STRING(object);
-            char* ch = NULL;
-            size_t index = (size_t)AS_NUMBER(key);
-            if (index < s->length) {
-              ch = &s->chars[index];
-            }
-            if (ch != NULL) {
-              result = OBJ_VAL(copyString(ch, 1));
-            } else {
-              result = NIL_VAL;
-            }
-          }
-        }
+        if (!getByIndexImpl(object, key, &result)) return INTERPRET_RUNTIME_ERROR;
         push(result);
         break;
       }
@@ -1551,43 +1444,9 @@ static InterpretResult runUntil(int stopFrameCount) {
         Value object = slots[objSlot];
         Value key = frame->closure->function->chunk.constants.values[constIdx];
         Value value = slots[valSlot];
-
-        if (IS_ENUM(object)) {
-          runtimeError("Enum is immutable.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-        if (!IS_HASHMAP(object) && !IS_ARRAY(object)) {
-          runtimeError("Only array or hashmap can set value by index.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-
-        if (IS_ARRAY(object)) {
-          if (!IS_NUMBER(key)) {
-            runtimeError("Can only use number index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          int index = (int)AS_NUMBER(key);
-          if ((double)index != AS_NUMBER(key)) {
-            runtimeError("Can only use integer index to access array.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-
-          ValueArray* array = &AS_ARRAY(object);
-          if (index >= 0 && index < array->count) {
-            array->values[index] = value;
-          } else {
-            value = NIL_VAL;
-          }
-          push(value);
-        } else {
-          if (!IS_NUMBER(key) && !IS_STRING(key)) {
-            runtimeError("Hashmap key type must be number or string.");
-            return INTERPRET_RUNTIME_ERROR;
-          }
-          Table* table = &AS_HASHMAP(object);
-          tableSet(table, key, value);
-          push(value);
-        }
+        Value result;
+        if (!setByIndexImpl(object, key, value, &result)) return INTERPRET_RUNTIME_ERROR;
+        push(result);
         break;
       }
 

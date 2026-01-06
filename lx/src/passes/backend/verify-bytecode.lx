@@ -97,6 +97,12 @@ let STACK_MIN = .{
   [OP.APPEND]:        2,
   [OP.SWAP]:          2,
 
+  // GET/SET_BY_CONST: key from constant pool
+  [OP.GET_BY_CONST]:      1,  // pop object, push result
+  [OP.GET_BY_CONST_LONG]: 1,
+  [OP.SET_BY_CONST]:      2,  // pop object and value, push result
+  [OP.SET_BY_CONST_LONG]: 2,
+
   // Need 3 inputs
   [OP.SET_BY_INDEX]:  3,
   [OP.ASSOC]:         3,
@@ -189,6 +195,12 @@ let STACK_EFFECTS = .{
   [OP.BIT_RSHIFT]:    -1,
   [OP.GET_BY_INDEX]:  -1,  // pop 2, push 1
   [OP.APPEND]:        -1,  // consumes value, keeps array
+
+  // GET/SET_BY_CONST: key from constant pool
+  [OP.GET_BY_CONST]:      0,   // pop 1 (object), push 1 (result)
+  [OP.GET_BY_CONST_LONG]: 0,
+  [OP.SET_BY_CONST]:     -1,   // pop 2 (object, value), push 1 (result)
+  [OP.SET_BY_CONST_LONG]: -1,
 
   // Pop 3, push 1 (-2)
   [OP.SET_BY_INDEX]:  -2,
@@ -329,6 +341,10 @@ let INSTRUCTION_LENGTHS = .{
   [OP.SWAP]:          1,
   [OP.GET_BY_INDEX]:  1,
   [OP.SET_BY_INDEX]:  1,
+  [OP.GET_BY_CONST]:  2,  // opcode + 1-byte constIdx
+  [OP.GET_BY_CONST_LONG]: 3,  // opcode + 2-byte constIdx
+  [OP.SET_BY_CONST]:  2,  // opcode + 1-byte constIdx
+  [OP.SET_BY_CONST_LONG]: 3,  // opcode + 2-byte constIdx
   [OP.GREATER]:       1,
   [OP.LESS]:          1,
   [OP.ADD]:           1,
@@ -668,4 +684,5 @@ fn verifyFunction(fnObj) {
 .{
   verifyFunction: verifyFunction,
   stackEffect: stackEffect,  // For testing
+  instructionLength: instructionLength,  // For peephole pass
 }

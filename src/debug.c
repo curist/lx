@@ -182,6 +182,14 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return simpleInstruction("OP_GET_BY_INDEX", offset);
     case OP_SET_BY_INDEX:
       return simpleInstruction("OP_SET_BY_INDEX", offset);
+    case OP_GET_BY_CONST:
+      return constantInstruction("OP_GET_BY_CONST", chunk, offset);
+    case OP_GET_BY_CONST_LONG:
+      return constantLongInstruction("OP_GET_BY_CONST_LONG", chunk, offset);
+    case OP_SET_BY_CONST:
+      return constantInstruction("OP_SET_BY_CONST", chunk, offset);
+    case OP_SET_BY_CONST_LONG:
+      return constantLongInstruction("OP_SET_BY_CONST_LONG", chunk, offset);
     case OP_EQUAL:
       return simpleInstruction("OP_EQUAL", offset);
     case OP_GREATER:

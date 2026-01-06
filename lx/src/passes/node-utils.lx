@@ -120,6 +120,8 @@ let shallowCopyHandlers = .{
   [NODE.IntrinsicCall]: fn(newNode, node) {
     newNode.intrinsic = node.intrinsic
     newNode.args = node.args
+    if node.modulus != nil { newNode.modulus = node.modulus }
+    if node.compareTo != nil { newNode.compareTo = node.compareTo }
   },
 }
 

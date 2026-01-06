@@ -1,0 +1,202 @@
+// Intrinsic Lowering (Post-Resolve, Post-ANF)
+//
+// Responsibility:
+// - Rewrite select generic AST patterns into IntrinsicCall nodes that map to
+//   specialized bytecode opcodes (e.g. `%` with small constant RHS).
+//
+// Design notes:
+// - Runs after ANF so evaluation order is already explicit; rewrites must not
+//   introduce new sequencing or new node IDs (binder tables must remain valid).
+// - Mutates the AST in-place (like anf-inline) and preserves node.id.
+
+let .{ NODE } = import "src/types.lx"
+
+fn isSmallUInt8NumberNode(node) {
+  if !node or node.type != NODE.Number { return nil }
+  let n = node.value
+  if n == Math.floor(n) and n >= 0 and n <= 255 { return n }
+  nil
+}
+
+fn lowerBinaryIntrinsic(node) {
+  if !node or node.type != NODE.Binary { return 0 }
+  let op = node.operator and node.operator.lexeme
+  if !op { return 0 }
+
+  // x % N  ->  IntrinsicCall(mod_const, [x], modulus=N)
+  if op == "%" {
+    let n = isSmallUInt8NumberNode(node.right)
+    if n != nil {
+      node.type = NODE.IntrinsicCall
+      node.intrinsic = "mod_const"
+      node.args = [node.left]
+      node.modulus = n
+      node.left = nil
+      node.right = nil
+      node.operator = nil
+      return 1
+    }
+  }
+
+  // x == N  ->  IntrinsicCall(eq_const, [x], compareTo=N)
+  if op == "==" {
+    let n = isSmallUInt8NumberNode(node.right)
+    if n != nil {
+      node.type = NODE.IntrinsicCall
+      node.intrinsic = "eq_const"
+      node.args = [node.left]
+      node.compareTo = n
+      node.left = nil
+      node.right = nil
+      node.operator = nil
+      return 1
+    }
+  }
+
+  0
+}
+
+fn walk(node, state) {
+  if !node { return }
+  let t = type(node)
+  if t == "array" {
+    for let i = 0; i < len(node); i = i + 1 { walk(node[i], state) }
+    return
+  }
+  if t != "map" { return }
+
+  let nt = node.type
+
+  if nt == NODE.Block {
+    let exprs = node.expressions or []
+    for let i = 0; i < len(exprs); i = i + 1 { walk(exprs[i], state) }
+    return
+  }
+
+  if nt == NODE.Let {
+    if node.name { walk(node.name, state) }
+    if node.init { walk(node.init, state) }
+    return
+  }
+
+  if nt == NODE.Function {
+    if node.name { walk(node.name, state) }
+    let params = node.params or []
+    for let i = 0; i < len(params); i = i + 1 { walk(params[i], state) }
+    walk(node.body, state)
+    return
+  }
+
+  if nt == NODE.Call {
+    walk(node.callee, state)
+    let args = node.args or []
+    for let i = 0; i < len(args); i = i + 1 { walk(args[i], state) }
+    return
+  }
+
+  if nt == NODE.IntrinsicCall {
+    let args = node.args or []
+    for let i = 0; i < len(args); i = i + 1 { walk(args[i], state) }
+    return
+  }
+
+  if nt == NODE.If {
+    walk(node.condition, state)
+    walk(node.then, state)
+    if node.else { walk(node.else, state) }
+    return
+  }
+
+  if nt == NODE.For {
+    if node.init { walk(node.init, state) }
+    if node.condition { walk(node.condition, state) }
+    if node.update { walk(node.update, state) }
+    walk(node.body, state)
+    return
+  }
+
+  if nt == NODE.Return {
+    if node.value { walk(node.value, state) }
+    return
+  }
+
+  if nt == NODE.Assignment {
+    walk(node.target, state)
+    walk(node.value, state)
+    return
+  }
+
+  if nt == NODE.Unary {
+    walk(node.operand, state)
+    return
+  }
+
+  if nt == NODE.Logical {
+    walk(node.left, state)
+    walk(node.right, state)
+    return
+  }
+
+  if nt == NODE.Binary {
+    walk(node.left, state)
+    walk(node.right, state)
+    state.rewrites = state.rewrites + lowerBinaryIntrinsic(node)
+    return
+  }
+
+  if nt == NODE.Array {
+    let elems = node.elements or []
+    for let i = 0; i < len(elems); i = i + 1 { walk(elems[i], state) }
+    return
+  }
+
+  if nt == NODE.Hashmap {
+    let pairs = node.pairs or []
+    for let i = 0; i < len(pairs); i = i + 1 {
+      let p = pairs[i]
+      walk(p.key, state)
+      walk(p.value, state)
+    }
+    return
+  }
+
+  if nt == NODE.Index {
+    walk(node.object, state)
+    walk(node.index, state)
+    return
+  }
+
+  if nt == NODE.Dot {
+    walk(node.object, state)
+    walk(node.property, state)
+    return
+  }
+
+  if nt == NODE.Grouping {
+    walk(node.expression, state)
+    return
+  }
+
+  if nt == NODE.Import {
+    walk(node.path, state)
+    return
+  }
+}
+
+fn lowerIntrinsics(ast, resolveResult, opts) {
+  // resolveResult kept for future binder-aware checks.
+  let _ = resolveResult
+  let _opts = opts
+
+  let state = .{ rewrites: 0 }
+  walk(ast, state)
+
+  .{
+    success: true,
+    ast: ast,
+    rewrites: state.rewrites,
+  }
+}
+
+lowerIntrinsics
+

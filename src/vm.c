@@ -1616,7 +1616,7 @@ static InterpretResult runUntil(int stopFrameCount) {
         // TOS = TOS % imm8 (specialized modulo with constant)
         uint8_t modulus = READ_BYTE();
         int64_t a;
-        if (!valueToInt64Exact(pop(), &a, "Operand of %")) return INTERPRET_RUNTIME_ERROR;
+        if (!valueToInt64Exact(pop(), &a, "Left operand of %")) return INTERPRET_RUNTIME_ERROR;
         if (modulus == 0) {
           runtimeError("Division by zero.");
           return INTERPRET_RUNTIME_ERROR;

@@ -14,6 +14,8 @@ Source
   → Resolved AST + Side Tables
   → passes/frontend/anf-inline.lx (optional, default on)
   → Optimized AST
+  → passes/frontend/lower-intrinsics.lx (optional, default on)
+  → Optimized AST
   → passes/frontend/typecheck.lx (optional)
   → Type Information
   → select.lx (opcode selection policy)
@@ -69,6 +71,7 @@ formatting and position resolution across all compilation passes.
 * Introduces temp `let` bindings to preserve left-to-right evaluation
 * Makes block expression values explicit without changing semantics
 * Does **not** perform semantic analysis or name resolution
+* Does **not** introduce IntrinsicCall fast paths (those are handled post-resolve)
 * Enabled by default (can be disabled via driver option `withAnf: false`)
 
 ---
@@ -120,6 +123,17 @@ Following the principle that **any pass manipulating bindings must be binder-awa
 `anf-inline` runs post-resolve to leverage binding metadata rather than implementing
 its own scope tracking. This aligns with how production compilers (Chez, OCaml) handle
 administrative let elimination.
+
+---
+
+### **lower-intrinsics.lx** — Intrinsic lowering pass (optional, default on)
+
+* **Post-resolve optimization** — runs after binding resolution (and after ANF)
+* Rewrites select generic AST patterns into `IntrinsicCall` nodes that map to specialized opcodes
+  * Example: `x % 8` → `IntrinsicCall("mod_const", [x], modulus=8)`
+  * Example: `x == 3` → `IntrinsicCall("eq_const", [x], compareTo=3)`
+* Mutates the AST in-place and **preserves `node.id`** so resolver/typecheck side tables remain valid
+* Keeps `anf.lx` scoped to evaluation-order normalization (ANF) rather than performance shaping
 
 ---
 

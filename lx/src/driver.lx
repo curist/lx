@@ -1,5 +1,5 @@
 // Driver - Orchestrates compilation pipeline (passes):
-//   parse → lower → anf → lower-loops → resolve → anf-inline → (codegen)
+//   parse → lower → anf → lower-loops → resolve → anf-inline → lower-intrinsics → (codegen)
 //
 // Responsibilities:
 // - Coordinate pass execution
@@ -14,6 +14,7 @@ let parse = import "src/passes/frontend/parser.lx"
 let lower = import "src/passes/frontend/lower.lx"
 let anf = import "src/passes/frontend/anf.lx"
 let anfInline = import "src/passes/frontend/anf-inline.lx"
+let lowerIntrinsics = import "src/passes/frontend/lower-intrinsics.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
 let typecheck = import "src/passes/frontend/typecheck.lx"
 let lowerLoops = import "src/passes/backend/lower-loops.lx"
@@ -50,27 +51,29 @@ fn remapEnumInfo(prevEnumInfo, resultOrigin) {
 // ========================================
 
 fn getProfile(name) {
-  // Returns .{ withLower, withAnf, withAnfInline, withTypecheck } for the given profile
+  // Returns .{ withLower, withAnf, withAnfInline, withLowerIntrinsics, withTypecheck } for the given profile
   // Profiles define curated pass combinations for specific use cases
 
   if name == "default" {
     // Current compiler semantics: all passes enabled
-    // parse → lower → anf → resolve → anf-inline → typecheck (non-fatal)
+    // parse → lower → anf → resolve → anf-inline → lower-intrinsics → typecheck (non-fatal)
     return .{
       withLower: true,
       withAnf: true,
       withAnfInline: true,
+      withLowerIntrinsics: true,
       withTypecheck: true,
     }
   }
 
   if name == "tooling" {
     // Best AST/tables for IDE/LSP
-    // Same as default: parse → lower → anf → resolve → anf-inline → typecheck (non-fatal)
+    // Same as default: parse → lower → anf → resolve → anf-inline → lower-intrinsics → typecheck (non-fatal)
     return .{
       withLower: true,
       withAnf: true,
       withAnfInline: true,
+      withLowerIntrinsics: true,
       withTypecheck: true,
     }
   }
@@ -78,11 +81,12 @@ fn getProfile(name) {
   if name == "O0" {
     // No optimizations, but keep passes that establish correctness invariants
     // parse → lower → anf → resolve → typecheck (non-fatal)
-    // Skip anf-inline optimization
+    // Skip post-resolve optimizations
     return .{
       withLower: true,
       withAnf: true,
       withAnfInline: false,
+      withLowerIntrinsics: false,
       withTypecheck: true,
     }
   }
@@ -95,6 +99,7 @@ fn getProfile(name) {
       withLower: true,
       withAnf: false,
       withAnfInline: false,
+      withLowerIntrinsics: false,
       withTypecheck: false,
     }
   }
@@ -107,6 +112,7 @@ fn getProfile(name) {
       withLower: false,
       withAnf: false,
       withAnfInline: false,
+      withLowerIntrinsics: false,
       withTypecheck: false,
     }
   }
@@ -121,7 +127,7 @@ fn getProfile(name) {
 
 fn buildPassList(ctx) {
   // Build the list of passes with their adapters
-  // ctx contains: importCache, compileModule, opts (withAnf, withAnfInline, withTypecheck)
+  // ctx contains: importCache, compileModule, opts (withAnf, withAnfInline, withLowerIntrinsics, withTypecheck)
 
   [
     // PASS 1: Parse
@@ -248,6 +254,19 @@ fn buildPassList(ctx) {
         anfInline(state.ast, resolveResult)
       },
     },
+
+    // PASS 7: Intrinsic Lowering (optional, default on, post-resolve)
+    .{
+      name: "lower-intrinsics",
+      mutatesAst: true,  // Mutates AST in-place (preserves node IDs)
+      requires: ["anfAst", "resolution"],
+      provides: ["intrinsicsLoweredAst"],
+      // enabled: auto-checked via ctx.opts.withLowerIntrinsics by pipeline
+      run: fn(ctx, state) {
+        let resolveResult = state.passes.resolve
+        lowerIntrinsics(state.ast, resolveResult, nil)
+      },
+    },
   ]
 }
 
@@ -306,6 +325,14 @@ fn make(opts) {
     withAnfInline = profileDefaults.withAnfInline
   }
 
+  let withLowerIntrinsics = nil
+  let explicitWithLowerIntrinsics = opts["withLowerIntrinsics"]
+  if explicitWithLowerIntrinsics != nil {
+    withLowerIntrinsics = explicitWithLowerIntrinsics
+  } else {
+    withLowerIntrinsics = profileDefaults.withLowerIntrinsics
+  }
+
   // Optional import overrides (used when compiling transitive imports).
   // Defaults to top-level behavior unless overridden.
   let withImportLower = opts["withImportLower"]
@@ -324,6 +351,7 @@ fn make(opts) {
       withLower: passes.lower != nil,
       withAnf: passes.anf != nil,
       withAnfInline: passes["anf-inline"] != nil,
+      withLowerIntrinsics: passes["lower-intrinsics"] != nil,
       withTypecheck: passes.typecheck != nil,
     }
   }
@@ -334,12 +362,14 @@ fn make(opts) {
       withLower: result.buildOpts.withLower == true,
       withAnf: result.buildOpts.withAnf == true,
       withAnfInline: result.buildOpts.withAnfInline == true,
+      withLowerIntrinsics: result.buildOpts.withLowerIntrinsics == true,
       withTypecheck: result.buildOpts.withTypecheck == true,
     }) or inferCaps(result)
 
     if needs.withLower == true and caps.withLower != true { return false }
     if needs.withAnf == true and caps.withAnf != true { return false }
     if needs.withAnfInline == true and caps.withAnfInline != true { return false }
+    if needs.withLowerIntrinsics == true and caps.withLowerIntrinsics != true { return false }
     if needs.withTypecheck == true and caps.withTypecheck != true { return false }
     true
   }
@@ -356,7 +386,8 @@ fn make(opts) {
       let resolveResult = passes.resolve
       if !resolveResult or resolveResult.success != true { continue }
 
-      let ast = (passes["anf-inline"] and passes["anf-inline"].ast) or
+      let ast = (passes["lower-intrinsics"] and passes["lower-intrinsics"].ast) or
+                (passes["anf-inline"] and passes["anf-inline"].ast) or
                 (passes.anf and passes.anf.ast) or
                 (passes.lower and passes.lower.ast) or
                 (passes.parse and passes.parse.ast)
@@ -395,18 +426,25 @@ fn make(opts) {
     let effectiveWithLower = isImport and withImportLower or withLower
     let effectiveWithAnf = withAnf
     let effectiveWithAnfInline = withAnfInline
+    let effectiveWithLowerIntrinsics = withLowerIntrinsics
     let effectiveWithTypecheck = withTypecheck
     // If lower is disabled, downstream passes depending on lowered AST must be disabled.
     if effectiveWithLower == false {
       effectiveWithAnf = false
       effectiveWithAnfInline = false
+      effectiveWithLowerIntrinsics = false
       effectiveWithTypecheck = false
+    }
+    if effectiveWithAnf == false {
+      effectiveWithAnfInline = false
+      effectiveWithLowerIntrinsics = false
     }
 
     let needs = .{
       withLower: effectiveWithLower == true,
       withAnf: effectiveWithAnf == true,
       withAnfInline: effectiveWithAnfInline == true,
+      withLowerIntrinsics: effectiveWithLowerIntrinsics == true,
       withTypecheck: effectiveWithTypecheck == true,
     }
 
@@ -473,6 +511,7 @@ fn make(opts) {
         withLower: effectiveWithLower,
         withAnf: effectiveWithAnf,
         withAnfInline: effectiveWithAnfInline,
+        withLowerIntrinsics: effectiveWithLowerIntrinsics,
         withTypecheck: effectiveWithTypecheck,
       },
       debug: debug,
@@ -559,8 +598,9 @@ fn codegenModule(compileResult, codegen, verify, opts) {
 
   let passes = compileResult.passes or .{}
 
-  // Select AST (prefer anf-inline → anf → lower)
-  let ast = (passes["anf-inline"] and passes["anf-inline"].ast) or
+  // Select AST (prefer lower-intrinsics → anf-inline → anf → lower)
+  let ast = (passes["lower-intrinsics"] and passes["lower-intrinsics"].ast) or
+            (passes["anf-inline"] and passes["anf-inline"].ast) or
             (passes.anf and passes.anf.ast) or
             (passes.lower and passes.lower.ast)
 

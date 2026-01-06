@@ -2057,7 +2057,7 @@ fn checkCall(checker, node) {
 }
 
 fn checkIntrinsicCall(checker, node) {
-  // Type check intrinsic calls (array_new, array_append)
+  // Type check intrinsic calls (array_new, array_append, etc.)
   let argTypes = []
   for let i = 0; i < len(node.args or []); i = i + 1 {
     push(argTypes, synthExpr(checker, node.args[i]))
@@ -2104,6 +2104,33 @@ fn checkIntrinsicCall(checker, node) {
       // Constrain argument to be a number
       unify(checker, argTypes[0], typeNumber())
       // is_even returns Bool
+      t = typeBool()
+    }
+  } else if node.intrinsic == "mod_const" {
+    // mod_const expects 1 arg: value, plus modulus field (u8)
+    if len(argTypes) != 1 {
+      addError(checker, node.id, "Internal error: mod_const expects 1 arg, got " + str(len(argTypes)))
+      // Fall through with Any
+    } else if node.modulus == nil or type(node.modulus) != "number" or
+              node.modulus != Math.floor(node.modulus) or node.modulus < 0 or node.modulus > 255 {
+      addError(checker, node.id, "Internal error: mod_const requires modulus in [0,255]")
+      // Fall through with Any
+    } else {
+      // Mirrors `%` typing: number -> number
+      unify(checker, argTypes[0], typeNumber())
+      t = typeNumber()
+    }
+  } else if node.intrinsic == "eq_const" {
+    // eq_const expects 1 arg: value, plus compareTo field (u8)
+    if len(argTypes) != 1 {
+      addError(checker, node.id, "Internal error: eq_const expects 1 arg, got " + str(len(argTypes)))
+      // Fall through with Any
+    } else if node.compareTo == nil or type(node.compareTo) != "number" or
+              node.compareTo != Math.floor(node.compareTo) or node.compareTo < 0 or node.compareTo > 255 {
+      addError(checker, node.id, "Internal error: eq_const requires compareTo in [0,255]")
+      // Fall through with Any
+    } else {
+      // Mirrors `==` typing: any -> bool (no constraint on operand)
       t = typeBool()
     }
   } else {

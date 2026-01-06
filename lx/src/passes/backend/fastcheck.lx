@@ -460,7 +460,10 @@ fn analyze(ast, resolveResult, opts) {
     if node.type == NODE.IntrinsicCall {
       let args = node.args or []
       for let i = 0; i < len(args); i = i + 1 { analyzeExpr(env, args[i]) }
-      // Current intrinsics are not numeric-producing.
+      if node.intrinsic == "mod_const" {
+        return record(node, CLASS.NUM_INT)
+      }
+      // Default: non-numeric (arrays, bool-returning intrinsics, etc.)
       return record(node, CLASS.NON_NUM)
     }
     if node.type == NODE.Import {

@@ -314,60 +314,6 @@ fn anfAssignmentValue(anf, node) {
 // ========================================
 
 fn anfBinary(anf, node) {
-  let op = node.operator and node.operator.lexeme
-
-  // Optimization: x % N → mod_const(x, N) where N is a small constant
-  if op == "%" {
-    let right = node.right
-    if right.type == NODE.Number {
-      let n = right.value
-      // Check if it's an integer in byte range [0, 255]
-      if n == Math.floor(n) and n >= 0 and n <= 255 {
-        let left = anfToAtomic(anf, node.left)
-        let intrinsicNode = .{
-          type: NODE.IntrinsicCall,
-          intrinsic: "mod_const",
-          args: [left.expr],
-          modulus: n,
-          filename: node.filename,
-          id: allocNodeId(anf),
-          line: node.line,
-          col: node.col,
-          endLine: node.endLine,
-          endCol: node.endCol,
-        }
-        anf.origin[intrinsicNode.id] = node.id
-        return wrapWithPrelude(anf, node, left.pre, intrinsicNode)
-      }
-    }
-  }
-
-  // Optimization: x == N → eq_const(x, N) where N is a small constant
-  if op == "==" {
-    let right = node.right
-    if right.type == NODE.Number {
-      let n = right.value
-      // Check if it's an integer in byte range [0, 255]
-      if n == Math.floor(n) and n >= 0 and n <= 255 {
-        let left = anfToAtomic(anf, node.left)
-        let intrinsicNode = .{
-          type: NODE.IntrinsicCall,
-          intrinsic: "eq_const",
-          args: [left.expr],
-          compareTo: n,
-          filename: node.filename,
-          id: allocNodeId(anf),
-          line: node.line,
-          col: node.col,
-          endLine: node.endLine,
-          endCol: node.endCol,
-        }
-        anf.origin[intrinsicNode.id] = node.id
-        return wrapWithPrelude(anf, node, left.pre, intrinsicNode)
-      }
-    }
-  }
-
   // Default binary handling
   let left = anfToAtomic(anf, node.left)
   let right = anfToAtomic(anf, node.right)

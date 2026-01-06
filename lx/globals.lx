@@ -1,38 +1,22 @@
 fn _1(cb) { fn(x) { cb(x) } }
-fn _2(cb) { fn(x, y) { cb(x, y) } }
 
 fn first(coll) { coll[0] }
 fn last(coll) { coll[len(coll) - 1] }
 
 fn each(arr, cb) {
   let length = len(arr)
-  let aborted = false
-  fn abort() { aborted = true }
-  for let i = 0; i < length and !aborted; i = i + 1 {
-    cb(arr[i], i, arr, abort)
+  for let i = 0; i < length; i = i + 1 {
+    cb(arr[i], i, arr )
   }
 }
 
 fn fold(arr, acc, cb) {
   let length = len(arr)
-  let aborted = false
-  fn abort() { aborted = true }
-  for let i = 0; i < length and !aborted; i = i + 1 {
-    acc = cb(acc, arr[i], i, abort)
+  for let i = 0; i < length; i = i + 1 {
+    acc = cb(acc, arr[i], i)
   }
   acc
 }
-
-fn foldr(arr, acc, cb) {
-  let length = len(arr)
-  let aborted = false
-  fn abort() { aborted = true }
-  for let i = length - 1; i >= 0 and !aborted; i = i - 1 {
-    acc = cb(acc, arr[i], i, abort)
-  }
-  acc
-}
-
 
 fn max(a, b) { if a > b { a } else { b } }
 fn min(a, b) { if a < b { a } else { b } }
@@ -89,12 +73,10 @@ fn sort(arr, compare) {
 
 return .{
   _1,
-  _2,
   first,
   last,
   each,
   fold,
-  foldr,
   max,
   min,
   sort,

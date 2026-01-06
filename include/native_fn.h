@@ -915,61 +915,73 @@ static bool splitNative(int argCount, Value *args) {
 }
 
 static bool substrNative(int argCount, Value *args) {
-  if (argCount < 3) {
-    args[-1] = CSTRING_VAL("Error: substr takes 3 args.");
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: substr takes 2 or 3 args.");
     return false;
   }
   if (!IS_STRING(args[0])) {
     args[-1] = CSTRING_VAL("Error: First arg must be a string.");
     return false;
   }
-  if (!IS_NUMBER(args[1]) || !IS_NUMBER(args[2])) {
-    args[-1] = CSTRING_VAL("Error: start and length must be numbers.");
+  if (!IS_NUMBER(args[1])) {
+    args[-1] = CSTRING_VAL("Error: start must be a number.");
     return false;
   }
 
   ObjString *input = AS_STRING(args[0]);
-
   double startRaw = AS_NUMBER(args[1]);
-  double lengthRaw = AS_NUMBER(args[2]);
 
-  if (!isfinite(startRaw) || !isfinite(lengthRaw)) {
-    args[-1] = CSTRING_VAL("Error: start and length must be finite numbers.");
+  // Handle optional end parameter
+  double endRaw;
+  if (argCount >= 3) {
+    if (!IS_NUMBER(args[2])) {
+      args[-1] = CSTRING_VAL("Error: end must be a number.");
+      return false;
+    }
+    endRaw = AS_NUMBER(args[2]);
+  } else {
+    // No end provided, use string length
+    endRaw = (double)input->length;
+  }
+
+  if (!isfinite(startRaw) || !isfinite(endRaw)) {
+    args[-1] = CSTRING_VAL("Error: start and end must be finite numbers.");
     return false;
   }
 
-  if (lengthRaw <= 0) {
-    args[-1] = CSTRING_VAL("");
-    return true;
-  }
-
-  if (startRaw < 0) startRaw = 0;
-
-  double inputLen = (double)input->length;
-  if (startRaw >= inputLen) {
-    args[-1] = CSTRING_VAL("");
-    return true;
-  }
-
-  // If we're in-bounds, enforce integral start/length (but allow out-of-bounds
-  // inputs above to truncate without error).
-  if (startRaw != trunc(startRaw) || lengthRaw != trunc(lengthRaw)) {
-    args[-1] = CSTRING_VAL("Error: start and length must be integers.");
+  // Require integers before resolving negative indices
+  if (startRaw != trunc(startRaw) || endRaw != trunc(endRaw)) {
+    args[-1] = CSTRING_VAL("Error: start and end must be integers.");
     return false;
   }
 
-  size_t startIndex = (size_t)startRaw;
-  size_t maxLen = input->length - startIndex;
+  int64_t len = (int64_t)input->length;
 
-  double outLenD = lengthRaw;
-  if (outLenD > (double)maxLen) outLenD = (double)maxLen;
-  if (outLenD > (double)INT_MAX) outLenD = (double)INT_MAX;
-  if (outLenD <= 0) {
+  // Handle negative indices (count from end)
+  int64_t start = (int64_t)startRaw;
+  int64_t end = (int64_t)endRaw;
+
+  if (start < 0) {
+    start = len + start;
+    if (start < 0) start = 0;
+  }
+  if (start > len) start = len;
+
+  if (end < 0) {
+    end = len + end;
+    if (end < 0) end = 0;
+  }
+  if (end > len) end = len;
+
+  // If end <= start, return empty string
+  if (end <= start) {
     args[-1] = CSTRING_VAL("");
     return true;
   }
 
-  int outLength = (int)outLenD;
+  size_t startIndex = (size_t)start;
+  int outLength = (int)(end - start);
+
   args[-1] = OBJ_VAL(copyString(input->chars + startIndex, outLength));
   return true;
 }
@@ -1849,6 +1861,108 @@ static bool stdinReadFdNative(int argCount, Value *args) {
   return true;
 }
 
+static bool reverseNative(int argCount, Value *args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: reverse takes 1 arg.");
+    return false;
+  }
+  if (!IS_ARRAY(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Arg must be an array.");
+    return false;
+  }
+
+  ValueArray *input = &AS_ARRAY(args[0]);
+  ObjArray *result = newArray();
+  args[-1] = OBJ_VAL(result);
+
+  // Copy elements in reverse order
+  for (int i = input->count - 1; i >= 0; i--) {
+    writeValueArray(&result->array, input->values[i]);
+  }
+
+  return true;
+}
+
+static bool sliceNative(int argCount, Value *args) {
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: slice takes 2 or 3 args.");
+    return false;
+  }
+  if (!IS_ARRAY(args[0])) {
+    args[-1] = CSTRING_VAL("Error: First arg must be an array.");
+    return false;
+  }
+  if (!IS_NUMBER(args[1])) {
+    args[-1] = CSTRING_VAL("Error: start must be a number.");
+    return false;
+  }
+
+  ValueArray *input = &AS_ARRAY(args[0]);
+  double startRaw = AS_NUMBER(args[1]);
+
+  // Handle optional end parameter
+  double endRaw;
+  if (argCount >= 3) {
+    if (!IS_NUMBER(args[2])) {
+      args[-1] = CSTRING_VAL("Error: end must be a number.");
+      return false;
+    }
+    endRaw = AS_NUMBER(args[2]);
+  } else {
+    // No end provided, use array length
+    endRaw = (double)input->count;
+  }
+
+  if (!isfinite(startRaw) || !isfinite(endRaw)) {
+    args[-1] = CSTRING_VAL("Error: start and end must be finite numbers.");
+    return false;
+  }
+
+  // Require integers before resolving negative indices
+  if (startRaw != trunc(startRaw) || endRaw != trunc(endRaw)) {
+    args[-1] = CSTRING_VAL("Error: start and end must be integers.");
+    return false;
+  }
+
+  int64_t len = (int64_t)input->count;
+
+  // Handle negative indices (count from end)
+  int64_t start = (int64_t)startRaw;
+  int64_t end = (int64_t)endRaw;
+
+  if (start < 0) {
+    start = len + start;
+    if (start < 0) start = 0;
+  }
+  if (start > len) start = len;
+
+  if (end < 0) {
+    end = len + end;
+    if (end < 0) end = 0;
+  }
+  if (end > len) end = len;
+
+  size_t startIndex = (size_t)start;
+  size_t endIndex = (size_t)end;
+
+  // If end <= start, return empty array
+  if (endIndex <= startIndex) {
+    args[-1] = OBJ_VAL(newArray());
+    return true;
+  }
+
+  size_t length = endIndex - startIndex;
+  ObjArray *result = newArray();
+  args[-1] = OBJ_VAL(result);
+
+  // Copy elements from start to end (exclusive)
+  for (size_t i = 0; i < length; i++) {
+    writeValueArray(&result->array, input->values[startIndex + i]);
+  }
+
+  return true;
+}
+
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
 // ---- end of native function declarations ----
@@ -2069,5 +2183,7 @@ void defineBuiltinNatives() {
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
   defineNative("lines", linesNative);
+  defineNative("reverse", reverseNative);
+  defineNative("slice", sliceNative);
 }
 #endif

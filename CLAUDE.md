@@ -625,10 +625,10 @@ make test     # Runs tests
 **Bootstrap build** (uses newly built compiler to rebuild itself):
 ```bash
 # Step 1: Build with system compiler
-make clean
-make
+make -B prepare build
 
-# Step 2: Rebuild using the newly built compiler
+# Step 2: Rebuild using the newly built compiler, do it twice
+LX=./out/lx make -B prepare build
 LX=./out/lx make -B prepare build
 
 # Step 3: Verify the build is stable

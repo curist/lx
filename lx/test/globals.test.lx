@@ -92,14 +92,27 @@ test("split", fn(assert) {
 })
 
 test("substr", fn(assert) {
+  // Basic slicing
   assert.equal(substr("abcdef", 0, 3), "abc")
-  assert.equal(substr("abcdef", 2, 10), "cdef")
-  assert.equal(substr("abcdef", 100, 3), "")
-  assert.equal(substr("abcdef", 2, 0), "")
-  assert.equal(substr("abcdef", 2, -1), "")
-  // Out-of-bounds indices clamp/truncate instead of erroring.
-  assert.equal(substr("abcdef", 1000000000000, 3), "")
+  assert.equal(substr("abcdef", 2, 6), "cdef")
+  assert.equal(substr("abcdef", 2), "cdef")
+
+  // Empty results
+  assert.equal(substr("abcdef", 2, 2), "")
+  assert.equal(substr("abcdef", 2, 1), "")
+
+  // Out-of-bounds indices clamp/truncate instead of erroring
+  assert.equal(substr("abcdef", 100), "")
+  assert.equal(substr("abcdef", 2, 100), "cdef")
+  assert.equal(substr("abcdef", 1000000000000), "")
   assert.equal(substr("abcdef", 2, 1000000000000), "cdef")
+
+  // Negative indices
+  assert.equal(substr("abcdef", 0, -1), "abcde")
+  assert.equal(substr("abcdef", -3, -1), "de")
+  assert.equal(substr("abcdef", -2), "ef")
+  assert.equal(substr("abcdef", 1, -1), "bcde")
+  assert.equal(substr("abcdef", -10, -1), "abcde")
 })
 
 suite.run()

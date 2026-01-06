@@ -449,6 +449,20 @@ let DOCS = .{
     markdown: "`range(x: number | string | array | map | enum) -> array`\nFor number: `[0..n-1]`; for string: chars; for map/enum: keys.",
     source: "API.md",
   },
+  ["reverse"]: .{
+    name: "reverse",
+    signature: "reverse(arr: array) -> array",
+    description: "Returns a new array with elements in reverse order (non-mutating).",
+    markdown: "`reverse(arr: array) -> array`\nReturns a new array with elements in reverse order (non-mutating).",
+    source: "API.md",
+  },
+  ["slice"]: .{
+    name: "slice",
+    signature: "slice(arr: array, start: number, end?: number) -> array",
+    description: "Array slice from start to end (exclusive). Supports negative indices (count from end). If end omitted, goes to end of array.",
+    markdown: "`slice(arr: array, start: number, end?: number) -> array`\nArray slice from start to end (exclusive). Supports negative indices (count from end). If end omitted, goes to end of array.",
+    source: "API.md",
+  },
   ["split"]: .{
     name: "split",
     signature: "split(s: string, sep: string) -> array[string]",
@@ -472,9 +486,9 @@ let DOCS = .{
   },
   ["substr"]: .{
     name: "substr",
-    signature: "substr(s: string, start: number, length: number) -> string",
-    description: "Substring by byte offset; if `length <= 0`, returns `\"\"`.",
-    markdown: "`substr(s: string, start: number, length: number) -> string`\nSubstring by byte offset; if `length <= 0`, returns `\"\"`.",
+    signature: "substr(s: string, start: number, end?: number) -> string",
+    description: "Substring from start to end (exclusive). Supports negative indices (count from end). If end omitted, goes to end of string.",
+    markdown: "`substr(s: string, start: number, end?: number) -> string`\nSubstring from start to end (exclusive). Supports negative indices (count from end). If end omitted, goes to end of string.",
     source: "API.md",
   },
   ["tolower"]: .{
@@ -572,6 +586,8 @@ let NATIVE_NAMES = .{
   ["println"]: true,
   ["push"]: true,
   ["range"]: true,
+  ["reverse"]: true,
+  ["slice"]: true,
   ["split"]: true,
   ["startsWith"]: true,
   ["str"]: true,
@@ -584,11 +600,9 @@ let NATIVE_NAMES = .{
 
 let PRELUDE_NAMES = .{
   ["_1"]: true,
-  ["_2"]: true,
   ["each"]: true,
   ["first"]: true,
   ["fold"]: true,
-  ["foldr"]: true,
   ["last"]: true,
   ["max"]: true,
   ["min"]: true,

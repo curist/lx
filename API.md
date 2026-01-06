@@ -11,7 +11,7 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `str(value) -> string` Convert a value to a string (uses runtime formatting).
 - `join(values: array, sep: string) -> string` Join stringified values with a separator.
 - `split(s: string, sep: string) -> array[string]` Split by substring; when `sep == ""`, splits into chars.
-- `substr(s: string, start: number, length: number) -> string` Substring by byte offset; if `length <= 0`, returns `""`.
+- `substr(s: string, start: number, end?: number) -> string` Substring from start to end (exclusive). Supports negative indices (count from end). If end omitted, goes to end of string.
 - `startsWith(s: string, prefix: string) -> bool` String prefix test.
 - `endsWith(s: string, suffix: string) -> bool` String suffix test.
 - `contains(haystack: array | string, needle) -> bool` Membership test for arrays/strings.
@@ -28,6 +28,8 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `push(arr: array, value) -> array` Mutates `arr` by appending `value`.
 - `pop(arr: array) -> value | nil` Mutates `arr` by removing and returning the last element.
 - `concat(a: array, b: array) -> array` New array with elements of `a` followed by `b`.
+- `reverse(arr: array) -> array` Returns a new array with elements in reverse order (non-mutating).
+- `slice(arr: array, start: number, end?: number) -> array` Array slice from start to end (exclusive). Supports negative indices (count from end). If end omitted, goes to end of array.
 - `lines(s: string) -> array[string]` Split by `\n` (newline not included in lines).
 
 ### `Date` namespace (native)

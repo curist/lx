@@ -38,12 +38,10 @@ Native builtins are documented in `../API.md` (this is the source of truth for e
 ### Prelude builtins (`lx/globals.lx`)
 
 - `_1(cb: fn) -> fn` Wrap a callback as a unary function (ignores extra args).
-- `_2(cb: fn) -> fn` Wrap a callback as a binary function (ignores extra args).
 - `first(coll: array | string) -> any` First element/char.
 - `last(coll: array | string) -> any` Last element/char.
 - `each(arr: array, cb: fn(x, i, arr, abort)) -> nil` Iterate; call `abort()` to stop early.
 - `fold(arr: array, acc, cb: fn(acc, x, i, abort) -> acc) -> any` Left fold.
-- `foldr(arr: array, acc, cb: fn(acc, x, i, abort) -> acc) -> any` Right fold.
 - Prefer `collect` expressions for mapping/filtering arrays.
 - `max(a, b) -> any` Maximum of two values.
 - `min(a, b) -> any` Minimum of two values.

@@ -211,18 +211,6 @@ fn builtinTypeByName(checker, name) {
     let c = freshTypeVar(checker)
     return typeFunction([typeFunction([a, b], c)], typeFunction([a, b], c))
   }
-  if name == "_3" {
-    let a = freshTypeVar(checker)
-    let b = freshTypeVar(checker)
-    let c = freshTypeVar(checker)
-    let d = freshTypeVar(checker)
-    return typeFunction([typeFunction([a, b, c], d)], typeFunction([a, b, c], d))
-  }
-  if name == "do" {
-    let a = freshTypeVar(checker)
-    let b = freshTypeVar(checker)
-    return typeFunction([a, typeFunction([a], b)], b)
-  }
 
   // Collection helpers (array-focused; some prelude fns also accept strings at runtime).
   if name == "each" {
@@ -232,7 +220,7 @@ fn builtinTypeByName(checker, name) {
     let cb = typeFunction([t, typeNumber(), typeArray(t), abort], typeAny())
     return typeFunction([typeArray(t), cb], typeNil())
   }
-  if name == "fold" or name == "foldr" {
+  if name == "fold" {
     let t = freshTypeVar(checker)
     let acc = freshTypeVar(checker)
     let abort = typeFunction([], typeNil())

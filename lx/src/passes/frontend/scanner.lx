@@ -16,8 +16,7 @@ fn initScanner(src) {
   fn isAtEnd() { srcLen == state.current }
 
   fn getLexeme() {
-    let n = state.current - state.start
-    substr(src, state.start, n)
+    substr(src, state.start, state.current)
   }
 
   fn Token(type) {.{
@@ -70,7 +69,7 @@ fn initScanner(src) {
     let s = if length == 1 {
       src[index]
     } else {
-      substr(src, index, length)
+      substr(src, index, index + length)
     }
 
     .{ s, length }

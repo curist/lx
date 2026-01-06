@@ -445,4 +445,150 @@ test("lower - import path gets fresh ID", fn(assert) {
   assert.truthy(loweredImport.path.id > parsedImport.path.id)
 })
 
+// ========================================
+// Default Arguments Tests
+// ========================================
+
+test("lower - function with one default argument", fn(assert) {
+  let result = parseAndLower("fn greet(name = \"World\") { \"Hello \" + name }")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(len(node.params), 1)
+  assert.equal(node.params[0].name, "name")
+
+  // Check that defaults array exists
+  assert.truthy(node.defaults)
+  assert.equal(len(node.defaults), 1)
+  assert.equal(node.defaults[0].type, NODE.String)
+  assert.equal(node.defaults[0].value, "World")
+
+  // Check that body has been augmented with nil check
+  let body = node.body
+  assert.equal(body.type, NODE.Block)
+  assert.truthy(len(body.expressions) >= 2)
+
+  // First expression should be: if name == nil { name = "World" }
+  let ifNode = body.expressions[0]
+  assert.equal(ifNode.type, NODE.If)
+  assert.equal(ifNode.condition.type, NODE.Binary)
+  assert.equal(ifNode.condition.operator.lexeme, "==")
+  assert.equal(ifNode.condition.left.name, "name")
+  assert.equal(ifNode.condition.right.type, NODE.Nil)
+
+  // Then branch should assign the default value
+  assert.equal(ifNode.then.type, NODE.Block)
+  assert.equal(len(ifNode.then.expressions), 1)
+  let assignment = ifNode.then.expressions[0]
+  assert.equal(assignment.type, NODE.Assignment)
+  assert.equal(assignment.target.name, "name")
+  assert.equal(assignment.value.value, "World")
+})
+
+test("lower - function with multiple default arguments", fn(assert) {
+  let result = parseAndLower("fn foo(a, b = 1, c = 2) { a + b + c }")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(len(node.params), 3)
+
+  // Check defaults array
+  assert.truthy(node.defaults)
+  assert.equal(len(node.defaults), 3)
+  assert.equal(node.defaults[0], nil)
+  assert.equal(node.defaults[1].type, NODE.Number)
+  assert.equal(node.defaults[1].value, 1)
+  assert.equal(node.defaults[2].type, NODE.Number)
+  assert.equal(node.defaults[2].value, 2)
+
+  // Check that body has nil checks for b and c
+  let body = node.body
+  assert.equal(body.type, NODE.Block)
+  assert.truthy(len(body.expressions) >= 3)
+
+  // First two expressions should be nil checks for b and c
+  let ifB = body.expressions[0]
+  assert.equal(ifB.type, NODE.If)
+  assert.equal(ifB.condition.left.name, "b")
+
+  let ifC = body.expressions[1]
+  assert.equal(ifC.type, NODE.If)
+  assert.equal(ifC.condition.left.name, "c")
+})
+
+test("lower - function with all default arguments", fn(assert) {
+  let result = parseAndLower("fn foo(a = 1, b = 2) { a + b }")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(len(node.params), 2)
+
+  // All parameters should have defaults
+  assert.equal(len(node.defaults), 2)
+  assert.equal(node.defaults[0].value, 1)
+  assert.equal(node.defaults[1].value, 2)
+
+  // Body should have nil checks for both parameters
+  let body = node.body
+  assert.truthy(len(body.expressions) >= 3)
+})
+
+test("lower - function with no default arguments", fn(assert) {
+  let result = parseAndLower("fn foo(a, b) { a + b }")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(len(node.params), 2)
+
+  // Defaults should be empty or all nil
+  if node.defaults {
+    assert.equal(len(node.defaults), 2)
+    assert.equal(node.defaults[0], nil)
+    assert.equal(node.defaults[1], nil)
+  }
+
+  // Body should not have extra nil checks
+  let body = node.body
+  assert.equal(body.type, NODE.Block)
+  assert.equal(len(body.expressions), 1)
+})
+
+test("lower - default argument with expression", fn(assert) {
+  let result = parseAndLower("fn foo(a = 1 + 2) { a }")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.defaults[0].type, NODE.Binary)
+  assert.equal(node.defaults[0].operator.lexeme, "+")
+  assert.equal(node.defaults[0].left.value, 1)
+  assert.equal(node.defaults[0].right.value, 2)
+})
+
+test("lower - anonymous function with defaults", fn(assert) {
+  let result = parseAndLower("fn(x = 0) { x + 1 }")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(node.name, nil)
+  assert.equal(len(node.params), 1)
+  assert.equal(node.defaults[0].value, 0)
+})
+
+test("lower - default arguments preserve position spans", fn(assert) {
+  let result = parseAndLower("fn foo(a = 42) { a }")
+  assert.truthy(result.success)
+
+  let parsed = result.parseResult.ast.expressions[0]
+  let lowered = first(result)
+
+  // Position should be preserved
+  assert.equal(lowered.line, parsed.line)
+  assert.equal(lowered.col, parsed.col)
+})
+
 suite.run()

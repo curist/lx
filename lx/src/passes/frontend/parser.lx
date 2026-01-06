@@ -1019,13 +1019,28 @@ fn parse(src, filename) {
     consume(TOKEN.LEFT_PAREN, "Expect '(' after function name.")
 
     let params = []
+    let defaults = []
     if !check(TOKEN.RIGHT_PAREN) {
       consumeIdentifier("Expect parameter name.")
       push(params, IdentifierNode(filename, parser.previous))
 
+      // Check for default value
+      if match(TOKEN.EQUAL) {
+        push(defaults, expression())
+      } else {
+        push(defaults, nil)
+      }
+
       for match(TOKEN.COMMA) and !check(TOKEN.RIGHT_PAREN) {
         consumeIdentifier("Expect parameter name.")
         push(params, IdentifierNode(filename, parser.previous))
+
+        // Check for default value
+        if match(TOKEN.EQUAL) {
+          push(defaults, expression())
+        } else {
+          push(defaults, nil)
+        }
       }
     }
 
@@ -1034,7 +1049,9 @@ fn parse(src, filename) {
 
     let body = block()
 
-    FunctionNode(filename, startToken, name, params, body, parser.previous)
+    let funcNode = FunctionNode(filename, startToken, name, params, body, parser.previous)
+    funcNode.defaults = defaults
+    funcNode
   }
 
   fn ifExpr() {

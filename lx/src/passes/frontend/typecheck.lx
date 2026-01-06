@@ -2179,6 +2179,22 @@ fn checkFunction(checker, node) {
     push(resolvedParams, deref(checker, params[i]))
   }
   let fnT = typeFunction(resolvedParams, deref(checker, ret))
+
+  // Calculate minArity based on default arguments
+  // minArity is the index of the first parameter with a default value
+  if node.defaults and len(node.defaults) > 0 {
+    let firstDefaultIdx = nil
+    for let i = 0; i < len(node.defaults); i = i + 1 {
+      if node.defaults[i] {
+        firstDefaultIdx = i
+        break
+      }
+    }
+    if firstDefaultIdx != nil {
+      fnT.minArity = firstDefaultIdx
+    }
+  }
+
   checker.types[node.id] = fnT
   if fnBinding {
     emitEq(checker, fnBinding, fnT, node.id, "Function declaration mismatch")

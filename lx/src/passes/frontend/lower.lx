@@ -203,8 +203,170 @@ fn lowerFunction(lowerer, node) {
   }
   newNode.params = loweredParams
 
+  // Lower defaults
+  let loweredDefaults = []
+  let hasDefaults = node.defaults and len(node.defaults) > 0
+  if hasDefaults {
+    for let i = 0; i < len(node.defaults); i = i + 1 {
+      let defaultVal = node.defaults[i]
+      if defaultVal {
+        push(loweredDefaults, lowerExpr(lowerer, defaultVal))
+      } else {
+        push(loweredDefaults, nil)
+      }
+    }
+  }
+  newNode.defaults = loweredDefaults
+
   // Lower body
-  newNode.body = lowerExpr(lowerer, node.body)
+  let loweredBody = lowerExpr(lowerer, node.body)
+
+  // If we have default arguments, inject nil checks at the start of the body
+  if hasDefaults and len(loweredDefaults) > 0 {
+    // Check if any parameters have defaults
+    let hasAnyDefaults = false
+    for let i = 0; i < len(loweredDefaults); i = i + 1 {
+      if loweredDefaults[i] {
+        hasAnyDefaults = true
+      }
+    }
+
+    if hasAnyDefaults {
+      // Helper to create identifier nodes
+      fn makeIdent(param) {
+        .{
+          type: NODE.Identifier,
+          filename: node.filename,
+          id: allocNodeId(lowerer),
+          line: param.line,
+          col: param.col,
+          endLine: param.endLine,
+          endCol: param.endCol,
+          name: param.name,
+          lexeme: param.lexeme,
+        }
+      }
+
+      // Create a new block that injects nil checks before the original body
+      let bodyBlock = loweredBody
+      let newExpressions = []
+
+      // Inject nil checks for each parameter with a default
+      for let i = 0; i < len(loweredParams); i = i + 1 {
+        let defaultVal = loweredDefaults[i]
+        if defaultVal {
+          // Create: if param == nil { param = defaultValue }
+          let param = loweredParams[i]
+
+          // Create nil literal
+          let nilNode = .{
+            type: NODE.Nil,
+            filename: node.filename,
+            id: allocNodeId(lowerer),
+            line: param.line,
+            col: param.col,
+            endLine: param.line,
+            endCol: param.col,
+          }
+
+          // Create operator token for ==
+          let eqToken = .{
+            type: TOKEN.EQUAL_EQUAL,
+            lexeme: "==",
+            line: param.line,
+            col: param.col,
+          }
+
+          // Create: param == nil
+          let nilCheck = .{
+            type: NODE.Binary,
+            filename: node.filename,
+            id: allocNodeId(lowerer),
+            line: param.line,
+            col: param.col,
+            endLine: nilNode.endLine,
+            endCol: nilNode.endCol,
+            left: makeIdent(param),
+            operator: eqToken,
+            right: nilNode,
+          }
+
+          // Create: param = defaultValue
+          let assignment = .{
+            type: NODE.Assignment,
+            filename: node.filename,
+            id: allocNodeId(lowerer),
+            line: param.line,
+            col: param.col,
+            endLine: defaultVal.endLine,
+            endCol: defaultVal.endCol,
+            target: makeIdent(param),
+            value: defaultVal,
+          }
+
+          // Create then block: { param = defaultValue }
+          let thenBlock = .{
+            type: NODE.Block,
+            filename: node.filename,
+            id: allocNodeId(lowerer),
+            line: param.line,
+            col: param.col,
+            endLine: defaultVal.endLine,
+            endCol: defaultVal.endCol,
+            expressions: [assignment],
+          }
+
+          // Create if statement
+          let ifNode = .{
+            type: NODE.If,
+            filename: node.filename,
+            id: allocNodeId(lowerer),
+            line: param.line,
+            col: param.col,
+            endLine: thenBlock.endLine,
+            endCol: thenBlock.endCol,
+            condition: nilCheck,
+            then: thenBlock,
+            else: nil,
+          }
+
+          // Track origin for debugging
+          lowerer.origin[ifNode.id] = node.id
+          lowerer.origin[nilCheck.id] = node.id
+          lowerer.origin[assignment.id] = node.id
+
+          push(newExpressions, ifNode)
+        }
+      }
+
+      // Append the original body expressions
+      if bodyBlock.type == NODE.Block {
+        for let i = 0; i < len(bodyBlock.expressions); i = i + 1 {
+          push(newExpressions, bodyBlock.expressions[i])
+        }
+        bodyBlock.expressions = newExpressions
+        newNode.body = bodyBlock
+      } else {
+        // Body is not a block (shouldn't happen for functions, but handle it)
+        push(newExpressions, bodyBlock)
+        let newBlock = .{
+          type: NODE.Block,
+          filename: node.filename,
+          id: allocNodeId(lowerer),
+          line: node.body.line,
+          col: node.body.col,
+          endLine: node.body.endLine,
+          endCol: node.body.endCol,
+          expressions: newExpressions,
+        }
+        newNode.body = newBlock
+      }
+    } else {
+      newNode.body = loweredBody
+    }
+  } else {
+    newNode.body = loweredBody
+  }
 
   newNode
 }

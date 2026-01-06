@@ -101,13 +101,13 @@ typedef enum {
   OP_MOD_CONST_BYTE,      // TOS = TOS % imm8 (specialized for constant modulo)
   OP_EQ_CONST_BYTE,       // TOS = (TOS == imm8) (specialized for constant equality)
 
-  // Fused numeric for loops (appended to avoid renumbering existing opcodes)
+  // Fused numeric for loops
   OP_FORPREP_1,           // Numeric for loop prepare (step=1)
   OP_FORLOOP_1,           // Numeric for loop iterate (step=1)
   OP_FORPREP,             // Numeric for loop prepare (arbitrary signed step)
   OP_FORLOOP,             // Numeric for loop iterate (arbitrary signed step)
 
-  // Superinstructions (appended to avoid renumbering existing opcodes)
+  // Superinstructions
   OP_GET_PROPERTY,        // GET_LOCAL + CONSTANT + GET_BY_INDEX (property access)
   OP_SET_PROPERTY,        // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX
 

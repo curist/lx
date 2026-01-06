@@ -183,13 +183,13 @@ let OP = enum {
   MOD_CONST_BYTE,   // TOS = TOS % imm8 (specialized for constant modulo)
   EQ_CONST_BYTE,    // TOS = (TOS == imm8) (specialized for constant equality)
 
-  // Fused numeric for loops (appended to avoid renumbering existing opcodes)
+  // Fused numeric for loops
   FORPREP_1,        // Numeric for loop prepare (step=1)
   FORLOOP_1,        // Numeric for loop iterate (step=1)
   FORPREP,          // Numeric for loop prepare (arbitrary signed step)
   FORLOOP,          // Numeric for loop iterate (arbitrary signed step)
 
-  // Superinstructions (appended to avoid renumbering existing opcodes)
+  // Superinstructions
   GET_PROPERTY,     // GET_LOCAL + CONSTANT + GET_BY_INDEX (property access)
   SET_PROPERTY,     // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX
 

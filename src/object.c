@@ -11,6 +11,8 @@
 #define ALLOCATE_OBJ(type, objectType) \
     (type*)allocateObject(sizeof(type), objectType)
 
+#define INTERN_MAX_LEN 64
+
 static Obj* allocateObject(size_t size, ObjType type) {
   Obj* object = (Obj*)reallocate(NULL, 0, size);
   object->type = type;
@@ -142,22 +144,47 @@ static uint64_t hashString(const char* key, size_t length) {
 
 ObjString* takeString(char* chars, int length) {
   uint64_t hash = hashString(chars, (size_t)length);
-  ObjString* interned = tableFindString(&vm.strings, chars, length, hash);
-  if (interned != NULL) {
-    FREE_ARRAY(char, chars, length + 1);
-    return interned;
+
+  if (length <= INTERN_MAX_LEN) {
+    ObjString* interned = tableFindString(&vm.strings, chars, length, hash);
+    if (interned != NULL) {
+      FREE_ARRAY(char, chars, length + 1);
+      return interned;
+    }
+
+    return allocateString(chars, length, hash);
   }
-  return allocateString(chars, length, hash);
+
+  // Large string: do NOT intern
+  ObjString* string = ALLOCATE_OBJ(ObjString, OBJ_STRING);
+  string->length = length;
+  string->chars = chars;
+  string->hash = hash;
+  return string;
 }
 
 ObjString* copyString(const char* chars, int length) {
   uint64_t hash = hashString(chars, (size_t)length);
-  ObjString* interned = tableFindString(&vm.strings, chars, length, hash);
-  if (interned != NULL) return interned;
+
+  if (length <= INTERN_MAX_LEN) {
+    ObjString* interned = tableFindString(&vm.strings, chars, length, hash);
+    if (interned != NULL) return interned;
+  }
+
   char* heapChars = ALLOCATE(char, length + 1);
   memcpy(heapChars, chars, length);
   heapChars[length] = '\0';
-  return allocateString(heapChars, length, hash);
+
+  if (length <= INTERN_MAX_LEN) {
+    return allocateString(heapChars, length, hash);
+  }
+
+  // Large string: heap-only
+  ObjString* string = ALLOCATE_OBJ(ObjString, OBJ_STRING);
+  string->length = length;
+  string->chars = heapChars;
+  string->hash = hash;
+  return string;
 }
 
 ObjUpvalue* newUpvalue(Value* slot) {

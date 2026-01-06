@@ -41,6 +41,14 @@ bool valuesEqual(Value a, Value b) {
   if (IS_NUMBER(a) && IS_NUMBER(b)) {
     return AS_NUMBER(a) == AS_NUMBER(b);
   }
+  // For strings, compare by value (length, hash, and content)
+  if (IS_STRING(a) && IS_STRING(b)) {
+    ObjString* aStr = AS_STRING(a);
+    ObjString* bStr = AS_STRING(b);
+    return aStr->length == bStr->length &&
+           aStr->hash == bStr->hash &&
+           memcmp(aStr->chars, bStr->chars, aStr->length) == 0;
+  }
   return a == b;
 }
 

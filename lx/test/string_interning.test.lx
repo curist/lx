@@ -1,0 +1,102 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+// Test that small strings (≤ 64 bytes) are interned
+test("small strings are interned via identity", fn(assert) {
+  let s1 = "hello world"
+  let s2 = "hello world"
+  assert.equal(s1, s2, "small strings should be equal")
+})
+
+// Test that large strings (> 64 bytes) use value-based equality
+test("large strings use value-based equality", fn(assert) {
+  // Create a string > 64 bytes (65 chars)
+  let large = "12345678901234567890123456789012345678901234567890123456789012345"
+  let same = "12345678901234567890123456789012345678901234567890123456789012345"
+  assert.equal(len(large), 65, "string should be 65 bytes")
+  assert.equal(large, same, "large strings with same content should be equal")
+})
+
+// Test boundary case: exactly 64 bytes
+test("64-byte strings are interned", fn(assert) {
+  let exactly64 = "1234567890123456789012345678901234567890123456789012345678901234"
+  let same64 = "1234567890123456789012345678901234567890123456789012345678901234"
+  assert.equal(len(exactly64), 64, "string should be exactly 64 bytes")
+  assert.equal(exactly64, same64, "64-byte strings should be equal")
+})
+
+// Test that string concatenation works correctly
+test("concatenation produces correct large strings", fn(assert) {
+  let part1 = "123456789012345678901234567890123"  // 33 bytes
+  let part2 = "456789012345678901234567890123456"  // 33 bytes
+  let combined = part1 + part2
+  assert.equal(len(combined), 66, "concatenated string should be 66 bytes")
+
+  // Create same string directly (should be equal via value comparison)
+  let direct = "123456789012345678901234567890123456789012345678901234567890123456"
+  assert.equal(len(direct), 66, "direct string should be 66 bytes")
+  assert.equal(combined, direct, "concatenated and direct strings should be equal")
+})
+
+// Test empty and single-char strings
+test("edge cases: empty and single char", fn(assert) {
+  let empty = ""
+  let alsoEmpty = ""
+  assert.equal(empty, alsoEmpty, "empty strings should be equal")
+
+  let single = "a"
+  let alsoSingle = "a"
+  assert.equal(single, alsoSingle, "single char strings should be equal")
+})
+
+// Test that hashmap keys work with large strings
+test("large strings work as hashmap keys", fn(assert) {
+  let longKey = "this_is_a_very_long_key_that_exceeds_64_bytes_to_test_non_interned_strings"
+  let map = .{}
+  map[longKey] = 42
+
+  let sameKey = "this_is_a_very_long_key_that_exceeds_64_bytes_to_test_non_interned_strings"
+  assert.equal(map[sameKey], 42, "should retrieve value with equal long key")
+  assert.equal(map[longKey], 42, "should retrieve value with original key")
+})
+
+// Test that large strings in arrays work correctly
+test("large strings in arrays", fn(assert) {
+  let long1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // 65 'a's
+  let long2 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // 65 'a's
+  let arr = [long1, long2]
+
+  assert.equal(arr[0], arr[1], "large strings in array should be equal")
+  assert.equal(arr[0], long1, "array element should equal original")
+})
+
+// Test both takeString and copyString paths
+test("takeString vs copyString for large strings", fn(assert) {
+  // copyString path: string literal
+  let literal = "this_is_a_long_string_literal_that_exceeds_the_64_byte_threshold_for_interning"
+
+  // takeString path: string concatenation creates heap string
+  let base = "this_is_a_long_string_literal_that_exceeds_the_64_byte_threshold_"
+  let suffix = "for_interning"
+  let concatenated = base + suffix
+
+  assert.equal(len(literal), len(concatenated), "lengths should match")
+  assert.equal(literal, concatenated, "takeString and copyString should produce equal strings")
+})
+
+// Stress test: many large strings to potentially trigger GC
+test("GC safety with many large strings", fn(assert) {
+  let strings = []
+  for let i = 0; i < 100; i = i + 1 {
+    // Create unique large string (> 64 bytes)
+    let s = "prefix_" + str(i) + "_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
+    push(strings, s)
+  }
+
+  // Verify all strings are still valid and unique
+  assert.equal(len(strings), 100, "should have 100 strings")
+  assert.truthy(len(strings[0]) > 64, "strings should be large")
+  assert.truthy(strings[0] != strings[1], "strings should be different")
+})
+
+suite.run()

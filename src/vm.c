@@ -11,6 +11,10 @@
 #include "native_fn.h"
 #include "lx/lxglobals.h"
 
+#ifdef DEBUG_TRACE_EXECUTION
+#include "debug.h"
+#endif
+
 VM vm;
 
 static void resetStack() {

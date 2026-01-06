@@ -862,8 +862,9 @@ test("resolve - driver handles missing modules", fn(assert) {
   }
   let resolveResult = resolve(lowerResult.ast, resolveOpts)
 
-  // Should succeed at resolve level (module loading failure is cached)
-  assert.truthy(resolveResult.success, "Should resolve without errors")
+  // Should fail at resolve level when module loading fails
+  assert.equal(resolveResult.success, false, "Should fail with missing import")
+  assert.truthy(len(resolveResult.errors) > 0, "Should have errors for failed import")
 
   // Verify cache entry shows failure
   let cached = driver.cache["test/fixtures/imports/nonexistent.lx"]

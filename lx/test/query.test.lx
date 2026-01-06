@@ -41,7 +41,7 @@ fn compileAndQuery(source, filename) {
       errors = passes.resolve.errors
     }
 
-    return .{ success: false, phase, errors }
+    return .{ success: false, phase, errors, passes: result.passes }
   }
 
   let initResult = query.queryInit(
@@ -803,18 +803,32 @@ test("query - completion on empty object returns no results", fn(assert) {
 test("query - diagnostic on failed module import", fn(assert) {
   // Test that when an import fails, we get a proper diagnostic
   let source = "let mod = import \"nonexistent.lx\"\nmod"
-  let result = compileAndQuery(source, "test.lx")
+
+  // Create driver with custom loadSource that returns nil for missing modules
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "test.lx" { return source }
+      if path == "nonexistent.lx" { return nil }
+      let resolver = ModuleResolution.forEntry(Lx.args[2])
+      return resolver.slurp(path)
+    },
+    withTypecheck: true,
+    withAnf: false,
+  })
+
+  let compileResult = driver.compileModule("test.lx")
 
   // Compilation should fail
-  assert.equal(result.success, false, "Should fail with missing import")
+  assert.equal(compileResult.success, false, "Should fail with missing import")
+
+  // Should have resolve errors
+  let passes = compileResult.passes or .{}
+  assert.truthy(passes.resolve, "Should have resolve pass")
+  assert.equal(passes.resolve.success, false, "Resolve should fail")
+  assert.truthy(len(passes.resolve.errors) > 0, "Should have resolve errors")
 
   // Should get diagnostics with proper location
-  let diags = query.queryDiagnostics(result)
-  println("Diags type:", type(diags))
-  println("Diags length:", len(diags))
-  if len(diags) > 0 {
-    println("First diag:", diags[0])
-  }
+  let diags = query.queryDiagnostics(compileResult)
   assert.truthy(len(diags) > 0, "Should have diagnostics for failed import")
   assert.truthy(diags[0].filename, "Diagnostic should have filename")
   assert.truthy(diags[0].line > 0, "Diagnostic should have line number")
@@ -871,7 +885,7 @@ test("query - duplicated declaration span info is correct", fn(assert) {
   let foundDup = false
   for let i = 0; i < len(diags); i = i + 1 {
     let d = diags[i]
-    if d.message and (len(split(d.message, "duplicate")) > 1 or len(split(d.message, "Duplicate")) > 1) {
+    if d.message and (len(split(d.message, "duplicate")) > 1 or len(split(d.message, "Duplicate")) > 1 or len(split(d.message, "already")) > 1) {
       foundDup = true
       assert.equal(d.filename, "test.lx", "Duplicate diagnostic should have correct filename")
       assert.equal(d.line, 2, "Duplicate diagnostic should point to second declaration")

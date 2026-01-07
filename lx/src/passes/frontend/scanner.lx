@@ -232,7 +232,7 @@ fn initScanner(src) {
   // consume possible shebang
   shebang()
 
-  fn _scanToken() {
+  fn scanToken() {
     skipWhitespace()
     state.start = state.current
 
@@ -252,18 +252,24 @@ fn initScanner(src) {
     errorToken("Unexpected character: " + c)
   }
 
-  // scan all tokens
-  let tokens = collect !isAtEnd() { _scanToken() }
-
-  let tokensLength = len(tokens)
-  let currentTokenIndex = 0
+  // buffer for peek tokens
+  let prescannedTokens = []
 
   return .{
-    peek: fn(n) { tokens[currentTokenIndex + n] or .{} },
+    peek: fn(n) {
+      for !isAtEnd() and (n + 1 > len(prescannedTokens)) {
+        prescannedTokens->push(scanToken())
+      }
+      prescannedTokens[n] or Token(TOKEN.EOF)
+    },
     scanToken: fn() {
-      if currentTokenIndex >= tokensLength { return Token(TOKEN.EOF) }
-      currentTokenIndex = currentTokenIndex + 1
-      return tokens[currentTokenIndex - 1]
+      if len(prescannedTokens) > 0 {
+        let token = prescannedTokens[0]
+        prescannedTokens = prescannedTokens->slice(1)
+        return token
+      }
+      if isAtEnd() { return Token(TOKEN.EOF) }
+      scanToken()
     },
   }
 }

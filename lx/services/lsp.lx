@@ -1022,6 +1022,7 @@ fn serve() {
     pendingRequests: .{},
     nextRequestId: 1,
     workspaceRoot: nil,
+    driver: nil,
     resolver: nil,
     pendingCompile: .{},
     debounceMs: 100,

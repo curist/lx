@@ -23,15 +23,18 @@ fn run(ctx) {
     profile: "tooling",
     withTypecheck: true,
     loadSource: fn(p) { resolver.slurp(p) },
-  })
-
-  if !d {
+  }) or {
     Lx.stderr.println("Failed to initialize driver.")
     Lx.exit(70)
   }
 
-  let result = d.compileModule(entry)
-  if !result {
+  let entryPath = if entry[0] == "/" {
+    entry
+  } else {
+    Lx.path.join(Lx.fs.cwd(), entry)
+  }
+
+  let result = d.compileModule(entryPath) or {
     Lx.stderr.println("Internal error: compileModule returned nil.")
     Lx.exit(70)
   }

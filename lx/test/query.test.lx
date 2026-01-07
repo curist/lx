@@ -897,4 +897,168 @@ test("query - duplicated declaration span info is correct", fn(assert) {
   assert.truthy(foundDup, "Should find duplicate declaration diagnostic")
 })
 
+// ========================================
+// Undefined Variable Detection Tests
+// ========================================
+
+test("query - diagnostics detects undefined variable", fn(assert) {
+  let source = "let x = undefinedVar"
+
+  // Use direct driver compilation to get raw passes structure for diagnostics
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "test.lx" { return source }
+      let resolver = ModuleResolution.forEntry(Lx.args[2])
+      return resolver.slurp(path)
+    },
+    withTypecheck: true,
+    withAnf: false,
+  })
+
+  let compileResult = driver.compileModule("test.lx")
+
+  // Compilation may succeed (runtime error) but diagnostics should flag undefined
+  let diags = query.queryDiagnostics(.{ compileResult })
+  assert.truthy(len(diags) > 0, "Should have diagnostics for undefined variable")
+
+  let foundUndef = false
+  for let i = 0; i < len(diags); i = i + 1 {
+    let d = diags[i]
+    if d.message and len(split(d.message, "undefinedVar")) > 1 {
+      foundUndef = true
+      assert.equal(d.phase, "resolve", "Undefined variable should be resolve phase")
+      assert.equal(d.filename, "test.lx", "Should have correct filename")
+      assert.equal(d.line, 1, "Should point to line with undefined var")
+    }
+  }
+  assert.truthy(foundUndef, "Should find undefined variable diagnostic")
+})
+
+test("query - diagnostics does not flag valid builtins", fn(assert) {
+  let source = "println(len([1, 2, 3]))"
+
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "test.lx" { return source }
+      let resolver = ModuleResolution.forEntry(Lx.args[2])
+      return resolver.slurp(path)
+    },
+    withTypecheck: true,
+    withAnf: false,
+  })
+
+  let compileResult = driver.compileModule("test.lx")
+  assert.equal(compileResult.status, "done", "Should compile successfully")
+
+  let diags = query.queryDiagnostics(.{ compileResult })
+
+  // Should have no undefined variable errors for builtins
+  let foundUndef = false
+  for let i = 0; i < len(diags); i = i + 1 {
+    let d = diags[i]
+    if d.message and len(split(d.message, "Undefined")) > 1 {
+      foundUndef = true
+    }
+  }
+  assert.equal(foundUndef, false, "Should not flag valid builtins as undefined")
+})
+
+test("query - diagnostics does not flag Lx namespace as undefined", fn(assert) {
+  let source = "Lx.stderr.println(\"test\")"
+
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "test.lx" { return source }
+      let resolver = ModuleResolution.forEntry(Lx.args[2])
+      return resolver.slurp(path)
+    },
+    withTypecheck: true,
+    withAnf: false,
+  })
+
+  let compileResult = driver.compileModule("test.lx")
+  assert.equal(compileResult.status, "done", "Should compile successfully")
+
+  let diags = query.queryDiagnostics(.{ compileResult })
+
+  // Should have no undefined variable errors for Lx namespace
+  let foundLxUndef = false
+  for let i = 0; i < len(diags); i = i + 1 {
+    let d = diags[i]
+    if d.message and len(split(d.message, "Lx")) > 1 and len(split(d.message, "Undefined")) > 1 {
+      foundLxUndef = true
+    }
+  }
+  assert.equal(foundLxUndef, false, "Should not flag Lx namespace as undefined")
+})
+
+// ========================================
+// Hover Binding Kind Tests
+// ========================================
+
+test("query - hover shows local binding kind", fn(assert) {
+  let source = "let x = 42\nx"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Hover on 'x' usage (line 2)
+  let hoverResult = query.queryHover(result.ctx, "test.lx", 2, 0)
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.truthy(hoverResult.contents.symbol, "Should have symbol info")
+  assert.equal(hoverResult.contents.symbol.bindingKind, "local", "Should show local binding kind")
+  assert.truthy(hoverResult.contents.symbol.slot != nil, "Should include slot for local")
+})
+
+test("query - hover shows upvalue binding kind", fn(assert) {
+  let source = "let x = 42\nfn inner() { x }"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Hover on 'x' inside closure (line 2, col 13)
+  let hoverResult = query.queryHover(result.ctx, "test.lx", 2, 13)
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.truthy(hoverResult.contents.symbol, "Should have symbol info")
+  assert.equal(hoverResult.contents.symbol.bindingKind, "upvalue", "Should show upvalue binding kind")
+  assert.truthy(hoverResult.contents.symbol.upvalueIndex != nil, "Should include upvalue index")
+})
+
+test("query - hover shows global binding kind for builtins", fn(assert) {
+  let source = "println(42)"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Hover on 'println' (line 1, col 0)
+  let hoverResult = query.queryHover(result.ctx, "test.lx", 1, 0)
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.truthy(hoverResult.contents.symbol, "Should have symbol info")
+  assert.equal(hoverResult.contents.symbol.bindingKind, "global", "Should show global binding kind for builtin")
+  assert.equal(hoverResult.contents.symbol.builtinName, "println", "Should include builtin name")
+})
+
+test("query - hover includes builtin documentation", fn(assert) {
+  let source = "len([1, 2, 3])"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Hover on 'len' (line 1, col 0)
+  let hoverResult = query.queryHover(result.ctx, "test.lx", 1, 0)
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.truthy(hoverResult.contents.symbol, "Should have symbol info")
+  assert.truthy(hoverResult.contents.symbol.documentation, "Should include documentation")
+  assert.truthy(hoverResult.contents.symbol.signature, "Should include signature")
+  assert.truthy(len(split(hoverResult.contents.symbol.signature, "len")) > 1, "Signature should contain function name")
+})
+
+test("query - hover shows undefined binding kind for unknown vars", fn(assert) {
+  let source = "unknownVar"
+  let result = compileAndQuery(source, "test.lx")
+
+  // Hover on 'unknownVar' (line 1, col 0)
+  let hoverResult = query.queryHover(result.ctx, "test.lx", 1, 0)
+  assert.truthy(hoverResult.success, "Hover should succeed")
+  assert.truthy(hoverResult.contents.symbol, "Should have symbol info")
+  assert.equal(hoverResult.contents.symbol.bindingKind, "undefined", "Should show undefined binding kind")
+  assert.truthy(hoverResult.contents.symbol.isUndefined, "Should mark as undefined")
+})
+
 suite.run()

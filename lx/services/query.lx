@@ -988,6 +988,23 @@ fn formatTypeWithBindings(ctx, ty) {
   fmt(ty, .{})
 }
 
+// Check if a name is a valid builtin (either native or prelude)
+fn isValidBuiltin(name) {
+  if !name { return false }
+  // Check if name or its root (for dotted names like "Lx.fs") is a builtin
+  if builtinsData.NATIVE_NAMES[name] { return true }
+  if builtinsData.PRELUDE_NAMES[name] { return true }
+  // For root-level names like "Lx", "Math", "Date", check if they're known namespaces
+  let root = split(name, ".")[0]
+  if builtinsData.NATIVE_NAMES[root] { return true }
+  false
+}
+
+// Get documentation for a builtin name
+fn getBuiltinDoc(name) {
+  builtinsData.DOCS[name]
+}
+
 // Given a string key node inside a record literal, return the value's type if known.
 fn valueTypeForRecordKey(ctx, keyNode) {
   if !keyNode or !keyNode.id {
@@ -1043,8 +1060,34 @@ fn buildSymbolInfo(ctx, n) {
 
   info.kind = r.kind
 
-  if r.kind == "builtin" and r.name {
-    info.builtinName = r.name
+  // Provide binding category for hover display
+  if r.kind == "local" {
+    info.bindingKind = "local"
+    if r.slot != nil {
+      info.slot = r.slot
+    }
+  } else if r.kind == "upvalue" {
+    info.bindingKind = "upvalue"
+    if r.upvalueIndex != nil {
+      info.upvalueIndex = r.upvalueIndex
+    }
+  } else if r.kind == "builtin" {
+    // Check if this is an actual builtin or an undefined variable
+    let name = r.name or n.name
+    if isValidBuiltin(name) {
+      info.bindingKind = "global"
+      info.builtinName = name
+      // Include documentation if available
+      let doc = getBuiltinDoc(name)
+      if doc {
+        info.documentation = doc.markdown
+        info.signature = doc.signature
+      }
+    } else {
+      // Not a valid builtin - this is an undefined variable
+      info.bindingKind = "undefined"
+      info.isUndefined = true
+    }
   }
 
   if r.declaredAt {
@@ -1077,6 +1120,11 @@ fn buildHoverContents(ctx, n, ty) {
   let symbol = buildSymbolInfo(ctx, n)
   if symbol {
     contents.symbol = symbol
+    // For builtins with signatures, use the signature as the type instead of "Unknown"
+    // and remove it from symbol to avoid duplication
+    if contents.type == "Unknown" {
+      contents.type = nil
+    }
   }
   contents
 }
@@ -1401,6 +1449,32 @@ fn queryDiagnostics(result) {
       let err = passes.typecheck.errors[i]
       let nodeId = err.nodeId
       push(diags, diagFromNodeId(nodes, nodeId, err, "typecheck"))
+    }
+  }
+
+  // Detect undefined variables: names resolved as "builtin" but not in NATIVE_NAMES or PRELUDE_NAMES
+  if passes.resolve and passes.resolve.resolvedNames {
+    let nodes = passes.resolve.nodes or .{}
+    let resolvedIds = keys(passes.resolve.resolvedNames)
+    for let i = 0; i < len(resolvedIds); i = i + 1 {
+      let nodeId = resolvedIds[i]
+      let r = passes.resolve.resolvedNames[nodeId]
+      if r and r.kind == "builtin" and r.name {
+        if !isValidBuiltin(r.name) {
+          let node = nodes[nodeId]
+          push(diags, .{
+            message: "Undefined variable '" + r.name + "'",
+            severity: "error",
+            phase: "resolve",
+            filename: node and node.filename or nil,
+            line: node and node.line or nil,
+            col: node and node.col or nil,
+            endLine: node and node.endLine or nil,
+            endCol: node and node.endCol or nil,
+            nodeId: nodeId,
+          })
+        }
+      }
     }
   }
 

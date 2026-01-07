@@ -731,8 +731,9 @@ static bool linesNative(int argCount, Value *args) {
   while (end < limit) {
     if (*end == '\n') {
       size_t lineLength = end - start;
-      ObjString *line = copyString(start, lineLength);
-      writeValueArray(&result->array, OBJ_VAL(line));
+      push(OBJ_VAL(copyString(start, lineLength)));
+      writeValueArray(&result->array, vm.stackTop[-1]);
+      pop();
       start = end + 1;
     }
     end++;
@@ -741,8 +742,9 @@ static bool linesNative(int argCount, Value *args) {
   // Handle the last line if it doesn't end with a newline
   if (start < limit) {
     size_t lineLength = limit - start;
-    ObjString *line = copyString(start, lineLength);
-    writeValueArray(&result->array, OBJ_VAL(line));
+    push(OBJ_VAL(copyString(start, lineLength)));
+    writeValueArray(&result->array, vm.stackTop[-1]);
+    pop();
   }
 
   return true;
@@ -898,8 +900,9 @@ static bool splitNative(int argCount, Value *args) {
 
   while (next != NULL) {
     size_t length = next - start;
-    ObjString *part = copyString(start, length);
-    writeValueArray(&result->array, OBJ_VAL(part));
+    push(OBJ_VAL(copyString(start, length)));
+    writeValueArray(&result->array, vm.stackTop[-1]);
+    pop();
 
     start = next + delimiter->length;
     next = strstr(start, delimiter->chars);
@@ -908,8 +911,9 @@ static bool splitNative(int argCount, Value *args) {
   // Add remaining part
   if (*start != '\0') {
     size_t length = (input->chars + input->length) - start;
-    ObjString *part = copyString(start, length);
-    writeValueArray(&result->array, OBJ_VAL(part));
+    push(OBJ_VAL(copyString(start, length)));
+    writeValueArray(&result->array, vm.stackTop[-1]);
+    pop();
   }
 
   return true;
@@ -1579,15 +1583,16 @@ static bool zlibDeflateNative(int argCount, Value *args) {
   }
 
   // Calculate max compressed size
-  uLongf compressedLen = compressBound(inputLen);
-  uint8_t* compressedBuf = ALLOCATE(uint8_t, compressedLen);
+  uLongf compressedCap = compressBound(inputLen);
+  uLongf compressedLen = compressedCap;
+  uint8_t* compressedBuf = ALLOCATE(uint8_t, compressedCap);
 
-  // Compress
+  // Compress (compressedLen is modified to actual output size)
   int result = compress2(compressedBuf, &compressedLen, inputBuf, inputLen, Z_DEFAULT_COMPRESSION);
   FREE_ARRAY(uint8_t, inputBuf, inputLen);
 
   if (result != Z_OK) {
-    FREE_ARRAY(uint8_t, compressedBuf, compressedLen);
+    FREE_ARRAY(uint8_t, compressedBuf, compressedCap);
     args[-1] = CSTRING_VAL("Error: zlib compression failed");
     return false;
   }
@@ -1601,7 +1606,7 @@ static bool zlibDeflateNative(int argCount, Value *args) {
   args[-1] = OBJ_VAL(output);
   pop();
 
-  FREE_ARRAY(uint8_t, compressedBuf, compressedLen);
+  FREE_ARRAY(uint8_t, compressedBuf, compressedCap);
   return true;
 }
 

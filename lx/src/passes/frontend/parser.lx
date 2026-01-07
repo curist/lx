@@ -636,6 +636,7 @@ fn parse(src, filename) {
 
     if canAssign and match(TOKEN.EQUAL) {
       let value = expression()
+      if !value { return nil }
       return AssignmentNode(filename, name, value, parser.previous)
     }
 
@@ -722,6 +723,7 @@ fn parse(src, filename) {
 
     if canAssign and match(TOKEN.EQUAL) {
       let value = expression()
+      if !value { return nil }
       let dotNode = DotNode(filename, left, property, propertyToken)
       return AssignmentNode(filename, dotNode, value, parser.previous)
     }
@@ -736,6 +738,7 @@ fn parse(src, filename) {
 
     if canAssign and match(TOKEN.EQUAL) {
       let value = expression()
+      if !value { return nil }
       let indexNode = IndexNode(filename, left, indexExpr, endToken)
       return AssignmentNode(filename, indexNode, value, parser.previous)
     }

@@ -421,13 +421,6 @@ let DOCS = .{
     markdown: "`len(x: string | array) -> number`\nLength of a string/array.",
     source: "API.md",
   },
-  ["lines"]: .{
-    name: "lines",
-    signature: "lines(s: string) -> array[string]",
-    description: "Split by `\\n` (newline not included in lines).",
-    markdown: "`lines(s: string) -> array[string]`\nSplit by `\\n` (newline not included in lines).",
-    source: "API.md",
-  },
   ["nameOf"]: .{
     name: "nameOf",
     signature: "nameOf(enum: enum, value: number | string) -> string | nil",
@@ -613,7 +606,6 @@ let NATIVE_NAMES = .{
   ["join"]: true,
   ["keys"]: true,
   ["len"]: true,
-  ["lines"]: true,
   ["nameOf"]: true,
   ["ord"]: true,
   ["pop"]: true,

@@ -5,7 +5,7 @@
 let testDir = "test"
 let result = Lx.proc.exec("ls " + testDir + "/*.test.lx")
 let testFiles = if result.code == 0 {
-  let lines = result.out->lines()
+  let lines = result.out->split("\n")
   collect fullPath in lines {
     if fullPath == "" { continue }
     // Extract just the filename from full path

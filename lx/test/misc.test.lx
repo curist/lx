@@ -40,8 +40,8 @@ test("else expression", fn(assert) {
   assert.equal((if true {0} else {1} + 10) + 10, 20)
 })
 
-test("lines", fn(assert) {
-  let splitted = "a\nb\nc"->lines()
+test("split", fn(assert) {
+  let splitted = "a\nb\nc"->split("\n")
   assert.equal(len(splitted), 3)
   assert.equal(splitted[0], "a")
   assert.equal(splitted[1], "b")

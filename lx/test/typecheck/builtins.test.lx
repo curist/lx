@@ -15,7 +15,7 @@ fn register(test) {
   })
 
   test("typecheck - string builtins", fn(assert) {
-    let result = parseAndTypecheck("{ tolower(\"A\")\ntoupper(\"a\")\nlines(\"a\\nb\")\nsplit(\"a,b\", \",\")\njoin([1, 2], \",\") }")
+    let result = parseAndTypecheck("{ tolower(\"A\")\ntoupper(\"a\")\nsplit(\"a,b\", \",\")\njoin([1, 2], \",\") }")
     assert.truthy(result.success)
     if !result.success { return }
     assert.equal(deref(result, getExprType(result, 0)).kind, "String")
@@ -23,10 +23,7 @@ fn register(test) {
     let lt = deref(result, getExprType(result, 2))
     assert.equal(lt.kind, "Array")
     assert.equal(deref(result, lt.elem).kind, "String")
-    let st = deref(result, getExprType(result, 3))
-    assert.equal(st.kind, "Array")
-    assert.equal(deref(result, st.elem).kind, "String")
-    assert.equal(deref(result, getExprType(result, 4)).kind, "String")
+    assert.equal(deref(result, getExprType(result, 3)).kind, "String")
   })
 
   test("typecheck - array builtins are polymorphic per use", fn(assert) {

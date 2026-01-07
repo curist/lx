@@ -710,46 +710,6 @@ static bool rangeNative(int argCount, Value *args) {
   return true;
 }
 
-static bool linesNative(int argCount, Value *args) {
-  if (argCount < 1) {
-    args[-1] = CSTRING_VAL("Error: lines takes 1 arg.");
-    return false;
-  }
-  if (!IS_STRING(args[0])) {
-    args[-1] = CSTRING_VAL("Error: Arg must be a string.");
-    return false;
-  }
-
-  ObjString *input = AS_STRING(args[0]);
-  ObjArray *result = newArray();
-  args[-1] = OBJ_VAL(result);
-
-  const char *start = input->chars;
-  const char *end = input->chars;
-  const char *limit = input->chars + input->length;
-
-  while (end < limit) {
-    if (*end == '\n') {
-      size_t lineLength = end - start;
-      push(OBJ_VAL(copyString(start, lineLength)));
-      writeValueArray(&result->array, vm.stackTop[-1]);
-      pop();
-      start = end + 1;
-    }
-    end++;
-  }
-
-  // Handle the last line if it doesn't end with a newline
-  if (start < limit) {
-    size_t lineLength = limit - start;
-    push(OBJ_VAL(copyString(start, lineLength)));
-    writeValueArray(&result->array, vm.stackTop[-1]);
-    pop();
-  }
-
-  return true;
-}
-
 static int tostring(char **s, Value v) {
   return valueToString(v, s);
 }
@@ -2352,7 +2312,6 @@ void defineBuiltinNatives() {
   defineNative("pop", popNative);
   defineNative("concat", concatNative);
   defineNative("range", rangeNative);
-  defineNative("lines", linesNative);
   defineNative("reverse", reverseNative);
   defineNative("slice", sliceNative);
 }

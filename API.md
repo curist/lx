@@ -30,7 +30,6 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `concat(a: array, b: array) -> array` New array with elements of `a` followed by `b`.
 - `reverse(arr: array) -> array` Returns a new array with elements in reverse order (non-mutating).
 - `slice(arr: array, start: number, end?: number) -> array` Array slice from start to end (exclusive). Supports negative indices (count from end). If end omitted, goes to end of array.
-- `lines(s: string) -> array[string]` Split by `\n` (newline not included in lines).
 
 ### `Date` namespace (native)
 

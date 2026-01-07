@@ -6,6 +6,7 @@
 #include "object.h"
 #include "table.h"
 #include "value.h"
+#include "vm.h"
 
 #define TABLE_MAX_LOAD 0.6
 #define GROUP_WIDTH TABLE_GROUP_WIDTH
@@ -185,57 +186,80 @@ static void adjustCapacity(Table* table, int capacity) {
   if (capacity < GROUP_WIDTH) capacity = GROUP_WIDTH;
   capacity = (capacity + GROUP_WIDTH - 1) & ~(GROUP_WIDTH - 1);
 
-  int bucketCount = capacity / GROUP_WIDTH;
-  uint32_t bucketMask = (uint32_t)(bucketCount - 1);
+  // Build new table WITHOUT modifying *table yet (GC safety)
+  Table newTable;
+  initTable(&newTable);
 
-  Entry* entries = ALLOCATE(Entry, capacity);
-  uint8_t* control = ALLOCATE(uint8_t, capacity);
+  // Preserve array storage (not rehashing array part)
+  newTable.arrayCount = table->arrayCount;
+  newTable.arrayCapacity = table->arrayCapacity;
+  newTable.arrayValues = table->arrayValues;
+  newTable.arrayPresent = table->arrayPresent;
+  newTable.hasIntKeysInHash = table->hasIntKeysInHash;
+
+  int bucketCount = capacity / GROUP_WIDTH;
+  newTable.capacity = capacity;
+  newTable.bucketCount = bucketCount;
+  newTable.bucketMask = (uint32_t)(bucketCount - 1);
+  newTable.count = newTable.arrayCount;
+  newTable.tombstones = 0;
+
+  newTable.entries = ALLOCATE(Entry, capacity);
+  newTable.control = ALLOCATE(uint8_t, capacity);
+
   for (int i = 0; i < capacity; i++) {
-    entries[i].key = NIL_VAL;
-    entries[i].value = NIL_VAL;
-    control[i] = CTRL_EMPTY;
+    newTable.entries[i].key = NIL_VAL;
+    newTable.entries[i].value = NIL_VAL;
+    newTable.control[i] = CTRL_EMPTY;
   }
 
+  // Rehash from old table into newTable (original *table still valid for GC)
+  if (table->entries != NULL) {
+    for (int i = 0; i < table->capacity; i++) {
+      if (table->control != NULL && (table->control[i] & CTRL_EMPTY) != 0) continue;
+      Entry* e = &table->entries[i];
+      if (IS_NIL(e->key)) continue;
+
+      Value key = e->key;
+      Value val = e->value;
+
+      uint32_t hash = hashValue(key);
+      uint8_t h2 = h2hash(hash);
+      uint32_t group = h1hash(hash, newTable.bucketMask);
+
+      for (;;) {
+        uint8_t* ctrl = ctrlAt(&newTable, group);
+        uint32_t empties = matchEmptyOrTomb(ctrl);
+        if (empties != 0) {
+          int offset = lowestBitIndex(empties);
+          Entry* dest = entryAt(&newTable, group, (uint32_t)offset);
+          dest->key = key;
+          dest->value = val;
+          ctrl[offset] = h2;
+          newTable.count++;
+          break;
+        }
+        group = (group + 1) & newTable.bucketMask;
+      }
+    }
+  }
+
+  // Now atomically swap in new hash storage
   Entry* oldEntries = table->entries;
   uint8_t* oldControl = table->control;
   int oldCapacity = table->capacity;
 
-  table->entries = entries;
-  table->control = control;
-  table->capacity = capacity;
-  table->bucketCount = bucketCount;
-  table->bucketMask = bucketMask;
-  table->count = table->arrayCount;
-  table->tombstones = 0;
+  table->entries = newTable.entries;
+  table->control = newTable.control;
+  table->capacity = newTable.capacity;
+  table->bucketCount = newTable.bucketCount;
+  table->bucketMask = newTable.bucketMask;
+  table->count = newTable.count;
+  table->tombstones = newTable.tombstones;
 
-  if (oldEntries != NULL) {
-    for (int i = 0; i < oldCapacity; i++) {
-      if (oldControl != NULL && (oldControl[i] & CTRL_EMPTY) != 0) continue;
-      if (IS_NIL(oldEntries[i].key)) continue;
-
-      Value key = oldEntries[i].key;
-      Value value = oldEntries[i].value;
-      uint32_t hash = hashValue(key);
-      uint8_t h2 = h2hash(hash);
-      uint32_t group = h1hash(hash, table->bucketMask);
-      for (;;) {
-        uint8_t* ctrl = ctrlAt(table, group);
-        uint32_t empties = matchEmptyOrTomb(ctrl);
-        if (empties != 0) {
-          int offset = lowestBitIndex(empties);
-          Entry* dest = entryAt(table, group, (uint32_t)offset);
-          dest->key = key;
-          dest->value = value;
-          ctrl[offset] = h2;
-          table->count++;
-          break;
-        }
-        group = (group + 1) & table->bucketMask;
-      }
-    }
-    FREE_ARRAY(Entry, oldEntries, oldCapacity);
-    FREE_ARRAY(uint8_t, oldControl, oldCapacity);
-  }
+  // Free old hash storage
+  FREE_ARRAY(Entry, oldEntries, oldCapacity);
+  FREE_ARRAY(uint8_t, oldControl, oldCapacity);
 }
 
 typedef struct {
@@ -333,6 +357,12 @@ bool tableGet(Table* table, Value key, Value* value) {
 }
 
 bool tableSet(Table* table, Value key, Value value) {
+#ifdef DEBUG_STRESS_GC
+  push(key);
+  push(value);
+#endif
+
+  bool result = false;
   key = normalizeNumberKey(key);
 
   uint32_t arrayIndex;
@@ -365,7 +395,8 @@ bool tableSet(Table* table, Value key, Value value) {
         table->count++;
       }
       table->arrayValues[arrayIndex] = value;
-      return !wasPresent && !existedInHash;
+      result = !wasPresent && !existedInHash;
+      goto cleanup;
     }
     table->hasIntKeysInHash = true;
   }
@@ -379,7 +410,8 @@ bool tableSet(Table* table, Value key, Value value) {
   ProbeResult probe = findSlot(table, key, hash);
   if (probe.found) {
     probe.entry->value = value;
-    return false;
+    result = false;
+    goto cleanup;
   }
 
   if (*probe.ctrl == CTRL_TOMB) {
@@ -390,7 +422,14 @@ bool tableSet(Table* table, Value key, Value value) {
   probe.entry->value = value;
   *probe.ctrl = h2hash(hash);
   table->count++;
-  return true;
+  result = true;
+
+cleanup:
+#ifdef DEBUG_STRESS_GC
+  pop();
+  pop();
+#endif
+  return result;
 }
 
 bool tableDelete(Table* table, Value key) {
@@ -506,9 +545,9 @@ void markTable(Table* table) {
   for (int i = 0; i < table->capacity; i++) {
     if (table->control != NULL && (table->control[i] & CTRL_EMPTY) != 0) continue;
     Entry* entry = &table->entries[i];
-    if (IS_STRING(entry->key)) {
-      markObject(AS_OBJ(entry->key));
+    if (!IS_NIL(entry->key)) {
+      markValue(entry->key);
+      markValue(entry->value);
     }
-    markValue(entry->value);
   }
 }

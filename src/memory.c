@@ -8,15 +8,24 @@
 #include "debug.h"
 #endif
 
+// Disable per-object logging under stress GC (summary only)
+#if defined(DEBUG_LOG_GC) && defined(DEBUG_STRESS_GC)
+  #define DEBUG_LOG_GC_VERBOSE 0
+#else
+  #define DEBUG_LOG_GC_VERBOSE 1
+#endif
+
 void* reallocate(void* pointer, size_t oldSize, size_t newSize) {
   vm.bytesAllocated += newSize - oldSize;
   if (newSize > oldSize) {
+    // Never start a GC while one is already running.
+    if (!vm.gcRunning) {
 #ifdef DEBUG_STRESS_GC
-    collectGarbage();
-#endif
-
-    if (vm.bytesAllocated > vm.nextGC) {
       collectGarbage();
+#endif
+      if (vm.bytesAllocated > vm.nextGC) {
+        collectGarbage();
+      }
     }
   }
 
@@ -34,7 +43,7 @@ void markObject(Obj* object) {
   if (object == NULL) return;
   if (object->isMarked) return;
 
-#ifdef DEBUG_LOG_GC
+#if defined(DEBUG_LOG_GC) && DEBUG_LOG_GC_VERBOSE
   printf("%p mark ", (void*)object);
   printValue(stdout, OBJ_VAL(object));
   printf("\n");
@@ -43,9 +52,12 @@ void markObject(Obj* object) {
   object->isMarked = true;
 
   if (vm.grayCapacity < vm.grayCount + 1) {
-    vm.grayCapacity = GROW_CAPACITY(vm.grayCapacity);
-    vm.grayStack = (Obj**)realloc(vm.grayStack, sizeof(Obj*) * vm.grayCapacity);
+    int oldCapacity = vm.grayCapacity;
+    vm.grayCapacity = GROW_CAPACITY(oldCapacity);
 
+    vm.grayStack = (Obj**)reallocate(vm.grayStack,
+                                     sizeof(Obj*) * oldCapacity,
+                                     sizeof(Obj*) * vm.grayCapacity);
     if (vm.grayStack == NULL) exit(1);
   }
 
@@ -63,7 +75,7 @@ static void markArray(ValueArray* array) {
 }
 
 static void blackenObject(Obj* object) {
-#ifdef DEBUG_LOG_GC
+#if defined(DEBUG_LOG_GC) && DEBUG_LOG_GC_VERBOSE
   printf("%p blacken ", (void*)object);
   printValue(stdout, OBJ_VAL(object));
   printf("\n");
@@ -102,14 +114,14 @@ static void blackenObject(Obj* object) {
       break;
     }
     case OBJ_ARRAY: {
-      ValueArray array = ((ObjArray*)object)->array;
-      markArray(&array);
+      markArray(&((ObjArray*)object)->array);
+      break;
     }
   }
 }
 
 static void freeObject(Obj* object) {
-#ifdef DEBUG_LOG_GC
+#if defined(DEBUG_LOG_GC) && DEBUG_LOG_GC_VERBOSE
   printf("%p free type %d\n", (void*)object, object->type);
 #endif
 
@@ -139,25 +151,22 @@ static void freeObject(Obj* object) {
       FREE(ObjUpvalue, object);
       break;
     case OBJ_HASHMAP: {
-      Table table = ((ObjHashmap*)object)->table;
-      freeTable(&table);
+      ObjHashmap* hm = (ObjHashmap*)object;
+      freeTable(&hm->table);
       FREE(ObjHashmap, object);
       break;
     }
     case OBJ_ENUM: {
       ObjEnum* e = (ObjEnum*)object;
-      Table forward = e->forward;
-      Table reverse = e->reverse;
-      freeTable(&forward);
-      freeTable(&reverse);
-      ValueArray names = e->names;
-      freeValueArray(&names);
+      freeTable(&e->forward);
+      freeTable(&e->reverse);
+      freeValueArray(&e->names);
       FREE(ObjEnum, object);
       break;
     }
     case OBJ_ARRAY: {
-      ValueArray array = ((ObjArray*)object)->array;
-      freeValueArray(&array);
+      ObjArray* a = (ObjArray*)object;
+      freeValueArray(&a->array);
       FREE(ObjArray, object);
       break;
     }
@@ -223,8 +232,15 @@ static void sweep() {
 }
 
 void collectGarbage() {
+#ifdef DEBUG
+  if (vm.gcRunning) {
+    fprintf(stderr, "BUG: GC reentered.\n");
+    abort();
+  }
+#endif
+  vm.gcRunning = true;
+
 #ifdef DEBUG_LOG_GC
-  printf("-- gc begin\n");
   size_t before = vm.bytesAllocated;
 #endif
 
@@ -235,10 +251,17 @@ void collectGarbage() {
 
   vm.nextGC = vm.bytesAllocated * GC_HEAP_GROW_FACTOR;
 
+  vm.gcRunning = false;  // clear BEFORE doing formatted IO
+
 #ifdef DEBUG_LOG_GC
-  printf("-- gc end\n");
-  printf("   collected %zu bytes (from %zu to %zu) next at %zu\n",
-         before - vm.bytesAllocated, before, vm.bytesAllocated,
-         vm.nextGC);
+  fprintf(stderr, "-- gc begin\n");
+  fprintf(stderr, "-- gc end\n");
+  if (vm.bytesAllocated <= before) {
+    fprintf(stderr, "   collected %zu bytes (from %zu to %zu) next at %zu\n",
+           before - vm.bytesAllocated, before, vm.bytesAllocated, vm.nextGC);
+  } else {
+    fprintf(stderr, "   gc grew by %zu bytes (from %zu to %zu) next at %zu\n",
+           vm.bytesAllocated - before, before, vm.bytesAllocated, vm.nextGC);
+  }
 #endif
 }

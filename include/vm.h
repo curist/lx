@@ -36,6 +36,7 @@ typedef struct {
   int grayCount;
   int grayCapacity;
   Obj** grayStack;
+  bool gcRunning;
 
 #ifdef PROFILE_OPCODES
   uint64_t opCounts[256];

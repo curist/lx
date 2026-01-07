@@ -21,7 +21,7 @@ static Obj* allocateObject(size_t size, ObjType type) {
   object->next = vm.objects;
   vm.objects = object;
 
-#ifdef DEBUG_LOG_GC
+#if defined(DEBUG_LOG_GC) && DEBUG_LOG_GC_VERBOSE
   printf("%p allocate %zu for %d\n", (void*)object, size, type);
 #endif
 

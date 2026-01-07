@@ -294,6 +294,7 @@ void initVM() {
   vm.grayCount = 0;
   vm.grayCapacity = 0;
   vm.grayStack = NULL;
+  vm.gcRunning = false;
 
   vm.lastResult = NIL_VAL;
   vm.lastError = NIL_VAL;

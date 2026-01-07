@@ -9,7 +9,7 @@ extern int LX_ARGC;
 extern const char** LX_ARGV;
 
 #ifdef DEBUG
-#define DEBUG_TRACE_EXECUTION
+// #define DEBUG_TRACE_EXECUTION
 
 #define DEBUG_STRESS_GC
 #define DEBUG_LOG_GC

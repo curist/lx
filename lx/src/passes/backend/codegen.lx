@@ -210,12 +210,10 @@ fn identifierConstant(gen, name) {
 fn buildDeclMap(scopeInfo) {
   let map = .{}
   let scopeIds = keys(scopeInfo or .{})
-  for let i = 0; i < len(scopeIds); i = i + 1 {
-    let id = scopeIds[i]
+  for id in scopeIds {
     let scope = scopeInfo[id]
     let locals = scope and scope.locals or []
-    for let j = 0; j < len(locals); j = j + 1 {
-      let local = locals[j]
+    for local in locals {
       if local.nodeId {
         map[local.nodeId] = local
       }
@@ -313,8 +311,7 @@ fn unwindToSlot(gen, targetSlot) {
 fn patchBreaks(gen) {
   let breaker = gen.breakOffsets[len(gen.breakOffsets) - 1]
   let currentAddr = len(gen.currentFunction.chunk.bytecode)
-  for let i = 0; i < len(breaker); i = i + 1 {
-    let addr = breaker[i]
+  for addr in breaker {
     let jump = currentAddr - addr - 2
     if jump > UINT16_MAX {
       addError(gen, gen.currentNode, "Too much code to jump over.")
@@ -327,8 +324,7 @@ fn patchBreaks(gen) {
 fn patchContinues(gen) {
   let continues = gen.continueOffsets[len(gen.continueOffsets) - 1]
   let currentAddr = len(gen.currentFunction.chunk.bytecode)
-  for let i = 0; i < len(continues); i = i + 1 {
-    let addr = continues[i]
+  for addr in continues {
     let jump = currentAddr - addr - 2
     if jump > UINT16_MAX {
       addError(gen, gen.currentNode, "Loop body too large.")
@@ -431,28 +427,12 @@ fn compileBlock(gen, node, mode) {
     let hoistedNames = keys(scope.hoistedFns)
 
     // Collect hoisted functions with their declaration indices
-    let hoistedList = []
-    for let i = 0; i < len(hoistedNames); i = i + 1 {
-      let name = hoistedNames[i]
-      let hoisted = scope.hoistedFns[name]
-      push(hoistedList, hoisted)
-    }
-
-    // Sort by declIndex to match resolver's prescan order
-    // Simple bubble sort (sufficient for small lists)
-    for let i = 0; i < len(hoistedList); i = i + 1 {
-      for let j = i + 1; j < len(hoistedList); j = j + 1 {
-        if hoistedList[j].declIndex < hoistedList[i].declIndex {
-          let temp = hoistedList[i]
-          hoistedList[i] = hoistedList[j]
-          hoistedList[j] = temp
-        }
-      }
-    }
+    let hoistedList = collect name in hoistedNames {
+      scope.hoistedFns[name]
+    }->sort(fn(a, b) { a.declIndex < b.declIndex })
 
     // Pre-allocate locals for hoisted functions
-    for let i = 0; i < len(hoistedList); i = i + 1 {
-      let hoisted = hoistedList[i]
+    for hoisted in hoistedList {
       gen.emittedLocals[hoisted.declNodeId] = gen.nextLocalSlot
       gen.nextLocalSlot = gen.nextLocalSlot + 1
 
@@ -468,8 +448,7 @@ fn compileBlock(gen, node, mode) {
       emitByte(gen, OP.NIL, node.line)
     }
   } else {
-    for let i = 0; i < len(exprs); i = i + 1 {
-      let expr = exprs[i]
+    for expr, i in exprs {
       if i < len(exprs) - 1 {
         compileStmt(gen, expr)
       } else {
@@ -599,8 +578,8 @@ fn compileIf(gen, node, mode) {
 fn compileCall(gen, node) {
   compileValue(gen, node.callee)
   let args = node.args or []
-  for let i = 0; i < len(args); i = i + 1 {
-    compileValue(gen, args[i])
+  for arg in args {
+    compileValue(gen, arg)
   }
   emitBytes(gen, OP.CALL, len(args), node.line)
 }
@@ -628,8 +607,8 @@ fn compileIntrinsicCall(gen, node) {
       return
     }
     // Compile args: array, value
-    for let i = 0; i < len(args); i = i + 1 {
-      compileValue(gen, args[i])
+    for arg in args {
+      compileValue(gen, arg)
     }
     emitByte(gen, OP.APPEND, node.line)
   } else if node.intrinsic == "mod_const" {
@@ -678,8 +657,7 @@ fn compileFunctionExpr(gen, node, mode) {
   if fnScope {
     let locals = fnScope.locals or []
     let slot = 0
-    for let i = 0; i < len(locals); i = i + 1 {
-      let local = locals[i]
+    for local in locals {
       if local.kind == "fn" {
         // Function name: record at slot -1 so localSlot(-1) = 0 (the closure)
         gen.emittedLocals[local.nodeId] = -1
@@ -711,9 +689,7 @@ fn compileFunctionExpr(gen, node, mode) {
   emitClosure(gen, func, node.line)
 
   let upvalues = scope and scope.upvalues or []
-  for let i = 0; i < len(upvalues); i = i + 1 {
-    let uv = upvalues[i]
-
+  for uv in upvalues {
     // CRITICAL FIX: Translate upvalue captures correctly
     // For isLocal=true: uv.captured is nodeId, need to look up runtime slot
     // For isLocal=false: uv.captured is upvalue index, use directly
@@ -734,11 +710,9 @@ fn compileFunctionExpr(gen, node, mode) {
     }
   }
 
-  let local = gen.localsByDecl[node.id]
-  if local {
+  if let local = gen.localsByDecl[node.id] {
     // Check if this function was already pre-allocated (hoisted)
-    let preallocatedSlot = gen.emittedLocals[node.id]
-    if preallocatedSlot or preallocatedSlot == 0 {
+    if let preallocatedSlot = gen.emittedLocals[node.id] {
       // Function was hoisted - assign closure into existing slot
       // SET_LOCAL leaves value on stack, so we POP it after assignment
       emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
@@ -1065,9 +1039,8 @@ fn compileDot(gen, node) {
 
 fn compileArray(gen, node) {
   emitByte(gen, OP.ARRAY, node.line)
-  let elems = node.elements or []
-  for let i = 0; i < len(elems); i = i + 1 {
-    compileValue(gen, elems[i])
+  for el in node.elements or [] {
+    compileValue(gen, el)
     emitByte(gen, OP.APPEND, node.line)
   }
 }
@@ -1075,9 +1048,7 @@ fn compileArray(gen, node) {
 fn compileHashmap(gen, node) {
   let isEnum = gen.enumInfo and gen.enumInfo[node.id]
   emitByte(gen, isEnum and OP.ENUM or OP.HASHMAP, node.line)
-  let pairs = node.pairs or []
-  for let i = 0; i < len(pairs); i = i + 1 {
-    let pair = pairs[i]
+  for pair in node.pairs or [] {
     compileValue(gen, pair.key)
     compileValue(gen, pair.value)
     emitByte(gen, OP.ASSOC, node.line)
@@ -1391,10 +1362,8 @@ fn compileFor(gen, node, mode) {
   // 1. Pattern matches: for let i = start; i <//<= limit; i = i + 1 { body }
   // 2. Both i and limit are Identifiers resolved to local slots
   // 3. Both slots < loopContinueSlot (stable across iterations)
-  let match = matchNumericForLoop(gen, node)
-  if match {
-    let success = compileNumericForLoop(gen, node, match, mode)
-    if success {
+  if let match = matchNumericForLoop(gen, node) {
+    if let success = compileNumericForLoop(gen, node, match, mode) {
       return
     }
     // If fusion failed safety checks, fall through to generic loop

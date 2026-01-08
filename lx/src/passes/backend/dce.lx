@@ -132,8 +132,7 @@ fn collectUsages(state) {
   // resolvedNames: nodeId -> { kind, declaredAt, ... }
 
   let resolvedKeys = keys(state.resolvedNames)
-  for let i = 0; i < len(resolvedKeys); i = i + 1 {
-    let nodeId = resolvedKeys[i]
+  for nodeId in resolvedKeys {
     let binding = state.resolvedNames[nodeId]
 
     if binding and (binding.kind == "local" or binding.kind == "upvalue") {
@@ -156,15 +155,12 @@ fn detectDeadLocals(state) {
   // scopeInfo: scopeNodeId -> { locals (localsArray), ... }
 
   let scopeKeys = keys(state.scopeInfo)
-  for let i = 0; i < len(scopeKeys); i = i + 1 {
-    let scopeNodeId = scopeKeys[i]
+  for scopeNodeId in scopeKeys {
     let scopeData = state.scopeInfo[scopeNodeId]
 
     // Check localsArray for unused locals
     let locals = scopeData.localsArray or scopeData.locals or []
-    for let j = 0; j < len(locals); j = j + 1 {
-      let local = locals[j]
-
+    for local in locals {
       // Skip if captured by closure
       if local.isCaptured { continue }
 
@@ -184,8 +180,7 @@ fn detectDeadLocals(state) {
     // Check hoisted functions
     let hoistedFns = scopeData.hoistedFns or .{}
     let fnNames = keys(hoistedFns)
-    for let k = 0; k < len(fnNames); k = k + 1 {
-      let fnName = fnNames[k]
+    for fnName in fnNames {
       let hoisted = hoistedFns[fnName]
       let declId = hoisted.declNodeId
 
@@ -205,9 +200,7 @@ fn detectDeadImports(state) {
   // An import is dead if its binding (the Let's name identifier) is never used
 
   let importKeys = keys(state.importInfoByNodeId)
-  for let i = 0; i < len(importKeys); i = i + 1 {
-    let importNodeId = importKeys[i]
-
+  for importNodeId in importKeys {
     // The import node itself - check if the containing Let's name is ever used
     // We need to find the Let node that wraps this import
     // For now, we track via the import node and check resolvedNames

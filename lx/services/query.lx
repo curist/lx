@@ -1122,7 +1122,7 @@ fn buildHoverContents(ctx, n, ty) {
     contents.symbol = symbol
     // For builtins with signatures, use the signature as the type instead of "Unknown"
     // and remove it from symbol to avoid duplication
-    if contents.type == "Unknown" {
+    if contents.type == "Unknown" and symbol.signature {
       contents.type = nil
     }
   }

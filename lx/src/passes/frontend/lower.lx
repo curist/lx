@@ -126,8 +126,7 @@ fn lowerLetDestructureExprs(lowerer, node) {
 
   // For each binding, emit: let <name> = $destr.<key>
   let bindings = node.bindings or []
-  for let i = 0; i < len(bindings); i = i + 1 {
-    let b = bindings[i]
+  for b in bindings {
     let bindName = b and b.name
     let bindKey = b and b.key
     if !bindName or !bindKey {
@@ -172,12 +171,11 @@ fn lowerBlock(lowerer, node) {
   let newNode = copyNodeShallow(lowerer, node)
 
   let loweredExprs = []
-  for let i = 0; i < len(node.expressions); i = i + 1 {
-    let expr = node.expressions[i]
+  for expr in node.expressions {
     if expr and expr.type == NODE.LetDestructure {
       let expanded = lowerLetDestructureExprs(lowerer, expr)
-      for let j = 0; j < len(expanded); j = j + 1 {
-        push(loweredExprs, expanded[j])
+      for expandedExpr in expanded {
+        push(loweredExprs, expandedExpr)
       }
     } else {
       push(loweredExprs, lowerExpr(lowerer, expr))
@@ -198,8 +196,8 @@ fn lowerFunction(lowerer, node) {
 
   // Lower params (array of Identifier nodes)
   let loweredParams = []
-  for let i = 0; i < len(node.params); i = i + 1 {
-    push(loweredParams, lowerExpr(lowerer, node.params[i]))
+  for param in node.params {
+    push(loweredParams, lowerExpr(lowerer, param))
   }
   newNode.params = loweredParams
 
@@ -207,8 +205,7 @@ fn lowerFunction(lowerer, node) {
   let loweredDefaults = []
   let hasDefaults = node.defaults and len(node.defaults) > 0
   if hasDefaults {
-    for let i = 0; i < len(node.defaults); i = i + 1 {
-      let defaultVal = node.defaults[i]
+    for defaultVal in node.defaults {
       if defaultVal {
         push(loweredDefaults, lowerExpr(lowerer, defaultVal))
       } else {
@@ -225,8 +222,8 @@ fn lowerFunction(lowerer, node) {
   if hasDefaults and len(loweredDefaults) > 0 {
     // Check if any parameters have defaults
     let hasAnyDefaults = false
-    for let i = 0; i < len(loweredDefaults); i = i + 1 {
-      if loweredDefaults[i] {
+    for loweredDefault in loweredDefaults {
+      if loweredDefault {
         hasAnyDefaults = true
       }
     }
@@ -252,7 +249,7 @@ fn lowerFunction(lowerer, node) {
       let newExpressions = []
 
       // Inject nil checks for each parameter with a default
-      for let i = 0; i < len(loweredParams); i = i + 1 {
+      for param, i in loweredParams {
         let defaultVal = loweredDefaults[i]
         if defaultVal {
           // Create: if param == nil { param = defaultValue }
@@ -286,7 +283,7 @@ fn lowerFunction(lowerer, node) {
             col: param.col,
             endLine: nilNode.endLine,
             endCol: nilNode.endCol,
-            left: makeIdent(param),
+            left: makeIdent(loweredParams[i]),
             operator: eqToken,
             right: nilNode,
           }
@@ -300,7 +297,7 @@ fn lowerFunction(lowerer, node) {
             col: param.col,
             endLine: defaultVal.endLine,
             endCol: defaultVal.endCol,
-            target: makeIdent(param),
+            target: makeIdent(loweredParams[i]),
             value: defaultVal,
           }
 
@@ -341,8 +338,8 @@ fn lowerFunction(lowerer, node) {
 
       // Append the original body expressions
       if bodyBlock.type == NODE.Block {
-        for let i = 0; i < len(bodyBlock.expressions); i = i + 1 {
-          push(newExpressions, bodyBlock.expressions[i])
+        for bodyExpr in bodyBlock.expressions {
+          push(newExpressions, bodyExpr)
         }
         bodyBlock.expressions = newExpressions
         newNode.body = bodyBlock
@@ -377,8 +374,8 @@ fn lowerCall(lowerer, node) {
   newNode.callee = lowerExpr(lowerer, node.callee)
 
   let loweredArgs = []
-  for let i = 0; i < len(node.args); i = i + 1 {
-    push(loweredArgs, lowerExpr(lowerer, node.args[i]))
+  for arg in node.args {
+    push(loweredArgs, lowerExpr(lowerer, arg))
   }
   newNode.args = loweredArgs
 
@@ -401,8 +398,8 @@ fn lowerArrow(lowerer, node) {
   // Create new Call node with left prepended to args
   // Need to manually build the prepended args array
   let newArgs = [left]
-  for let i = 0; i < len(right.args); i = i + 1 {
-    push(newArgs, right.args[i])
+  for arg in right.args {
+    push(newArgs, arg)
   }
 
   let newCall = .{
@@ -518,8 +515,8 @@ fn lowerFor(lowerer, node) {
     forNode.body = lowerExpr(lowerer, node.body)
 
     let exprs = []
-    for let i = 0; i < len(initExprs); i = i + 1 {
-      push(exprs, initExprs[i])
+    for initExpr in initExprs {
+      push(exprs, initExpr)
     }
     push(exprs, forNode)
 
@@ -762,8 +759,8 @@ fn lowerForIn(lowerer, node) {
 
   // Add original body expressions to inner body
   if loweredBody.type == NODE.Block {
-    for let i = 0; i < len(loweredBody.expressions); i = i + 1 {
-      push(innerBodyExprs, loweredBody.expressions[i])
+    for bodyExpr in loweredBody.expressions {
+      push(innerBodyExprs, bodyExpr)
     }
   } else {
     push(innerBodyExprs, loweredBody)
@@ -1253,8 +1250,8 @@ fn lowerArray(lowerer, node) {
   let newNode = copyNodeShallow(lowerer, node)
 
   let loweredElements = []
-  for let i = 0; i < len(node.elements); i = i + 1 {
-    push(loweredElements, lowerExpr(lowerer, node.elements[i]))
+  for element in node.elements {
+    push(loweredElements, lowerExpr(lowerer, element))
   }
   newNode.elements = loweredElements
 
@@ -1265,8 +1262,7 @@ fn lowerHashmap(lowerer, node) {
   let newNode = copyNodeShallow(lowerer, node)
 
   let loweredPairs = []
-  for let i = 0; i < len(node.pairs); i = i + 1 {
-    let pair = node.pairs[i]
+  for pair in node.pairs {
     let loweredPair = .{
       key: lowerExpr(lowerer, pair.key),
       value: lowerExpr(lowerer, pair.value),

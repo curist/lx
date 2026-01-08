@@ -304,8 +304,8 @@ fn typeEquals(checker, a, b) {
       let yMin = (y.minArity != nil) and y.minArity or len(y.params)
       if xMin != yMin { return false }
       if len(x.params) != len(y.params) { return false }
-      for let i = 0; i < len(x.params); i = i + 1 {
-        if !eq(x.params[i], y.params[i], depth + 1) { return false }
+      for xParam, i in x.params {
+        if !eq(xParam, y.params[i], depth + 1) { return false }
       }
       return eq(x.return, y.return, depth + 1)
     }
@@ -313,8 +313,7 @@ fn typeEquals(checker, a, b) {
       let kx = keys(x.fields)
       let ky = keys(y.fields)
       if len(kx) != len(ky) { return false }
-      for let i = 0; i < len(kx); i = i + 1 {
-        let k = kx[i]
+      for k in kx {
         if !y.fields[k] { return false }
         if !eq(x.fields[k], y.fields[k], depth + 1) { return false }
       }
@@ -365,8 +364,8 @@ fn occurs(checker, typeVarId, type) {
   }
 
   if type.kind == "Function" {
-    for let i = 0; i < len(type.params); i = i + 1 {
-      if occurs(checker, typeVarId, type.params[i]) {
+    for param in type.params {
+      if occurs(checker, typeVarId, param) {
         return true
       }
     }
@@ -386,9 +385,8 @@ fn occurs(checker, typeVarId, type) {
   }
 
   if type.kind == "Record" {
-    let ks = keys(type.fields)
-    for let i = 0; i < len(ks); i = i + 1 {
-      if occurs(checker, typeVarId, type.fields[ks[i]]) {
+    for k in keys(type.fields) {
+      if occurs(checker, typeVarId, type.fields[k]) {
         return true
       }
     }
@@ -403,8 +401,8 @@ fn derefAll(checker, t) {
 
   if t.kind == "Function" {
     let ps = []
-    for let i = 0; i < len(t.params); i = i + 1 {
-      push(ps, derefAll(checker, t.params[i]))
+    for param in t.params {
+      push(ps, derefAll(checker, param))
     }
     return typeFunction(ps, derefAll(checker, t.return))
   }
@@ -432,9 +430,8 @@ fn derefAll(checker, t) {
 
   if t.kind == "Record" {
     let fields = .{}
-    let ks = keys(t.fields)
-    for let i = 0; i < len(ks); i = i + 1 {
-      fields[ks[i]] = derefAll(checker, t.fields[ks[i]])
+    for k in keys(t.fields) {
+      fields[k] = derefAll(checker, t.fields[k])
     }
     return typeRecord(fields)
   }
@@ -480,8 +477,8 @@ fn unify(checker, t1, t2) {
 
     if t1.kind == "Function" {
       if len(t1.params) != len(t2.params) { return false }
-      for let i = 0; i < len(t1.params); i = i + 1 {
-        if !unify(checker, t1.params[i], t2.params[i]) {
+      for t1Param, i in t1.params {
+        if !unify(checker, t1Param, t2.params[i]) {
           return false
         }
       }
@@ -504,8 +501,7 @@ fn unify(checker, t1, t2) {
       let k1 = keys(t1.fields)
       let k2 = keys(t2.fields)
       if len(k1) != len(k2) { return false }
-      for let i = 0; i < len(k1); i = i + 1 {
-        let k = k1[i]
+      for k in k1 {
         if !t2.fields[k] { return false }
         if !unify(checker, t1.fields[k], t2.fields[k]) {
           return false
@@ -926,8 +922,7 @@ fn overloadCasesByName(name) {
         let fs = keys(base.fields)
         let sawString = false
         let sawNumber = false
-        for let i = 0; i < len(fs); i = i + 1 {
-          let k = fs[i]
+        for k in fs {
           if type(k) == "string" { sawString = true } else { sawNumber = true }
         }
         let kt = (sawString and sawNumber) and typeAny() or (sawString and typeString() or typeNumber())
@@ -1004,8 +999,7 @@ fn overloadCasesByName(name) {
         let fs = keys(base.fields)
         let sawString = false
         let sawNumber = false
-        for let i = 0; i < len(fs); i = i + 1 {
-          let k = fs[i]
+        for k in fs {
           if type(k) == "string" { sawString = true } else { sawNumber = true }
         }
         let kt = (sawString and sawNumber) and typeAny() or (sawString and typeString() or typeNumber())
@@ -1162,8 +1156,7 @@ fn trySolveOverloadCall(checker, c) {
 
   let sawDefer = false
 
-  for let i = 0; i < len(c.cases); i = i + 1 {
-    let cs = c.cases[i]
+  for cs in c.cases {
     let status = cs.matches(checker, c)
     if status == "match" {
       return cs.apply(checker, c)
@@ -1269,7 +1262,7 @@ fn trySolveConstraint(checker, c) {
     // required param count equal to the call arg count (extra args remain allowed).
     if root and root.kind == "TypeVar" and t.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
       let params = []
-      for let i = 0; i < len(c.args); i = i + 1 {
+      for arg in c.args {
         push(params, freshTypeVar(checker))
       }
       let fnT = typeFunction(params, c.out)
@@ -1285,8 +1278,8 @@ fn trySolveConstraint(checker, c) {
     // when later calls pass more arguments.
     if root and root.kind == "TypeVar" and t.kind == "Function" and t.inferredFromCall and len(t.params) < len(c.args) {
       let params = []
-      for let i = 0; i < len(t.params); i = i + 1 {
-        push(params, t.params[i])
+      for param in t.params {
+        push(params, param)
       }
       for let i = len(t.params); i < len(c.args); i = i + 1 {
         push(params, freshTypeVar(checker))
@@ -1346,8 +1339,8 @@ fn trySolveConstraint(checker, c) {
           if len(argT.params) > len(paramT.params) {
             ok = false
           } else {
-            for let p = 0; p < len(argT.params); p = p + 1 {
-              if !unify(checker, argT.params[p], paramT.params[p]) {
+            for argTParam, p in argT.params {
+              if !unify(checker, argTParam, paramT.params[p]) {
                 ok = false
                 break
               }
@@ -1435,8 +1428,7 @@ fn trySolveConstraint(checker, c) {
           joined = typeAny()
         } else {
           let tv = freshTypeVar(checker)
-          for let i = 0; i < len(keysList); i = i + 1 {
-            let k = keysList[i]
+          for k in keysList {
             let ft = base.fields[k]
             if !unify(checker, tv, ft) {
               bindTypeVar(checker, tv.id, typeAny())
@@ -1689,8 +1681,7 @@ fn finalizeConstraints(checker) {
   let remaining = checker.constraints
   checker.constraints = []
 
-  for let i = 0; i < len(remaining); i = i + 1 {
-    let c = remaining[i]
+  for c in remaining {
     if trySolveConstraint(checker, c) { continue }
 
     if c.kind == "HasField" {
@@ -1750,9 +1741,7 @@ fn finalizeConstraints(checker) {
 }
 
 fn finalizeIndexables(checker) {
-  let ids = keys(checker.typeVarBindings)
-  for let i = 0; i < len(ids); i = i + 1 {
-    let id = ids[i]
+  for id in keys(checker.typeVarBindings) {
     // Defensively ensure we use numeric ids as stored by typeVarBindings.
     if type(id) == "string" { id = Math.floor(tonumber(id) or 0) }
 
@@ -1978,8 +1967,8 @@ fn checkCall(checker, node) {
   // Synth args once so types table is populated
   let argsNodes = node.args or []
   let argsTs = []
-  for let i = 0; i < len(argsNodes); i = i + 1 {
-    push(argsTs, synthExpr(checker, argsNodes[i]))
+  for argNode in argsNodes {
+    push(argsTs, synthExpr(checker, argNode))
   }
 
   // Bidirectional typing: if callee is known to be a Function, check args immediately.
@@ -2013,10 +2002,10 @@ fn checkCall(checker, node) {
             containEqFailure(checker, argD, paramD)
           } else {
             // Check param types and return type
-            for let p = 0; p < len(argD.params); p = p + 1 {
-              if !unify(checker, argD.params[p], paramD.params[p]) {
+            for argDParam, p in argD.params {
+              if !unify(checker, argDParam, paramD.params[p]) {
                 addError(checker, argsNodes[i].id, "Argument mismatch: function parameter type")
-                containEqFailure(checker, deref(checker, argD.params[p]), deref(checker, paramD.params[p]))
+                containEqFailure(checker, deref(checker, argDParam), deref(checker, paramD.params[p]))
               }
             }
             if !unify(checker, argD.return, paramD.return) {
@@ -2047,8 +2036,8 @@ fn checkCall(checker, node) {
 
   // Fallback: emit Call constraint for unknown callee
   let argNodeIds = []
-  for let i = 0; i < len(argsNodes); i = i + 1 {
-    push(argNodeIds, argsNodes[i].id)
+  for argNode in argsNodes {
+    push(argNodeIds, argNode.id)
   }
   let out = freshTypeVar(checker)
   emitCall(checker, calleeT, argsTs, argNodeIds, out, node.id)
@@ -2059,8 +2048,8 @@ fn checkCall(checker, node) {
 fn checkIntrinsicCall(checker, node) {
   // Type check intrinsic calls (array_new, array_append, etc.)
   let argTypes = []
-  for let i = 0; i < len(node.args or []); i = i + 1 {
-    push(argTypes, synthExpr(checker, node.args[i]))
+  for arg in (node.args or []) {
+    push(argTypes, synthExpr(checker, arg))
   }
 
   // Return type based on intrinsic
@@ -2158,9 +2147,9 @@ fn checkFunction(checker, node) {
   enterScope(checker)
 
   let params = []
-  for let i = 0; i < len(node.params); i = i + 1 {
-    let tv = bindDecl(checker, node.params[i].id)
-    checker.types[node.params[i].id] = tv
+  for param in node.params {
+    let tv = bindDecl(checker, param.id)
+    checker.types[param.id] = tv
     push(params, tv)
   }
 
@@ -2175,8 +2164,8 @@ fn checkFunction(checker, node) {
 
   // Store the function type with current bindings resolved.
   let resolvedParams = []
-  for let i = 0; i < len(params); i = i + 1 {
-    push(resolvedParams, deref(checker, params[i]))
+  for param in params {
+    push(resolvedParams, deref(checker, param))
   }
   let fnT = typeFunction(resolvedParams, deref(checker, ret))
 
@@ -2184,8 +2173,8 @@ fn checkFunction(checker, node) {
   // minArity is the index of the first parameter with a default value
   if node.defaults and len(node.defaults) > 0 {
     let firstDefaultIdx = nil
-    for let i = 0; i < len(node.defaults); i = i + 1 {
-      if node.defaults[i] {
+    for defaultVal, i in node.defaults {
+      if defaultVal {
         firstDefaultIdx = i
         break
       }
@@ -2222,8 +2211,7 @@ fn dotPropertyName(node) {
 fn enumMembersMapFromInfo(info) {
   if !info or !info.members { return nil }
   let m = .{}
-  for let i = 0; i < len(info.members); i = i + 1 {
-    let mem = info.members[i]
+  for mem in info.members {
     if mem and mem.name != nil and mem.value != nil {
       m[mem.name] = mem.value
     }
@@ -2240,9 +2228,7 @@ fn findEnumMemberMapInModuleResult(moduleResult, fieldName) {
   let ast = parseResult.ast
   if ast.type != NODE.Block or !ast.expressions { return nil }
 
-  for let i = 0; i < len(ast.expressions); i = i + 1 {
-    let n = ast.expressions[i]
-
+  for n in ast.expressions {
     // Pattern A: `let X = enum {...}`
     if n and n.type == NODE.Let and n.name and n.name.type == NODE.Identifier and n.name.name == fieldName {
       let init = n.init
@@ -2356,8 +2342,8 @@ fn checkBlock(checker, node) {
 
   let lastT = typeNil()
   if node.expressions {
-    for let i = 0; i < len(node.expressions); i = i + 1 {
-      lastT = synthExpr(checker, node.expressions[i])
+    for expr in node.expressions {
+      lastT = synthExpr(checker, expr)
     }
   }
 
@@ -2535,9 +2521,9 @@ fn checkContinue(checker, node) {
 fn checkArray(checker, node) {
   let elemT = freshTypeVar(checker)
   if node.elements {
-    for let i = 0; i < len(node.elements); i = i + 1 {
-      let it = synthExpr(checker, node.elements[i])
-      emitEq(checker, it, elemT, node.elements[i].id, "Array element mismatch")
+    for element in node.elements {
+      let it = synthExpr(checker, element)
+      emitEq(checker, it, elemT, element.id, "Array element mismatch")
     }
   }
   let t = typeArray(elemT)
@@ -2573,8 +2559,7 @@ fn checkHashmap(checker, node) {
   let enumKeyOrigins = .{}
   let sawInvalidKey = false
 
-  for let i = 0; i < len(node.pairs); i = i + 1 {
-    let p = node.pairs[i]
+  for p in node.pairs {
     let vType = p.value and synthExpr(checker, p.value) or typeAny()
 
     // Determine record field key.
@@ -2785,8 +2770,7 @@ fn checkImport(checker, node) {
 }
 
 fn refineFunctions(checker) {
-  for let i = 0; i < len(checker.functionInfos); i = i + 1 {
-    let info = checker.functionInfos[i]
+  for info in checker.functionInfos {
     checker.currentEnv = info.defEnv or checker.rootEnv
     enterScope(checker)
 
@@ -2794,10 +2778,10 @@ fn refineFunctions(checker) {
       checker.currentEnv.bindings[info.node.id] = lookupDecl(checker, info.node.id) or info.fnType
     }
 
-    for let p = 0; p < len(info.params); p = p + 1 {
+    for param, p in info.params {
       let paramNode = info.node.params[p]
-      checker.currentEnv.bindings[paramNode.id] = info.params[p]
-      checker.types[paramNode.id] = info.params[p]
+      checker.currentEnv.bindings[paramNode.id] = param
+      checker.types[paramNode.id] = param
     }
 
     let prevReturn = checker.currentReturn
@@ -2904,8 +2888,7 @@ fn makeChecker(resolveResult, opts) {
 fn predeclareTopLevel(checker, ast) {
   if !ast or ast.type != NODE.Block or !ast.expressions { return }
 
-  for let i = 0; i < len(ast.expressions); i = i + 1 {
-    let node = ast.expressions[i]
+  for node in ast.expressions {
     if node.type == NODE.Let and node.name {
       if !lookupDecl(checker, node.name.id) {
         bindDecl(checker, node.name.id)
@@ -2954,16 +2937,12 @@ fn typecheck(ast, resolveResult, opts) {
   finalizeConstraints(checker)
 
   let outTypes = .{}
-  let typeKeys = keys(checker.types)
-  for let i = 0; i < len(typeKeys); i = i + 1 {
-    let k = typeKeys[i]
+  for k in keys(checker.types) {
     outTypes[k] = derefAll(checker, checker.types[k])
   }
 
   let outBindings = .{}
-  let bindKeys = keys(checker.typeVarBindings)
-  for let i = 0; i < len(bindKeys); i = i + 1 {
-    let k = bindKeys[i]
+  for k in keys(checker.typeVarBindings) {
     outBindings[k] = derefAll(checker, checker.typeVarBindings[k])
   }
 

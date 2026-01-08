@@ -146,9 +146,7 @@ fn copyNodeShallow(allocNodeIdFn, ctx, node) {
     handler(newNode, node)
   } else if type(node) == "map" {
     // Slow path: preserve any additional fields on unknown node types
-    let node_keys = keys(node)
-    for let i = 0; i < len(node_keys); i = i + 1 {
-      let key = node_keys[i]
+    for key in keys(node) {
       if key == "id" { continue }
       newNode[key] = node[key]
     }

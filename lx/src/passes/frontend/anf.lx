@@ -100,8 +100,8 @@ fn addName(anf, name) {
 
 fn pushScope(anf, names) {
   let scope = .{}
-  for let i = 0; i < len(names); i = i + 1 {
-    scope[names[i]] = true
+  for name in names {
+    scope[name] = true
   }
   push(anf.scopeStack, scope)
 }
@@ -113,8 +113,7 @@ fn popScope(anf) {
 fn collectBlockNames(node) {
   let names = []
   let exprs = node.expressions or []
-  for let i = 0; i < len(exprs); i = i + 1 {
-    let expr = exprs[i]
+  for expr in exprs {
     if expr.type == NODE.Let and expr.name {
       push(names, expr.name.name)
     } else if expr.type == NODE.Function and expr.name {
@@ -128,8 +127,8 @@ fn collectFunctionNames(node) {
   let names = []
   if node.name { push(names, node.name.name) }
   let params = node.params or []
-  for let i = 0; i < len(params); i = i + 1 {
-    push(names, params[i].name)
+  for param in params {
+    push(names, param.name)
   }
   names
 }
@@ -179,8 +178,8 @@ fn isAtomic(node) {
 
 fn appendAll(dst, src) {
   if !src { return dst }
-  for let i = 0; i < len(src); i = i + 1 {
-    push(dst, src[i])
+  for item in src {
+    push(dst, item)
   }
   dst
 }
@@ -375,8 +374,8 @@ fn anfBlock(anf, node) {
   let newNode = copyNodeShallow(anf, node)
   pushScope(anf, collectBlockNames(node))
   let newExprs = []
-  for let i = 0; i < len(node.expressions); i = i + 1 {
-    let expr = anfExpr(anf, node.expressions[i])
+  for nodeExpr in node.expressions {
+    let expr = anfExpr(anf, nodeExpr)
     if expr and expr.type == NODE.Block and expr.anfSynthetic and expr.expressions {
       appendAll(newExprs, expr.expressions)
     } else {
@@ -394,8 +393,8 @@ fn anfFunction(anf, node) {
     newNode.name = copyNodeShallow(anf, node.name)
   }
   let newParams = []
-  for let i = 0; i < len(node.params); i = i + 1 {
-    push(newParams, copyNodeShallow(anf, node.params[i]))
+  for param in node.params {
+    push(newParams, copyNodeShallow(anf, param))
   }
   newNode.params = newParams
   pushScope(anf, collectFunctionNames(node))
@@ -409,8 +408,8 @@ fn anfCall(anf, node) {
   let pre = []
   appendAll(pre, callee.pre)
   let args = []
-  for let i = 0; i < len(node.args); i = i + 1 {
-    let arg = anfToAtomic(anf, node.args[i])
+  for nodeArg in node.args {
+    let arg = anfToAtomic(anf, nodeArg)
     appendAll(pre, arg.pre)
     push(args, arg.expr)
   }
@@ -424,8 +423,8 @@ fn anfIntrinsicCall(anf, node) {
   // IntrinsicCall doesn't have a callee, just args
   let pre = []
   let args = []
-  for let i = 0; i < len(node.args or []); i = i + 1 {
-    let arg = anfToAtomic(anf, node.args[i])
+  for nodeArg in (node.args or []) {
+    let arg = anfToAtomic(anf, nodeArg)
     appendAll(pre, arg.pre)
     push(args, arg.expr)
   }
@@ -494,8 +493,8 @@ fn anfContinue(anf, node) {
 fn anfArray(anf, node) {
   let pre = []
   let elements = []
-  for let i = 0; i < len(node.elements); i = i + 1 {
-    let elem = anfToAtomic(anf, node.elements[i])
+  for nodeElem in node.elements {
+    let elem = anfToAtomic(anf, nodeElem)
     appendAll(pre, elem.pre)
     push(elements, elem.expr)
   }
@@ -507,8 +506,7 @@ fn anfArray(anf, node) {
 fn anfHashmap(anf, node) {
   let pre = []
   let pairs = []
-  for let i = 0; i < len(node.pairs); i = i + 1 {
-    let pair = node.pairs[i]
+  for pair in node.pairs {
     let key = anfToAtomic(anf, pair.key)
     appendAll(pre, key.pre)
     let value = anfToAtomic(anf, pair.value)

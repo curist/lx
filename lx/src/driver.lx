@@ -36,9 +36,7 @@ fn remapEnumInfo(prevEnumInfo, resultOrigin) {
   if !prevEnumInfo or !resultOrigin { return .{} }
 
   let remapped = .{}
-  let newIds = keys(resultOrigin)
-  for let i = 0; i < len(newIds); i = i + 1 {
-    let newId = newIds[i]
+  for newId in keys(resultOrigin) {
     let oldId = resultOrigin[newId]
     if type(oldId) == "number" or type(oldId) == "string" {
       let info = prevEnumInfo[oldId]
@@ -451,8 +449,7 @@ fn make(opts) {
     // Build: usedExportsPerModule[modulePath] = { propName: true, ... }
     let usedExportsPerModule = .{}
 
-    for let i = 0; i < len(compiledModules); i = i + 1 {
-      let path = compiledModules[i]
+    for path in compiledModules {
       let r = cache[path]
       if !r or r.status != "done" { continue }
       let passes = r.passes or .{}
@@ -460,24 +457,20 @@ fn make(opts) {
       if !dceResult or !dceResult.success { continue }
 
       let usedProps = dceResult.usedImportProperties or .{}
-      let importPaths = keys(usedProps)
-      for let j = 0; j < len(importPaths); j = j + 1 {
-        let importPath = importPaths[j]
+      for importPath in keys(usedProps) {
         let props = usedProps[importPath]
         if !usedExportsPerModule[importPath] {
           usedExportsPerModule[importPath] = .{}
         }
         // Merge used properties
-        let propNames = keys(props)
-        for let k = 0; k < len(propNames); k = k + 1 {
-          usedExportsPerModule[importPath][propNames[k]] = true
+        for propName in keys(props) {
+          usedExportsPerModule[importPath][propName] = true
         }
       }
     }
 
     // Step 2: For each module, find unused exports and mark them dead
-    for let i = 0; i < len(compiledModules); i = i + 1 {
-      let path = compiledModules[i]
+    for path in compiledModules {
       let r = cache[path]
       if !r or r.status != "done" { continue }
       let passes = r.passes or .{}
@@ -500,8 +493,7 @@ fn make(opts) {
           let usedProps = usedExportsPerModule[path] or .{}
           let entries = lastExpr.entries or []
 
-          for let j = 0; j < len(entries); j = j + 1 {
-            let entry = entries[j]
+          for entry in entries {
             if !entry { continue }
             let key = entry.key
             let keyName = key and (key.name or key.value or key.lexeme)

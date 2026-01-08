@@ -547,8 +547,7 @@ fn resolveFunction(resolver, node, context) {
   }
 
   // Declare parameters as locals
-  for let i = 0; i < len(node.params); i = i + 1 {
-    let param = node.params[i]
+  for param in node.params {
     let local = declareLocal(resolver, param.name, "param", param.id)
     markInitialized(resolver, local)
   }
@@ -570,8 +569,7 @@ fn resolveBlockWithHoisting(resolver, node, context) {
 
   // PHASE 1: Prescan for hoisted functions
   let lastHoistedIndex = -1
-  for let i = 0; i < len(node.expressions); i = i + 1 {
-    let expr = node.expressions[i]
+  for expr, i in node.expressions {
     if expr.type == NODE.Function and expr.name {
       // Named function declaration - hoist it
       let fnName = expr.name.name
@@ -597,8 +595,7 @@ fn resolveBlockWithHoisting(resolver, node, context) {
 
   // PHASE 2: Resolve all expressions
   let exprCount = len(node.expressions)
-  for let i = 0; i < exprCount; i = i + 1 {
-    let expr = node.expressions[i]
+  for expr, i in node.expressions {
     let blockContext = .{
       exprIndex: i,
       inFunctionBody: context and context.inFunctionBody or false,
@@ -656,8 +653,8 @@ let resolveExprHandlers = .{
   },
   [NODE.Call]: fn(resolver, node, context) {
     resolveExpr(resolver, node.callee, context)
-    for let i = 0; i < len(node.args); i = i + 1 {
-      resolveExpr(resolver, node.args[i], context)
+    for arg in node.args {
+      resolveExpr(resolver, arg, context)
     }
   },
   [NODE.Arrow]: fn(resolver, node, context) {
@@ -670,8 +667,8 @@ let resolveExprHandlers = .{
     }
   },
   [NODE.IntrinsicCall]: fn(resolver, node, context) {
-    for let i = 0; i < len(node.args or []); i = i + 1 {
-      resolveExpr(resolver, node.args[i], context)
+    for arg in (node.args or []) {
+      resolveExpr(resolver, arg, context)
     }
   },
   [NODE.If]: fn(resolver, node, context) {
@@ -710,14 +707,14 @@ let resolveExprHandlers = .{
     resolveExpr(resolver, node.value, context)
   },
   [NODE.Array]: fn(resolver, node, context) {
-    for let i = 0; i < len(node.elements); i = i + 1 {
-      resolveExpr(resolver, node.elements[i], context)
+    for element in node.elements {
+      resolveExpr(resolver, element, context)
     }
   },
   [NODE.Hashmap]: fn(resolver, node, context) {
-    for let i = 0; i < len(node.pairs); i = i + 1 {
-      resolveExpr(resolver, node.pairs[i].key, context)
-      resolveExpr(resolver, node.pairs[i].value, context)
+    for pair in node.pairs {
+      resolveExpr(resolver, pair.key, context)
+      resolveExpr(resolver, pair.value, context)
     }
   },
   [NODE.Index]: fn(resolver, node, context) {

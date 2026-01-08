@@ -88,8 +88,8 @@ fn isInlineSafeExprImpl(node, depth) {
 
   if t == NODE.IntrinsicCall {
     let args = node.args or []
-    for let i = 0; i < len(args); i = i + 1 {
-      if !isInlineSafeExprImpl(args[i], d) { return false }
+    for arg in args {
+      if !isInlineSafeExprImpl(arg, d) { return false }
     }
     return true
   }
@@ -114,9 +114,9 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
   let t = type(node)
 
   if t == "array" {
-    for let i = 0; i < len(node); i = i + 1 {
+    for item, i in node {
       // Parent is this array; field name is nil; index is i
-      walk(node[i], resolvedNames, state, node, nil, i)
+      walk(item, resolvedNames, state, node, nil, i)
     }
     return
   }
@@ -128,8 +128,8 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
     state.blockById[node.id] = node
     // Traverse expressions with precise parent info
     let exprs = node.expressions or []
-    for let i = 0; i < len(exprs); i = i + 1 {
-      walk(exprs[i], resolvedNames, state, node, "expressions", i)
+    for expr, i in exprs {
+      walk(expr, resolvedNames, state, node, "expressions", i)
     }
     return
   }
@@ -220,9 +220,7 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
 
   // Fallback traversal (should be rare now):
   // We avoid copying; we only walk map/array children.
-  let ks = keys(node)
-  for let i = 0; i < len(ks); i = i + 1 {
-    let k = ks[i]
+  for k in keys(node) {
     let v = node[k]
     let vt = type(v)
     if vt == "map" or vt == "array" {
@@ -272,9 +270,9 @@ fn compactBlock(block, flags) {
   if !flags { return }
   let exprs = block.expressions or []
   let out = []
-  for let i = 0; i < len(exprs); i = i + 1 {
+  for expr, i in exprs {
     if flags[i] { continue }
-    push(out, exprs[i])
+    push(out, expr)
   }
   block.expressions = out
 }
@@ -304,9 +302,7 @@ fn anfInline(ast, resolveResult) {
   let removedByBlockId = .{} // blockId -> { index:true }
   let inlined = 0
 
-  let declIds = keys(state.letByDeclId)
-  for let i = 0; i < len(declIds); i = i + 1 {
-    let declId = declIds[i]
+  for declId in keys(state.letByDeclId) {
     let info = state.letByDeclId[declId]
     let letNode = info and info.letNode
     if !letNode { continue }
@@ -340,9 +336,7 @@ fn anfInline(ast, resolveResult) {
   }
 
   // Compact each affected block once
-  let blockIds = keys(removedByBlockId)
-  for let i = 0; i < len(blockIds); i = i + 1 {
-    let bid = blockIds[i]
+  for bid in keys(removedByBlockId) {
     let block = state.blockById[bid]
     if !block {
       return .{

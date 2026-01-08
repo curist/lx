@@ -16,14 +16,12 @@ fn validatePassDependencies(passList) {
   let provided = .{}  // Track what capabilities are available
   let errors = []
 
-  for let i = 0; i < len(passList); i = i + 1 {
-    let p = passList[i]
+  for p in passList {
     if !p or !p.name { continue }
 
     // Check requirements
     if p.requires {
-      for let j = 0; j < len(p.requires); j = j + 1 {
-        let req = p.requires[j]
+      for req in p.requires {
         if !provided[req] {
           let msg = "Pass '" + p.name + "' requires '" + req + "', but no earlier pass provides it"
           push(errors, msg)
@@ -33,8 +31,7 @@ fn validatePassDependencies(passList) {
 
     // Register what this pass provides
     if p.provides {
-      for let k = 0; k < len(p.provides); k = k + 1 {
-        let cap = p.provides[k]
+      for cap in p.provides {
         provided[cap] = true
       }
     }
@@ -59,8 +56,7 @@ fn normalizeErrors(passName, errors) {
   let out = type(errors) == "array" and errors or [errors]
 
   // Tag objects with pass name if missing
-  for let i = 0; i < len(out); i = i + 1 {
-    let e = out[i]
+  for e in out {
     if type(e) == "map" and !e.pass {
       e.pass = passName
     }
@@ -82,8 +78,7 @@ fn passNameToOptKey(passName) {
   // Split by dash and capitalize each word
   let parts = []
   let current = ""
-  for let i = 0; i < len(passName); i = i + 1 {
-    let ch = passName[i]
+  for ch in range(passName) {
     if ch == "-" {
       if len(current) > 0 {
         push(parts, current)
@@ -99,14 +94,13 @@ fn passNameToOptKey(passName) {
 
   // Capitalize first letter of each part
   let result = "with"
-  for let i = 0; i < len(parts); i = i + 1 {
-    let part = parts[i]
+  for part in parts {
     if len(part) > 0 {
       // Capitalize first letter
       let first = toupper(part[0])
       let rest = ""
-      for let j = 1; j < len(part); j = j + 1 {
-        rest = rest + part[j]
+      for ch, j in range(part) {
+        if j > 0 { rest = rest + ch }
       }
       result = result + first + rest
     }
@@ -134,8 +128,7 @@ fn runPasses(passList, ctx, state) {
   let enabledPasses = []
   let provided = .{}  // Track capabilities provided by enabled passes
 
-  for let i = 0; i < len(passList); i = i + 1 {
-    let p = passList[i]
+  for p in passList {
     if !p or !p.name or !p.run { continue }
 
     // Check if pass is disabled via opts (e.g., ctx.opts.withAnf == false)
@@ -148,8 +141,7 @@ fn runPasses(passList, ctx, state) {
     // Check if requirements are satisfied by earlier enabled passes
     let requirementsMet = true
     if p.requires {
-      for let j = 0; j < len(p.requires); j = j + 1 {
-        let req = p.requires[j]
+      for req in p.requires {
         if !provided[req] {
           requirementsMet = false
           break
@@ -168,8 +160,7 @@ fn runPasses(passList, ctx, state) {
 
       // Register capabilities this pass provides
       if p.provides {
-        for let k = 0; k < len(p.provides); k = k + 1 {
-          let cap = p.provides[k]
+        for cap in p.provides {
           provided[cap] = true
         }
       }
@@ -182,8 +173,8 @@ fn runPasses(passList, ctx, state) {
     // Dependency validation failed - return as synthetic failed pass
     // This ensures errors.collectErrors() can surface validation errors
     Lx.stderr.println("Pipeline dependency validation failed:")
-    for let i = 0; i < len(validation.errors); i = i + 1 {
-      Lx.stderr.println("  " + validation.errors[i])
+    for err in validation.errors {
+      Lx.stderr.println("  " + err)
     }
     return .{
       status: "failed",
@@ -201,8 +192,7 @@ fn runPasses(passList, ctx, state) {
   }
 
   // Execute enabled passes
-  for let i = 0; i < len(enabledPasses); i = i + 1 {
-    let p = enabledPasses[i]
+  for p in enabledPasses {
     push(passOrder, p.name)
 
     // Optional mutation check (debug mode)

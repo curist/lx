@@ -369,8 +369,8 @@ fn walkExpr(node, gen) {
 
     // Only allocate a new block if something changed.
     let anyChanged = false
-    for let i = 0; i < len(newExprs); i = i + 1 {
-      if newExprs[i] != node.expressions[i] { anyChanged = true; break }
+    for newExpr, i in newExprs {
+      if newExpr != node.expressions[i] { anyChanged = true; break }
     }
     if !anyChanged { return node }
 

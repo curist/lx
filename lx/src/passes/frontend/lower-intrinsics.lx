@@ -60,7 +60,7 @@ fn walk(node, state) {
   if !node { return }
   let t = type(node)
   if t == "array" {
-    for let i = 0; i < len(node); i = i + 1 { walk(node[i], state) }
+    for item in node { walk(item, state) }
     return
   }
   if t != "map" { return }
@@ -69,7 +69,7 @@ fn walk(node, state) {
 
   if nt == NODE.Block {
     let exprs = node.expressions or []
-    for let i = 0; i < len(exprs); i = i + 1 { walk(exprs[i], state) }
+    for expr in exprs { walk(expr, state) }
     return
   }
 
@@ -82,7 +82,7 @@ fn walk(node, state) {
   if nt == NODE.Function {
     if node.name { walk(node.name, state) }
     let params = node.params or []
-    for let i = 0; i < len(params); i = i + 1 { walk(params[i], state) }
+    for param in params { walk(param, state) }
     walk(node.body, state)
     return
   }
@@ -90,13 +90,13 @@ fn walk(node, state) {
   if nt == NODE.Call {
     walk(node.callee, state)
     let args = node.args or []
-    for let i = 0; i < len(args); i = i + 1 { walk(args[i], state) }
+    for arg in args { walk(arg, state) }
     return
   }
 
   if nt == NODE.IntrinsicCall {
     let args = node.args or []
-    for let i = 0; i < len(args); i = i + 1 { walk(args[i], state) }
+    for arg in args { walk(arg, state) }
     return
   }
 
@@ -146,14 +146,13 @@ fn walk(node, state) {
 
   if nt == NODE.Array {
     let elems = node.elements or []
-    for let i = 0; i < len(elems); i = i + 1 { walk(elems[i], state) }
+    for elem in elems { walk(elem, state) }
     return
   }
 
   if nt == NODE.Hashmap {
     let pairs = node.pairs or []
-    for let i = 0; i < len(pairs); i = i + 1 {
-      let p = pairs[i]
+    for p in pairs {
       walk(p.key, state)
       walk(p.value, state)
     }

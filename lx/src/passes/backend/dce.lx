@@ -68,16 +68,15 @@ fn hasSideEffects(node) {
   // Array/Hashmap literals - check elements
   if t == NODE.Array {
     if node.elements {
-      for let i = 0; i < len(node.elements); i = i + 1 {
-        if hasSideEffects(node.elements[i]) { return true }
+      for element in node.elements {
+        if hasSideEffects(element) { return true }
       }
     }
     return false
   }
   if t == NODE.Hashmap {
     if node.entries {
-      for let i = 0; i < len(node.entries); i = i + 1 {
-        let entry = node.entries[i]
+      for entry in node.entries {
         if hasSideEffects(entry.key) or hasSideEffects(entry.value) {
           return true
         }
@@ -96,8 +95,8 @@ fn hasSideEffects(node) {
   // Block - check all expressions
   if t == NODE.Block {
     if node.expressions {
-      for let i = 0; i < len(node.expressions); i = i + 1 {
-        if hasSideEffects(node.expressions[i]) { return true }
+      for expr in node.expressions {
+        if hasSideEffects(expr) { return true }
       }
     }
     return false
@@ -202,17 +201,15 @@ fn detectDeadImports(state) {
   // Walk importInfoByNodeId to find unused imports
   // An import is dead if its binding (the Let's name identifier) is never used
 
-  let importKeys = keys(state.importInfoByNodeId)
-  for importNodeId in importKeys {
+  for importNodeId in keys(state.importInfoByNodeId) {
     // The import node itself - check if the containing Let's name is ever used
     // We need to find the Let node that wraps this import
     // For now, we track via the import node and check resolvedNames
 
     // Check if any binding refers to this import's declaration
     let isUsed = false
-    let resolvedKeys = keys(state.resolvedNames)
-    for let j = 0; j < len(resolvedKeys); j = j + 1 {
-      let binding = state.resolvedNames[resolvedKeys[j]]
+    for key in keys(state.resolvedNames) {
+      let binding = state.resolvedNames[key]
       // The import's Let.name.id would be the declaredAt for usages
       // We need the Let node ID, not the Import node ID
       // For simplicity, mark import as used if any binding points near it
@@ -234,8 +231,7 @@ fn detectDeadExpressions(node, state, isStatementPosition) {
 
   if t == NODE.Block {
     let exprs = node.expressions or []
-    for let i = 0; i < len(exprs); i = i + 1 {
-      let expr = exprs[i]
+    for expr, i in exprs {
       // All expressions except the last in a block are in statement position
       // Actually, all expressions in a block are evaluated but only last is returned
       // An expression in statement position whose result is unused AND has no side effects is dead
@@ -289,30 +285,22 @@ fn markDeadNodes(state) {
   // Populate deadNodes from the various dead* tables
 
   // Dead locals: mark the Let node
-  let localKeys = keys(state.letNodeForDeadLocal)
-  for let i = 0; i < len(localKeys); i = i + 1 {
-    let letNodeId = localKeys[i]
+  for letNodeId in keys(state.letNodeForDeadLocal) {
     state.deadNodes[letNodeId] = true
   }
 
   // Dead functions: mark the Function node
-  let fnKeys = keys(state.deadFunctions)
-  for let i = 0; i < len(fnKeys); i = i + 1 {
-    let declId = fnKeys[i]
+  for declId in keys(state.deadFunctions) {
     state.deadNodes[declId] = true
   }
 
   // Dead imports: mark the Let node containing the import
-  let importKeys = keys(state.deadImports)
-  for let i = 0; i < len(importKeys); i = i + 1 {
-    let letNodeId = importKeys[i]
+  for letNodeId in keys(state.deadImports) {
     state.deadNodes[letNodeId] = true
   }
 
   // Dead expressions: already have the node IDs
-  let exprKeys = keys(state.deadExpressions)
-  for let i = 0; i < len(exprKeys); i = i + 1 {
-    let nodeId = exprKeys[i]
+  for nodeId in keys(state.deadExpressions) {
     state.deadNodes[nodeId] = true
   }
 }
@@ -370,8 +358,8 @@ fn walkForImports(node, state) {
 
   if t == NODE.Block {
     let exprs = node.expressions or []
-    for let i = 0; i < len(exprs); i = i + 1 {
-      walkForImports(exprs[i], state)
+    for expr in exprs {
+      walkForImports(expr, state)
     }
     return
   }
@@ -411,10 +399,9 @@ fn resolveAnfImportAliases(ast, state) {
   // Then we need: importDeclToPath[m.id] = "foo.lx"
 
   let anfAliases = state.anfAliases or .{}
-  let aliasKeys = keys(anfAliases)
 
-  for let i = 0; i < len(aliasKeys); i = i + 1 {
-    let aliasedDeclId = aliasKeys[i]  // The declId of the alias (e.g., m)
+  for aliasedDeclId in keys(anfAliases) {
+    // The declId of the alias (e.g., m)
     let targetIdentifierId = anfAliases[aliasedDeclId]  // The identifier node id of the target
 
     // Look up the target identifier in resolvedNames to find what it refers to
@@ -487,8 +474,8 @@ fn trackPropertyAccesses(node, state) {
 
   if t == NODE.Block {
     let exprs = node.expressions or []
-    for let i = 0; i < len(exprs); i = i + 1 {
-      trackPropertyAccesses(exprs[i], state)
+    for expr in exprs {
+      trackPropertyAccesses(expr, state)
     }
     return
   }
@@ -527,8 +514,8 @@ fn trackPropertyAccesses(node, state) {
   if t == NODE.Call {
     trackPropertyAccesses(node.callee, state)
     let args = node.args or node.arguments or []
-    for let i = 0; i < len(args); i = i + 1 {
-      trackPropertyAccesses(args[i], state)
+    for arg in args {
+      trackPropertyAccesses(arg, state)
     }
     return
   }
@@ -546,17 +533,17 @@ fn trackPropertyAccesses(node, state) {
 
   if t == NODE.Array {
     let elems = node.elements or []
-    for let i = 0; i < len(elems); i = i + 1 {
-      trackPropertyAccesses(elems[i], state)
+    for elem in elems {
+      trackPropertyAccesses(elem, state)
     }
     return
   }
 
   if t == NODE.Hashmap {
     let entries = node.entries or []
-    for let i = 0; i < len(entries); i = i + 1 {
-      trackPropertyAccesses(entries[i].key, state)
-      trackPropertyAccesses(entries[i].value, state)
+    for entry in entries {
+      trackPropertyAccesses(entry.key, state)
+      trackPropertyAccesses(entry.value, state)
     }
     return
   }

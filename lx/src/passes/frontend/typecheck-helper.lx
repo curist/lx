@@ -19,8 +19,7 @@ fn solveWorklist(items, trySolve, opts) {
     remaining = []
     let solved = 0
 
-    for let i = 0; i < len(work); i = i + 1 {
-      let item = work[i]
+    for item in work {
       if trySolve(item) {
         solved = solved + 1
       } else {
@@ -71,9 +70,7 @@ fn scc(nodes, edgesFor) {
     onStack[v] = true
 
     let neighbors = (edgesFor and edgesFor(v)) or []
-    for let i = 0; i < len(neighbors); i = i + 1 {
-      let w = neighbors[i]
-
+    for w in neighbors {
       if indexBy[w] == nil {
         strongConnect(w)
         lowBy[v] = min(lowBy[v], lowBy[w])
@@ -92,15 +89,14 @@ fn scc(nodes, edgesFor) {
       }
 
       let compIndex = len(components)
-      for let i = 0; i < len(comp); i = i + 1 {
-        componentOf[comp[i]] = compIndex
+      for c in comp {
+        componentOf[c] = compIndex
       }
       push(components, comp)
     }
   }
 
-  for let i = 0; i < len(nodes); i = i + 1 {
-    let v = nodes[i]
+  for v in nodes {
     if indexBy[v] == nil {
       strongConnect(v)
     }
@@ -118,17 +114,15 @@ fn sccTopo(nodes, edgesFor) {
   // compEdges: compIndex -> set of neighbor compIndex
   let compEdges = []
   let indegree = []
-  for let i = 0; i < len(comps); i = i + 1 {
+  for comp in comps {
     push(compEdges, .{})
     push(indegree, 0)
   }
 
-  for let i = 0; i < len(nodes); i = i + 1 {
-    let v = nodes[i]
+  for v in nodes {
     let vComp = compOf[v]
     let neighbors = (edgesFor and edgesFor(v)) or []
-    for let j = 0; j < len(neighbors); j = j + 1 {
-      let w = neighbors[j]
+    for w in neighbors {
       let wComp = compOf[w]
       if vComp != wComp {
         // Dedup edges with a set.
@@ -142,8 +136,8 @@ fn sccTopo(nodes, edgesFor) {
 
   // Kahn's algorithm over SCC DAG.
   let queue = []
-  for let i = 0; i < len(indegree); i = i + 1 {
-    if indegree[i] == 0 { push(queue, i) }
+  for deg, i in indegree {
+    if deg == 0 { push(queue, i) }
   }
 
   let order = []
@@ -153,17 +147,15 @@ fn sccTopo(nodes, edgesFor) {
     head = head + 1
     push(order, c)
 
-    let outKeys = keys(compEdges[c])
-    for let k = 0; k < len(outKeys); k = k + 1 {
-      let n = outKeys[k]
+    for n in keys(compEdges[c]) {
       indegree[n] = indegree[n] - 1
       if indegree[n] == 0 { push(queue, n) }
     }
   }
 
   let orderedComps = []
-  for let i = 0; i < len(order); i = i + 1 {
-    push(orderedComps, comps[order[i]])
+  for idx in order {
+    push(orderedComps, comps[idx])
   }
 
   .{

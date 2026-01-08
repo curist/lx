@@ -38,6 +38,7 @@ let lowerLoops = import "src/passes/backend/lower-loops.lx"
 let dce = import "src/passes/backend/dce.lx"
 let pipeline = import "src/passes/pipeline.lx"
 let types = import "src/types.lx"
+let ModuleResolution = import "src/module_resolution.lx"
 
 let NODE = types.NODE
 
@@ -1233,7 +1234,7 @@ fn printMetadataHelp() {
   println("  anf-inline:   All metadata from resolve, plus any new origins")
 }
 
-fn buildPassList() {
+fn buildPassList(resolver, importCache, compileImportedModule) {
   // Build pass list similar to driver, but simplified for single-file compilation
   [
     .{
@@ -1277,16 +1278,9 @@ fn buildPassList() {
       requires: ["ast"],
       provides: ["resolution", "scopeInfo"],
       run: fn(ctx, state) {
-        // Minimal resolve - no import handling for this debug command
         resolve(state.ast, .{
-          importCache: .{},
-          compileModule: fn(path) {
-            .{
-              status: "failed",
-              success: false,
-              errors: ["Import not supported in ast command"]
-            }
-          },
+          importCache: importCache,
+          compileModule: compileImportedModule,
         })
       },
     },
@@ -1402,11 +1396,88 @@ fn run(ctx) {
     }
   }
 
+  // Resolve path to absolute
+  let absPath = if path == "-" {
+    "<stdin>"
+  } else if path[0] == "/" {
+    path
+  } else {
+    Lx.path.join(Lx.fs.cwd(), path)
+  }
+
+  // Set up module resolution
+  let resolver = if path == "-" {
+    nil
+  } else {
+    ModuleResolution.forEntry(path)
+  }
+
   // Load source
-  let source = Lx.fs.readFile(path)
+  let source = if path == "-" {
+    Lx.stdin.readAll()
+  } else if resolver {
+    resolver.slurp(absPath)
+  } else {
+    Lx.fs.readFile(path)
+  }
   if !source {
     Lx.stderr.println("Failed to open " + path)
     Lx.exit(2)
+  }
+
+  // Import cache for compiled modules
+  let importCache = .{}
+
+  // Recursive module compilation for imports
+  fn compileImportedModule(importPath) {
+    // Check cache first
+    if importCache[importPath] {
+      return importCache[importPath]
+    }
+
+    // Mark as in-progress to detect cycles
+    importCache[importPath] = .{ status: "compiling" }
+
+    // Load source for imported module
+    let importSource = resolver and resolver.slurp(importPath) or Lx.fs.readFile(importPath)
+    if !importSource {
+      let result = .{
+        status: "failed",
+        success: false,
+        errors: [.{ message: "Failed to load module: " + importPath }],
+      }
+      importCache[importPath] = result
+      return result
+    }
+
+    // Compile the imported module through same passes
+    let importState = .{
+      path: importPath,
+      source: importSource,
+      ast: nil,
+      nextNodeId: 1,
+      passes: .{},
+    }
+
+    let importCtx = .{
+      debug: .{ stopAfter: passName }
+    }
+
+    let importPassList = buildPassList(resolver, importCache, compileImportedModule)
+    let importResult = pipeline.runPasses(importPassList, importCtx, importState)
+
+    let cached = .{
+      status: importResult.success and "done" or "failed",
+      success: importResult.success,
+      ast: importResult.ast,
+      passes: importResult.passes,
+    }
+    if !importResult.success {
+      cached.errors = importResult.passes[importResult.failedPass].errors
+    }
+
+    importCache[importPath] = cached
+    cached
   }
 
   // Build context and state
@@ -1415,7 +1486,7 @@ fn run(ctx) {
   }
 
   let state = .{
-    path: path,
+    path: absPath,
     source: source,
     ast: nil,
     nextNodeId: 1,
@@ -1423,7 +1494,7 @@ fn run(ctx) {
   }
 
   // Run passes
-  let passList = buildPassList()
+  let passList = buildPassList(resolver, importCache, compileImportedModule)
   let result = pipeline.runPasses(passList, pipelineCtx, state)
 
   // Check for errors

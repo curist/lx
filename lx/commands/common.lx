@@ -46,12 +46,15 @@ fn compileWithDriver(driverInstance, path) {
       (passes.parse and passes.parse.enumInfo) or
       .{}
 
+    let deadNodes = passes.dce and passes.dce.deadNodes or .{}
+
     let fc = fastcheck(ast, result.passes.resolve, .{ enumInfo: enumInfo })
     result.fastcheckResult = fc
     let cg = codegen(ast, result.passes.resolve, .{
       codegenModule: codegenModule,
       enumInfo: enumInfo,
       fastcheck: fc,
+      dceResult: .{ deadNodes: deadNodes },
     })
     result.codegenResult = cg
     if !cg.success {

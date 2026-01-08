@@ -184,6 +184,9 @@ fn detectDeadLocals(state) {
       let hoisted = hoistedFns[fnName]
       let declId = hoisted.declNodeId
 
+      // Skip if this function is a module export (last expression of root block)
+      if state.exportNodeIds[declId] { continue }
+
       // Check if this function is ever referenced
       let readCount = state.readCount[declId] or 0
 
@@ -576,14 +579,69 @@ fn trackPropertyAccesses(node, state) {
 }
 
 // ============================================================================
+// Return Position Detection
+// ============================================================================
+
+// Collect all function IDs that appear in "return position" (last expression of a block)
+// These should never be marked as dead because they're the block's/function's return value
+fn collectReturnPositions(node, result) {
+  if !node { return }
+
+  let t = node.type
+
+  // Mark last expression of blocks as return position
+  if t == NODE.Block {
+    let exprs = node.expressions or []
+    if len(exprs) > 0 {
+      let lastExpr = exprs[len(exprs) - 1]
+      if lastExpr and lastExpr.type == NODE.Function {
+        result[lastExpr.id] = true
+      }
+    }
+    // Recurse into all expressions
+    for expr in exprs {
+      collectReturnPositions(expr, result)
+    }
+    return
+  }
+
+  if t == NODE.Function {
+    collectReturnPositions(node.body, result)
+    return
+  }
+
+  if t == NODE.If {
+    collectReturnPositions(node.then, result)
+    collectReturnPositions(node.else, result)
+    return
+  }
+
+  if t == NODE.For or t == NODE.ForIn {
+    collectReturnPositions(node.body, result)
+    return
+  }
+
+  if t == NODE.Let {
+    collectReturnPositions(node.init, result)
+    return
+  }
+}
+
+// ============================================================================
 // Main Entry Point
 // ============================================================================
 
 fn dce(ast, resolveResult) {
+  // Find all functions that are in "return position" (last expression of a block)
+  // These should never be marked as dead since they're the block's return value
+  let exportNodeIds = .{}
+  collectReturnPositions(ast, exportNodeIds)
+
   let state = .{
     resolvedNames: resolveResult.resolvedNames or .{},
     scopeInfo: resolveResult.scopeInfo or .{},
     importInfoByNodeId: resolveResult.importInfoByNodeId or .{},
+    exportNodeIds: exportNodeIds,  // Functions that are module exports
 
     // Usage tracking: declNodeId -> count
     readCount: .{},

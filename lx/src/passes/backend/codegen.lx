@@ -638,6 +638,20 @@ fn compileIntrinsicCall(gen, node) {
 }
 
 fn compileFunctionExpr(gen, node, mode) {
+  // DCE: Check if this is a dead HOISTED function (never called/referenced)
+  // Only applies to named functions that have a pre-allocated slot
+  // The slot contains NIL from pre-allocation, so we skip body compilation
+  if node.name and node.name.name {
+    let preallocatedSlot = gen.emittedLocals[node.id]
+    if (preallocatedSlot or preallocatedSlot == 0) and gen.deadNodes[node.id] {
+      // Hoisted dead function - slot already has NIL from pre-allocation
+      if mode == MODE.VALUE {
+        emitBytes(gen, OP.GET_LOCAL, localSlot(preallocatedSlot), node.line)
+      }
+      return
+    }
+  }
+
   let name = node.name and node.name.name or "fn"
   let func = Function(name, len(node.params or []), Chunk(node.filename))
 
@@ -1541,7 +1555,7 @@ fn codegen(ast, resolveResult, opts) {
     nodes: resolveResult.nodes or .{},
     localsByDecl: buildDeclMap(resolveResult.scopeInfo),
     enumInfo: opts and opts.enumInfo or .{},
-    deadNodes: deadNodes,  // DCE dead node set
+    deadNodes,  // DCE dead node set
     errors: [],
     currentLine: 1,
     currentNode: nil,

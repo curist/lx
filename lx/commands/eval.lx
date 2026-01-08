@@ -3,14 +3,21 @@ let common = import "commands/common.lx"
 fn run(ctx) {
   let src = nil
   if len(ctx.argv) >= 3 {
-    src = ctx.argv[2]
+    let arg = ctx.argv[2]
+    if arg == "-" {
+      // Explicit stdin
+      src = Lx.stdin.readAll()
+    } else {
+      src = arg
+    }
   } else if Lx and Lx.stdin and Lx.stdin.readAll {
     src = Lx.stdin.readAll()
   }
 
   if !src or src == "" {
     Lx.stderr.println("Usage: " + ctx.prog + " eval <expression>")
-    Lx.stderr.println("  or pipe input via stdin: echo 'println(42)' | " + ctx.prog + " eval")
+    Lx.stderr.println("       " + ctx.prog + " eval -              (read from stdin)")
+    Lx.stderr.println("       echo 'expr' | " + ctx.prog + " eval  (pipe to stdin)")
     Lx.exit(64)
   }
 
@@ -31,7 +38,7 @@ fn run(ctx) {
 .{
   name: "eval",
   aliases: [],
-  usage: "eval <expression>",
+  usage: "eval <expression> | eval -",
   summary: "Evaluate expression (arg or stdin)",
   run: run,
 }

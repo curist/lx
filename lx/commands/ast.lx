@@ -1096,7 +1096,7 @@ fn printDiff(fromPass, toPass, diff) {
 
 fn parseArgs(argv) {
   // Parse command line arguments
-  // Returns .{ path: "...", pass: "...", showHelp: bool, summary: bool, trackNode: num, diff: .{from, to} } or .{ error: "..." }
+  // Returns .{ path: "...", pass: "...", showHelp: bool, summary: bool, trackNode: num, diff: .{from, to}, withImports: bool } or .{ error: "..." }
 
   let path = nil
   let pass = DEFAULT_PASS
@@ -1104,6 +1104,7 @@ fn parseArgs(argv) {
   let summary = false
   let trackNode = nil
   let diff = nil
+  let withImports = false
 
   let i = 2  // Start after command name
   for true {
@@ -1146,6 +1147,9 @@ fn parseArgs(argv) {
       let toPass = argv[i]
       diff = .{ from: fromPass, to: toPass }
       i = i + 1
+    } else if arg == "--with-imports" {
+      withImports = true
+      i = i + 1
     } else {
       if path {
         return .{ error: "Multiple file paths specified" }
@@ -1163,7 +1167,7 @@ fn parseArgs(argv) {
     return .{ error: "No file path specified" }
   }
 
-  .{ path: path, pass: pass, showHelp: false, summary: summary, trackNode: trackNode, diff: diff }
+  .{ path: path, pass: pass, showHelp: false, summary: summary, trackNode: trackNode, diff: diff, withImports: withImports }
 }
 
 fn printMetadataHelp() {
@@ -1317,14 +1321,20 @@ fn run(ctx) {
 
   if args.error {
     Lx.stderr.println("Error: " + args.error)
-    Lx.stderr.println("Usage: " + ctx.prog + " ast [--pass <pass-name>] <path>")
+    Lx.stderr.println("Usage: " + ctx.prog + " ast [--pass <pass-name>] [--with-imports] <path>")
     Lx.stderr.println("       " + ctx.prog + " ast --summary <path>")
     Lx.stderr.println("       " + ctx.prog + " ast --track-node <id> <path>")
     Lx.stderr.println("       " + ctx.prog + " ast --diff <from-pass> <to-pass> <path>")
     Lx.stderr.println("       " + ctx.prog + " ast --help-metadata")
     Lx.stderr.println("")
+    Lx.stderr.println("Options:")
+    Lx.stderr.println("  --pass <name>    Stop after specified pass (default: " + DEFAULT_PASS + ")")
+    Lx.stderr.println("  --with-imports   Also dump AST of imported modules")
+    Lx.stderr.println("  --summary        Show pipeline statistics")
+    Lx.stderr.println("  --track-node <id> Track a node through passes")
+    Lx.stderr.println("  --diff <from> <to> Compare two passes")
+    Lx.stderr.println("")
     Lx.stderr.println("Available passes: " + join(VALID_PASSES, ", "))
-    Lx.stderr.println("Default pass: " + DEFAULT_PASS)
     Lx.exit(28)
   }
 
@@ -1521,13 +1531,31 @@ fn run(ctx) {
     // Build metadata from pipeline results
     let meta = buildMetadata(result)
     // Dump the AST with metadata
+    println("== " + absPath + " ==")
+    println("")
     dumpNode(result.ast, 0, meta)
+
+    // Dump imported modules if requested
+    if args.withImports {
+      let importPaths = keys(importCache)
+      for let i = 0; i < len(importPaths); i = i + 1 {
+        let importPath = importPaths[i]
+        let cached = importCache[importPath]
+        if cached and cached.status == "done" and cached.ast {
+          println("")
+          println("== " + importPath + " ==")
+          println("")
+          let importMeta = buildMetadata(cached)
+          dumpNode(cached.ast, 0, importMeta)
+        }
+      }
+    }
   }
 }
 
 .{
   name: "ast",
-  usage: "ast [--pass <pass-name>] <path>\n       ast --summary <path>\n       ast --track-node <id> <path>\n       ast --diff <from-pass> <to-pass> <path>\n       ast --help-metadata",
+  usage: "ast [--pass <pass-name>] [--with-imports] <path>\n       ast --summary <path>\n       ast --track-node <id> <path>\n       ast --diff <from-pass> <to-pass> <path>\n       ast --help-metadata",
   summary: "Dump AST with metadata at different compilation stages (debug)",
   run: run,
 }

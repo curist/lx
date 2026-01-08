@@ -244,14 +244,14 @@ fn buildPassList(ctx) {
       },
     },
 
-    // PASS 5.5: DCE (optional, off by default)
+    // PASS 5.5: DCE (on by default)
     .{
       name: "dce",
       mutatesAst: false,  // Produces side tables only
       requires: ["resolution"],
       provides: ["dce"],
       enabled: fn(ctx, state) {
-        ctx.opts.withDce == true
+        ctx.opts.withDce != false
       },
       run: fn(ctx, state) {
         let resolveResult = state.passes.resolve
@@ -350,8 +350,8 @@ fn make(opts) {
     withLowerIntrinsics = profileDefaults.withLowerIntrinsics
   }
 
-  // DCE is opt-in, default off (no profile default)
-  let withDce = opts["withDce"] == true
+  // DCE is on by default
+  let withDce = opts["withDce"] != false
 
   // Optional import overrides (used when compiling transitive imports).
   // Defaults to top-level behavior unless overridden.

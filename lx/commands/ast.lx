@@ -44,7 +44,7 @@ let NODE = types.NODE
 
 // Valid pass names
 let VALID_PASSES = ["parse", "lower", "anf", "lower-loops", "resolve", "anf-inline", "dce"]
-let DEFAULT_PASS = "anf-inline"
+let DEFAULT_PASS = "dce"
 
 fn pad(n) {
   let s = ""

@@ -1,0 +1,643 @@
+// Dead Code Elimination Pass
+//
+// Purpose:
+// - Identify and mark dead code for codegen to skip
+// - Unused locals, functions, imports, and pure expressions
+//
+// Non-destructive: produces side tables, AST remains unchanged
+// Codegen emits NIL placeholders for dead locals to preserve slot indices
+//
+// Pipeline placement: After resolve, before codegen
+//
+// Output:
+// .{
+//   success: true,
+//   ast: <unchanged AST>,
+//   deadNodes: .{ [nodeId]: true },      // Set of dead node IDs
+//   deadLocals: .{ [declNodeId]: reason },
+//   deadFunctions: .{ [declNodeId]: reason },
+//   deadImports: .{ [nodeId]: reason },
+//   deadExpressions: .{ [nodeId]: reason },
+// }
+
+let .{ NODE } = import "src/types.lx"
+
+// ============================================================================
+// Side Effect Analysis
+// ============================================================================
+
+fn hasSideEffects(node) {
+  // Conservative: assume side effects unless we can prove otherwise
+  if !node { return false }
+
+  let t = node.type
+
+  // Definitely has side effects
+  if t == NODE.Call { return true }
+  if t == NODE.IntrinsicCall { return true }
+  if t == NODE.Assignment { return true }
+  if t == NODE.Import { return true }
+
+  // Pure literals - no side effects
+  if t == NODE.Number { return false }
+  if t == NODE.String { return false }
+  if t == NODE.Bool { return false }
+  if t == NODE.Nil { return false }
+  if t == NODE.Identifier { return false }
+
+  // Function definition (not call) - no side effects
+  if t == NODE.Function { return false }
+
+  // Binary/Unary/Logical - check operands
+  if t == NODE.Binary {
+    return hasSideEffects(node.left) or hasSideEffects(node.right)
+  }
+  if t == NODE.Unary {
+    return hasSideEffects(node.operand)
+  }
+  if t == NODE.Logical {
+    return hasSideEffects(node.left) or hasSideEffects(node.right)
+  }
+
+  // Property access - no side effects
+  if t == NODE.Dot { return hasSideEffects(node.object) }
+  if t == NODE.Index {
+    return hasSideEffects(node.object) or hasSideEffects(node.index)
+  }
+
+  // Array/Hashmap literals - check elements
+  if t == NODE.Array {
+    if node.elements {
+      for let i = 0; i < len(node.elements); i = i + 1 {
+        if hasSideEffects(node.elements[i]) { return true }
+      }
+    }
+    return false
+  }
+  if t == NODE.Hashmap {
+    if node.entries {
+      for let i = 0; i < len(node.entries); i = i + 1 {
+        let entry = node.entries[i]
+        if hasSideEffects(entry.key) or hasSideEffects(entry.value) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  // If expression - condition and branches
+  if t == NODE.If {
+    return hasSideEffects(node.condition) or
+           hasSideEffects(node.then) or
+           hasSideEffects(node.else)
+  }
+
+  // Block - check all expressions
+  if t == NODE.Block {
+    if node.expressions {
+      for let i = 0; i < len(node.expressions); i = i + 1 {
+        if hasSideEffects(node.expressions[i]) { return true }
+      }
+    }
+    return false
+  }
+
+  // Let - check initializer
+  if t == NODE.Let {
+    return hasSideEffects(node.init)
+  }
+
+  // For loops, Collect - always have side effects (iteration)
+  if t == NODE.For { return true }
+  if t == NODE.ForIn { return true }
+  if t == NODE.Collect { return true }
+  if t == NODE.CollectIn { return true }
+
+  // Control flow
+  if t == NODE.Return { return true }
+  if t == NODE.Break { return true }
+  if t == NODE.Continue { return true }
+
+  // Default: assume has side effects (conservative)
+  true
+}
+
+// ============================================================================
+// Usage Collection
+// ============================================================================
+
+fn collectUsages(state) {
+  // Scan resolvedNames to count reads per declaration
+  // resolvedNames: nodeId -> { kind, declaredAt, ... }
+
+  let resolvedKeys = keys(state.resolvedNames)
+  for let i = 0; i < len(resolvedKeys); i = i + 1 {
+    let nodeId = resolvedKeys[i]
+    let binding = state.resolvedNames[nodeId]
+
+    if binding and (binding.kind == "local" or binding.kind == "upvalue") {
+      let declId = binding.declaredAt
+      if declId {
+        // Increment read count for this declaration
+        let count = state.readCount[declId] or 0
+        state.readCount[declId] = count + 1
+      }
+    }
+  }
+}
+
+// ============================================================================
+// Dead Code Detection
+// ============================================================================
+
+fn detectDeadLocals(state) {
+  // Walk scopeInfo to find unused locals
+  // scopeInfo: scopeNodeId -> { locals (localsArray), ... }
+
+  let scopeKeys = keys(state.scopeInfo)
+  for let i = 0; i < len(scopeKeys); i = i + 1 {
+    let scopeNodeId = scopeKeys[i]
+    let scopeData = state.scopeInfo[scopeNodeId]
+
+    // Check localsArray for unused locals
+    let locals = scopeData.localsArray or scopeData.locals or []
+    for let j = 0; j < len(locals); j = j + 1 {
+      let local = locals[j]
+
+      // Skip if captured by closure
+      if local.isCaptured { continue }
+
+      // Skip parameters - they're part of the function interface
+      if local.kind == "param" { continue }
+
+      // Check if this local is ever read
+      let declId = local.nodeId
+      let readCount = state.readCount[declId] or 0
+
+      if readCount == 0 {
+        // This local is never read - mark as dead
+        state.deadLocals[declId] = "never read"
+      }
+    }
+
+    // Check hoisted functions
+    let hoistedFns = scopeData.hoistedFns or .{}
+    let fnNames = keys(hoistedFns)
+    for let k = 0; k < len(fnNames); k = k + 1 {
+      let fnName = fnNames[k]
+      let hoisted = hoistedFns[fnName]
+      let declId = hoisted.declNodeId
+
+      // Check if this function is ever referenced
+      let readCount = state.readCount[declId] or 0
+
+      if readCount == 0 {
+        // Function is never called/referenced - mark as dead
+        state.deadFunctions[declId] = "never called"
+      }
+    }
+  }
+}
+
+fn detectDeadImports(state) {
+  // Walk importInfoByNodeId to find unused imports
+  // An import is dead if its binding (the Let's name identifier) is never used
+
+  let importKeys = keys(state.importInfoByNodeId)
+  for let i = 0; i < len(importKeys); i = i + 1 {
+    let importNodeId = importKeys[i]
+
+    // The import node itself - check if the containing Let's name is ever used
+    // We need to find the Let node that wraps this import
+    // For now, we track via the import node and check resolvedNames
+
+    // Check if any binding refers to this import's declaration
+    let isUsed = false
+    let resolvedKeys = keys(state.resolvedNames)
+    for let j = 0; j < len(resolvedKeys); j = j + 1 {
+      let binding = state.resolvedNames[resolvedKeys[j]]
+      // The import's Let.name.id would be the declaredAt for usages
+      // We need the Let node ID, not the Import node ID
+      // For simplicity, mark import as used if any binding points near it
+      // This is a conservative approximation
+      if binding and binding.declaredAt {
+        // Check if declaredAt is associated with this import
+        // (This requires walking to find the Let wrapping the Import)
+        // For now, we'll detect dead imports during AST walk
+      }
+    }
+  }
+}
+
+fn detectDeadExpressions(node, state, isStatementPosition) {
+  // Walk AST looking for expressions in statement position that have no side effects
+  if !node { return }
+
+  let t = node.type
+
+  if t == NODE.Block {
+    let exprs = node.expressions or []
+    for let i = 0; i < len(exprs); i = i + 1 {
+      let expr = exprs[i]
+      // All expressions except the last in a block are in statement position
+      // Actually, all expressions in a block are evaluated but only last is returned
+      // An expression in statement position whose result is unused AND has no side effects is dead
+      let isLast = i == len(exprs) - 1
+      detectDeadExpressions(expr, state, !isLast)
+    }
+    return
+  }
+
+  // If this expression is in statement position and has no side effects, it's dead
+  if isStatementPosition and !hasSideEffects(node) {
+    // Exclude Let nodes - they're declarations, not expressions
+    if t != NODE.Let and t != NODE.Function {
+      state.deadExpressions[node.id] = "unused pure expression"
+    }
+  }
+
+  // Recurse into children
+  if t == NODE.Function {
+    detectDeadExpressions(node.body, state, false)
+  }
+  if t == NODE.If {
+    detectDeadExpressions(node.then, state, false)
+    detectDeadExpressions(node.else, state, false)
+  }
+  if t == NODE.For {
+    detectDeadExpressions(node.body, state, false)
+  }
+  if t == NODE.ForIn {
+    detectDeadExpressions(node.body, state, false)
+  }
+  if t == NODE.Let {
+    // Check if this Let is for a dead local
+    if node.name and state.deadLocals[node.name.id] {
+      state.letNodeForDeadLocal[node.id] = node.name.id
+    }
+    // Check if this is a dead import
+    if node.init and node.init.type == NODE.Import {
+      if node.name {
+        let declId = node.name.id
+        let readCount = state.readCount[declId] or 0
+        if readCount == 0 {
+          state.deadImports[node.id] = "unused import"
+        }
+      }
+    }
+  }
+}
+
+fn markDeadNodes(state) {
+  // Populate deadNodes from the various dead* tables
+
+  // Dead locals: mark the Let node
+  let localKeys = keys(state.letNodeForDeadLocal)
+  for let i = 0; i < len(localKeys); i = i + 1 {
+    let letNodeId = localKeys[i]
+    state.deadNodes[letNodeId] = true
+  }
+
+  // Dead functions: mark the Function node
+  let fnKeys = keys(state.deadFunctions)
+  for let i = 0; i < len(fnKeys); i = i + 1 {
+    let declId = fnKeys[i]
+    state.deadNodes[declId] = true
+  }
+
+  // Dead imports: mark the Let node containing the import
+  let importKeys = keys(state.deadImports)
+  for let i = 0; i < len(importKeys); i = i + 1 {
+    let letNodeId = importKeys[i]
+    state.deadNodes[letNodeId] = true
+  }
+
+  // Dead expressions: already have the node IDs
+  let exprKeys = keys(state.deadExpressions)
+  for let i = 0; i < len(exprKeys); i = i + 1 {
+    let nodeId = exprKeys[i]
+    state.deadNodes[nodeId] = true
+  }
+}
+
+// ============================================================================
+// Import Property Tracking (for whole-program tree-shaking)
+// ============================================================================
+
+fn buildImportDeclMap(ast, state) {
+  // Build a map from declNodeId (Let.name.id) -> import path
+  // This lets us know which identifiers refer to imports
+  //
+  // After ANF, imports may be transformed:
+  //   let m = import "foo.lx"
+  // becomes:
+  //   let $anf.0 = import "foo.lx"
+  //   let m = $anf.0
+  //
+  // We need to handle both cases and trace through ANF temps.
+
+  // First pass: collect direct imports and ANF temps
+  walkForImports(ast, state)
+
+  // Second pass: resolve ANF temps to find the actual import paths
+  // If we have: let m = $anf.0, and $anf.0 is an import, then m points to that import
+  resolveAnfImportAliases(ast, state)
+}
+
+fn walkForImports(node, state) {
+  if !node { return }
+
+  let t = node.type
+
+  if t == NODE.Let {
+    if node.init and node.init.type == NODE.Import {
+      // This is a direct import declaration: let x = import "path"
+      if node.name and node.init.path {
+        let declId = node.name.id
+        let importPath = node.init.path.value or node.init.path.literal
+        if importPath {
+          state.importDeclToPath[declId] = importPath
+        }
+      }
+    } else if node.init and node.init.type == NODE.Identifier {
+      // This might be: let m = $anf.0 (where $anf.0 is an import)
+      // Record this so we can resolve it in the second pass
+      if node.name {
+        state.anfAliases[node.name.id] = node.init.id
+      }
+    }
+    // Continue walking into init
+    walkForImports(node.init, state)
+    return
+  }
+
+  if t == NODE.Block {
+    let exprs = node.expressions or []
+    for let i = 0; i < len(exprs); i = i + 1 {
+      walkForImports(exprs[i], state)
+    }
+    return
+  }
+
+  if t == NODE.Function {
+    walkForImports(node.body, state)
+    return
+  }
+
+  if t == NODE.If {
+    walkForImports(node.condition, state)
+    walkForImports(node.then, state)
+    walkForImports(node.else, state)
+    return
+  }
+
+  if t == NODE.For {
+    walkForImports(node.init, state)
+    walkForImports(node.condition, state)
+    walkForImports(node.update, state)
+    walkForImports(node.body, state)
+    return
+  }
+
+  if t == NODE.ForIn {
+    walkForImports(node.iterable, state)
+    walkForImports(node.body, state)
+    return
+  }
+}
+
+fn resolveAnfImportAliases(ast, state) {
+  // Resolve ANF aliases to find import paths
+  // If we have:
+  //   let $anf.0 = import "foo.lx"  (importDeclToPath[$anf.0.id] = "foo.lx")
+  //   let m = $anf.0               (anfAliases[m.id] = $anf.0.identifierId)
+  // Then we need: importDeclToPath[m.id] = "foo.lx"
+
+  let anfAliases = state.anfAliases or .{}
+  let aliasKeys = keys(anfAliases)
+
+  for let i = 0; i < len(aliasKeys); i = i + 1 {
+    let aliasedDeclId = aliasKeys[i]  // The declId of the alias (e.g., m)
+    let targetIdentifierId = anfAliases[aliasedDeclId]  // The identifier node id of the target
+
+    // Look up the target identifier in resolvedNames to find what it refers to
+    let binding = state.resolvedNames[targetIdentifierId]
+    if binding and binding.declaredAt {
+      let targetDeclId = binding.declaredAt
+      // Check if the target declaration has an import path
+      let importPath = state.importDeclToPath[targetDeclId]
+      if importPath {
+        // The alias also points to this import
+        state.importDeclToPath[aliasedDeclId] = importPath
+      }
+    }
+  }
+}
+
+fn trackPropertyAccesses(node, state) {
+  // Walk AST and find Dot nodes where object is an import variable
+  // Record which properties are accessed on each import
+  if !node { return }
+
+  let t = node.type
+
+  if t == NODE.Dot {
+    // Check if object is an identifier that resolves to an import
+    if node.object and node.object.type == NODE.Identifier {
+      let binding = state.resolvedNames[node.object.id]
+      if binding and (binding.kind == "local" or binding.kind == "upvalue") {
+        let declId = binding.declaredAt
+        let importPath = state.importDeclToPath[declId]
+        if importPath {
+          // This is a property access on an import
+          let propName = node.property and (node.property.name or node.property.value or node.property.lexeme)
+          if propName {
+            if !state.usedImportProperties[importPath] {
+              state.usedImportProperties[importPath] = .{}
+            }
+            state.usedImportProperties[importPath][propName] = true
+          }
+        }
+      }
+    }
+    // Continue walking (object might have nested accesses)
+    trackPropertyAccesses(node.object, state)
+    return
+  }
+
+  if t == NODE.Index {
+    // Check for m["propName"] style access
+    if node.object and node.object.type == NODE.Identifier {
+      let binding = state.resolvedNames[node.object.id]
+      if binding and (binding.kind == "local" or binding.kind == "upvalue") {
+        let declId = binding.declaredAt
+        let importPath = state.importDeclToPath[declId]
+        if importPath and node.index and node.index.type == NODE.String {
+          let propName = node.index.value or node.index.literal
+          if propName {
+            if !state.usedImportProperties[importPath] {
+              state.usedImportProperties[importPath] = .{}
+            }
+            state.usedImportProperties[importPath][propName] = true
+          }
+        }
+      }
+    }
+    trackPropertyAccesses(node.object, state)
+    trackPropertyAccesses(node.index, state)
+    return
+  }
+
+  if t == NODE.Block {
+    let exprs = node.expressions or []
+    for let i = 0; i < len(exprs); i = i + 1 {
+      trackPropertyAccesses(exprs[i], state)
+    }
+    return
+  }
+
+  if t == NODE.Let {
+    trackPropertyAccesses(node.init, state)
+    return
+  }
+
+  if t == NODE.Function {
+    trackPropertyAccesses(node.body, state)
+    return
+  }
+
+  if t == NODE.If {
+    trackPropertyAccesses(node.condition, state)
+    trackPropertyAccesses(node.then, state)
+    trackPropertyAccesses(node.else, state)
+    return
+  }
+
+  if t == NODE.For {
+    trackPropertyAccesses(node.init, state)
+    trackPropertyAccesses(node.condition, state)
+    trackPropertyAccesses(node.update, state)
+    trackPropertyAccesses(node.body, state)
+    return
+  }
+
+  if t == NODE.ForIn {
+    trackPropertyAccesses(node.iterable, state)
+    trackPropertyAccesses(node.body, state)
+    return
+  }
+
+  if t == NODE.Call {
+    trackPropertyAccesses(node.callee, state)
+    let args = node.args or node.arguments or []
+    for let i = 0; i < len(args); i = i + 1 {
+      trackPropertyAccesses(args[i], state)
+    }
+    return
+  }
+
+  if t == NODE.Binary or t == NODE.Logical {
+    trackPropertyAccesses(node.left, state)
+    trackPropertyAccesses(node.right, state)
+    return
+  }
+
+  if t == NODE.Unary {
+    trackPropertyAccesses(node.operand, state)
+    return
+  }
+
+  if t == NODE.Array {
+    let elems = node.elements or []
+    for let i = 0; i < len(elems); i = i + 1 {
+      trackPropertyAccesses(elems[i], state)
+    }
+    return
+  }
+
+  if t == NODE.Hashmap {
+    let entries = node.entries or []
+    for let i = 0; i < len(entries); i = i + 1 {
+      trackPropertyAccesses(entries[i].key, state)
+      trackPropertyAccesses(entries[i].value, state)
+    }
+    return
+  }
+
+  if t == NODE.Return {
+    trackPropertyAccesses(node.value, state)
+    return
+  }
+
+  if t == NODE.Assignment {
+    trackPropertyAccesses(node.target, state)
+    trackPropertyAccesses(node.value, state)
+    return
+  }
+
+  if t == NODE.Collect or t == NODE.CollectIn {
+    trackPropertyAccesses(node.body, state)
+    return
+  }
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+fn dce(ast, resolveResult) {
+  let state = .{
+    resolvedNames: resolveResult.resolvedNames or .{},
+    scopeInfo: resolveResult.scopeInfo or .{},
+    importInfoByNodeId: resolveResult.importInfoByNodeId or .{},
+
+    // Usage tracking: declNodeId -> count
+    readCount: .{},
+
+    // Import property tracking (for whole-program tree-shaking)
+    importDeclToPath: .{},       // declNodeId -> import path string
+    usedImportProperties: .{},   // importPath -> { propName: true, ... }
+    anfAliases: .{},             // aliasedDeclId -> targetIdentifierId (for ANF temp resolution)
+
+    // Intermediate tracking
+    letNodeForDeadLocal: .{},  // letNodeId -> declNodeId
+
+    // Results
+    deadNodes: .{},       // nodeId -> true
+    deadLocals: .{},      // declNodeId -> reason
+    deadFunctions: .{},   // declNodeId -> reason
+    deadImports: .{},     // letNodeId -> reason
+    deadExpressions: .{}, // nodeId -> reason
+  }
+
+  // Phase 1: Count usages by scanning resolvedNames
+  collectUsages(state)
+
+  // Phase 2: Build import declaration map
+  buildImportDeclMap(ast, state)
+
+  // Phase 3: Track property accesses on imports
+  trackPropertyAccesses(ast, state)
+
+  // Phase 4: Detect dead code
+  detectDeadLocals(state)
+  detectDeadExpressions(ast, state, false)
+
+  // Phase 5: Mark dead nodes
+  markDeadNodes(state)
+
+  .{
+    success: true,
+    ast: ast,
+    deadNodes: state.deadNodes,
+    deadLocals: state.deadLocals,
+    deadFunctions: state.deadFunctions,
+    deadImports: state.deadImports,
+    deadExpressions: state.deadExpressions,
+    // For whole-program analysis:
+    usedImportProperties: state.usedImportProperties,
+  }
+}
+
+dce

@@ -23,10 +23,10 @@ LX_LX_SOURCES := $(shell find lx \
 include/lx:
 	@mkdir -p include/lx
 
-include/lx/lxlx.h: $(LX_LX_SOURCES) API.md include/native_fn.h scripts/gen-builtin-docs.lx scripts/build-lxlx.sh include/chunk.h include/object.h | include/lx
+include/lx/lxlx.h: $(LX_LX_SOURCES) API.md include/native_fn.h scripts/gen-builtin-docs.lx include/chunk.h | include/lx
 	./scripts/build-lxlx.sh
 
-include/lx/lxglobals.h: $(LX_LX_SOURCES) scripts/build-globals.sh include/chunk.h include/object.h | include/lx
+include/lx/lxglobals.h: $(LX_LX_SOURCES) include/chunk.h | include/lx
 	./scripts/build-globals.sh
 
 lxlx: include/lx/lxlx.h

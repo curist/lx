@@ -35,13 +35,14 @@ let anf = import "src/passes/frontend/anf.lx"
 let anfInline = import "src/passes/frontend/anf-inline.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
 let lowerLoops = import "src/passes/backend/lower-loops.lx"
+let dce = import "src/passes/backend/dce.lx"
 let pipeline = import "src/passes/pipeline.lx"
 let types = import "src/types.lx"
 
 let NODE = types.NODE
 
 // Valid pass names
-let VALID_PASSES = ["parse", "lower", "anf", "lower-loops", "resolve", "anf-inline"]
+let VALID_PASSES = ["parse", "lower", "anf", "lower-loops", "resolve", "anf-inline", "dce"]
 let DEFAULT_PASS = "anf-inline"
 
 fn pad(n) {
@@ -65,6 +66,7 @@ fn buildMetadata(pipelineResult) {
     origin: .{},        // nodeId -> originNodeId
     bindings: .{},      // nodeId -> binding info
     scopes: .{},        // nodeId -> scope info
+    deadNodes: .{},     // nodeId -> true (dead code)
   }
 
   if !pipelineResult or !pipelineResult.passes { return meta }
@@ -91,6 +93,14 @@ fn buildMetadata(pipelineResult) {
     }
     if resolveResult.scopeInfo {
       meta.scopes = resolveResult.scopeInfo
+    }
+  }
+
+  // Collect DCE metadata
+  let dceResult = passes.dce
+  if dceResult and dceResult.success {
+    if dceResult.deadNodes {
+      meta.deadNodes = dceResult.deadNodes
     }
   }
 
@@ -197,6 +207,11 @@ fn dumpNode(node, indent, meta) {
     let scopeStr = formatScope(scopeInfo)
     if scopeStr {
       header = header + " [scope " + scopeStr + "]"
+    }
+
+    // Show DCE dead code annotation
+    if meta.deadNodes and meta.deadNodes[node.id] {
+      header = header + " [DEAD]"
     }
   }
 
@@ -522,8 +537,9 @@ fn findNodeById(node, targetId) {
   let t = type(node)
   if t == "array" {
     for let i = 0; i < len(node); i = i + 1 {
-      let found = findNodeById(node[i], targetId)
-      if found { return found }
+      if let found = findNodeById(node[i], targetId) {
+        return found
+      }
     }
     return nil
   }
@@ -535,96 +551,119 @@ fn findNodeById(node, targetId) {
 
   // Search children
   if node.value {
-    let found = findNodeById(node.value, targetId)
-    if found { return found }
+    if let found = findNodeById(node.value, targetId) {
+      return found
+    }
   }
   if node.name {
-    let found = findNodeById(node.name, targetId)
-    if found { return found }
+    if let found = findNodeById(node.name, targetId) {
+      return found
+    }
   }
   if node.params {
-    let found = findNodeById(node.params, targetId)
-    if found { return found }
+    if let found = findNodeById(node.params, targetId) {
+      return found
+    }
   }
   if node.body {
-    let found = findNodeById(node.body, targetId)
-    if found { return found }
+    if let found = findNodeById(node.body, targetId) {
+      return found
+    }
   }
   if node.expressions {
-    let found = findNodeById(node.expressions, targetId)
-    if found { return found }
+    if let found = findNodeById(node.expressions, targetId) {
+      return found
+    }
   }
   if node.left {
-    let found = findNodeById(node.left, targetId)
-    if found { return found }
+    if let found = findNodeById(node.left, targetId) {
+      return found
+    }
   }
   if node.right {
-    let found = findNodeById(node.right, targetId)
-    if found { return found }
+    if let found = findNodeById(node.right, targetId) {
+      return found
+    }
   }
   if node.operand {
-    let found = findNodeById(node.operand, targetId)
-    if found { return found }
+    if let found = findNodeById(node.operand, targetId) {
+      return found
+    }
   }
   if node.expression {
-    let found = findNodeById(node.expression, targetId)
-    if found { return found }
+    if let found = findNodeById(node.expression, targetId) {
+      return found
+    }
   }
   if node.condition {
-    let found = findNodeById(node.condition, targetId)
-    if found { return found }
+    if let found = findNodeById(node.condition, targetId) {
+      return found
+    }
   }
   if node.then {
-    let found = findNodeById(node.then, targetId)
-    if found { return found }
+    if let found = findNodeById(node.then, targetId) {
+      return found
+    }
   }
   if node.else {
-    let found = findNodeById(node.else, targetId)
-    if found { return found }
+    if let found = findNodeById(node.else, targetId) {
+      return found
+    }
   }
   if node.init {
-    let found = findNodeById(node.init, targetId)
-    if found { return found }
+    if let found = findNodeById(node.init, targetId) {
+      return found
+    }
   }
   if node.update {
-    let found = findNodeById(node.update, targetId)
-    if found { return found }
+    if let found = findNodeById(node.update, targetId) {
+      return found
+    }
   }
   if node.callee {
-    let found = findNodeById(node.callee, targetId)
-    if found { return found }
+    if let found = findNodeById(node.callee, targetId) {
+      return found
+    }
   }
   if node.args {
-    let found = findNodeById(node.args, targetId)
-    if found { return found }
+    if let found = findNodeById(node.args, targetId) {
+      return found
+    }
   }
   if node.object {
-    let found = findNodeById(node.object, targetId)
-    if found { return found }
+    if let found = findNodeById(node.object, targetId) {
+      return found
+    }
   }
   if node.index {
-    let found = findNodeById(node.index, targetId)
-    if found { return found }
+    if let found = findNodeById(node.index, targetId) {
+      return found
+    }
   }
   if node.property {
-    let found = findNodeById(node.property, targetId)
-    if found { return found }
+    if let found = findNodeById(node.property, targetId) {
+      return found
+    }
   }
   if node.target {
-    let found = findNodeById(node.target, targetId)
-    if found { return found }
+    if let found = findNodeById(node.target, targetId) {
+      return found
+    }
   }
   if node.elements {
-    let found = findNodeById(node.elements, targetId)
-    if found { return found }
+    if let found = findNodeById(node.elements, targetId) {
+      return found
+    }
   }
   if node.pairs {
-    let found = findNodeById(node.pairs, targetId)
-    if found { return found }
+    if let found = findNodeById(node.pairs, targetId) {
+      return found
+    }
   }
   if node.path {
-    let found = findNodeById(node.path, targetId)
-    if found { return found }
+    if let found = findNodeById(node.path, targetId) {
+      return found
+    }
   }
 
   nil
@@ -1259,6 +1298,16 @@ fn buildPassList() {
       run: fn(ctx, state) {
         let resolveResult = state.passes.resolve
         anfInline(state.ast, resolveResult)
+      },
+    },
+    .{
+      name: "dce",
+      mutatesAst: false,
+      requires: ["resolution"],
+      provides: ["dce"],
+      run: fn(ctx, state) {
+        let resolveResult = state.passes.resolve
+        dce(state.ast, resolveResult)
       },
     },
   ]

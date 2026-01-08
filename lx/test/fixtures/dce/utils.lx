@@ -1,0 +1,16 @@
+// Test fixture for whole-program DCE
+// Exports foo, bar, baz - only foo should be used
+
+fn foo() {
+  "foo called"
+}
+
+fn bar() {
+  "bar called - should be dead"
+}
+
+fn baz() {
+  "baz called - should be dead"
+}
+
+.{ foo: foo, bar: bar, baz: baz }

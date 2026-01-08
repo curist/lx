@@ -379,13 +379,28 @@ fn compileIdentifier(gen, node) {
 }
 
 fn compileLet(gen, node, mode) {
+  let local = gen.localsByDecl[node.name.id]
+
+  // DCE: Check if this Let is dead (unused local)
+  // Still emit NIL to preserve slot indices, but skip compiling the init expression
+  if gen.deadNodes[node.id] and local {
+    emitByte(gen, OP.NIL, node.line)
+    gen.emittedLocals[local.nodeId] = gen.nextLocalSlot
+    let slot = gen.nextLocalSlot
+    gen.nextLocalSlot = gen.nextLocalSlot + 1
+
+    if mode == MODE.VALUE {
+      emitBytes(gen, OP.GET_LOCAL, localSlot(slot), node.line)
+    }
+    return
+  }
+
   if node.init {
     compileValue(gen, node.init)
   } else {
     emitByte(gen, OP.NIL, node.line)
   }
 
-  let local = gen.localsByDecl[node.name.id]
   if local {
     // Record the absolute slot for this local
     gen.emittedLocals[local.nodeId] = gen.nextLocalSlot
@@ -1545,6 +1560,10 @@ fn compileExpr(gen, node, mode) {
 }
 
 fn codegen(ast, resolveResult, opts) {
+  // Get DCE result if provided
+  let dceResult = opts and opts.dceResult
+  let deadNodes = dceResult and dceResult.deadNodes or .{}
+
   let gen = .{
     currentFunction: Function("", 0, Chunk(ast.filename)),
     resolvedNames: resolveResult.resolvedNames or .{},
@@ -1553,6 +1572,7 @@ fn codegen(ast, resolveResult, opts) {
     nodes: resolveResult.nodes or .{},
     localsByDecl: buildDeclMap(resolveResult.scopeInfo),
     enumInfo: opts and opts.enumInfo or .{},
+    deadNodes: deadNodes,  // DCE dead node set
     errors: [],
     currentLine: 1,
     currentNode: nil,

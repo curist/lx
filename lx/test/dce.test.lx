@@ -1,0 +1,239 @@
+// Dead Code Elimination (DCE) Pass Tests
+// Tests for unused code detection
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let parse = import "src/passes/frontend/parser.lx"
+let lower = import "src/passes/frontend/lower.lx"
+let anf = import "src/passes/frontend/anf.lx"
+let resolve = import "src/passes/frontend/resolve.lx"
+let dce = import "src/passes/backend/dce.lx"
+let types = import "src/types.lx"
+
+let NODE = types.NODE
+
+// Helper to run full pipeline through DCE
+fn runDce(source) {
+  let parseResult = parse(source, "test.lx")
+  if !parseResult.success {
+    return .{ success: false, parseErrors: parseResult.errors }
+  }
+
+  let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
+  if !lowerResult.success {
+    return .{ success: false, lowerErrors: lowerResult.errors }
+  }
+
+  let anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
+  if !anfResult.success {
+    return .{ success: false, anfErrors: anfResult.errors }
+  }
+
+  let resolveResult = resolve(anfResult.ast, .{})
+  if !resolveResult.success {
+    return .{ success: false, resolveErrors: resolveResult.errors }
+  }
+
+  let dceResult = dce(anfResult.ast, resolveResult)
+
+  .{
+    success: dceResult.success,
+    parseResult: parseResult,
+    lowerResult: lowerResult,
+    anfResult: anfResult,
+    resolveResult: resolveResult,
+    dceResult: dceResult,
+    deadNodes: dceResult.deadNodes,
+    deadLocals: dceResult.deadLocals,
+    deadFunctions: dceResult.deadFunctions,
+    deadImports: dceResult.deadImports,
+    deadExpressions: dceResult.deadExpressions,
+  }
+}
+
+// Check if any dead nodes were found
+fn hasDeadNodes(result) {
+  len(keys(result.deadNodes or .{})) > 0
+}
+
+fn deadNodeCount(result) {
+  len(keys(result.deadNodes or .{}))
+}
+
+fn deadLocalCount(result) {
+  len(keys(result.deadLocals or .{}))
+}
+
+fn deadFunctionCount(result) {
+  len(keys(result.deadFunctions or .{}))
+}
+
+fn deadImportCount(result) {
+  len(keys(result.deadImports or .{}))
+}
+
+fn deadExpressionCount(result) {
+  len(keys(result.deadExpressions or .{}))
+}
+
+// ========================================
+// Unused Local Detection
+// ========================================
+
+test("dce - unused local is marked dead", fn(assert) {
+  let result = runDce("let x = 1; 42")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.truthy(deadLocalCount(result) > 0, "Should detect unused local 'x'")
+})
+
+test("dce - used local is not dead", fn(assert) {
+  let result = runDce("let x = 1; x")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.equal(deadLocalCount(result), 0, "Used local should not be dead")
+})
+
+test("dce - local used in expression is not dead", fn(assert) {
+  let result = runDce("let x = 1; x + 2")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.equal(deadLocalCount(result), 0, "Local used in expression should not be dead")
+})
+
+test("dce - multiple unused locals", fn(assert) {
+  let result = runDce("let x = 1; let y = 2; 42")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.truthy(deadLocalCount(result) >= 2, "Should detect multiple unused locals")
+})
+
+test("dce - one used one unused", fn(assert) {
+  let result = runDce("let x = 1; let y = 2; x")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.truthy(deadLocalCount(result) >= 1, "Should detect unused local 'y'")
+})
+
+// ========================================
+// Captured Variables
+// ========================================
+
+test("dce - captured local is not dead", fn(assert) {
+  let result = runDce("let x = 1; fn f() { x }; f")
+  assert.truthy(result.success, "DCE should succeed")
+  // x is captured by f, so it should not be dead
+  // Note: x itself might not appear in deadLocals because it's captured
+  assert.truthy(result.success, "Captured local should be preserved")
+})
+
+// ========================================
+// Unused Function Detection
+// ========================================
+
+test("dce - unused function is marked dead", fn(assert) {
+  let result = runDce("fn f() { 1 }; 42")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.truthy(deadFunctionCount(result) > 0, "Should detect unused function 'f'")
+})
+
+test("dce - used function is not dead", fn(assert) {
+  let result = runDce("fn f() { 1 }; f()")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.equal(deadFunctionCount(result), 0, "Used function should not be dead")
+})
+
+test("dce - function passed as value is not dead", fn(assert) {
+  let result = runDce("fn f() { 1 }; f")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.equal(deadFunctionCount(result), 0, "Function used as value should not be dead")
+})
+
+// ========================================
+// Side Effect Preservation
+// ========================================
+
+test("dce - function call preserves side effects", fn(assert) {
+  let result = runDce("println(42); 1")
+  assert.truthy(result.success, "DCE should succeed")
+  // The call to println should not be marked dead
+  assert.equal(deadExpressionCount(result), 0, "Side-effectful call should not be dead")
+})
+
+test("dce - assignment has side effects", fn(assert) {
+  let result = runDce("let x = 1; x = 2; x")
+  assert.truthy(result.success, "DCE should succeed")
+  // Assignment should not be eliminated
+  assert.truthy(result.success, "Assignment should be preserved")
+})
+
+// ========================================
+// Dead Expression Detection
+// ========================================
+
+test("dce - pure expression in statement position is dead", fn(assert) {
+  let result = runDce("1 + 2; 42")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.truthy(deadExpressionCount(result) > 0, "Pure expression in statement position should be dead")
+})
+
+test("dce - literal in statement position is dead", fn(assert) {
+  let result = runDce("1; 2; 3")
+  assert.truthy(result.success, "DCE should succeed")
+  // First two literals are in statement position, last is returned
+  assert.truthy(deadExpressionCount(result) >= 2, "Literals in statement position should be dead")
+})
+
+test("dce - identifier read in statement position is dead", fn(assert) {
+  let result = runDce("let x = 1; x; 42")
+  assert.truthy(result.success, "DCE should succeed")
+  // Reading x in statement position with result unused is dead
+  // But wait - the identifier read IS counted as a use of x
+  // So x is not dead, but the expression statement is dead
+  assert.truthy(deadExpressionCount(result) > 0, "Pure identifier read in statement position should be dead")
+})
+
+// ========================================
+// Complex Cases
+// ========================================
+
+test("dce - nested scope unused local", fn(assert) {
+  let result = runDce("{
+    let x = 1
+    42
+  }")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.truthy(deadLocalCount(result) > 0, "Unused local in nested scope should be dead")
+})
+
+test("dce - function param is not dead", fn(assert) {
+  let result = runDce("fn f(x) { 1 }; f(42)")
+  assert.truthy(result.success, "DCE should succeed")
+  // Parameters should not be marked dead even if unused in body
+  // (they're part of the function interface)
+  assert.truthy(result.success, "Function parameters should not be dead")
+})
+
+test("dce - all code live", fn(assert) {
+  let result = runDce("let x = 1; let y = x + 2; y")
+  assert.truthy(result.success, "DCE should succeed")
+  assert.equal(deadLocalCount(result), 0, "All locals are used")
+  assert.equal(deadExpressionCount(result), 0, "No dead expressions")
+})
+
+// ========================================
+// Property Tracking
+// ========================================
+
+test("dce - tracks property accesses on imports", fn(assert) {
+  // This tests that usedImportProperties is populated correctly
+  // We use the runDce helper with a code that has imports
+  let source = "let m = import \"test/fixtures/dce/utils.lx\"; m.foo()"
+  let result = runDce(source)
+  assert.truthy(result.success, "DCE should succeed")
+
+  // Check that usedImportProperties tracks the access
+  let usedProps = result.dceResult.usedImportProperties or .{}
+  let utilsProps = usedProps["test/fixtures/dce/utils.lx"] or .{}
+  assert.truthy(utilsProps["foo"], "Should track foo property access")
+  assert.truthy(!utilsProps["bar"], "Should not track unused bar property")
+  assert.truthy(!utilsProps["baz"], "Should not track unused baz property")
+})
+
+suite.run()

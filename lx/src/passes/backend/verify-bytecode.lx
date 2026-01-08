@@ -258,16 +258,6 @@ fn stackEffect(opcode, operand, operand2) {
 // Operand Decoding
 // ========================================
 
-fn hexToByte(hex) {
-  // Convert hex string like "ff" to number 255
-  let mapping = .{
-    ["0"]: 0, ["1"]: 1, ["2"]: 2, ["3"]: 3, ["4"]: 4,
-    ["5"]: 5, ["6"]: 6, ["7"]: 7, ["8"]: 8, ["9"]: 9,
-    a: 10, b: 11, c: 12, d: 13, e: 14, f: 15,
-  }
-  return mapping[hex[0]] * 16 + mapping[hex[1]]
-}
-
 fn readByte(code, ip) {
   // Bytecode now stored as numbers, not hex strings
   return code[ip]

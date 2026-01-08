@@ -18,6 +18,7 @@ let lowerIntrinsics = import "src/passes/frontend/lower-intrinsics.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
 let typecheck = import "src/passes/frontend/typecheck.lx"
 let lowerLoops = import "src/passes/backend/lower-loops.lx"
+let dce = import "src/passes/backend/dce.lx"
 let peephole = (import "src/passes/backend/peephole-bytecode.lx").peephole
 let pipeline = import "src/passes/pipeline.lx"
 let .{ NODE } = import "src/types.lx"
@@ -243,6 +244,21 @@ fn buildPassList(ctx) {
       },
     },
 
+    // PASS 5.5: DCE (optional, off by default)
+    .{
+      name: "dce",
+      mutatesAst: false,  // Produces side tables only
+      requires: ["resolution"],
+      provides: ["dce"],
+      enabled: fn(ctx, state) {
+        ctx.opts.withDce == true
+      },
+      run: fn(ctx, state) {
+        let resolveResult = state.passes.resolve
+        dce(state.ast, resolveResult)
+      },
+    },
+
     // PASS 6: ANF Inline Optimization (optional, default on, post-resolve)
     .{
       name: "anf-inline",
@@ -334,6 +350,9 @@ fn make(opts) {
     withLowerIntrinsics = profileDefaults.withLowerIntrinsics
   }
 
+  // DCE is opt-in, default off (no profile default)
+  let withDce = opts["withDce"] == true
+
   // Optional import overrides (used when compiling transitive imports).
   // Defaults to top-level behavior unless overridden.
   let withImportLower = opts["withImportLower"]
@@ -422,6 +441,91 @@ fn make(opts) {
     entryResult
   }
 
+  let wholeProgramDceDone = false
+
+  let runWholeProgramDce = fn(entryResult) {
+    // Whole-program DCE: collect used import properties from all modules
+    // and mark unused exports in each module as dead
+
+    // Step 1: Collect usedImportProperties from all modules
+    // Build: usedExportsPerModule[modulePath] = { propName: true, ... }
+    let usedExportsPerModule = .{}
+
+    for let i = 0; i < len(compiledModules); i = i + 1 {
+      let path = compiledModules[i]
+      let r = cache[path]
+      if !r or r.status != "done" { continue }
+      let passes = r.passes or .{}
+      let dceResult = passes.dce
+      if !dceResult or !dceResult.success { continue }
+
+      let usedProps = dceResult.usedImportProperties or .{}
+      let importPaths = keys(usedProps)
+      for let j = 0; j < len(importPaths); j = j + 1 {
+        let importPath = importPaths[j]
+        let props = usedProps[importPath]
+        if !usedExportsPerModule[importPath] {
+          usedExportsPerModule[importPath] = .{}
+        }
+        // Merge used properties
+        let propNames = keys(props)
+        for let k = 0; k < len(propNames); k = k + 1 {
+          usedExportsPerModule[importPath][propNames[k]] = true
+        }
+      }
+    }
+
+    // Step 2: For each module, find unused exports and mark them dead
+    for let i = 0; i < len(compiledModules); i = i + 1 {
+      let path = compiledModules[i]
+      let r = cache[path]
+      if !r or r.status != "done" { continue }
+      let passes = r.passes or .{}
+      let dceResult = passes.dce
+      if !dceResult or !dceResult.success { continue }
+
+      // Get the module's AST to find its exports (last expression)
+      let ast = (passes["lower-intrinsics"] and passes["lower-intrinsics"].ast) or
+                (passes["anf-inline"] and passes["anf-inline"].ast) or
+                (passes.anf and passes.anf.ast) or
+                (passes.lower and passes.lower.ast) or
+                (passes.parse and passes.parse.ast)
+      if !ast { continue }
+
+      // Find the last expression (module's exports)
+      if ast.type == NODE.Block and ast.expressions and len(ast.expressions) > 0 {
+        let lastExpr = ast.expressions[len(ast.expressions) - 1]
+        if lastExpr and lastExpr.type == NODE.Hashmap {
+          // Module exports a hashmap - check which exports are unused
+          let usedProps = usedExportsPerModule[path] or .{}
+          let entries = lastExpr.entries or []
+
+          for let j = 0; j < len(entries); j = j + 1 {
+            let entry = entries[j]
+            if !entry { continue }
+            let key = entry.key
+            let keyName = key and (key.name or key.value or key.lexeme)
+            if !keyName { continue }
+
+            if !usedProps[keyName] {
+              // This export is unused - mark the value as dead
+              if entry.value and entry.value.id {
+                dceResult.deadNodes[entry.value.id] = true
+                if !dceResult.unusedExports {
+                  dceResult.unusedExports = .{}
+                }
+                dceResult.unusedExports[keyName] = "unused export"
+              }
+            }
+          }
+        }
+      }
+    }
+
+    wholeProgramDceDone = true
+    entryResult
+  }
+
   let compileModuleInternal = fn compileModuleInternal(path) {
     let isImport = compileDepth > 1
     let effectiveWithLower = isImport and withImportLower or withLower
@@ -429,6 +533,7 @@ fn make(opts) {
     let effectiveWithAnfInline = withAnfInline
     let effectiveWithLowerIntrinsics = withLowerIntrinsics
     let effectiveWithTypecheck = withTypecheck
+    let effectiveWithDce = withDce
     // If lower is disabled, downstream passes depending on lowered AST must be disabled.
     if effectiveWithLower == false {
       effectiveWithAnf = false
@@ -447,6 +552,7 @@ fn make(opts) {
       withAnfInline: effectiveWithAnfInline == true,
       withLowerIntrinsics: effectiveWithLowerIntrinsics == true,
       withTypecheck: effectiveWithTypecheck == true,
+      withDce: effectiveWithDce == true,
     }
 
     // Check cache first
@@ -514,6 +620,7 @@ fn make(opts) {
         withAnfInline: effectiveWithAnfInline,
         withLowerIntrinsics: effectiveWithLowerIntrinsics,
         withTypecheck: effectiveWithTypecheck,
+        withDce: effectiveWithDce,
       },
       debug: debug,
     }
@@ -556,7 +663,12 @@ fn make(opts) {
     compileDepth = compileDepth - 1
 
     if isTop and withTypecheck != false and !wholeProgramTypecheckDone {
-      return runWholeProgramTypecheck(result)
+      result = runWholeProgramTypecheck(result)
+    }
+
+    // Run whole-program DCE after all modules are compiled (at top level)
+    if isTop and withDce and !wholeProgramDceDone {
+      result = runWholeProgramDce(result)
     }
 
     result

@@ -1,0 +1,6 @@
+// Test fixture for whole-program DCE
+// Only uses foo from utils, bar and baz should be marked dead
+
+let utils = import "test/fixtures/dce/utils.lx"
+
+utils.foo()

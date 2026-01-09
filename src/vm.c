@@ -1357,7 +1357,7 @@ static InterpretResult runUntil(int stopFrameCount) {
       }
 
       case OP_ADD_LOCAL_IMM: {
-        // Superinstruction: GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
+        // Superinstruction: i += imm (statement-only, no value on stack)
         uint8_t slot = READ_BYTE();
         uint8_t imm = READ_BYTE();
         Value local = slots[slot];
@@ -1380,7 +1380,6 @@ static InterpretResult runUntil(int stopFrameCount) {
           result = NUMBER_VAL(AS_NUMBER(local) + (double)imm);
         }
         slots[slot] = result;
-        push(result); // Like SET_LOCAL, leaves value on stack
         break;
       }
 
@@ -1405,7 +1404,7 @@ static InterpretResult runUntil(int stopFrameCount) {
       }
 
       case OP_SETI: {
-        // Superinstruction: GET_LOCAL + GET_LOCAL + GET_LOCAL + SET_BY_INDEX
+        // Superinstruction: arr[idx] = val (statement-only, no value on stack)
         uint8_t arrSlot = READ_BYTE();
         uint8_t idxSlot = READ_BYTE();
         uint8_t valSlot = READ_BYTE();
@@ -1415,13 +1414,11 @@ static InterpretResult runUntil(int stopFrameCount) {
         Value value = slots[valSlot];
         Value result;
         if (!setByIndexImpl(object, key, value, &result)) return INTERPRET_RUNTIME_ERROR;
-        push(result);
         break;
       }
 
       case OP_ADD_LOCALS: {
-        // Superinstruction: GET_LOCAL + GET_LOCAL + ADD + SET_LOCAL
-        // dest = lhs + rhs
+        // Superinstruction: dest = lhs + rhs (statement-only, no value on stack)
         uint8_t destSlot = READ_BYTE();
         uint8_t lhsSlot = READ_BYTE();
         uint8_t rhsSlot = READ_BYTE();
@@ -1449,13 +1446,11 @@ static InterpretResult runUntil(int stopFrameCount) {
         }
 
         slots[destSlot] = result;
-        push(result); // Like SET_LOCAL, leaves value on stack
         break;
       }
 
       case OP_SUB_LOCALS: {
-        // Superinstruction: GET_LOCAL + GET_LOCAL + SUB + SET_LOCAL
-        // dest = lhs - rhs
+        // Superinstruction: dest = lhs - rhs (statement-only, no value on stack)
         uint8_t destSlot = READ_BYTE();
         uint8_t lhsSlot = READ_BYTE();
         uint8_t rhsSlot = READ_BYTE();
@@ -1483,13 +1478,11 @@ static InterpretResult runUntil(int stopFrameCount) {
         }
 
         slots[destSlot] = result;
-        push(result); // Like SET_LOCAL, leaves value on stack
         break;
       }
 
       case OP_MUL_LOCALS: {
-        // Superinstruction: GET_LOCAL + GET_LOCAL + MUL + SET_LOCAL
-        // dest = lhs * rhs
+        // Superinstruction: dest = lhs * rhs (statement-only, no value on stack)
         uint8_t destSlot = READ_BYTE();
         uint8_t lhsSlot = READ_BYTE();
         uint8_t rhsSlot = READ_BYTE();
@@ -1517,13 +1510,11 @@ static InterpretResult runUntil(int stopFrameCount) {
         }
 
         slots[destSlot] = result;
-        push(result); // Like SET_LOCAL, leaves value on stack
         break;
       }
 
       case OP_DIV_LOCALS: {
-        // Superinstruction: GET_LOCAL + GET_LOCAL + DIV + SET_LOCAL
-        // dest = lhs / rhs
+        // Superinstruction: dest = lhs / rhs (statement-only, no value on stack)
         uint8_t destSlot = READ_BYTE();
         uint8_t lhsSlot = READ_BYTE();
         uint8_t rhsSlot = READ_BYTE();
@@ -1541,7 +1532,6 @@ static InterpretResult runUntil(int stopFrameCount) {
         }
 
         slots[destSlot] = result;
-        push(result); // Like SET_LOCAL, leaves value on stack
         break;
       }
 
@@ -1559,7 +1549,7 @@ static InterpretResult runUntil(int stopFrameCount) {
       }
 
       case OP_SET_PROPERTY: {
-        // Superinstruction: GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX
+        // Superinstruction: obj.field = val or obj[const] = val (statement-only, no value on stack)
         uint8_t objSlot = READ_BYTE();
         uint8_t constIdx = READ_BYTE();
         uint8_t valSlot = READ_BYTE();
@@ -1569,7 +1559,6 @@ static InterpretResult runUntil(int stopFrameCount) {
         Value value = slots[valSlot];
         Value result;
         if (!setByIndexImpl(object, key, value, &result)) return INTERPRET_RUNTIME_ERROR;
-        push(result);
         break;
       }
 

@@ -216,16 +216,16 @@ let STACK_EFFECTS = .{
   [OP.JUMP_IF_FALSE]: -1,
 
   // Superinstructions
-  [OP.ADD_LOCAL_IMM]:      1,   // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL: net +1
+  [OP.ADD_LOCAL_IMM]:      0,   // i += imm (statement-only, no value on stack)
   [OP.STORE_LOCAL]:       -1,   // SET_LOCAL + POP: net -1
   [OP.GETI]:  1,     // GET_LOCAL×2 + GET_BY_INDEX: net +1 (2 pushes, GET_BY_INDEX is -1)
-  [OP.SETI]:  1,     // GET_LOCAL×3 + SET_BY_INDEX: net +1 (3 pushes, SET_BY_INDEX is -2)
-  [OP.ADD_LOCALS]: 1,     // GET_LOCAL×2 + ADD + SET_LOCAL: net +1 (2 pushes, ADD is -1, SET_LOCAL is 0)
-  [OP.SUB_LOCALS]: 1,     // GET_LOCAL×2 + SUB + SET_LOCAL: net +1
-  [OP.MUL_LOCALS]: 1,     // GET_LOCAL×2 + MUL + SET_LOCAL: net +1
-  [OP.DIV_LOCALS]: 1,     // GET_LOCAL×2 + DIV + SET_LOCAL: net +1
+  [OP.SETI]:  0,     // arr[idx] = val (statement-only, no value on stack)
+  [OP.ADD_LOCALS]: 0,     // dest = lhs + rhs (statement-only, no value on stack)
+  [OP.SUB_LOCALS]: 0,     // dest = lhs - rhs (statement-only, no value on stack)
+  [OP.MUL_LOCALS]: 0,     // dest = lhs * rhs (statement-only, no value on stack)
+  [OP.DIV_LOCALS]: 0,     // dest = lhs / rhs (statement-only, no value on stack)
   [OP.GET_PROPERTY]:  1,     // GET_LOCAL + CONSTANT + GET_BY_INDEX: net +1
-  [OP.SET_PROPERTY]:  1,     // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX: net +1
+  [OP.SET_PROPERTY]:  0,     // obj.field = val or obj[const] = val (statement-only, no value on stack)
 
   // Fused numeric for loops (stack-neutral, operate on locals)
   [OP.FORPREP_1]:          0,

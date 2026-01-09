@@ -90,9 +90,25 @@ fn emit3(gen, b1, b2, b3, line) {
   push(chunk.nodeIds, nodeId)
 }
 
-// Backwards compatibility wrappers
-fn emitByte(gen, byte, line) { emit1(gen, byte, line) }
-fn emitBytes(gen, byte1, byte2, line) { emit2(gen, byte1, byte2, line) }
+fn emit4(gen, b1, b2, b3, b4, line) {
+  gen.metrics.emitCalls = gen.metrics.emitCalls + 4
+  let chunk = gen.currentFunction.chunk
+  let ln = line or gen.currentLine or 1
+  let nodeId = gen.currentNode and gen.currentNode.id or 0
+
+  push(chunk.bytecode, Math.floor(b1))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
+  push(chunk.bytecode, Math.floor(b2))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
+  push(chunk.bytecode, Math.floor(b3))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
+  push(chunk.bytecode, Math.floor(b4))
+  push(chunk.lines, ln)
+  push(chunk.nodeIds, nodeId)
+}
 
 fn emitLoop(gen, loopStart, line) {
   emit1(gen, OP.LOOP, line)
@@ -169,7 +185,7 @@ fn emitConstant(gen, value, line) {
     // Use bit shift to extract high byte
     emit3(gen, OP.CONSTANT_LONG, (index >> 8) & 255, index & 255, line)
   } else {
-    emitBytes(gen, OP.CONSTANT, index, line)
+    emit2(gen, OP.CONSTANT, index, line)
   }
 }
 
@@ -179,7 +195,7 @@ fn emitGlobalOp(gen, shortOp, longOp, name, line) {
   if idx >= 256 {
     emit3(gen, longOp, (idx >> 8) & 255, idx & 255, line)
   } else {
-    emitBytes(gen, shortOp, idx, line)
+    emit2(gen, shortOp, idx, line)
   }
 }
 
@@ -188,7 +204,7 @@ fn emitUpvalueOp(gen, shortOp, longOp, slot, line) {
   if slot >= 256 {
     emit3(gen, longOp, (slot >> 8) & 255, slot & 255, line)
   } else {
-    emitBytes(gen, shortOp, slot, line)
+    emit2(gen, shortOp, slot, line)
   }
 }
 
@@ -198,7 +214,7 @@ fn emitClosure(gen, func, line) {
   if constIndex >= 256 {
     emit3(gen, OP.CLOSURE_LONG, (constIndex >> 8) & 255, constIndex & 255, line)
   } else {
-    emitBytes(gen, OP.CLOSURE, constIndex, line)
+    emit2(gen, OP.CLOSURE, constIndex, line)
   }
   constIndex
 }
@@ -283,9 +299,9 @@ fn endScope(gen, node) {
   for let i = len(locals) - 1; i >= 0; i = i - 1 {
     let local = locals[i]
     if local.isCaptured {
-      emitByte(gen, OP.CLOSE_UPVALUE, gen.currentLine)
+      emit1(gen, OP.CLOSE_UPVALUE, gen.currentLine)
     } else {
-      emitByte(gen, OP.POP, gen.currentLine)
+      emit1(gen, OP.POP, gen.currentLine)
     }
     // Decrement the local slot counter as we pop locals
     gen.nextLocalSlot = gen.nextLocalSlot - 1
@@ -303,9 +319,8 @@ fn unwindToSlot(gen, targetSlot) {
   if toPop <= 0 { return }
 
   // Emit UNWIND with keep=0 (break/continue don't preserve a value)
-  emitByte(gen, OP.UNWIND, gen.currentLine)
-  emitByte(gen, toPop, gen.currentLine)  // count
-  emitByte(gen, 0, gen.currentLine)      // keep=0
+  // toPop: count, keep = 0
+  emit3(gen, OP.UNWIND, toPop, 0, gen.currentLine)
 }
 
 fn patchBreaks(gen) {
@@ -342,13 +357,13 @@ fn compileStmt(gen, node) { compileExpr(gen, node, MODE.STMT) }
 
 fn compileLiteral(gen, node) {
   if node.type == NODE.Nil {
-    emitByte(gen, OP.NIL, node.line)
+    emit1(gen, OP.NIL, node.line)
   } else if node.type == NODE.Bool {
-    emitByte(gen, node.value and OP.TRUE or OP.FALSE, node.line)
+    emit1(gen, node.value and OP.TRUE or OP.FALSE, node.line)
   } else if node.type == NODE.Number {
     let value = node.value
     if value >= 0 and value < 256 and Math.floor(value) == value {
-      emitBytes(gen, OP.CONST_BYTE, value, node.line)
+      emit2(gen, OP.CONST_BYTE, value, node.line)
     } else {
       emitConstant(gen, NUMBER_VAL(value), node.line)
     }
@@ -365,7 +380,7 @@ fn compileIdentifier(gen, node) {
   }
   if binding.kind == "local" {
     let absoluteSlot = computeAbsoluteSlot(gen, binding)
-    emitBytes(gen, binding.getOp, localSlot(absoluteSlot), node.line)
+    emit2(gen, binding.getOp, localSlot(absoluteSlot), node.line)
   } else if binding.kind == "upvalue" {
     emitUpvalueOp(gen, binding.getOp, OP.GET_UPVALUE_LONG, binding.upvalueIndex, node.line)
   } else {
@@ -380,13 +395,13 @@ fn compileLet(gen, node, mode) {
   // DCE: Check if this Let is dead (unused local)
   // Still emit NIL to preserve slot indices, but skip compiling the init expression
   if gen.deadNodes[node.id] and local {
-    emitByte(gen, OP.NIL, node.line)
+    emit1(gen, OP.NIL, node.line)
     gen.emittedLocals[local.nodeId] = gen.nextLocalSlot
     let slot = gen.nextLocalSlot
     gen.nextLocalSlot = gen.nextLocalSlot + 1
 
     if mode == MODE.VALUE {
-      emitBytes(gen, OP.GET_LOCAL, localSlot(slot), node.line)
+      emit2(gen, OP.GET_LOCAL, localSlot(slot), node.line)
     }
     return
   }
@@ -394,7 +409,7 @@ fn compileLet(gen, node, mode) {
   if node.init {
     compileValue(gen, node.init)
   } else {
-    emitByte(gen, OP.NIL, node.line)
+    emit1(gen, OP.NIL, node.line)
   }
 
   if local {
@@ -405,12 +420,12 @@ fn compileLet(gen, node, mode) {
 
     if mode == MODE.VALUE {
       // GET_LOCAL to read the local as expression result (not DUP)
-      emitBytes(gen, OP.GET_LOCAL, localSlot(slot), node.line)
+      emit2(gen, OP.GET_LOCAL, localSlot(slot), node.line)
     }
     // STMT mode: local stays on stack, no extra value needed
   } else {
     if mode == MODE.VALUE {
-      emitByte(gen, OP.DUP, node.line)
+      emit1(gen, OP.DUP, node.line)
     }
     emitGlobalOp(gen, OP.DEFINE_GLOBAL, OP.DEFINE_GLOBAL_LONG, node.name.name, node.line)
   }
@@ -436,7 +451,7 @@ fn compileBlock(gen, node, mode) {
       gen.emittedLocals[hoisted.declNodeId] = gen.nextLocalSlot
       gen.nextLocalSlot = gen.nextLocalSlot + 1
 
-      emitByte(gen, OP.NIL, node.line)
+      emit1(gen, OP.NIL, node.line)
       // NIL stays on stack until endScope - this IS the reserved slot
     }
   }
@@ -445,7 +460,7 @@ fn compileBlock(gen, node, mode) {
   if len(exprs) == 0 {
     // Empty block: nil in VALUE mode, nothing in STMT mode
     if mode == MODE.VALUE {
-      emitByte(gen, OP.NIL, node.line)
+      emit1(gen, OP.NIL, node.line)
     }
   } else {
     for expr, i in exprs {
@@ -470,13 +485,10 @@ fn compileBlock(gen, node, mode) {
 
   // Optimize: skip UNWIND 0 K (no locals to pop = noop)
   if toPop > 0 {
-    emitByte(gen, OP.UNWIND, node.line)
-    emitByte(gen, toPop, node.line)  // count = actual stack slots to pop
-    if mode == MODE.VALUE {
-      emitByte(gen, 1, node.line)  // keep=1: preserve block result
-    } else {
-      emitByte(gen, 0, node.line)  // keep=0: statement mode, no result needed
-    }
+    // keep=0: statement mode, no result needed
+    // keep=1: preserve block result
+    let keep = if mode == MODE.VALUE { 1 } else { 0 }
+    emit3(gen, OP.UNWIND, toPop, keep, node.line)
   }
 
   // Update slot counter - locals are now popped
@@ -493,7 +505,7 @@ fn compileUnary(gen, node) {
     addError(gen, node, "Unsupported unary op: " + (node.operator and node.operator.lexeme or ""))
     return
   }
-  emitByte(gen, opcode, node.line)
+  emit1(gen, opcode, node.line)
 }
 
 fn compileBinary(gen, node) {
@@ -510,9 +522,9 @@ fn compileBinary(gen, node) {
   }
 
   if type(code) == "array" {
-    emitBytes(gen, code[0], code[1], node.line)
+    emit2(gen, code[0], code[1], node.line)
   } else {
-    emitByte(gen, code, node.line)
+    emit1(gen, code, node.line)
   }
 }
 
@@ -521,9 +533,9 @@ fn compileLogical(gen, node) {
   let op = node.operator and node.operator.lexeme or ""
 
   if op == "and" {
-    emitByte(gen, OP.DUP, node.line)
+    emit1(gen, OP.DUP, node.line)
     let endJump = emitJump(gen, OP.JUMP_IF_FALSE, node.line)
-    emitByte(gen, OP.POP, node.line)
+    emit1(gen, OP.POP, node.line)
     compileValue(gen, node.right)
     patchJump(gen, endJump)
     return
@@ -544,15 +556,15 @@ fn compileLogical(gen, node) {
       if constIndex >= 256 {
         emit3(gen, OP.COALESCE_CONST_LONG, (constIndex >> 8) & 255, constIndex & 255, node.line)
       } else {
-        emitBytes(gen, OP.COALESCE_CONST, constIndex, node.line)
+        emit2(gen, OP.COALESCE_CONST, constIndex, node.line)
       }
       return
     }
 
     // General case: use jump-based implementation
-    emitByte(gen, OP.DUP, node.line)
+    emit1(gen, OP.DUP, node.line)
     let endJump = emitJump(gen, OP.JUMP_IF_TRUE, node.line)
-    emitByte(gen, OP.POP, node.line)
+    emit1(gen, OP.POP, node.line)
     compileValue(gen, node.right)
     patchJump(gen, endJump)
     return
@@ -570,7 +582,7 @@ fn compileIf(gen, node, mode) {
   if node.else {
     compileExpr(gen, node.else, mode)
   } else if mode == MODE.VALUE {
-    emitByte(gen, OP.NIL, node.line)
+    emit1(gen, OP.NIL, node.line)
   }
   patchJump(gen, elseJump)
 }
@@ -581,7 +593,7 @@ fn compileCall(gen, node) {
   for arg in args {
     compileValue(gen, arg)
   }
-  emitBytes(gen, OP.CALL, len(args), node.line)
+  emit2(gen, OP.CALL, len(args), node.line)
 }
 
 fn compileIntrinsicCall(gen, node) {
@@ -594,46 +606,44 @@ fn compileIntrinsicCall(gen, node) {
     // array_new expects 0 args
     if len(args) != 0 {
       addError(gen, node, "Internal error: array_new expects 0 args, got " + str(len(args)))
-      emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+      emit1(gen, OP.NIL, node.line)  // Preserve stack discipline
       return
     }
     // Create empty array
-    emitByte(gen, OP.ARRAY, node.line)
+    emit1(gen, OP.ARRAY, node.line)
   } else if node.intrinsic == "array_append" {
     // array_append expects 2 args: array, value
     if len(args) != 2 {
       addError(gen, node, "Internal error: array_append expects 2 args, got " + str(len(args)))
-      emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+      emit1(gen, OP.NIL, node.line)  // Preserve stack discipline
       return
     }
     // Compile args: array, value
     for arg in args {
       compileValue(gen, arg)
     }
-    emitByte(gen, OP.APPEND, node.line)
+    emit1(gen, OP.APPEND, node.line)
   } else if node.intrinsic == "mod_const" {
     // mod_const expects 1 arg: value, plus modulus field
     if len(args) != 1 {
       addError(gen, node, "Internal error: mod_const expects 1 arg, got " + str(len(args)))
-      emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+      emit1(gen, OP.NIL, node.line)  // Preserve stack discipline
       return
     }
     compileValue(gen, args[0])
-    emitByte(gen, OP.MOD_CONST_BYTE, node.line)
-    emitByte(gen, node.modulus, node.line)
+    emit2(gen, OP.MOD_CONST_BYTE, node.modulus, node.line)
   } else if node.intrinsic == "eq_const" {
     // eq_const expects 1 arg: value, plus compareTo field
     if len(args) != 1 {
       addError(gen, node, "Internal error: eq_const expects 1 arg, got " + str(len(args)))
-      emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+      emit1(gen, OP.NIL, node.line)  // Preserve stack discipline
       return
     }
     compileValue(gen, args[0])
-    emitByte(gen, OP.EQ_CONST_BYTE, node.line)
-    emitByte(gen, node.compareTo, node.line)
+    emit2(gen, OP.EQ_CONST_BYTE, node.compareTo, node.line)
   } else {
     addError(gen, node, "Unknown intrinsic: " + node.intrinsic)
-    emitByte(gen, OP.NIL, node.line)  // Preserve stack discipline
+    emit1(gen, OP.NIL, node.line)  // Preserve stack discipline
   }
 }
 
@@ -646,7 +656,7 @@ fn compileFunctionExpr(gen, node, mode) {
     if (preallocatedSlot or preallocatedSlot == 0) and gen.deadNodes[node.id] {
       // Hoisted dead function - slot already has NIL from pre-allocation
       if mode == MODE.VALUE {
-        emitBytes(gen, OP.GET_LOCAL, localSlot(preallocatedSlot), node.line)
+        emit2(gen, OP.GET_LOCAL, localSlot(preallocatedSlot), node.line)
       }
       return
     }
@@ -688,7 +698,7 @@ fn compileFunctionExpr(gen, node, mode) {
   compileBlock(gen, node.body, MODE.VALUE)
   popScope(gen)
 
-  emitByte(gen, OP.RETURN, node.line)
+  emit1(gen, OP.RETURN, node.line)
 
   // Restore the local counter and emittedLocals map
   gen.currentFunction = enclosing
@@ -707,20 +717,20 @@ fn compileFunctionExpr(gen, node, mode) {
     // CRITICAL FIX: Translate upvalue captures correctly
     // For isLocal=true: uv.captured is nodeId, need to look up runtime slot
     // For isLocal=false: uv.captured is upvalue index, use directly
-    emitByte(gen, uv.isLocal and 1 or 0, node.line)
+    emit1(gen, uv.isLocal and 1 or 0, node.line)
     if uv.isLocal {
       // Look up the enclosing function's runtime slot for this captured local
       // uv.captured is the nodeId of the declaration in the enclosing function
       let capturedSlot = enclosingEmittedLocals[uv.captured]
       if capturedSlot or capturedSlot == 0 {
-        emitByte(gen, localSlot(capturedSlot), node.line)
+        emit1(gen, localSlot(capturedSlot), node.line)
       } else {
         addError(gen, node, "Internal error: captured local not found in enclosing emittedLocals")
-        emitByte(gen, 0, node.line)
+        emit1(gen, 0, node.line)
       }
     } else {
       // Indirect capture: uv.captured is already an upvalue index
-      emitByte(gen, uv.captured, node.line)
+      emit1(gen, uv.captured, node.line)
     }
   }
 
@@ -729,12 +739,12 @@ fn compileFunctionExpr(gen, node, mode) {
     if let preallocatedSlot = gen.emittedLocals[node.id] {
       // Function was hoisted - assign closure into existing slot
       // SET_LOCAL leaves value on stack, so we POP it after assignment
-      emitBytes(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
-      emitByte(gen, OP.POP, node.line)
+      emit2(gen, OP.SET_LOCAL, localSlot(preallocatedSlot), node.line)
+      emit1(gen, OP.POP, node.line)
 
       if mode == MODE.VALUE {
         // Read the slot back as expression result
-        emitBytes(gen, OP.GET_LOCAL, localSlot(preallocatedSlot), node.line)
+        emit2(gen, OP.GET_LOCAL, localSlot(preallocatedSlot), node.line)
       }
     } else {
       // Not preallocated - closure value IS the local slot (stays on stack)
@@ -744,7 +754,7 @@ fn compileFunctionExpr(gen, node, mode) {
 
       if mode == MODE.VALUE {
         // GET_LOCAL to read the local as expression result (not DUP)
-        emitBytes(gen, OP.GET_LOCAL, localSlot(slot), node.line)
+        emit2(gen, OP.GET_LOCAL, localSlot(slot), node.line)
       }
       // STMT mode: closure stays on stack as local, no extra value needed
     }
@@ -778,10 +788,7 @@ fn compileAssignment(gen, node, mode) {
           let .{ opcode } = plan
 
           // Emit: OP dest lhs rhs (no value on stack)
-          emitByte(gen, opcode, node.line)
-          emitByte(gen, localSlot(destSlot), node.line)
-          emitByte(gen, localSlot(lhsSlot), node.line)
-          emitByte(gen, localSlot(rhsSlot), node.line)
+          emit4(gen, opcode, localSlot(destSlot), localSlot(lhsSlot), localSlot(rhsSlot), node.line)
           return
         }
         if plan.kind == "SETI" {
@@ -791,10 +798,7 @@ fn compileAssignment(gen, node, mode) {
           let valSlot = computeAbsoluteSlot(gen, plan.valBinding)
 
           // Emit: OP_SETI obj idx val (no value on stack)
-          emitByte(gen, OP.SETI, node.line)
-          emitByte(gen, localSlot(objSlot), node.line)
-          emitByte(gen, localSlot(idxSlot), node.line)
-          emitByte(gen, localSlot(valSlot), node.line)
+          emit4(gen, OP.SETI, localSlot(objSlot), localSlot(idxSlot), localSlot(valSlot), node.line)
           return
         }
         if plan.kind == "SET_PROPERTY" {
@@ -814,10 +818,7 @@ fn compileAssignment(gen, node, mode) {
             let constIdx = makeConstant(gen, keyValue)
             if constIdx < 256 {
               // Emit: OP_SET_PROPERTY obj const val (no value on stack)
-              emitByte(gen, OP.SET_PROPERTY, node.line)
-              emitByte(gen, localSlot(objSlot), node.line)
-              emitByte(gen, constIdx, node.line)
-              emitByte(gen, localSlot(valSlot), node.line)
+              emit4(gen, OP.SET_PROPERTY, localSlot(objSlot), constIdx, localSlot(valSlot), node.line)
               return
             }
           }
@@ -832,20 +833,20 @@ fn compileAssignment(gen, node, mode) {
       let absoluteSlot = computeAbsoluteSlot(gen, targetBinding)
       if mode == MODE.STMT {
         // Emit STORE_LOCAL superinstruction (SET_LOCAL + POP)
-        emitBytes(gen, OP.STORE_LOCAL, localSlot(absoluteSlot), node.line)
+        emit2(gen, OP.STORE_LOCAL, localSlot(absoluteSlot), node.line)
       } else {
-        emitBytes(gen, OP.SET_LOCAL, localSlot(absoluteSlot), node.line)
+        emit2(gen, OP.SET_LOCAL, localSlot(absoluteSlot), node.line)
       }
     } else if info.kind == "upvalue" {
       emitUpvalueOp(gen, OP.SET_UPVALUE, OP.SET_UPVALUE_LONG, info.upvalueIndex, node.line)
       if mode == MODE.STMT {
-        emitByte(gen, OP.POP, node.line)
+        emit1(gen, OP.POP, node.line)
       }
     } else if info.kind == "global" {
       // Global assignment - use long form if needed
       emitGlobalOp(gen, OP.SET_GLOBAL, OP.SET_GLOBAL_LONG, node.target.name, node.line)
       if mode == MODE.STMT {
-        emitByte(gen, OP.POP, node.line)
+        emit1(gen, OP.POP, node.line)
       }
     } else {
       addError(gen, node, "Invalid assignment target.")
@@ -868,10 +869,9 @@ fn compileAssignment(gen, node, mode) {
       let constIdx = makeConstant(gen, keyValue)
 
       if constIdx < 256 {
-        emitByte(gen, OP.SET_BY_CONST, node.line)
-        emitByte(gen, constIdx, node.line)
+        emit2(gen, OP.SET_BY_CONST, constIdx, node.line)
       } else {
-        emitByte(gen, OP.SET_BY_CONST_LONG, node.line)
+        emit1(gen, OP.SET_BY_CONST_LONG, node.line)
         emit2(gen, Math.floor(constIdx / 256), constIdx % 256, node.line)
       }
     } else {
@@ -879,11 +879,11 @@ fn compileAssignment(gen, node, mode) {
       compileValue(gen, node.target.object)
       compileValue(gen, node.target.index)
       compileValue(gen, node.value)
-      emitByte(gen, OP.SET_BY_INDEX, node.line)
+      emit1(gen, OP.SET_BY_INDEX, node.line)
     }
 
     if mode == MODE.STMT {
-      emitByte(gen, OP.POP, node.line)
+      emit1(gen, OP.POP, node.line)
     }
     return
   }
@@ -895,15 +895,14 @@ fn compileAssignment(gen, node, mode) {
     let constIdx = makeConstant(gen, ObjectString(node.target.property.value))
 
     if constIdx < 256 {
-      emitByte(gen, OP.SET_BY_CONST, node.line)
-      emitByte(gen, constIdx, node.line)
+      emit2(gen, OP.SET_BY_CONST, constIdx, node.line)
     } else {
-      emitByte(gen, OP.SET_BY_CONST_LONG, node.line)
+      emit1(gen, OP.SET_BY_CONST_LONG, node.line)
       emit2(gen, Math.floor(constIdx / 256), constIdx % 256, node.line)
     }
 
     if mode == MODE.STMT {
-      emitByte(gen, OP.POP, node.line)
+      emit1(gen, OP.POP, node.line)
     }
     return
   }
@@ -924,9 +923,7 @@ fn compileIndex(gen, node) {
       let objSlot = computeAbsoluteSlot(gen, objBinding)
       let idxSlot = computeAbsoluteSlot(gen, idxBinding)
 
-      emitByte(gen, OP.GETI, node.line)
-      emitByte(gen, localSlot(objSlot), node.line)
-      emitByte(gen, localSlot(idxSlot), node.line)
+      emit3(gen, OP.GETI, localSlot(objSlot), localSlot(idxSlot), node.line)
       return
     }
   }
@@ -947,9 +944,7 @@ fn compileIndex(gen, node) {
       let constIdx = makeConstant(gen, keyValue)
 
       if constIdx < 256 {
-        emitByte(gen, OP.GET_PROPERTY, node.line)
-        emitByte(gen, localSlot(objSlot), node.line)
-        emitByte(gen, constIdx, node.line)
+        emit3(gen, OP.GET_PROPERTY, localSlot(objSlot), constIdx, node.line)
         return
       }
     }
@@ -968,15 +963,14 @@ fn compileIndex(gen, node) {
     let constIdx = makeConstant(gen, keyValue)
 
     if constIdx < 256 {
-      emitByte(gen, OP.GET_BY_CONST, node.line)
-      emitByte(gen, constIdx, node.line)
+      emit2(gen, OP.GET_BY_CONST, constIdx, node.line)
     } else {
-      emitByte(gen, OP.GET_BY_CONST_LONG, node.line)
+      emit1(gen, OP.GET_BY_CONST_LONG, node.line)
       emit2(gen, Math.floor(constIdx / 256), constIdx % 256, node.line)
     }
   } else {
     compileValue(gen, node.index)
-    emitByte(gen, OP.GET_BY_INDEX, node.line)
+    emit1(gen, OP.GET_BY_INDEX, node.line)
   }
 }
 
@@ -991,9 +985,7 @@ fn compileDot(gen, node) {
       let constIdx = makeConstant(gen, ObjectString(node.property.value))
 
       if constIdx < 256 {
-        emitByte(gen, OP.GET_PROPERTY, node.line)
-        emitByte(gen, localSlot(objSlot), node.line)
-        emitByte(gen, constIdx, node.line)
+        emit3(gen, OP.GET_PROPERTY, localSlot(objSlot), constIdx, node.line)
         return
       }
     }
@@ -1004,29 +996,29 @@ fn compileDot(gen, node) {
   let constIdx = makeConstant(gen, ObjectString(node.property.value))
 
   if constIdx < 256 {
-    emitByte(gen, OP.GET_BY_CONST, node.line)
-    emitByte(gen, constIdx, node.line)
+    emit1(gen, OP.GET_BY_CONST, node.line)
+    emit1(gen, constIdx, node.line)
   } else {
-    emitByte(gen, OP.GET_BY_CONST_LONG, node.line)
+    emit1(gen, OP.GET_BY_CONST_LONG, node.line)
     emit2(gen, Math.floor(constIdx / 256), constIdx % 256, node.line)
   }
 }
 
 fn compileArray(gen, node) {
-  emitByte(gen, OP.ARRAY, node.line)
+  emit1(gen, OP.ARRAY, node.line)
   for el in node.elements or [] {
     compileValue(gen, el)
-    emitByte(gen, OP.APPEND, node.line)
+    emit1(gen, OP.APPEND, node.line)
   }
 }
 
 fn compileHashmap(gen, node) {
   let isEnum = gen.enumInfo and gen.enumInfo[node.id]
-  emitByte(gen, isEnum and OP.ENUM or OP.HASHMAP, node.line)
+  emit1(gen, isEnum and OP.ENUM or OP.HASHMAP, node.line)
   for pair in node.pairs or [] {
     compileValue(gen, pair.key)
     compileValue(gen, pair.value)
-    emitByte(gen, OP.ASSOC, node.line)
+    emit1(gen, OP.ASSOC, node.line)
   }
 }
 
@@ -1034,9 +1026,9 @@ fn compileReturn(gen, node) {
   if node.value {
     compileValue(gen, node.value)
   } else {
-    emitByte(gen, OP.NIL, node.line)
+    emit1(gen, OP.NIL, node.line)
   }
-  emitByte(gen, OP.RETURN, node.line)
+  emit1(gen, OP.RETURN, node.line)
 }
 
 fn compileBreak(gen, node) {
@@ -1267,10 +1259,7 @@ fn compileNumericForLoop(gen, node, match, mode) {
 
   // Emit FORPREP with placeholder for exit jump
   let prepOffset = len(gen.currentFunction.chunk.bytecode)
-  emit1(gen, prep_opcode, node.line)
-  emit1(gen, localSlot(i_slot), node.line)
-  emit1(gen, localSlot(limit_slot), node.line)
-  emit1(gen, match.cmp_kind, node.line)
+  emit4(gen, prep_opcode, localSlot(i_slot), localSlot(limit_slot), match.cmp_kind, node.line)
 
   // Emit step byte only for non-fast-path
   if !match.use_fast_path {
@@ -1290,10 +1279,7 @@ fn compileNumericForLoop(gen, node, match, mode) {
   patchContinues(gen)
 
   // Emit FORLOOP with backward jump to body start
-  emit1(gen, loop_opcode, node.line)
-  emit1(gen, localSlot(i_slot), node.line)
-  emit1(gen, localSlot(limit_slot), node.line)
-  emit1(gen, match.cmp_kind, node.line)
+  emit4(gen, loop_opcode, localSlot(i_slot), localSlot(limit_slot), match.cmp_kind, node.line)
 
   // Emit step byte only for non-fast-path
   if !match.use_fast_path {
@@ -1325,7 +1311,7 @@ fn compileNumericForLoop(gen, node, match, mode) {
 
   // For loops always return nil
   if mode == MODE.VALUE {
-    emitByte(gen, OP.NIL, node.line)
+    emit1(gen, OP.NIL, node.line)
   }
 
   true
@@ -1404,7 +1390,7 @@ fn compileFor(gen, node, mode) {
 
   // For loops always return nil (only emit in VALUE mode)
   if mode == MODE.VALUE {
-    emitByte(gen, OP.NIL, node.line)
+    emit1(gen, OP.NIL, node.line)
   }
 }
 
@@ -1428,8 +1414,8 @@ fn compileImport(gen, node) {
     const = makeConstant(gen, ObjectFunction(func))
     gen.currentFunction.chunk.importConstCache[path] = const
   }
-  emitBytes(gen, OP.CLOSURE, const, node.line)
-  emitBytes(gen, OP.CALL, 0, node.line)
+  emit2(gen, OP.CLOSURE, const, node.line)
+  emit2(gen, OP.CALL, 0, node.line)
 }
 
 let valueExprHandlers = .{
@@ -1499,7 +1485,7 @@ fn compileExpr(gen, node, mode) {
   // All other nodes: compile as value expression, then discard if STMT
   compileValueExpr(gen, node)
   if mode == MODE.STMT {
-    emitByte(gen, OP.POP, node.line)
+    emit1(gen, OP.POP, node.line)
   }
 }
 
@@ -1546,7 +1532,7 @@ fn codegen(ast, resolveResult, opts = .{}) {
   }
 
   compileBlock(gen, ast, MODE.VALUE)
-  emitByte(gen, OP.RETURN, gen.currentLine)
+  emit1(gen, OP.RETURN, gen.currentLine)
 
   .{
     success: len(gen.errors) == 0,

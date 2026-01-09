@@ -827,8 +827,8 @@ fn resolveExpr(resolver, node, context) {
 // Main API
 // ========================================
 
-fn resolve(ast, opts) {
-  let resolver = makeResolver(opts or .{})
+fn resolve(ast, opts = .{}) {
+  let resolver = makeResolver(opts)
 
   // Root is an implicit block (same semantics as a Block node).
   resolveExpr(resolver, ast, .{

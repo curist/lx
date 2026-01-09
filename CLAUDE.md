@@ -451,7 +451,7 @@ The `ast` command is a powerful tool for debugging and understanding compilation
 
 The ast command enriches nodes with metadata from compilation passes:
 
-**Origin tracking** (lower, anf, lower-loops):
+**Origin tracking** (lower, anf):
 ```
 Binary #80 [origin: #43]  # Node #80 came from node #43 in previous pass
 ```

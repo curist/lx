@@ -1,4 +1,4 @@
-// Codegen Phase - Emit bytecode from resolved ANF AST
+// Codegen pass - Emit bytecode from resolved ANF AST
 // Responsibility: Mechanical bytecode emission, no semantic decisions.
 
 let .{ OP, ValueType, NODE } = import "src/types.lx"
@@ -1102,7 +1102,7 @@ fn compileContinue(gen, node) {
   push(gen.continueOffsets[len(gen.continueOffsets) - 1], jump)
 }
 
-// Fused numeric loop pattern matching and codegen (Phase 1 MVP)
+// Fused numeric loop pattern matching and codegen
 // Only fuses when limit is an Identifier (no temp allocation)
 fn matchNumericForLoop(gen, node) {
   if !node.init or !node.condition or !node.update {
@@ -1118,7 +1118,7 @@ fn matchNumericForLoop(gen, node) {
   }
   let i_name = node.init.name.value or node.init.name.name or node.init.name.lexeme
 
-  // Phase 1 MVP: Init value must be a number literal (ensures fixnum at runtime)
+  // Init value must be a number literal (ensures fixnum at runtime)
   if !node.init.init or node.init.init.type != NODE.Number {
     return nil
   }
@@ -1150,7 +1150,7 @@ fn matchNumericForLoop(gen, node) {
   let left_name = cond.left.value or cond.left.name or cond.left.lexeme
   if left_name != i_name { return nil }
 
-  // Phase 1: Limit must be an Identifier
+  // Limit must be an Identifier
   if cond.right.type != NODE.Identifier { return nil }
   let limit_node = cond.right
 
@@ -1214,7 +1214,7 @@ fn compileNumericForLoop(gen, node, match, mode) {
   push(gen.continueOffsets, [])
 
   // Compile init and derive i_slot from validated slot allocation
-  // Phase 1 MVP: require init allocates exactly one local (the loop var)
+  // require init allocates exactly one local (the loop var)
   let slotBeforeInit = gen.nextLocalSlot
   compileStmt(gen, node.init)
   let slotAfterInit = gen.nextLocalSlot
@@ -1371,7 +1371,7 @@ fn compileNumericForLoop(gen, node, match, mode) {
 }
 
 fn compileFor(gen, node, mode) {
-  // Try to fuse numeric loops (Phase 1 MVP)
+  // Try to fuse numeric loops
   // Only fuses when:
   // 1. Pattern matches: for let i = start; i <//<= limit; i = i + 1 { body }
   // 2. Both i and limit are Identifiers resolved to local slots
@@ -1542,9 +1542,9 @@ fn compileExpr(gen, node, mode) {
   }
 }
 
-fn codegen(ast, resolveResult, opts) {
+fn codegen(ast, resolveResult, opts = .{}) {
   // Get DCE result if provided
-  let dceResult = opts and opts.dceResult
+  let dceResult = opts.dceResult
   let deadNodes = dceResult and dceResult.deadNodes or .{}
 
   let gen = .{
@@ -1554,7 +1554,7 @@ fn codegen(ast, resolveResult, opts) {
     scopeInfo: resolveResult.scopeInfo or .{},
     nodes: resolveResult.nodes or .{},
     localsByDecl: buildDeclMap(resolveResult.scopeInfo),
-    enumInfo: opts and opts.enumInfo or .{},
+    enumInfo: opts.enumInfo or .{},
     deadNodes,  // DCE dead node set
     errors: [],
     currentLine: 1,
@@ -1566,8 +1566,8 @@ fn codegen(ast, resolveResult, opts) {
     loopBaseSlots: [],  // Track loop base slots for break (pops everything)
     loopContinueSlots: [],  // Track loop continue slots (keeps loop var)
     loopScopeDepth: 0,
-    codegenModule: opts and opts.codegenModule or nil,
-    fastcheck: opts and opts.fastcheck or nil,
+    codegenModule: opts.codegenModule or nil,
+    fastcheck: opts.fastcheck or nil,
 
     // Track actual emitted local positions (nodeId -> absolute slot)
     emittedLocals: .{},

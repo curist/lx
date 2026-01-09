@@ -1,5 +1,5 @@
 // Driver - Orchestrates compilation pipeline (passes):
-//   parse → lower → anf → lower-loops → resolve → anf-inline → lower-intrinsics → (codegen)
+//   parse → lower → anf → resolve → anf-inline → lower-intrinsics → (codegen)
 //
 // Responsibilities:
 // - Coordinate pass execution
@@ -17,7 +17,6 @@ let anfInline = import "src/passes/frontend/anf-inline.lx"
 let lowerIntrinsics = import "src/passes/frontend/lower-intrinsics.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
 let typecheck = import "src/passes/frontend/typecheck.lx"
-let lowerLoops = import "src/passes/backend/lower-loops.lx"
 let dce = import "src/passes/backend/dce.lx"
 let peephole = (import "src/passes/backend/peephole-bytecode.lx").peephole
 let pipeline = import "src/passes/pipeline.lx"
@@ -180,37 +179,6 @@ fn buildPassList(ctx) {
 
         // Remap enum info through ANF transform (node IDs change again).
         let prev = state.passes and state.passes.lower
-        if prev and prev.enumInfo and result and result.origin {
-          let remapped = remapEnumInfo(prev.enumInfo, result.origin)
-          return .{
-            success: result.success,
-            ast: result.ast,
-            origin: result.origin,
-            errors: result.errors,
-            nextNodeId: result.nextNodeId,
-            enumInfo: remapped,
-          }
-        }
-
-        result
-      },
-    },
-
-    // PASS 4: Loop Lowering (only transforms loops with literal limits)
-    .{
-      name: "lower-loops",
-      mutatesAst: false,  // Returns new AST with origin tracking
-      requires: ["anfAst"],  // Works on ANF AST (pipeline auto-checks this)
-      provides: ["loweredLoopsAst"],
-      enabled: fn(ctx, state) {
-        // currently fail to bootstrap lx compiler, disable for now
-        false
-      },
-      run: fn(ctx, state) {
-        let result = lowerLoops(state.ast, .{ nextNodeId: state.nextNodeId })
-
-        // Remap enum info through loop lowering transform
-        let prev = state.passes.anf
         if prev and prev.enumInfo and result and result.origin {
           let remapped = remapEnumInfo(prev.enumInfo, result.origin)
           return .{

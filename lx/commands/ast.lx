@@ -2,7 +2,7 @@
 //
 // METADATA GUIDE:
 //
-// Origin Tracking (lower, anf, lower-loops passes):
+// Origin Tracking (lower, anf passes):
 //   [origin: #N] - This node was created from node #N in the previous pass
 //                  Helps trace transformations through the pipeline
 //
@@ -34,7 +34,6 @@ let lower = import "src/passes/frontend/lower.lx"
 let anf = import "src/passes/frontend/anf.lx"
 let anfInline = import "src/passes/frontend/anf-inline.lx"
 let resolve = import "src/passes/frontend/resolve.lx"
-let lowerLoops = import "src/passes/backend/lower-loops.lx"
 let dce = import "src/passes/backend/dce.lx"
 let pipeline = import "src/passes/pipeline.lx"
 let types = import "src/types.lx"
@@ -43,7 +42,7 @@ let ModuleResolution = import "src/module_resolution.lx"
 let NODE = types.NODE
 
 // Valid pass names
-let VALID_PASSES = ["parse", "lower", "anf", "lower-loops", "resolve", "anf-inline", "dce"]
+let VALID_PASSES = ["parse", "lower", "anf", "resolve", "anf-inline", "dce"]
 let DEFAULT_PASS = "dce"
 
 fn pad(n) {
@@ -76,7 +75,7 @@ fn buildMetadata(pipelineResult) {
 
   // Collect origin tracking from the last pass that has it
   // (Each pass maps new IDs to previous pass IDs, so we want the most recent)
-  let originPasses = ["anf-inline", "resolve", "lower-loops", "anf", "lower"]
+  let originPasses = ["anf-inline", "resolve", "anf", "lower"]
   for let i = 0; i < len(originPasses); i = i + 1 {
     let passName = originPasses[i]
     let passResult = passes[passName]
@@ -1176,7 +1175,7 @@ fn printMetadataHelp() {
   println("")
   println("The ast command enriches AST nodes with metadata from compilation passes.")
   println("")
-  println("ORIGIN TRACKING (lower, anf, lower-loops passes)")
+  println("ORIGIN TRACKING (lower, anf passes)")
   println("  [origin: #N]")
   println("    This node was created from node #N in the previous pass.")
   println("    Helps trace how nodes transform through the compilation pipeline.")
@@ -1233,7 +1232,6 @@ fn printMetadataHelp() {
   println("  parse:        No metadata (baseline AST)")
   println("  lower:        Origin tracking")
   println("  anf:          Origin tracking")
-  println("  lower-loops:  Origin tracking")
   println("  resolve:      Name bindings, scope info, plus origin from previous passes")
   println("  anf-inline:   All metadata from resolve, plus any new origins")
 }
@@ -1265,15 +1263,6 @@ fn buildPassList(resolver, importCache, compileImportedModule) {
       provides: ["anfAst", "loweredAst"],
       run: fn(ctx, state) {
         anf(state.ast, .{ startNodeId: state.nextNodeId })
-      },
-    },
-    .{
-      name: "lower-loops",
-      mutatesAst: false,
-      requires: ["anfAst"],
-      provides: ["loweredLoopsAst"],
-      run: fn(ctx, state) {
-        lowerLoops(state.ast, .{ nextNodeId: state.nextNodeId })
       },
     },
     .{

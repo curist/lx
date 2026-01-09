@@ -2854,7 +2854,7 @@ synthExpr = fn(checker, node) {
 // Public API
 // ========================================================
 
-fn makeChecker(resolveResult, opts) {
+fn makeChecker(resolveResult, opts = .{}) {
   let root = TypeEnv(nil)
   .{
     types: .{},
@@ -2874,8 +2874,8 @@ fn makeChecker(resolveResult, opts) {
 
     currentReturn: nil,
 
-    program: (opts and opts.program) or nil,
-    enumInfo: (opts and opts.enumInfo) or .{},
+    program: opts.program,
+    enumInfo: opts.enumInfo or .{},
     enumDeclValues: .{}, // let declNodeId -> { memberName -> number }
     recordEnumKeyOrigins: .{}, // recordLiteralNodeId -> { key -> { enumDeclId, enumName, member } }
     importResultsByDeclId: .{}, // let declNodeId -> moduleResult (for imported modules)

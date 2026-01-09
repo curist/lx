@@ -1,94 +1,487 @@
 # Lx Compiler Architecture
 
-## Pipeline
+This document describes the structure, responsibilities, and design principles of the Lx compiler.
+
+The architecture is organized around **representations (IR levels)** and **pass roles**, rather than a traditional “frontend/backend” split. This framing scales better as the compiler grows and aligns with Lx’s long-term goals: deterministic compilation, explicit dependencies, tooling support, and evolvable optimizations.
+
+---
+
+## High-Level Compilation Model
+
+Lx compilation is a **multi-stage pipeline** that transforms source text into bytecode, while producing intermediate artifacts (ASTs, analysis tables) that are also consumed by tooling.
+
+Conceptually:
 
 ```
 Source
-  → passes/frontend/parser.lx
-  → AST
-  → passes/frontend/lower.lx
-  → Lowered AST
-  → passes/frontend/anf.lx
-  → ANF AST
-  → passes/frontend/resolve.lx
-  → Resolved AST + Side Tables
-  → passes/frontend/anf-inline.lx (optional, default on)
-  → Optimized AST
-  → passes/frontend/lower-intrinsics.lx (optional, default on)
-  → Optimized AST
-  → passes/frontend/typecheck.lx (optional)
-  → Type Information
-  → select.lx (opcode selection policy)
-  → passes/backend/codegen.lx
-  → Bytecode + Chunk
-  → passes/backend/verify-bytecode.lx
-  → Verified Bytecode
-  → (a) objbuilder.lx → Object File
-  → (b) LSP / tooling outputs
+  → Parse (AST transform)
+  → AST transforms (lowering, ANF, inlining, intrinsics)
+  → AST analyses (resolve, DCE, fastcheck, typecheck)
+  → Opcode selection policy (select.lx)
+  → Bytecode transform (codegen)
+  → Bytecode analysis (verify)
+  → Object building / runtime loading
 ```
 
-## Source Layout
+Crucially:
 
-See `lx/docs/source-layout.md` for the intended long-term folder structure (passes/IR split, typed backend boundary, and entrypoint/tooling conventions).
-
-Each pass has a **single responsibility**.
-Most passes treat their inputs as immutable; a small number of optimization passes
-(notably `anf-inline.lx`) intentionally mutate the AST in-place for performance.
-
-**Error handling** is centralized in `errors.lx`, which provides unified error
-formatting and position resolution across all compilation passes.
+* **Transforms** change a representation.
+* **Analyses** compute *facts* about a representation without mutating it.
+* Code generation is *mechanical* and delegates all policy to analysis + selection layers.
 
 ---
 
-## Passes
+## Core Design Principles
 
-### **parser.lx** — Syntax validation pass → AST
+1. **Representation-oriented structure**
+   Passes are categorized by *what they operate on* (AST vs bytecode), not by when they run.
 
-* Recognizes lx grammar
-* Creates AST with node IDs and position spans
+2. **Role separation**
+   Transforms and analyses are distinct concepts with different invariants and lifecycles.
+
+3. **Single canonical AST**
+   At any point in compilation, there is exactly one “current” AST that downstream passes and analyses must agree on.
+
+4. **Explicit facts, not implicit state**
+   Semantic knowledge (bindings, deadness, type facts) lives in side tables keyed by `nodeId`, not inside the AST.
+
+5. **Policy / mechanism separation**
+   `select.lx` decides *what* to emit; `codegen.lx` decides *how* to emit it.
+
+6. **Tooling-first**
+   Resolve + typecheck + error infrastructure form a complete, reusable foundation for LSP and static tools.
+
+---
+
+## Directory Structure (Conceptual)
+
+Passes are organized by **IR level** and **role**:
+
+```
+src/passes/
+  ast/
+    transform/
+      parse.lx
+      lower.lx
+      anf.lx
+      anf-inline.lx
+      lower-intrinsics.lx
+    analysis/
+      resolve.lx
+      dce.lx
+      fastcheck.lx
+      typecheck.lx
+      typecheck-helper.lx
+  bytecode/
+    transform/
+      codegen.lx
+      peephole.lx
+    analysis/
+      verify.lx
+  pipeline.lx
+  node-utils.lx
+```
+
+Supporting libraries (not passes), such as the scanner/lexer, live outside `passes/` (e.g. `src/frontend/scanner.lx`).
+
+---
+
+## Canonical Artifacts
+
+Lx compilation is organized around a small set of **canonical artifacts**.
+An artifact is a *named, well-defined product* of compilation that may be:
+
+* a transformed representation (AST, bytecode), or
+* a set of **analysis facts** associated with a representation.
+
+Artifacts are the unit of dependency, caching, and scheduling.
+
+The key rule is:
+
+> **All downstream consumers must agree on which artifact they are using.**
+> Analyses and transforms are only valid with respect to a specific artifact version.
+
+This section defines the canonical artifacts that structure the compiler.
+
+---
+
+### Artifact Classes
+
+Artifacts fall into three broad classes:
+
+1. **Representation artifacts**
+   Concrete program representations (AST, bytecode).
+
+2. **Analysis artifacts**
+   Side tables keyed by `nodeId` or instruction index that describe a representation.
+
+3. **Program-level artifacts**
+   Aggregations that depend on the full module graph.
+
+---
+
+## AST Artifacts
+
+### **`ast.final`** — Canonical AST
+
+The **canonical AST** is the single AST instance that all downstream passes agree on.
+
+It is produced by applying the enabled AST transform passes in order:
+
+```
+parse
+  → lower
+  → anf
+  → anf-inline        (if enabled)
+  → lower-intrinsics  (if enabled)
+```
+
+Properties:
+
+* Exactly one `ast.final` exists per module per compilation.
+* All AST analyses and codegen operate on `ast.final`.
+* `nodeId`s in `ast.final` are the authoritative keys for all AST-level side tables.
+* Passes that mutate the AST in place **must preserve `nodeId`** to keep analyses valid.
+
+**Rationale:**
+This eliminates ambiguity about “which AST codegen uses” and prevents stale analyses.
+
+---
+
+## AST Analysis Artifacts
+
+AST analyses do **not** mutate the AST.
+They compute facts *about* `ast.final`.
+
+All AST analysis artifacts are keyed by `nodeId`.
+
+---
+
+### **`analysis.resolve`**
+
+Produced by `resolve.lx`.
+
+Contains:
+
+* `resolvedNames`
+* `scopeInfo`
+* `nodes` (partial node index)
+
+Properties:
+
+* Required by all binding-aware passes and analyses.
+* Establishes core semantic invariants of the program.
+* Does not depend on other analyses.
+
+---
+
+### **`analysis.dce.local`**
+
+Produced by `dce.lx`.
+
+Contains:
+
+* `deadNodes[nodeId]`
+* `usedImportProperties`
+
+Properties:
+
+* Computed per module.
+* Pure analysis; does not rewrite the AST.
+* Used by codegen to skip emission of dead *pure* expressions.
+
+---
+
+### **`analysis.fastcheck`**
+
+Produced by `fastcheck.lx`.
+
+Contains:
+
+* `facts[nodeId]` (fixnum / numeric / string / etc.)
+
+Properties:
+
+* Conservative, flow-insensitive.
+* Used exclusively by `select.lx`.
+* Replaceable by a stronger future analysis (`analysis.rep`) without changing codegen.
+
+---
+
+### **`analysis.typecheck`**
+
+Produced by `typecheck.lx`.
+
+Contains:
+
+* `types[nodeId]`
+* Type diagnostics
+
+Properties:
+
+* Tooling-oriented.
+* No impact on runtime or codegen.
+* May be computed lazily or omitted in non-tooling pipelines.
+
+---
+
+## Program-Level Analysis Artifacts
+
+Some analyses require knowledge of **all modules in the program**.
+
+These artifacts are computed after the module graph is known.
+
+---
+
+### **`analysis.dce.whole_program`**
+
+Aggregates results from all `analysis.dce.local` artifacts.
+
+Contains:
+
+* `usedExportsPerModule`
+* Derived unused-export information
+
+Produces a *derived view*:
+
+### **`analysis.dce.final`** (per module)
+
+* Union of:
+
+  * local dead nodes
+  * whole-program unused export nodes
+
+Properties:
+
+* Must be computed **before codegen** if enabled.
+* Determines which export values are elided from emitted bytecode.
+* Does not mutate AST; affects emission only.
+
+---
+
+## Bytecode Artifacts
+
+### **`bytecode.function`**
+
+Produced by `codegen.lx`.
+
+Input requirements:
+
+* `ast.final`
+* `analysis.resolve`
+* `analysis.dce.final`
+* `analysis.fastcheck` (or future `analysis.rep`)
+
+Contains:
+
+* Bytecode chunk
+* Constant pool
+* Instruction → `nodeId` mapping
+
+Properties:
+
+* Mechanical emission only.
+* Deterministic given its inputs.
+
+---
+
+### **`bytecode.verified`**
+
+Produced by `verify.lx`.
+
+Contains:
+
+* Validation result
+* Stack-discipline diagnostics
+
+Properties:
+
+* Mandatory for compilation success.
+* Consumed by object building and runtime loading.
+
+---
+
+## Object and Runtime Artifacts
+
+### **`object.bytes`**
+
+Produced by `objbuilder`.
+
+Contains:
+
+* Serialized bytecode
+* Constant pool
+* Metadata
+
+This artifact is the boundary between the compiler and the runtime.
+
+---
+
+## Artifact Dependency Summary
+
+At a high level:
+
+```
+ast.final
+  ├─ analysis.resolve
+  ├─ analysis.dce.local
+  ├─ analysis.fastcheck
+  ├─ analysis.typecheck (optional)
+  └─ analysis.dce.whole_program
+        ↓
+   analysis.dce.final
+        ↓
+   bytecode.function
+        ↓
+   bytecode.verified
+        ↓
+   object.bytes
+```
+
+---
+
+## Why Canonical Artifacts Matter
+
+This model addresses several structural issues directly:
+
+* **No stale analyses**
+  Analyses are explicitly tied to `ast.final`.
+
+* **No “rerun before codegen” hacks**
+  Codegen declares its dependencies; the scheduler ensures they are built.
+
+* **Whole-program phases are well-defined**
+  Program-level artifacts run *before* codegen when they must affect output.
+
+* **Tooling and compilation share the same foundation**
+  Tooling pipelines simply stop earlier in the artifact graph.
+
+* **Scheduling becomes declarative**
+  The compiler can answer:
+  *“What must be built to produce artifact X?”*
+
+---
+
+## Future Direction
+
+A dependency-driven scheduler can be layered on top of this artifact model:
+
+* Each artifact declares:
+
+  * required artifacts
+  * scope (module vs program)
+* The driver builds only what is needed for a requested target
+* Artifacts are cached and invalidated by representation changes
+
+This turns compilation into a small, deterministic build graph rather than a fixed linear pipeline.
+
+---
+
+## AST-Level Passes
+
+### **parse.lx** — AST transform (syntax → AST)
+
+**Role:** AST transform
+**Input:** source text
+**Output:** AST with node IDs and spans
+
+* Recognizes Lx grammar
+* Assigns monotonically increasing `nodeId`s
+* Attaches source positions (filename, line, column)
 * Reports **syntax errors only**
-* Preserves full surface syntax (Arrow nodes, etc.)
-* **Structural "everything is expression"**: the file root is an implicit `Block`, and both root + `{...}` blocks store `[Expr]` in `Block.expressions` (no separate `[Stmt]`)
-* Does **NOT** enforce contextual legality (return/break placement, etc.)
+* Preserves surface syntax
+* Enforces “everything is an expression” structurally (root is an implicit `Block`)
+* Does **not** enforce contextual legality (e.g. return placement)
+
+Lexing/scanning is an implementation detail of parsing and is not itself a pipeline pass.
 
 ---
 
-### **lower.lx** — Desugaring pass → Canonical AST
+### **lower.lx** — AST transform (desugaring)
 
-* Pure syntactic transformations
-* Arrow operator: `x->f(a)` → `f(x, a)`
-* Missing else normalization: `if cond {a}` → `if cond {a} else {nil}`
-* Creates new AST with fresh node IDs (continuation of module ID space)
-* Copies position spans for accurate diagnostics
-* Makes "everything is expression" semantics uniform for later passes
-* Future: other syntax sugar (spread, destructuring, for-loops, etc.)
+**Role:** AST transform
+**Input:** AST
+**Output:** canonical AST (new node IDs)
 
----
+* Pure syntactic rewrites:
 
-### **anf.lx** — Evaluation-order normalization pass
-
-* Lowers expressions into A-normal form (ANF)
-* Introduces temp `let` bindings to preserve left-to-right evaluation
-* Makes block expression values explicit without changing semantics
-* Does **not** perform semantic analysis or name resolution
-* Does **not** introduce IntrinsicCall fast paths (those are handled post-resolve)
-* Enabled by default (can be disabled via driver option `withAnf: false`)
+  * Arrow: `x->f(a)` → `f(x, a)`
+  * Normalize missing `else` branches
+* Produces a new AST with fresh node IDs
+* Records **origin chains** for error reporting
+* No semantic reasoning
 
 ---
 
-### **resolve.lx** — Binding + semantic validation pass
+### **anf.lx** — AST transform (evaluation order normalization)
+
+**Role:** AST transform
+**Input:** AST
+**Output:** ANF AST
+
+* Lowers expressions into A-normal form
+* Introduces temporary `let` bindings to preserve left-to-right evaluation
+* Makes block values explicit
+* No name resolution or semantic checks
+* Enabled by default (can be disabled for experimentation)
+
+---
+
+### **anf-inline.lx** — AST transform (post-resolve optimization)
+
+**Role:** AST transform
+**Input:** resolved ANF AST
+**Output:** optimized AST (mutated in place)
+
+* Runs **after resolve**
+* Eliminates single-use ANF temporaries
+* Uses binding identity (`declaredAt`) rather than names
+* Conservative: only inlines pure expressions
+* Binder-aware and scope-safe
+* Preserves `nodeId`s
+
+This pass exists specifically because it can rely on resolver metadata.
+
+---
+
+### **lower-intrinsics.lx** — AST transform (post-resolve optimization)
+
+**Role:** AST transform
+**Input:** resolved AST
+**Output:** optimized AST (mutated in place)
+
+* Rewrites generic patterns into `IntrinsicCall` nodes
+* Examples:
+
+  * `x % 8` → `mod_const(x, 8)`
+  * `x == 3` → `eq_const(x, 3)`
+* Preserves `nodeId`s so all side tables remain valid
+* Keeps ANF focused purely on evaluation order
+
+---
+
+## AST-Level Analyses
+
+### **resolve.lx** — AST analysis (binding + semantic validation)
+
+**Role:** AST analysis
+**Input:** AST
+**Output:** side tables
 
 * Name resolution (locals, upvalues, globals)
-* Function hoisting for mutual recursion
-* **Contextual legality** ("everything is expression" enforcement):
-  * `return` placement (end of block/file, inside function)
-  * `break`/`continue` placement (inside loops only)
-  * Invalid assignment targets
-* **Semantic validation**:
+* Function hoisting
+* Contextual legality checks:
+
+  * `return` placement
+  * `break` / `continue` placement
+  * assignment targets
+* Semantic errors:
+
   * undefined variables
   * duplicate declarations
-  * read-before-initialization
-* Builds **side tables**:
+  * read-before-init
+* Produces side tables:
+
   * `resolvedNames`
   * `scopeInfo`
   * `nodes`
@@ -96,407 +489,171 @@ formatting and position resolution across all compilation passes.
 
 ---
 
-### **anf-inline.lx** — ANF temp elimination pass (optional, default on)
+### **dce.lx** — AST analysis (dead code elimination facts)
 
-* **Post-resolve optimization** — runs after binding resolution
-* Inlines single-use ANF temporary variables (`$anf.N`)
-* Uses **binding metadata** (`declaredAt`) instead of name matching
-* Conservative safety predicate:
-  * Only inlines pure expressions (literals, identifiers, arithmetic, etc.)
-  * Skips function calls, assignments, and other side-effecting operations
-* **Binder-aware**:
-  * Immune to shadowing bugs
-  * Immune to scope capture errors
-  * Correct by construction
-* Reduces stack pressure by eliminating unnecessary `UNWIND` operations
-* Does **not** change semantics — only reduces intermediate bindings
-* Can be disabled via driver option: `withAnfInline: false`
+**Role:** AST analysis
+**Input:** resolved AST
+**Output:** side tables
 
-**Algorithm:**
-1. Collect all ANF temp Let nodes (names starting with `$anf.`)
-2. Count uses by binding identity (via `resolvedNames[nodeId].declaredAt`)
-3. For each single-use safe temp: substitute RHS into usage site and delete Let
-4. Validate: no orphaned temp references remain
+* Identifies dead expressions and unused bindings
+* Produces:
 
-**Design rationale:**
-Following the principle that **any pass manipulating bindings must be binder-aware**,
-`anf-inline` runs post-resolve to leverage binding metadata rather than implementing
-its own scope tracking. This aligns with how production compilers (Chez, OCaml) handle
-administrative let elimination.
+  * `deadNodes[nodeId]`
+  * `usedImportProperties`
+* Pure analysis: does not rewrite the AST
+* Used by codegen to skip emission of dead pure expressions
+
+Whole-program DCE extends this analysis but follows the same model: compute facts, do not emit code.
 
 ---
 
-### **lower-intrinsics.lx** — Intrinsic lowering pass (optional, default on)
+### **fastcheck.lx** — AST analysis (representation/type facts)
 
-* **Post-resolve optimization** — runs after binding resolution (and after ANF)
-* Rewrites select generic AST patterns into `IntrinsicCall` nodes that map to specialized opcodes
-  * Example: `x % 8` → `IntrinsicCall("mod_const", [x], modulus=8)`
-  * Example: `x == 3` → `IntrinsicCall("eq_const", [x], compareTo=3)`
-* Mutates the AST in-place and **preserves `node.id`** so resolver/typecheck side tables remain valid
-* Keeps `anf.lx` scoped to evaluation-order normalization (ANF) rather than performance shaping
+**Role:** AST analysis
+**Input:** AST + resolve tables
+**Output:** side tables
+
+* Computes lightweight representation facts:
+
+  * fixnum vs numeric vs string, etc.
+* Flow-insensitive, conservative, fast
+* Produces `facts[nodeId]`
+* Consumed exclusively by `select.lx`
+
+This pass is intentionally replaceable by a stronger future analysis (`rep`).
 
 ---
 
-### **typecheck.lx** — Static analysis pass (monomorphic, best-effort)
+### **typecheck.lx** — AST analysis (tooling-oriented)
 
+**Role:** AST analysis
+**Input:** AST + resolve tables
+**Output:** side tables
+
+* Monomorphic, best-effort inference
 * Infers stable types for:
 
   * variables
   * functions
   * records
   * arrays
-* Detects incompatible usages:
-
-  * shape mismatches
-  * conflicting assignments
-  * inconsistent call sites
-* Supports closures (captured variables share TypeVars)
-* Flow-insensitive, local, fast
-* Produces:
-
-  * `types[nodeId]`
-  * structured type diagnostics
-* **No runtime or codegen impact**
-
-> This pass is designed to support **tooling and IDE features** independently
-> of backend code generation.
+* Detects incompatible usage
+* No impact on runtime or codegen
+* Intended for tooling (LSP, diagnostics, refactors)
 
 ---
 
-### **select.lx** — Opcode selection policy module
+## Opcode Selection and Bytecode
 
-* Centralizes all policy decisions for bytecode generation
-* Separates "what to emit" (policy) from "how to emit" (mechanism)
-* Pure functions that query analysis facts and return decisions
-* No bytecode emission or state mutation
-* Responsibilities:
-  * **Opcode selection**: Choose specialized opcodes based on type facts
-    * Unary ops: `NEGATE` vs `NEGATE_INT`
-    * Binary ops: `ADD` vs `ADD_INT` vs `ADD_STR` vs `ADD_NUM`
-  * **Micro-optimizations**: Recognize patterns for superinstructions
-    * `v or CONST` → `COALESCE_CONST`
-    * `i = i + n` → `ADD_LOCAL_IMM`
-  * **Facts abstraction**: Queries `gen.fastcheck` (today) or `gen.rep` (future)
-* Enables evolution:
-  * Swap analysis passes without touching codegen
-  * Add new optimizations in one place
-  * Test policy decisions independently
+### **select.lx** — Opcode selection policy
 
-**API Functions:**
-* `unaryOpcode(gen, node)` → OP
-* `binaryCode(gen, node)` → OP | [OP, OP]
-* `logicalOrCoalesceConst(gen, node)` → plan | nil
-* `assignmentSuper(gen, node, mode)` → plan | nil
+**Role:** policy module (not a pass)
+
+* Centralizes all *decision-making* for bytecode emission
+* Pure, deterministic functions
+* Reads analysis facts (`fastcheck` today, `rep` later)
+* Returns opcode choices or emission plans
+* No byte emission
+* No mutation of codegen state
+
+Responsibilities:
+
+* Choose specialized opcodes (`ADD_INT`, `ADD_STR`, etc.)
+* Recognize superinstruction patterns
+* Abstract over analysis sources
+
+This layer decouples analysis evolution from codegen mechanics.
 
 ---
 
-### **codegen.lx** — Mechanical bytecode emission pass
+### **codegen.lx** — Bytecode transform (mechanical emission)
 
-* Walks resolved AST in **source order**
-* Delegates policy decisions to `select.lx`
-* Emits bytecode and builds chunks
-* Tracks **nodeId for each bytecode instruction** (`chunk.nodeIds[]`)
-* Responsibilities:
-  * Evaluate operands in correct order
-  * Query select module for opcode choices
-  * Emit bytes and manage constant pool
-  * Maintain stack and local slot discipline
-  * Patch jumps and handle control flow
-* No semantic analysis or type reasoning
-* No reordering or deduplication
-* All invariants enforced by resolver
+**Role:** bytecode transform
+**Input:** AST + analysis tables
+**Output:** bytecode function / chunk
 
-**Architecture:**
+* Walks the AST in source order
+* Evaluates operands
+* Delegates all policy decisions to `select.lx`
+* Emits bytecode and manages:
+
+  * stack discipline
+  * local slots
+  * constant pool
+  * control-flow patching
+* Records `nodeId` per instruction for diagnostics
+* No semantic reasoning
+
+Architecture:
+
 ```
-codegen:
-  1. Compile operands (recursive)
-  2. Ask select: "What opcode should I use?"
-  3. Emit the opcode (mechanical)
-
-select:
-  1. Read type facts from gen.fastcheck/gen.rep
-  2. Match patterns (structural)
-  3. Return decision (pure, no side effects)
+compile operands
+  → select (policy)
+  → emit bytecode (mechanical)
 ```
 
 ---
 
-### **verify-bytecode.lx** — Stack discipline validation pass
+### **verify.lx** — Bytecode analysis (stack discipline)
 
-* Validates bytecode stack operations
-* Ensures balanced stack effects for all execution paths
-* Detects stack underflow/overflow
-* Uses dataflow analysis (worklist algorithm)
-* Reports errors with **nodeId** (resolved via `chunk.nodeIds[]`)
-* Returns: `{ success: bool, errors: [...] }`
-* **Mandatory pass** — compilation fails if verification fails
+**Role:** bytecode analysis
+**Input:** bytecode
+**Output:** validation result
 
----
+* Dataflow analysis of stack effects
+* Ensures:
 
-### **errors.lx** — Error handling utilities
-
-* Centralizes all error formatting and reporting
-* **buildNodesIndex(ast)** — builds complete `{ nodeId: node }` map
-  * Uses dynamic property traversal with `keys(node)`
-  * Filters metadata properties (id, type, line, col, etc.)
-  * O(1) lookup for any node ID
-  * Lazy — only built when errors occur
-* **resolveNodePosition(nodeId, result)** — maps nodeId to position
-  * Follows origin chains: ANF → lowered → parser
-  * Returns `{ filename, line, col }`
-* **formatError(err, result)** — formats single error to string
-* **printErrors(errors, result)** — prints to stderr
-* **collectErrors(result)** — gathers errors from all passes
-
-**Error Structure:**
-* Parser: pre-formatted strings (e.g., `"[file:L1:C5] message"`)
-* All semantic passes: `{ nodeId, message, severity: "error" }`
+  * no underflow
+  * no overflow
+  * balanced stack at joins
+* Mandatory pass
+* Errors reported via `nodeId`
 
 ---
 
-## Driver
+## Error Handling
+
+Centralized in `errors.lx`.
+
+Key features:
+
+* Unified error structure across all passes
+* Origin-chain tracking (ANF → lower → parse)
+* Lazy construction of complete `nodeId → node` index
+* Precise source positions for all diagnostics
+
+---
+
+## Driver and Pipelines
 
 The driver:
 
-* orchestrates pass execution
-* owns the import cache
-* manages module compilation lifecycle
-* provides callbacks for recursive imports
+* Orchestrates pass execution
+* Owns the import cache
+* Manages module lifecycle
+* Supports curated **profiles** (compiler, tooling, O0, etc.)
+
+Profiles select *targets*, not arbitrary pass subsets. This avoids invalid combinations and simplifies reasoning.
+
+Future direction: a dependency-driven scheduler that builds requested artifacts (AST, analyses, bytecode) from declared dependencies.
 
 ---
 
-## Pipelines (Profiles)
+## Design Goals Recap
 
-Lx supports multiple **pipelines** (a.k.a. profiles) that select a **known-good**
-sequence of passes for a given product line (compiler vs tooling).
-
-This is intentional: allowing arbitrary pass subsets quickly creates a
-combinatorial space that is hard to test and reason about. Instead, Lx prefers:
-
-* a small number of curated pipelines (e.g. `tooling`, `O0`, `O2`, `typed-backend`)
-* pass-level toggles used internally by those pipelines (not as a public API)
-
-Within a pipeline:
-
-* passes that establish correctness invariants (e.g. binding resolution) are mandatory
-* optional passes are limited to semantics-preserving optimizations or instrumentation
-
-Future direction: a pass manager can enforce this mechanically via
-`requires`/`provides` metadata, rejecting invalid combinations and auto-inserting
-prerequisites when appropriate.
-
----
-
-## Data Structures
-
-### **Node IDs**
-
-* Auto-increment per module, starting at 1
-* Parse: `1..N`
-* Lower: `N+1..M` (same module ID space)
-* ANF: `M+1..K` (same module ID space)
-* Used as stable keys across all side tables and tooling
-
----
-
-### **Origin Chains**
-
-Lowering and ANF passes create new nodes and track their provenance:
-
-```
-ANF node (id: 31)
-  → lowerResult.origin[31] = 20
-  → loweredNode (id: 20)
-    → lowerResult.origin[20] = 7
-    → parserNode (id: 7)
-      → has position: { filename, line, col }
-```
-
-**Error reporting** follows origin chains backward to find the original
-parser node with position information:
-
-1. Error occurs in resolve pass → reports nodeId from ANF AST
-2. `errors.resolveNodePosition()` follows chain: ANF → lower → parser
-3. Looks up final parser node to extract source position
-4. Formats error: `[file.lx:3:6] Variable 'x' already declared`
-
----
-
-### **Side Tables** (per module, keyed by node ID)
-
-* `resolvedNames[nodeId]`
-
-  * binding kind
-  * opcodes
-  * slot / upvalue indices
-
-* `scopeInfo[nodeId]`
-
-  * locals (ordered)
-  * upvalues
-  * hoisting metadata
-
-* `nodes[nodeId]` (in resolve pass)
-
-  * **Partial** AST node lookup
-  * Contains nodes visited during main resolution traversal
-  * May not include all nodes (e.g., nested identifiers in `let` name properties)
-
-* **Complete node index** (built by `errors.buildNodesIndex()`)
-
-  * **Complete** mapping of all nodeIds to nodes
-  * Built on-demand when formatting errors
-  * Traverses entire AST with dynamic property iteration
-  * Guaranteed O(1) lookup for any nodeId in the AST
-
----
-
-### **Import Cache**
-
-* Driver-owned
-* Lifecycle:
-
-  ```
-  compiling → done | failed
-  ```
-* Circular imports detected via status checks
-* Keyed by the import path string (as written in source, after any caller-level path mapping)
-
----
-
-## Design Goals
-
-1. **Enable mutual recursion**
-
-   * Eliminate forward declarations via function hoisting
-
-2. **Better error reporting**
-
-   * Unified error structure across all passes
-   * Precise source positions via nodeId tracking and origin chains
-   * Centralized error formatting in `errors.lx`
-   * Deterministic node lookup with complete AST indexing
-
-3. **Tooling-first architecture**
-
-   * Resolve + typecheck form a complete foundation for LSP, IDEs, and static tools
-
-4. **Preserve object format**
-
-   * Compatible with existing `objbuilder` / `objloader`
-
-5. **Maintainability**
-
-   * Clear pass separation
-   * Deterministic behavior
-   * Each pass testable in isolation
-
-6. **Evolvable backend architecture**
-
-   * **Policy/mechanism separation**: `select.lx` decouples opcode choice from emission
-   * **Analysis-agnostic codegen**: Swap type/representation analysis without touching emission code
-   * **Composable optimizations**: Add micro-optimizations in select module, not scattered through codegen
-   * **Local reasoning**: Policy decisions have no side effects, emission logic has no semantic reasoning
-
-### Backend Architecture Rationale
-
-The separation of `select.lx` from `codegen.lx` addresses three key problems:
-
-1. **Scalability**: Adding new analysis passes (fixnum flow, enum exhaustiveness, etc.)
-   should not require threading logic throughout codegen. The select layer provides a
-   stable interface between analysis and emission.
-
-2. **Correctness**: It is hard to reason about correctness when codegen both decides
-   semantics and emits bytecode. Separating concerns makes both easier to verify.
-
-3. **Evolution cost**: Replacing or upgrading analysis passes (e.g., fastcheck → rep)
-   becomes a localized change to select.lx, not a risky multi-file rewrite.
-
-This follows the principle that **each module should have exactly one reason to change**:
-* Analysis passes change when we improve type/representation inference
-* Select changes when we add new optimizations or opcode specializations
-* Codegen changes when we modify bytecode format or stack discipline
+1. Deterministic compilation
+2. Precise diagnostics
+3. Tooling-first architecture
+4. Policy/mechanism separation
+5. Evolvable analysis and backend
+6. Maintainability through explicit structure
 
 ---
 
 ## Non-Goals
 
-* **Polymorphic type inference**
-* **Perfect soundness**
-* **Aggressive optimization** (only conservative, semantics-preserving passes)
-* **Pervasive AST mutation** (most passes create new ASTs; a few targeted opts may mutate in-place)
-* **Bytecode-level equivalence** (semantic equivalence only)
+* Full polymorphic type inference
+* Aggressive optimization
+* Perfect soundness
+* SSA or moving GC assumptions
 
----
-
-## Migration Strategy
-
-1. Implement new pipeline alongside `compiler.lx`
-2. Validate semantic equivalence
-3. Adopt new pipeline as default
-4. Deprecate legacy compiler incrementally
-
----
-
-## Product Lines
-
-Lx supports **multiple consumers** of the same frontend pipeline:
-
-### 1. Compiler
-
-```
-parser → lower → anf → resolve → anf-inline → select → codegen → verify-bytecode → objbuilder → runtime
-                          ↓                       ↑
-                    errors.lx              (policy layer)
-                 (error formatting
-                  & reporting)
-```
-
-### 2. Tooling / LSP
-
-```
-parser → lower → anf → resolve → anf-inline → typecheck → diagnostics / IDE features
-                          ↓                       ↓
-                    errors.lx (error formatting & reporting)
-```
-
-These paths share the same frontend passes, error handling, and guarantees.
-
----
-
-## Error Handling Flow
-
-All compilation passes follow a consistent error handling pattern:
-
-1. **Error Detection** — Each pass detects its own class of errors
-   * Parser: syntax errors
-   * Lower/ANF: transformation errors (rare)
-   * Resolve: semantic errors (undefined vars, duplicates, etc.)
-   * Typecheck: type incompatibilities
-   * Codegen: bytecode generation errors
-   * Verify: stack discipline violations
-
-2. **Error Recording** — Errors stored in standardized format
-   * Parser: pre-formatted strings with position
-   * Semantic passes: `{ nodeId, message, severity }`
-
-3. **Error Collection** — `errors.collectErrors(result)` gathers from all passes
-
-4. **Error Formatting** — `errors.formatError(err, result)` resolves positions
-   * Follows origin chains for semantic errors
-   * Uses `buildNodesIndex()` for O(1) node lookup
-
-5. **Error Reporting** — `errors.printErrors(errors, result)` outputs to stderr
-
----
-
-## Future Work
-
-* Additional optimization passes:
-  * Dead code elimination
-  * Constant folding
-  * Inline expansion for small functions
-* Incremental compilation
-* Signature files for modules
-* Richer type narrowing
-* Full LSP server implementation

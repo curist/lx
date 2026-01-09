@@ -172,7 +172,7 @@ fn collectEnumExportsFromModuleResult(moduleResult) {
   out
 }
 
-fn analyze(ast, resolveResult, opts) {
+fn analyze(ast, resolveResult, opts = .{}) {
   let facts = .{}
   let locals = .{}
 
@@ -181,7 +181,7 @@ fn analyze(ast, resolveResult, opts) {
 
   // Optional: enumInfo keyed by the AST's current node IDs (driver remaps through lower/anf).
   // Keep this explicit so FastCheck stays independent of any specific frontend pass output.
-  let enumInfo = (opts and opts.enumInfo) or nil
+  let enumInfo = opts.enumInfo or nil
 
   // Side facts: enum-values and module-values for dot/index propagation.
   let enumValueFacts = .{}   // nodeId -> { memberName -> number }
@@ -626,10 +626,10 @@ fn analyze(ast, resolveResult, opts) {
   }
 }
 
-fn fastcheck(ast, resolveResult, opts) {
+fn fastcheck(ast, resolveResult, opts = .{}) {
   if !ast { return .{ success: false, errors: ["fastcheck: missing ast"] } }
   if !resolveResult { return .{ success: false, errors: ["fastcheck: missing resolve result"] } }
-  analyze(ast, resolveResult, opts or .{})
+  analyze(ast, resolveResult, opts)
 }
 
 fastcheck

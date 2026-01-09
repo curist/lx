@@ -1,9 +1,9 @@
 // Repeatedly scans `items`, removing the ones `trySolve(item)` can solve.
 // Returns the remaining (unsolved) items once no progress is made.
-fn solveWorklist(items, trySolve, opts) {
-  let maxRounds = (opts and opts.maxRounds) or 1000
-  let progress = opts and opts.progress
-  let resetProgress = opts and opts.resetProgress
+fn solveWorklist(items, trySolve, opts = .{}) {
+  let maxRounds = opts.maxRounds or 1000
+  let progress = opts.progress
+  let resetProgress = opts.resetProgress
 
   let round = 0 // number of completed rounds
   let remaining = items or []
@@ -33,7 +33,7 @@ fn solveWorklist(items, trySolve, opts) {
 
   if round == maxRounds and len(remaining) > 0 {
     hitMaxRounds = true
-    if opts and opts.onMaxRounds {
+    if opts.onMaxRounds {
       opts.onMaxRounds(.{ rounds: round, remaining: remaining })
     }
   }

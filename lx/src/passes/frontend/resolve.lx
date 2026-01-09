@@ -480,9 +480,23 @@ fn isInFunction(scope) {
         // Check if cached import compilation failed
         if cached.status == "failed" {
           let errMsg = "Failed to import module: " + path
-          if cached.passes and cached.passes.parse and cached.passes.parse.errors and len(cached.passes.parse.errors) > 0 {
-            errMsg = errMsg + " (" + cached.passes.parse.errors[0] + ")"
+          let passes = cached.passes or .{}
+
+          // Find the first error from any pass
+          if passes.parse and passes.parse.errors and len(passes.parse.errors) > 0 {
+            errMsg = errMsg + "\n  " + passes.parse.errors[0]
+          } else if passes.lower and passes.lower.errors and len(passes.lower.errors) > 0 {
+            let err = passes.lower.errors[0]
+            let msg = err.message or err
+            errMsg = errMsg + "\n  " + msg
+          } else if passes.resolve and passes.resolve.errors and len(passes.resolve.errors) > 0 {
+            let err = passes.resolve.errors[0]
+            let msg = err.message or err
+            errMsg = errMsg + "\n  " + msg
+          } else if cached.failedPass {
+            errMsg = errMsg + "\n  failed at " + cached.failedPass
           }
+
           addError(resolver, node.id, errMsg)
         }
 
@@ -507,9 +521,23 @@ fn isInFunction(scope) {
       // Check if import compilation failed
       if result and result.status == "failed" {
         let errMsg = "Failed to import module: " + path
-        if result.passes and result.passes.parse and result.passes.parse.errors and len(result.passes.parse.errors) > 0 {
-          errMsg = errMsg + " (" + result.passes.parse.errors[0] + ")"
+        let passes = result.passes or .{}
+
+        // Find the first error from any pass
+        if passes.parse and passes.parse.errors and len(passes.parse.errors) > 0 {
+          errMsg = errMsg + "\n  " + passes.parse.errors[0]
+        } else if passes.lower and passes.lower.errors and len(passes.lower.errors) > 0 {
+          let err = passes.lower.errors[0]
+          let msg = err.message or err
+          errMsg = errMsg + "\n  " + msg
+        } else if passes.resolve and passes.resolve.errors and len(passes.resolve.errors) > 0 {
+          let err = passes.resolve.errors[0]
+          let msg = err.message or err
+          errMsg = errMsg + "\n  " + msg
+        } else if result.failedPass {
+          errMsg = errMsg + "\n  failed at " + result.failedPass
         }
+
         addError(resolver, node.id, errMsg)
       }
 

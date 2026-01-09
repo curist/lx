@@ -530,7 +530,7 @@ fn make(opts) {
 
     // Track compilation (first time only)
     push(compiledModules, path)
-    // Graph changed; any previous whole-program typecheck results are stale.
+    // Graph changed; any previous whole-program results are stale.
     wholeProgramTypecheckDone = false
 
     // Mark as compiling (for circular import detection)

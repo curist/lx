@@ -7,6 +7,7 @@
 
 let types = import "src/types.lx"
 let builtinsData = import "services/builtins_docs_data.lx"
+let queryNilCheck = import "services/nilcheck.lx"
 
 let NODE = types.NODE
 
@@ -1474,6 +1475,16 @@ fn queryDiagnostics(result) {
             nodeId: nodeId,
           })
         }
+      }
+    }
+  }
+
+  // Run nil-check analysis if we have a valid context with resolve info
+  if ctx and ctx.ast and ctx.resolvedNames {
+    let nilCheckDiags = queryNilCheck(ctx)
+    if nilCheckDiags {
+      for let i = 0; i < len(nilCheckDiags); i = i + 1 {
+        push(diags, nilCheckDiags[i])
       }
     }
   }

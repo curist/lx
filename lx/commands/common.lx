@@ -36,6 +36,12 @@ fn compileWithDriver(driverInstance, path) {
       return nil
     }
 
+    // Print warnings even if compilation succeeded (e.g., nilcheck warnings)
+    let allErrors = errors.collectErrors(result)
+    if allErrors and len(allErrors) > 0 {
+      errors.printErrors(allErrors, result)
+    }
+
     let passes = result.passes or .{}
     let ast = (passes["anf-inline"] and passes["anf-inline"].ast) or
               (passes.anf and passes.anf.ast) or

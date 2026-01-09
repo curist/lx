@@ -1,0 +1,672 @@
+// Nil-Check Service - Flow-sensitive nil-safety analysis for IDE/LSP
+//
+// Works with pre-ANF AST (parse → lower → resolve) to provide accurate
+// nil-safety diagnostics without dealing with ANF temporaries.
+//
+// Checks four enforced sites:
+// - Member access: a.x
+// - Index access: a[x]
+// - Function calls: a()
+// - Destructuring: let .{x} = a
+//
+// Features:
+// - Flow-sensitive tracking of definitely non-nil variables
+// - Conditional refinement: if x { ... } proves x is non-nil in then-branch
+// - Conservative analysis: only tracks what we can prove
+
+let .{ NODE } = import "src/types.lx"
+
+// ========================================
+// Helpers
+// ========================================
+
+fn nodeKeyFor(ctx, node) {
+  if !node { return nil }
+  if ctx and ctx.nodes and ctx.nodes[node.id] {
+    return node.id
+  }
+  // Composite key format: filename:id
+  join([node.filename or "", ":", node.id], "")
+}
+
+fn normalizeOperator(op) {
+  if !op { return nil }
+  if type(op) == "string" { return op }
+  op.lexeme or op
+}
+
+// ========================================
+// Type Helpers
+// ========================================
+
+fn isNonNilLiteral(node) {
+  if !node { return false }
+  let t = node.type
+  if t == NODE.Number or t == NODE.String or t == NODE.Bool {
+    return true
+  }
+  if t == NODE.Array or t == NODE.Hashmap or t == NODE.Function {
+    return true
+  }
+  if t == NODE.Enum {
+    return true
+  }
+  false
+}
+
+fn isNilLiteral(node) {
+  if !node { return false }
+  node.type == NODE.Nil
+}
+
+// ========================================
+// Dataflow State Management
+// ========================================
+
+fn makeState() {
+  .{
+    defNonNil: .{},        // declNodeId -> boolean (true = definitely non-nil)
+    assignedInLoop: .{},   // declNodeId -> boolean (assigned in current loop)
+  }
+}
+
+fn cloneState(state) {
+  let newDefNonNil = .{}
+  for k in keys(state.defNonNil) {
+    newDefNonNil[k] = state.defNonNil[k]
+  }
+
+  let newAssignedInLoop = .{}
+  for k in keys(state.assignedInLoop) {
+    newAssignedInLoop[k] = state.assignedInLoop[k]
+  }
+
+  .{
+    defNonNil: newDefNonNil,
+    assignedInLoop: newAssignedInLoop,
+  }
+}
+
+fn mergeStates(states) {
+  // Intersection - only keep bits set in ALL states
+  if !states or len(states) == 0 {
+    return makeState()
+  }
+
+  if len(states) == 1 {
+    return cloneState(states[0])
+  }
+
+  let result = cloneState(states[0])
+
+  for let i = 1; i < len(states); i = i + 1 {
+    let other = states[i]
+    for k in keys(result.defNonNil) {
+      if !other.defNonNil[k] {
+        result.defNonNil[k] = false
+      }
+    }
+  }
+
+  result
+}
+
+fn setNonNil(state, declNodeId, value) {
+  if declNodeId {
+    state.defNonNil[declNodeId] = value
+  }
+}
+
+fn isDefinitelyNonNil(state, declNodeId) {
+  if !declNodeId { return false }
+  state.defNonNil[declNodeId] == true
+}
+
+fn markAssignedInLoop(state, declNodeId) {
+  if declNodeId {
+    state.assignedInLoop[declNodeId] = true
+  }
+}
+
+// ========================================
+// Variable Resolution
+// ========================================
+
+fn getDeclNodeId(ctx, identNode) {
+  if !identNode or identNode.type != NODE.Identifier {
+    return nil
+  }
+
+  let binding = ctx.resolvedNames[nodeKeyFor(ctx, identNode)]
+  if !binding { return nil }
+
+  if binding.kind == "local" or binding.kind == "upvalue" {
+    return binding.declaredAt
+  }
+
+  nil
+}
+
+fn isFunctionBinding(ctx, identNode) {
+  if !identNode or identNode.type != NODE.Identifier {
+    return false
+  }
+
+  let binding = ctx.resolvedNames[nodeKeyFor(ctx, identNode)]
+  if !binding { return false }
+
+  // Builtins are functions and never nil
+  if binding.kind == "builtin" {
+    return true
+  }
+
+  false
+}
+
+// ========================================
+// Expression Analysis Helpers
+// ========================================
+
+fn isExprDefinitelyNonNil(ctx, expr, state) {
+  if !expr { return false }
+
+  // Non-nil literals and constructors
+  if isNonNilLiteral(expr) {
+    return true
+  }
+
+  // Identifiers - check state or function binding
+  if expr.type == NODE.Identifier {
+    if isFunctionBinding(ctx, expr) {
+      return true
+    }
+
+    let declNodeId = getDeclNodeId(ctx, expr)
+    if declNodeId {
+      return isDefinitelyNonNil(state, declNodeId)
+    }
+  }
+
+  // Block expressions - check the last expression
+  if expr.type == NODE.Block {
+    if expr.expressions and len(expr.expressions) > 0 {
+      let lastExpr = expr.expressions[len(expr.expressions) - 1]
+      return isExprDefinitelyNonNil(ctx, lastExpr, state)
+    }
+    return false
+  }
+
+  false
+}
+
+// ========================================
+// Expression Analysis
+// ========================================
+
+fn analyzeExpr(ctx, diagnostics, node, state) {
+  if !node { return state }
+
+  let t = node.type
+
+  // Literals - no state changes
+  if t == NODE.Number or t == NODE.String or t == NODE.Bool or t == NODE.Nil {
+    return state
+  }
+
+  if t == NODE.Identifier {
+    return state
+  }
+
+  // Array/Hashmap literals
+  if t == NODE.Array {
+    if node.elements {
+      for elem in node.elements {
+        state = analyzeExpr(ctx, diagnostics, elem, state)
+      }
+    }
+    return state
+  }
+
+  if t == NODE.Hashmap {
+    if node.entries {
+      for entry in node.entries {
+        if entry and entry.value {
+          state = analyzeExpr(ctx, diagnostics, entry.value, state)
+        }
+      }
+    }
+    return state
+  }
+
+  // Function - don't propagate state (intraprocedural)
+  if t == NODE.Function {
+    return state
+  }
+
+  // Binary/Unary operations
+  if t == NODE.Binary {
+    state = analyzeExpr(ctx, diagnostics, node.left, state)
+    state = analyzeExpr(ctx, diagnostics, node.right, state)
+    return state
+  }
+
+  if t == NODE.Unary {
+    state = analyzeExpr(ctx, diagnostics, node.operand, state)
+    return state
+  }
+
+  // Member access - CHECK SITE
+  if t == NODE.Dot {
+    state = analyzeExpr(ctx, diagnostics, node.object, state)
+
+    if node.object and !isExprDefinitelyNonNil(ctx, node.object, state) {
+      let name = "value"
+      if node.object.type == NODE.Identifier {
+        name = node.object.name or node.object.lexeme or "value"
+      }
+      push(diagnostics, .{
+        message: "Member access on potentially nil value '" + name + "'",
+        severity: "warning",
+        phase: "nilcheck",
+        filename: node.filename,
+        line: node.line,
+        col: node.col,
+        endLine: node.endLine,
+        endCol: node.endCol,
+        nodeId: node.id,
+      })
+    }
+
+    return state
+  }
+
+  // Index access - CHECK SITE
+  if t == NODE.Index {
+    state = analyzeExpr(ctx, diagnostics, node.object, state)
+    state = analyzeExpr(ctx, diagnostics, node.index, state)
+
+    if node.object and !isExprDefinitelyNonNil(ctx, node.object, state) {
+      let name = "value"
+      if node.object.type == NODE.Identifier {
+        name = node.object.name or node.object.lexeme or "value"
+      }
+      push(diagnostics, .{
+        message: "Index access on potentially nil value '" + name + "'",
+        severity: "warning",
+        phase: "nilcheck",
+        filename: node.filename,
+        line: node.line,
+        col: node.col,
+        endLine: node.endLine,
+        endCol: node.endCol,
+        nodeId: node.id,
+      })
+    }
+
+    return state
+  }
+
+  // Call - CHECK SITE
+  if t == NODE.Call {
+    state = analyzeExpr(ctx, diagnostics, node.callee, state)
+
+    if node.callee {
+      let isBuiltin = false
+      if node.callee.type == NODE.Identifier {
+        let binding = ctx.resolvedNames[nodeKeyFor(ctx, node.callee)]
+        isBuiltin = binding and binding.kind == "builtin"
+      }
+
+      if !isBuiltin and !isExprDefinitelyNonNil(ctx, node.callee, state) {
+        let name = "function"
+        if node.callee.type == NODE.Identifier {
+          name = node.callee.name or node.callee.lexeme or "function"
+        }
+        push(diagnostics, .{
+          message: "Call on potentially nil value '" + name + "'",
+          severity: "warning",
+          phase: "nilcheck",
+          filename: node.filename,
+          line: node.line,
+          col: node.col,
+          endLine: node.endLine,
+          endCol: node.endCol,
+          nodeId: node.id,
+        })
+      }
+    }
+
+    if node.args {
+      for arg in node.args {
+        state = analyzeExpr(ctx, diagnostics, arg, state)
+      }
+    }
+
+    return state
+  }
+
+  // If expression with conditional refinement
+  if t == NODE.If {
+    state = analyzeExpr(ctx, diagnostics, node.condition, state)
+
+    // Refine state for then branch
+    let thenState = cloneState(state)
+
+    // Simple refinement patterns (no ANF unwrapping needed!)
+    if node.condition {
+      if node.condition.type == NODE.Identifier {
+        // if x { ... } - x is non-nil in then branch
+        let declNodeId = getDeclNodeId(ctx, node.condition)
+        if declNodeId {
+          setNonNil(thenState, declNodeId, true)
+        }
+      } else if node.condition.type == NODE.Binary {
+        let op = normalizeOperator(node.condition.operator)
+
+        if op == "!=" {
+          // if x != nil { ... }
+          let left = node.condition.left
+          let right = node.condition.right
+
+          if left and left.type == NODE.Identifier and isNilLiteral(right) {
+            let declNodeId = getDeclNodeId(ctx, left)
+            if declNodeId {
+              setNonNil(thenState, declNodeId, true)
+            }
+          } else if right and right.type == NODE.Identifier and isNilLiteral(left) {
+            let declNodeId = getDeclNodeId(ctx, right)
+            if declNodeId {
+              setNonNil(thenState, declNodeId, true)
+            }
+          }
+        }
+      }
+    }
+
+    thenState = analyzeExpr(ctx, diagnostics, node.then, thenState)
+
+    if node.else_ {
+      let elseState = cloneState(state)
+      elseState = analyzeExpr(ctx, diagnostics, node.else_, elseState)
+      return mergeStates([thenState, elseState])
+    }
+
+    return mergeStates([thenState, state])
+  }
+
+  // Block
+  if t == NODE.Block {
+    return analyzeBlock(ctx, diagnostics, node, state)
+  }
+
+  // For loop - conservative handling
+  if t == NODE.For {
+    if node.init {
+      state = analyzeStmt(ctx, diagnostics, node.init, state)
+    }
+
+    if node.condition {
+      state = analyzeExpr(ctx, diagnostics, node.condition, state)
+    }
+
+    if node.body {
+      let bodyState = cloneState(state)
+      bodyState = analyzeExpr(ctx, diagnostics, node.body, bodyState)
+
+      // Conservative: clear non-nil bits for all vars assigned in loop
+      for declId in keys(bodyState.assignedInLoop) {
+        setNonNil(state, declId, false)
+      }
+    }
+
+    if node.increment {
+      state = analyzeExpr(ctx, diagnostics, node.increment, state)
+    }
+
+    return state
+  }
+
+  // Collect expression
+  if t == NODE.Collect {
+    if node.init {
+      state = analyzeStmt(ctx, diagnostics, node.init, state)
+    }
+
+    if node.condition {
+      state = analyzeExpr(ctx, diagnostics, node.condition, state)
+    }
+
+    if node.body {
+      let bodyState = cloneState(state)
+      bodyState = analyzeExpr(ctx, diagnostics, node.body, bodyState)
+
+      for declId in keys(bodyState.assignedInLoop) {
+        setNonNil(state, declId, false)
+      }
+    }
+
+    if node.increment {
+      state = analyzeExpr(ctx, diagnostics, node.increment, state)
+    }
+
+    return state
+  }
+
+  // Enum
+  if t == NODE.Enum {
+    return state
+  }
+
+  // Arrow (method call)
+  if t == NODE.Arrow {
+    state = analyzeExpr(ctx, diagnostics, node.object, state)
+    state = analyzeExpr(ctx, diagnostics, node.property, state)
+    return state
+  }
+
+  state
+}
+
+fn analyzeStmt(ctx, diagnostics, node, state) {
+  if !node { return state }
+
+  let t = node.type
+
+  // Let statement - track assignment
+  if t == NODE.Let {
+    // Destructuring - CHECK SITE
+    if node.destructure {
+      if node.init and !isExprDefinitelyNonNil(ctx, node.init, state) {
+        let name = "value"
+        if node.init.type == NODE.Identifier {
+          name = node.init.name or node.init.lexeme or "value"
+        }
+        push(diagnostics, .{
+          message: "Destructuring potentially nil value '" + name + "'",
+          severity: "warning",
+          phase: "nilcheck",
+          filename: node.filename,
+          line: node.line,
+          col: node.col,
+          endLine: node.endLine,
+          endCol: node.endCol,
+          nodeId: node.id,
+        })
+      }
+
+      if node.init {
+        state = analyzeExpr(ctx, diagnostics, node.init, state)
+      }
+
+      return state
+    }
+
+    // Regular let: let x = expr
+    if node.init {
+      state = analyzeExpr(ctx, diagnostics, node.init, state)
+
+      if node.name and node.name.type == NODE.Identifier {
+        let declNodeId = node.name.id
+
+        if isNonNilLiteral(node.init) {
+          setNonNil(state, declNodeId, true)
+        } else if isNilLiteral(node.init) {
+          setNonNil(state, declNodeId, false)
+        } else if node.init.type == NODE.Identifier {
+          // Copy nil state: let y = x
+          let srcDeclNodeId = getDeclNodeId(ctx, node.init)
+          if srcDeclNodeId {
+            let isNonNil = isDefinitelyNonNil(state, srcDeclNodeId)
+            setNonNil(state, declNodeId, isNonNil)
+          } else {
+            setNonNil(state, declNodeId, false)
+          }
+        } else if node.init.type == NODE.Block {
+          // Block expression - check last expression
+          if node.init.expressions and len(node.init.expressions) > 0 {
+            let lastExpr = node.init.expressions[len(node.init.expressions) - 1]
+            if isExprDefinitelyNonNil(ctx, lastExpr, state) {
+              setNonNil(state, declNodeId, true)
+            } else {
+              setNonNil(state, declNodeId, false)
+            }
+          } else {
+            setNonNil(state, declNodeId, false)
+          }
+        } else {
+          setNonNil(state, declNodeId, false)
+        }
+      }
+    }
+
+    return state
+  }
+
+  // Assignment - update tracked variable
+  if t == NODE.Assignment {
+    if node.value {
+      state = analyzeExpr(ctx, diagnostics, node.value, state)
+    }
+
+    if node.target and node.target.type == NODE.Identifier {
+      let declNodeId = getDeclNodeId(ctx, node.target)
+      if declNodeId {
+        markAssignedInLoop(state, declNodeId)
+
+        if isNonNilLiteral(node.value) {
+          setNonNil(state, declNodeId, true)
+        } else if isNilLiteral(node.value) {
+          setNonNil(state, declNodeId, false)
+        } else if node.value and node.value.type == NODE.Identifier {
+          let srcDeclNodeId = getDeclNodeId(ctx, node.value)
+          if srcDeclNodeId {
+            let isNonNil = isDefinitelyNonNil(state, srcDeclNodeId)
+            setNonNil(state, declNodeId, isNonNil)
+          } else {
+            setNonNil(state, declNodeId, false)
+          }
+        } else {
+          setNonNil(state, declNodeId, false)
+        }
+      }
+    }
+
+    return state
+  }
+
+  // Return statement
+  if t == NODE.Return {
+    if node.value {
+      state = analyzeExpr(ctx, diagnostics, node.value, state)
+    }
+    return state
+  }
+
+  // Break/Continue
+  if t == NODE.Break or t == NODE.Continue {
+    return state
+  }
+
+  // Expression statement
+  state = analyzeExpr(ctx, diagnostics, node, state)
+  state
+}
+
+fn analyzeBlock(ctx, diagnostics, block, state) {
+  if !block or block.type != NODE.Block { return state }
+  if !block.expressions { return state }
+
+  for expr in block.expressions {
+    state = analyzeStmt(ctx, diagnostics, expr, state)
+  }
+
+  state
+}
+
+fn analyzeFunction(ctx, diagnostics, funcNode) {
+  if !funcNode or funcNode.type != NODE.Function { return }
+
+  let state = makeState()
+
+  // Mark any hoisted functions in the body as non-nil from the start
+  if funcNode.body and funcNode.body.type == NODE.Block and funcNode.body.expressions {
+    for expr in funcNode.body.expressions {
+      if expr.type == NODE.Function and expr.name and expr.name.type == NODE.Identifier {
+        setNonNil(state, expr.id, true)
+      }
+    }
+  }
+
+  if funcNode.body {
+    analyzeExpr(ctx, diagnostics, funcNode.body, state)
+  }
+}
+
+fn analyzeTopLevel(ctx, diagnostics, ast) {
+  if !ast { return }
+
+  if ast.type == NODE.Block {
+    let state = makeState()
+
+    // First pass: mark all hoisted function names as non-nil
+    if ast.expressions {
+      for expr in ast.expressions {
+        if expr.type == NODE.Function and expr.name and expr.name.type == NODE.Identifier {
+          setNonNil(state, expr.id, true)
+        }
+      }
+    }
+
+    // Second pass: analyze expressions
+    if ast.expressions {
+      for expr in ast.expressions {
+        if expr.type == NODE.Function {
+          analyzeFunction(ctx, diagnostics, expr)
+        } else if expr.type == NODE.Let and expr.init and expr.init.type == NODE.Function {
+          analyzeFunction(ctx, diagnostics, expr.init)
+          state = analyzeStmt(ctx, diagnostics, expr, state)
+        } else {
+          state = analyzeStmt(ctx, diagnostics, expr, state)
+        }
+      }
+    }
+  } else if ast.type == NODE.Function {
+    analyzeFunction(ctx, diagnostics, ast)
+  }
+}
+
+// ========================================
+// Public API
+// ========================================
+
+fn queryNilCheck(ctx) {
+  if !ctx or !ctx.ast or !ctx.resolvedNames {
+    return []
+  }
+
+  let diagnostics = []
+  analyzeTopLevel(ctx, diagnostics, ctx.ast)
+  diagnostics
+}
+
+queryNilCheck

@@ -1061,4 +1061,69 @@ test("query - hover shows undefined binding kind for unknown vars", fn(assert) {
   assert.truthy(hoverResult.contents.symbol.isUndefined, "Should mark as undefined")
 })
 
+// ========================================
+// Duplicate Function Name Tests
+// ========================================
+
+test("query - duplicate function names should report error without crashing", fn(assert) {
+  let source = "fn foo() { 1 }\nfn foo() { 2 }"
+  let result = compileAndQuery(source, "test.lx")
+
+  // Should fail with duplicate declaration error
+  assert.equal(result.success, false, "Should fail with duplicate function declaration")
+
+  let diags = query.queryDiagnostics(result)
+  assert.truthy(len(diags) > 0, "Should have diagnostics for duplicate function")
+
+  // Check that the diagnostic mentions duplicate or already declared
+  let foundDup = false
+  for let i = 0; i < len(diags); i = i + 1 {
+    let d = diags[i]
+    if d.message and (len(split(d.message, "duplicate")) > 1 or len(split(d.message, "Duplicate")) > 1 or len(split(d.message, "already")) > 1) {
+      foundDup = true
+      assert.equal(d.filename, "test.lx", "Duplicate diagnostic should have correct filename")
+      assert.equal(d.line, 2, "Duplicate diagnostic should point to second function declaration")
+    }
+  }
+  assert.truthy(foundDup, "Should find duplicate function declaration diagnostic")
+})
+
+test("query - multiple duplicate function names", fn(assert) {
+  let source = "fn bar() { 1 }\nfn bar() { 2 }\nfn bar() { 3 }"
+  let result = compileAndQuery(source, "test.lx")
+
+  // Should fail with duplicate declaration errors
+  assert.equal(result.success, false, "Should fail with multiple duplicate function declarations")
+
+  let diags = query.queryDiagnostics(result)
+  assert.truthy(len(diags) >= 2, "Should have at least 2 diagnostics for multiple duplicates")
+})
+
+test("query - duplicate function names in block", fn(assert) {
+  let source = "{\n  fn helper() { 1 }\n  fn helper() { 2 }\n}"
+  let result = compileAndQuery(source, "test.lx")
+
+  // Should fail with duplicate declaration error
+  assert.equal(result.success, false, "Should fail with duplicate function in block")
+
+  let diags = query.queryDiagnostics(result)
+  assert.truthy(len(diags) > 0, "Should have diagnostics for duplicate function in block")
+})
+
+test("query - duplicate function names should not crash hover", fn(assert) {
+  let source = "fn baz() { 1 }\nfn baz() { 2 }\nbaz()"
+  let result = compileAndQuery(source, "test.lx")
+
+  // Should fail compilation but not crash
+  assert.equal(result.success, false, "Should fail with duplicate function")
+
+  // Hovering on the call should not crash even though compilation failed
+  // This tests that the query system handles broken ASTs gracefully
+  if result.ctx {
+    let hoverResult = query.queryHover(result.ctx, "test.lx", 3, 0)
+    // Hover might fail or succeed, but should not crash
+    assert.truthy(hoverResult.kind == "hover", "Hover should return result without crashing")
+  }
+})
+
 suite.run()

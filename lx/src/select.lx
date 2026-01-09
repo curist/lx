@@ -159,9 +159,12 @@ fn selectLogicalOrCoalesceConst(gen, node) {
 // 1) ADD_LOCAL_IMM pattern:
 //    .{ kind: "ADD_LOCAL_IMM", targetId: <Identifier node>, imm: <0..255> }
 //
+// 2) BINOP_LOCALS pattern (general x = y op z):
+//    .{ kind: "BINOP_LOCALS", operator: "+"|"-"|"*"|"/", targetId, lhsId, rhsId }
+//
 // Codegen will:
 // - resolve target binding -> absolute slot
-// - emit OP.ADD_LOCAL_IMM slot imm
+// - emit OP.{ADD,SUB,MUL,DIV}_LOCALS dest lhs rhs
 // - if STMT mode, emit POP
 //
 // NOTE: This only recognizes the structural pattern; codegen enforces binding kind.
@@ -174,25 +177,58 @@ fn selectAssignmentSuper(gen, node, mode) {
   if !value or value.type != NODE.Binary { return nil }
 
   let binOp = value.operator and value.operator.lexeme or ""
-  if binOp != "+" { return nil }
 
-  // target: i
-  // value: (i + <imm>)
-  if !value.left or value.left.type != NODE.Identifier { return nil }
-  if !value.right or value.right.type != NODE.Number { return nil }
-
-  // same identifier name
-  if value.left.name != node.target.name { return nil }
-
-  let imm = value.right.value
-  if imm < 0 or imm >= 256 { return nil }
-  if Math.floor(imm) != imm { return nil }
-
-  .{
-    kind: "ADD_LOCAL_IMM",
-    targetId: node.target.id,
-    imm: Math.floor(imm),
+  // Try ADD_LOCAL_IMM pattern first (more specific: i = i + imm)
+  if binOp == "+" {
+    // target: i
+    // value: (i + <imm>)
+    if value.left and value.left.type == NODE.Identifier and
+       value.right and value.right.type == NODE.Number and
+       value.left.name == node.target.name {
+      let imm = value.right.value
+      if imm >= 0 and imm < 256 and Math.floor(imm) == imm {
+        return .{
+          kind: "ADD_LOCAL_IMM",
+          targetId: node.target.id,
+          imm: Math.floor(imm),
+        }
+      }
+    }
   }
+
+  // Try BINOP_LOCALS pattern (general x = y op z where all are identifiers)
+  // Only for numeric operations to avoid issues with string concatenation
+  if binOp == "+" or binOp == "-" or binOp == "*" or binOp == "/" {
+    if !value.left or value.left.type != NODE.Identifier { return nil }
+    if !value.right or value.right.type != NODE.Identifier { return nil }
+
+    // Check if operands are numeric (to avoid string concatenation case for +)
+    let leftCls = classOf(gen, value.left)
+    let rightCls = classOf(gen, value.right)
+
+    // Only emit BINOP_LOCALS if we know both operands are numeric
+    // For +, we need to be sure they're not strings
+    // For -, *, /, they're always numeric operations
+    if binOp == "+" {
+      // For addition, only optimize if we know both are numeric
+      let leftNum = isNumericClass(leftCls)
+      let rightNum = isNumericClass(rightCls)
+      if !leftNum or !rightNum {
+        return nil  // Could be strings, don't optimize
+      }
+    }
+    // For -, *, /, we can assume numeric (they'd error at runtime otherwise)
+
+    return .{
+      kind: "BINOP_LOCALS",
+      operator: binOp,
+      targetId: node.target.id,
+      lhsId: value.left.id,
+      rhsId: value.right.id,
+    }
+  }
+
+  nil
 }
 
 // -----------------------------------------------------------------------------

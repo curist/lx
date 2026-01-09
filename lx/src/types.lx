@@ -161,6 +161,10 @@ let OP = enum {
   STORE_LOCAL,      // SET_LOCAL + POP
   GETI,             // GET_LOCAL×2 + GET_BY_INDEX
   SETI,             // GET_LOCAL×3 + SET_BY_INDEX
+  ADD_LOCALS,       // GET_LOCAL×2 + ADD + SET_LOCAL (dest = lhs + rhs)
+  SUB_LOCALS,       // GET_LOCAL×2 + SUB + SET_LOCAL (dest = lhs - rhs)
+  MUL_LOCALS,       // GET_LOCAL×2 + MUL + SET_LOCAL (dest = lhs * rhs)
+  DIV_LOCALS,       // GET_LOCAL×2 + DIV + SET_LOCAL (dest = lhs / rhs)
 
   // Special/optimization
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy

@@ -760,19 +760,60 @@ fn compileAssignment(gen, node, mode) {
     }
 
     // Try superinstruction first (pure structural match)
-    let plan = select.assignmentSuper(gen, node, mode)
-    if plan and plan.kind == "ADD_LOCAL_IMM" {
-      // Verify it's actually a local (not upvalue/global)
-      if info.kind == "local" {
-        let targetBinding = gen.resolvedNames[node.target.id]
-        let absoluteSlot = computeAbsoluteSlot(gen, targetBinding)
-        emit3(gen, OP.ADD_LOCAL_IMM, localSlot(absoluteSlot), plan.imm, node.line)
-        if mode == MODE.STMT {
-          emitByte(gen, OP.POP, node.line)
+    if let plan = select.assignmentSuper(gen, node, mode) {
+      if plan.kind == "ADD_LOCAL_IMM" {
+        // Verify it's actually a local (not upvalue/global)
+        if info.kind == "local" {
+          let targetBinding = gen.resolvedNames[node.target.id]
+          let absoluteSlot = computeAbsoluteSlot(gen, targetBinding)
+          emit3(gen, OP.ADD_LOCAL_IMM, localSlot(absoluteSlot), plan.imm, node.line)
+          if mode == MODE.STMT {
+            emitByte(gen, OP.POP, node.line)
+          }
+          return
         }
-        return
+        // If not local, fall through to normal path
       }
-      // If not local, fall through to normal path
+      if plan.kind == "BINOP_LOCALS" {
+        // Verify all three are locals
+        let targetBinding = gen.resolvedNames[plan.targetId]
+        let lhsBinding = gen.resolvedNames[plan.lhsId]
+        let rhsBinding = gen.resolvedNames[plan.rhsId]
+
+        if targetBinding and targetBinding.kind == "local" and
+           lhsBinding and lhsBinding.kind == "local" and
+           rhsBinding and rhsBinding.kind == "local" {
+          // Compute absolute slots for all three operands
+          let destSlot = computeAbsoluteSlot(gen, targetBinding)
+          let lhsSlot = computeAbsoluteSlot(gen, lhsBinding)
+          let rhsSlot = computeAbsoluteSlot(gen, rhsBinding)
+
+          // Select opcode based on operator
+          let opcode = nil
+          if plan.operator == "+" {
+            opcode = OP.ADD_LOCALS
+          } else if plan.operator == "-" {
+            opcode = OP.SUB_LOCALS
+          } else if plan.operator == "*" {
+            opcode = OP.MUL_LOCALS
+          } else if plan.operator == "/" {
+            opcode = OP.DIV_LOCALS
+          }
+
+          if opcode {
+            // Emit: OP dest lhs rhs
+            emitByte(gen, opcode, node.line)
+            emitByte(gen, localSlot(destSlot), node.line)
+            emitByte(gen, localSlot(lhsSlot), node.line)
+            emitByte(gen, localSlot(rhsSlot), node.line)
+            if mode == MODE.STMT {
+              emitByte(gen, OP.POP, node.line)
+            }
+            return
+          }
+        }
+        // If not all locals, fall through to normal path
+      }
     }
 
     // Normal path: compile value and emit SET_LOCAL/SET_UPVALUE

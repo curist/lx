@@ -116,6 +116,10 @@ let STACK_MIN = .{
   [OP.STORE_LOCAL]:        1,  // SET_LOCAL + POP: needs value to store
   [OP.GETI]:  0,    // GET_LOCAL×2 + GET_BY_INDEX: reads all from local slots
   [OP.SETI]:  0,    // GET_LOCAL×3 + SET_BY_INDEX: reads all from local slots
+  [OP.ADD_LOCALS]: 0,  // GET_LOCAL×2 + ADD + SET_LOCAL: reads all from local slots
+  [OP.SUB_LOCALS]: 0,  // GET_LOCAL×2 + SUB + SET_LOCAL: reads all from local slots
+  [OP.MUL_LOCALS]: 0,  // GET_LOCAL×2 + MUL + SET_LOCAL: reads all from local slots
+  [OP.DIV_LOCALS]: 0,  // GET_LOCAL×2 + DIV + SET_LOCAL: reads all from local slots
   [OP.GET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_BY_INDEX: reads from local slot
   [OP.SET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX: reads from local slots
 
@@ -216,6 +220,10 @@ let STACK_EFFECTS = .{
   [OP.STORE_LOCAL]:       -1,   // SET_LOCAL + POP: net -1
   [OP.GETI]:  1,     // GET_LOCAL×2 + GET_BY_INDEX: net +1 (2 pushes, GET_BY_INDEX is -1)
   [OP.SETI]:  1,     // GET_LOCAL×3 + SET_BY_INDEX: net +1 (3 pushes, SET_BY_INDEX is -2)
+  [OP.ADD_LOCALS]: 1,     // GET_LOCAL×2 + ADD + SET_LOCAL: net +1 (2 pushes, ADD is -1, SET_LOCAL is 0)
+  [OP.SUB_LOCALS]: 1,     // GET_LOCAL×2 + SUB + SET_LOCAL: net +1
+  [OP.MUL_LOCALS]: 1,     // GET_LOCAL×2 + MUL + SET_LOCAL: net +1
+  [OP.DIV_LOCALS]: 1,     // GET_LOCAL×2 + DIV + SET_LOCAL: net +1
   [OP.GET_PROPERTY]:  1,     // GET_LOCAL + CONSTANT + GET_BY_INDEX: net +1
   [OP.SET_PROPERTY]:  1,     // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX: net +1
 
@@ -229,63 +237,6 @@ let STACK_EFFECTS = .{
   [OP.RETURN]:        0,
 
   // UNWIND: special handling in stackEffect()
-}
-
-fn stackEffect(opcode, operand, operand2) {
-  // Returns: stack delta for this instruction
-  // operand: used for CALL (argCount) and UNWIND (count)
-  // operand2: used for UNWIND (keep)
-  // Returns: nil if opcode is unknown (caller must handle error)
-
-  // Special case: CALL has dynamic effect based on argCount
-  // pop (argCount + 1), push 1 → net effect: -argCount
-  if opcode == OP.CALL {
-    return 0 - operand
-  }
-
-  // Special case: UNWIND has dynamic effect based on count and keep
-  // keep=0: pop count → Δ = -count
-  // keep=1: preserve top, pop count under it → Δ = -count
-  if opcode == OP.UNWIND {
-    return 0 - operand
-  }
-
-  // Lookup in table
-  return STACK_EFFECTS[opcode]
-}
-
-// ========================================
-// Operand Decoding
-// ========================================
-
-fn readByte(code, ip) {
-  // Bytecode now stored as numbers, not hex strings
-  return code[ip]
-}
-
-fn readShort(code, ip) {
-  // Assumes bounds already checked by caller
-  let high = readByte(code, ip)
-  let low = readByte(code, ip + 1)
-  return (high * 256) + low
-}
-
-fn safeReadByte(code, ip, verifier, errorIp) {
-  // Returns: byte value or nil if out of bounds
-  if ip < 0 or ip >= len(code) {
-    addError(verifier, errorIp, "[verify-bytecode] Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
-    return nil
-  }
-  return readByte(code, ip)
-}
-
-fn safeReadShort(code, ip, verifier, errorIp) {
-  // Returns: short value or nil if out of bounds
-  if ip + 1 < 0 or ip + 1 >= len(code) {
-    addError(verifier, errorIp, "[verify-bytecode] Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
-    return nil
-  }
-  return readShort(code, ip)
 }
 
 // Static table of instruction lengths
@@ -368,6 +319,10 @@ let INSTRUCTION_LENGTHS = .{
   [OP.STORE_LOCAL]:        2,  // opcode + slot
   [OP.GETI]:    3,  // opcode + arr_slot + idx_slot
   [OP.SETI]:    4,  // opcode + arr_slot + idx_slot + val_slot
+  [OP.ADD_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
+  [OP.SUB_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
+  [OP.MUL_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
+  [OP.DIV_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
   [OP.GET_PROPERTY]:  3,  // opcode + obj_slot + const_idx
   [OP.SET_PROPERTY]:  4,  // opcode + obj_slot + const_idx + val_slot
 
@@ -376,6 +331,63 @@ let INSTRUCTION_LENGTHS = .{
   [OP.FORLOOP_1]:          6,  // opcode + i_slot + limit_slot + cmp_kind + offset[2]
   [OP.FORPREP]:            7,  // opcode + i_slot + limit_slot + cmp_kind + step + offset[2]
   [OP.FORLOOP]:            7,  // opcode + i_slot + limit_slot + cmp_kind + step + offset[2]
+}
+
+fn stackEffect(opcode, operand, operand2) {
+  // Returns: stack delta for this instruction
+  // operand: used for CALL (argCount) and UNWIND (count)
+  // operand2: used for UNWIND (keep)
+  // Returns: nil if opcode is unknown (caller must handle error)
+
+  // Special case: CALL has dynamic effect based on argCount
+  // pop (argCount + 1), push 1 → net effect: -argCount
+  if opcode == OP.CALL {
+    return 0 - operand
+  }
+
+  // Special case: UNWIND has dynamic effect based on count and keep
+  // keep=0: pop count → Δ = -count
+  // keep=1: preserve top, pop count under it → Δ = -count
+  if opcode == OP.UNWIND {
+    return 0 - operand
+  }
+
+  // Lookup in table
+  return STACK_EFFECTS[opcode]
+}
+
+// ========================================
+// Operand Decoding
+// ========================================
+
+fn readByte(code, ip) {
+  // Bytecode now stored as numbers, not hex strings
+  return code[ip]
+}
+
+fn readShort(code, ip) {
+  // Assumes bounds already checked by caller
+  let high = readByte(code, ip)
+  let low = readByte(code, ip + 1)
+  return (high * 256) + low
+}
+
+fn safeReadByte(code, ip, verifier, errorIp) {
+  // Returns: byte value or nil if out of bounds
+  if ip < 0 or ip >= len(code) {
+    addError(verifier, errorIp, "[verify-bytecode] Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
+    return nil
+  }
+  return readByte(code, ip)
+}
+
+fn safeReadShort(code, ip, verifier, errorIp) {
+  // Returns: short value or nil if out of bounds
+  if ip + 1 < 0 or ip + 1 >= len(code) {
+    addError(verifier, errorIp, "[verify-bytecode] Operand read out of bounds: ip=" + str(ip) + ", code length=" + str(len(code)))
+    return nil
+  }
+  return readShort(code, ip)
 }
 
 fn instructionLength(chunk, ip) {

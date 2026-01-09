@@ -94,6 +94,10 @@ typedef enum {
   OP_STORE_LOCAL,         // SET_LOCAL + POP
   OP_GETI,                // GET_LOCAL×2 + GET_BY_INDEX
   OP_SETI,                // GET_LOCAL×3 + SET_BY_INDEX
+  OP_ADD_LOCALS,          // GET_LOCAL×2 + ADD + SET_LOCAL (dest = lhs + rhs)
+  OP_SUB_LOCALS,          // GET_LOCAL×2 + SUB + SET_LOCAL (dest = lhs - rhs)
+  OP_MUL_LOCALS,          // GET_LOCAL×2 + MUL + SET_LOCAL (dest = lhs * rhs)
+  OP_DIV_LOCALS,          // GET_LOCAL×2 + DIV + SET_LOCAL (dest = lhs / rhs)
 
   // Special/optimization
   OP_COALESCE_CONST,      // Replace TOS with constant if TOS is falsy

@@ -1419,6 +1419,132 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_ADD_LOCALS: {
+        // Superinstruction: GET_LOCAL + GET_LOCAL + ADD + SET_LOCAL
+        // dest = lhs + rhs
+        uint8_t destSlot = READ_BYTE();
+        uint8_t lhsSlot = READ_BYTE();
+        uint8_t rhsSlot = READ_BYTE();
+
+        Value lhs = slots[lhsSlot];
+        Value rhs = slots[rhsSlot];
+        Value result;
+
+        // Optimize for fixnums
+        if (IS_FIXNUM(lhs) && IS_FIXNUM(rhs)) {
+          int64_t a = AS_FIXNUM(lhs);
+          int64_t b = AS_FIXNUM(rhs);
+          int64_t r;
+          if (__builtin_add_overflow(a, b, &r)) {
+            result = NUMBER_VAL((double)a + (double)b);
+          } else {
+            pushInt64AsNumberOrFlonum(r);
+            result = pop();
+          }
+        } else if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
+          result = NUMBER_VAL(AS_NUMBER(lhs) + AS_NUMBER(rhs));
+        } else {
+          runtimeError("ADD_LOCALS operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        slots[destSlot] = result;
+        push(result); // Like SET_LOCAL, leaves value on stack
+        break;
+      }
+
+      case OP_SUB_LOCALS: {
+        // Superinstruction: GET_LOCAL + GET_LOCAL + SUB + SET_LOCAL
+        // dest = lhs - rhs
+        uint8_t destSlot = READ_BYTE();
+        uint8_t lhsSlot = READ_BYTE();
+        uint8_t rhsSlot = READ_BYTE();
+
+        Value lhs = slots[lhsSlot];
+        Value rhs = slots[rhsSlot];
+        Value result;
+
+        // Optimize for fixnums
+        if (IS_FIXNUM(lhs) && IS_FIXNUM(rhs)) {
+          int64_t a = AS_FIXNUM(lhs);
+          int64_t b = AS_FIXNUM(rhs);
+          int64_t r;
+          if (__builtin_sub_overflow(a, b, &r)) {
+            result = NUMBER_VAL((double)a - (double)b);
+          } else {
+            pushInt64AsNumberOrFlonum(r);
+            result = pop();
+          }
+        } else if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
+          result = NUMBER_VAL(AS_NUMBER(lhs) - AS_NUMBER(rhs));
+        } else {
+          runtimeError("SUB_LOCALS operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        slots[destSlot] = result;
+        push(result); // Like SET_LOCAL, leaves value on stack
+        break;
+      }
+
+      case OP_MUL_LOCALS: {
+        // Superinstruction: GET_LOCAL + GET_LOCAL + MUL + SET_LOCAL
+        // dest = lhs * rhs
+        uint8_t destSlot = READ_BYTE();
+        uint8_t lhsSlot = READ_BYTE();
+        uint8_t rhsSlot = READ_BYTE();
+
+        Value lhs = slots[lhsSlot];
+        Value rhs = slots[rhsSlot];
+        Value result;
+
+        // Optimize for fixnums
+        if (IS_FIXNUM(lhs) && IS_FIXNUM(rhs)) {
+          int64_t a = AS_FIXNUM(lhs);
+          int64_t b = AS_FIXNUM(rhs);
+          int64_t r;
+          if (__builtin_mul_overflow(a, b, &r)) {
+            result = NUMBER_VAL((double)a * (double)b);
+          } else {
+            pushInt64AsNumberOrFlonum(r);
+            result = pop();
+          }
+        } else if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
+          result = NUMBER_VAL(AS_NUMBER(lhs) * AS_NUMBER(rhs));
+        } else {
+          runtimeError("MUL_LOCALS operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        slots[destSlot] = result;
+        push(result); // Like SET_LOCAL, leaves value on stack
+        break;
+      }
+
+      case OP_DIV_LOCALS: {
+        // Superinstruction: GET_LOCAL + GET_LOCAL + DIV + SET_LOCAL
+        // dest = lhs / rhs
+        uint8_t destSlot = READ_BYTE();
+        uint8_t lhsSlot = READ_BYTE();
+        uint8_t rhsSlot = READ_BYTE();
+
+        Value lhs = slots[lhsSlot];
+        Value rhs = slots[rhsSlot];
+        Value result;
+
+        // Division always produces floating point result in lx
+        if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
+          result = NUMBER_VAL(AS_NUMBER(lhs) / AS_NUMBER(rhs));
+        } else {
+          runtimeError("DIV_LOCALS operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        slots[destSlot] = result;
+        push(result); // Like SET_LOCAL, leaves value on stack
+        break;
+      }
+
       case OP_GET_PROPERTY: {
         // Superinstruction: GET_LOCAL + CONSTANT + GET_BY_INDEX
         uint8_t objSlot = READ_BYTE();

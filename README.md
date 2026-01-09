@@ -21,21 +21,24 @@ Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived pr
 
 ```sh
 ❯ lx version
-lx version 2025.12.26-ea09e35 (Darwin)
+lx version 2026.01.09-6b8cd78 (Darwin)
 
 ❯ lx
 Usage:
 
   lx <command> [arguments]
 
-The commands are:
-  run          Run source or lxobj
-  eval         Evaluate expression
-  repl         Start REPL
-  compile      Compile source to lxobj (-o/--output <output>)
-  disasm       Disassemble lxobj or lx source
-  version      Print version
-  help         Print this helpful page
+Commands:
+  run      Run source or lxobj
+  eval     Evaluate expression (arg or stdin)
+  repl     Start REPL (use :q to quit)
+  compile  Compile source to lxobj (-o/--output <output>)
+  disasm   Disassemble lxobj or lx source
+  ast      Dump AST with metadata at different compilation stages (debug)
+  check    Typecheck an entry module (dev)
+  lsp      Start LSP server on stdio
+  version  Print version
+  help     Print this helpful page
 ```
 
 # Lx in Y minutes

@@ -8,17 +8,11 @@
 // - `lx/services/builtins_docs_data.lx` (checked into repo, embedded into lxlx bytecode)
 
 fn readFile(path) {
-  if Lx and Lx.fs and Lx.fs.readFile {
-    return Lx.fs.readFile(path)
-  }
-  slurp(path)
+  Lx.fs.readFile(path)
 }
 
 fn writeFile(path, content) {
-  if Lx and Lx.fs and Lx.fs.writeFile {
-    return Lx.fs.writeFile(path, content)
-  }
-  spit(path, content)
+  Lx.fs.writeFile(path, content)
 }
 
 fn stringLess(a, b) {
@@ -36,15 +30,6 @@ fn stringLess(a, b) {
     if ca > cb { return false }
   }
   alen < blen
-}
-
-fn startsWith(s, prefix) {
-  if !s or !prefix { return false }
-  if len(prefix) > len(s) { return false }
-  for let i = 0; i < len(prefix); i = i + 1 {
-    if s[i] != prefix[i] { return false }
-  }
-  true
 }
 
 fn trimSpaces(s) {

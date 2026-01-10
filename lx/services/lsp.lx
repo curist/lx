@@ -20,15 +20,6 @@ fn stringLess(a, b) {
   alen < blen
 }
 
-fn startsWith(s, prefix) {
-  if !s or !prefix { return false }
-  if len(prefix) > len(s) { return false }
-  for let i = 0; i < len(prefix); i = i + 1 {
-    if s[i] != prefix[i] { return false }
-  }
-  true
-}
-
 fn sliceFrom(s, start) {
   if !s { return s }
   let n = len(s)

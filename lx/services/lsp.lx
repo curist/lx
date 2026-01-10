@@ -274,6 +274,12 @@ fn runWarmupSlice(state) {
   runWarmupStep(state)
 }
 
+fn isStaticModule(state, path) {
+  // Static modules are generated data that shouldn't be invalidated during editing
+  if !path or !state or !state.staticModulePaths { return false }
+  state.staticModulePaths[path] == true
+}
+
 fn invalidateSingle(state, path) {
   // Invalidate just this single file (not its dependents).
   //
@@ -281,6 +287,9 @@ fn invalidateSingle(state, path) {
   // recompiled (via updateDepGraphFromDriver/updateGraphForModule). This keeps
   // invalidation fast on keystroke-level changes.
   if !path { return }
+
+  // Skip invalidation for static modules
+  if isStaticModule(state, path) { return }
 
   // Drop compiled module cache entry (forces driver to reload from openDocs)
   if state.driver and state.driver.cache and state.driver.cache[path] {
@@ -318,6 +327,9 @@ fn invalidate(state, path) {
   let ks = keys(seen)
   for let i = 0; i < len(ks); i = i + 1 {
     let p = ks[i]
+
+    // Skip invalidation for static modules
+    if isStaticModule(state, p) { continue }
 
     // Remove outgoing edges p -> dep
     let deps = state.deps and state.deps[p] or nil
@@ -1026,6 +1038,7 @@ fn serve() {
     resolver: nil,
     pendingCompile: .{},
     debounceMs: 100,
+    staticModulePaths: .{},
   }
 
   // If supported, disable stdio buffering so `Lx.stdin.poll()` and the
@@ -1274,6 +1287,20 @@ fn serve() {
       Lx.exit(state.shutdown and 0 or 1)
     }
     if method == "initialized" {
+      // Pre-warm static modules (generated data that doesn't change during editing)
+      if state.resolver and state.driver {
+        let staticModules = ["services/builtins_docs_data.lx"]
+        for let i = 0; i < len(staticModules); i = i + 1 {
+          let modulePath = staticModules[i]
+          let resolved = state.resolver.resolve(modulePath)
+          if resolved {
+            // Record the canonical resolved path as static
+            state.staticModulePaths[resolved] = true
+            // Pre-compile the static module immediately
+            state.driver.compileModule(resolved)
+          }
+        }
+      }
       warmupTick()
       continue
     }

@@ -266,7 +266,7 @@ fn findImportByPathNode(ctx, pathNode) {
 // Node Selection
 // ========================================
 
-fn contains(n, line, col) {
+fn spanContains(n, line, col) {
   if line < n.line or line > n.endLine {
     return false
   }
@@ -303,7 +303,7 @@ fn nodeAtPos(ctx, filename, line, col) {
     if !n or n.filename != filename {
       return
     }
-    if !contains(n, line, col) {
+    if !spanContains(n, line, col) {
       return
     }
 
@@ -340,7 +340,7 @@ fn nodeAtPosWithTies(ctx, filename, line, col) {
     if !n or n.filename != filename {
       return
     }
-    if !contains(n, line, col) {
+    if !spanContains(n, line, col) {
       return
     }
 
@@ -1175,11 +1175,11 @@ fn queryHover(ctx, filename, line, col) {
   }
   // If we landed on a Let node but the cursor is within the name span,
   // prefer the identifier (some resolvers omit name nodes from the index).
-  if n and n.type == NODE.Let and n.name and contains(n.name, line, col) {
+  if n and n.type == NODE.Let and n.name and spanContains(n.name, line, col) {
     n = n.name
   }
   // If cursor is on a named function's identifier, prefer the name node.
-  if n and n.type == NODE.Function and n.name and contains(n.name, line, col) {
+  if n and n.type == NODE.Function and n.name and spanContains(n.name, line, col) {
     n = n.name
   }
   if !n {
@@ -1928,6 +1928,8 @@ fn completeIdentifiers(ctx, filename, line, col) {
   let fileDecls = index.declarationsByFile[filename] or []
   for let i = 0; i < len(fileDecls); i = i + 1 {
     let decl = fileDecls[i]
+    // Skip internal identifiers (ANF-generated names like $anf.1)
+    if startsWith(decl.name, "$") { continue }
     if !seen[decl.name] {
       seen[decl.name] = true
       // Get type info if available
@@ -1948,6 +1950,8 @@ fn completeIdentifiers(ctx, filename, line, col) {
     let decls = index.declarationsByFile[fname]
     for let j = 0; j < len(decls); j = j + 1 {
       let decl = decls[j]
+      // Skip internal identifiers (ANF-generated names like $anf.1)
+      if startsWith(decl.name, "$") { continue }
       if !seen[decl.name] {
         seen[decl.name] = true
         // Only include top-level declarations from other files
@@ -1969,10 +1973,32 @@ fn completeIdentifiers(ctx, filename, line, col) {
     let name = builtinNames[i]
     if !seen[name] {
       seen[name] = true
-      push(completions, .{
+      let doc = getBuiltinDoc(name)
+
+      // Detect kind: namespaces have signatures without parentheses
+      let kind = "function"
+      if doc and doc.signature {
+        // If signature doesn't contain '(', it's likely a namespace or constant
+        if !contains(doc.signature, "(") {
+          // Check if it's described as a namespace
+          if doc.description and contains(doc.description, "namespace") {
+            kind = "module"
+          } else {
+            kind = "constant"
+          }
+        }
+      }
+
+      let completion = .{
         label: name,
-        kind: "function",
-      })
+        kind: kind,
+      }
+      if doc {
+        completion.documentation = doc.markdown
+        completion.signature = doc.signature
+        completion.description = doc.description
+      }
+      push(completions, completion)
     }
   }
 

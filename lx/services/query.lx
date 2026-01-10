@@ -1480,8 +1480,25 @@ fn queryDiagnostics(result) {
   }
 
   // Run nil-check analysis if we have a valid context with resolve info
-  if ctx and ctx.ast and ctx.resolvedNames {
-    let nilCheckDiags = queryNilCheck(ctx)
+  let nilCheckCtx = ctx
+  if !nilCheckCtx and passes.resolve and passes.resolve.success {
+    // Build minimal ctx from passes
+    let ast = (passes.lower and passes.lower.ast) or (passes.parse and passes.parse.ast)
+    if ast {
+      let nodes = passes.resolve.nodes or .{}
+      // Merge in AST nodes for completeness (like typecheck does above)
+      collectAllNodes(ast, nodes)
+      nilCheckCtx = .{
+        ast: ast,
+        resolvedNames: passes.resolve.resolvedNames,
+        nodes: nodes,
+        moduleAsts: (ctx and ctx.moduleAsts) or .{},
+      }
+    }
+  }
+
+  if nilCheckCtx and nilCheckCtx.ast and nilCheckCtx.resolvedNames {
+    let nilCheckDiags = queryNilCheck(nilCheckCtx)
     if nilCheckDiags {
       for let i = 0; i < len(nilCheckDiags); i = i + 1 {
         push(diags, nilCheckDiags[i])

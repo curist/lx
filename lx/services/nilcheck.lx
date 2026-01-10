@@ -35,6 +35,166 @@ fn normalizeOperator(op) {
   op.lexeme or op
 }
 
+fn declKeyFromBinding(binding) {
+  if !binding { return nil }
+  binding.declaredAtKey or binding.declaredAt
+}
+
+fn hoistedFuncDeclKey(ctx, funcNode) {
+  if !funcNode or funcNode.type != NODE.Function { return nil }
+  if !funcNode.name or funcNode.name.type != NODE.Identifier { return nil }
+
+  let binding = ctx.resolvedNames and ctx.resolvedNames[nodeKeyFor(ctx, funcNode.name)]
+  if binding {
+    return binding.declaredAtKey or binding.declaredAt or nodeKeyFor(ctx, funcNode.name)
+  }
+
+  nodeKeyFor(ctx, funcNode.name)
+}
+
+fn propNameFromNode(n) {
+  if !n { return nil }
+  if n.type == NODE.Identifier { return n.name }
+  if n.type == NODE.String { return n.value }
+  nil
+}
+
+fn lastExprFromAst(ast) {
+  if ast and ast.expressions and len(ast.expressions) > 0 {
+    return ast.expressions[len(ast.expressions) - 1]
+  }
+  if ast and ast.body and len(ast.body) > 0 {
+    return ast.body[len(ast.body) - 1]
+  }
+  nil
+}
+
+fn findRecordField(recordNode, fieldName) {
+  if !recordNode or recordNode.type != NODE.Hashmap or !recordNode.pairs {
+    return nil
+  }
+
+  // Optional: lazy index like query.lx (recommended for performance)
+  if !recordNode._fieldIndex {
+    recordNode._fieldIndex = .{}
+    for let i = 0; i < len(recordNode.pairs); i = i + 1 {
+      let pair = recordNode.pairs[i]
+      let key = pair and pair.key
+      if key and key.type == NODE.String and key.value {
+        recordNode._fieldIndex[key.value] = .{ key, value: pair.value }
+      }
+    }
+  }
+
+  recordNode._fieldIndex[fieldName]
+}
+
+fn resolveExprToRecord(ctx, expr, seen) {
+  if !expr { return nil }
+
+  if expr.id and seen and seen[expr.id] { return nil }
+  if expr.id and seen { seen[expr.id] = true }
+
+  // direct record literal
+  if expr.type == NODE.Hashmap {
+    return expr
+  }
+
+  // block: last expression
+  if expr.type == NODE.Block {
+    let last = lastExprFromAst(expr)
+    return resolveExprToRecord(ctx, last, seen)
+  }
+
+  // grouping if you have it in your AST
+  if expr.type == NODE.Grouping {
+    return resolveExprToRecord(ctx, expr.expression, seen)
+  }
+
+  // identifier: chase let init
+  if expr.type == NODE.Identifier {
+    let binding = ctx.resolvedNames[nodeKeyFor(ctx, expr)]
+    if !binding { return nil }
+
+    let declKey = binding.declaredAtKey or binding.declaredAt
+    if !declKey { return nil }
+
+    let declNode = ctx.nodes and ctx.nodes[declKey] or nil
+    if !declNode { return nil }
+
+    // In your query implementation, you locate Let via findLetByNameNode.
+    // Nilcheck can simply accept that declNode itself might be the Identifier,
+    // and the actual Let is "nearby". But easiest is:
+    // - If resolver.declaredAt points to the Let name Identifier, get the Let from ctx.nodes mapping if it exists.
+    // If your resolver has a direct mapping, use it. Otherwise, you can:
+    // - check if declNode.parentLetId exists (if you track it)
+    // - or add a tiny index like query's letsByNameSpan (best long-term)
+    //
+    // For now, assume declaredAt points to the Identifier node, and that node has ._letId or .letId if you attached it.
+    // If you don't, the robust way is to build an index once (see "Recommended indexing" below).
+    let letNode = findLetForDecl(ctx, declKey)
+    if !letNode or !letNode.init { return nil }
+
+    // Import: resolve to module's return value (last expression)
+    if letNode.init.type == NODE.Import and letNode.init.path and letNode.init.path.value {
+      let modulePath = letNode.init.path.value
+      let moduleAst = ctx.moduleAsts and ctx.moduleAsts[modulePath]
+      let moduleReturn = moduleAst and lastExprFromAst(moduleAst)
+      if moduleReturn {
+        return resolveExprToRecord(ctx, moduleReturn, seen)
+      }
+      return nil
+    }
+
+    return resolveExprToRecord(ctx, letNode.init, seen)
+  }
+
+  // dot: base record -> field value
+  if expr.type == NODE.Dot {
+    let prop = propNameFromNode(expr.property)
+    if !prop { return nil }
+
+    let base = resolveExprToRecord(ctx, expr.object, seen)
+    if !base { return nil }
+
+    let field = findRecordField(base, prop)
+    if field and field.value {
+      return resolveExprToRecord(ctx, field.value, seen)
+    }
+  }
+
+  nil
+}
+
+fn ensureNilcheckIndex(ctx) {
+  if ctx._nilcheckIndex { return }
+  let index = .{ letByNameKey: .{} }
+
+  let ids = keys(ctx.nodes or .{})
+  for let i = 0; i < len(ids); i = i + 1 {
+    let n = ctx.nodes[ids[i]]
+    if n and n.type == NODE.Let and n.name and n.name.type == NODE.Identifier {
+      // Use nodeKeyFor so it works for composite or raw
+      index.letByNameKey[nodeKeyFor(ctx, n.name)] = n
+    }
+  }
+
+  ctx._nilcheckIndex = index
+}
+
+fn findLetForDecl(ctx, declKey) {
+  ensureNilcheckIndex(ctx)
+  // First try name-id lookup:
+  let letNode = ctx._nilcheckIndex.letByNameKey[declKey]
+  if letNode { return letNode }
+
+  // Fallback: if declaredAt points to a Let node key directly:
+  let n = ctx.nodes and ctx.nodes[declKey]
+  if n and n.type == NODE.Let { return n }
+
+  nil
+}
+
 // ========================================
 // Type Helpers
 // ========================================
@@ -141,7 +301,7 @@ fn getDeclNodeId(ctx, identNode) {
   if !binding { return nil }
 
   if binding.kind == "local" or binding.kind == "upvalue" {
-    return binding.declaredAt
+    return binding.declaredAtKey or binding.declaredAt
   }
 
   nil
@@ -155,8 +315,11 @@ fn isFunctionBinding(ctx, identNode) {
   let binding = ctx.resolvedNames[nodeKeyFor(ctx, identNode)]
   if !binding { return false }
 
-  // Builtins are functions and never nil
-  if binding.kind == "builtin" {
+  if binding.kind == "builtin" { return true }
+
+  // If declaration node exists and is a Function, treat as callable/non-nil
+  let declKey = binding.declaredAtKey or binding.declaredAt
+  if declKey and ctx.nodes and ctx.nodes[declKey] and ctx.nodes[declKey].type == NODE.Function {
     return true
   }
 
@@ -181,8 +344,7 @@ fn isExprDefinitelyNonNil(ctx, expr, state) {
       return true
     }
 
-    let declNodeId = getDeclNodeId(ctx, expr)
-    if declNodeId {
+    if let declNodeId = getDeclNodeId(ctx, expr) {
       return isDefinitelyNonNil(state, declNodeId)
     }
   }
@@ -195,6 +357,30 @@ fn isExprDefinitelyNonNil(ctx, expr, state) {
     }
     return false
   }
+
+  // Dot expression: if it resolves through record/enum namespace to something,
+  // treat as non-nil (conservative: require field exists and resolves).
+  if expr.type == NODE.Dot {
+    let prop = propNameFromNode(expr.property)
+    if prop {
+      let rec = resolveExprToRecord(ctx, expr.object, .{})
+      if rec {
+        let field = findRecordField(rec, prop)
+        if field and field.value {
+          // if you want strictness, recurse to ensure the member is non-nil
+          if isExprDefinitelyNonNil(ctx, field.value, state) {
+            return true
+          }
+          // or looser: member exists => treat as non-nil (common for enums)
+          // return true
+        }
+      }
+    }
+  }
+
+  // If an expression resolves to a record namespace, it's non-nil.
+  let rec = resolveExprToRecord(ctx, expr, .{})
+  if rec { return true }
 
   false
 }
@@ -228,10 +414,10 @@ fn analyzeExpr(ctx, diagnostics, node, state) {
   }
 
   if t == NODE.Hashmap {
-    if node.entries {
-      for entry in node.entries {
-        if entry and entry.value {
-          state = analyzeExpr(ctx, diagnostics, entry.value, state)
+    if node.pairs {
+      for pair in node.pairs {
+        if pair and pair.value {
+          state = analyzeExpr(ctx, diagnostics, pair.value, state)
         }
       }
     }
@@ -356,8 +542,7 @@ fn analyzeExpr(ctx, diagnostics, node, state) {
     if node.condition {
       if node.condition.type == NODE.Identifier {
         // if x { ... } - x is non-nil in then branch
-        let declNodeId = getDeclNodeId(ctx, node.condition)
-        if declNodeId {
+        if let declNodeId = getDeclNodeId(ctx, node.condition) {
           setNonNil(thenState, declNodeId, true)
         }
       } else if node.condition.type == NODE.Binary {
@@ -369,13 +554,11 @@ fn analyzeExpr(ctx, diagnostics, node, state) {
           let right = node.condition.right
 
           if left and left.type == NODE.Identifier and isNilLiteral(right) {
-            let declNodeId = getDeclNodeId(ctx, left)
-            if declNodeId {
+            if let declNodeId = getDeclNodeId(ctx, left) {
               setNonNil(thenState, declNodeId, true)
             }
           } else if right and right.type == NODE.Identifier and isNilLiteral(left) {
-            let declNodeId = getDeclNodeId(ctx, right)
-            if declNodeId {
+            if let declNodeId = getDeclNodeId(ctx, right) {
               setNonNil(thenState, declNodeId, true)
             }
           }
@@ -506,7 +689,7 @@ fn analyzeStmt(ctx, diagnostics, node, state) {
       state = analyzeExpr(ctx, diagnostics, node.init, state)
 
       if node.name and node.name.type == NODE.Identifier {
-        let declNodeId = node.name.id
+        let declNodeId = nodeKeyFor(ctx, node.name)
 
         if isNonNilLiteral(node.init) {
           setNonNil(state, declNodeId, true)
@@ -549,8 +732,7 @@ fn analyzeStmt(ctx, diagnostics, node, state) {
     }
 
     if node.target and node.target.type == NODE.Identifier {
-      let declNodeId = getDeclNodeId(ctx, node.target)
-      if declNodeId {
+      if let declNodeId = getDeclNodeId(ctx, node.target) {
         markAssignedInLoop(state, declNodeId)
 
         if isNonNilLiteral(node.value) {
@@ -612,7 +794,8 @@ fn analyzeFunction(ctx, diagnostics, funcNode) {
   if funcNode.body and funcNode.body.type == NODE.Block and funcNode.body.expressions {
     for expr in funcNode.body.expressions {
       if expr.type == NODE.Function and expr.name and expr.name.type == NODE.Identifier {
-        setNonNil(state, expr.id, true)
+        let k = hoistedFuncDeclKey(ctx, expr)
+        setNonNil(state, k, true)
       }
     }
   }
@@ -632,7 +815,8 @@ fn analyzeTopLevel(ctx, diagnostics, ast) {
     if ast.expressions {
       for expr in ast.expressions {
         if expr.type == NODE.Function and expr.name and expr.name.type == NODE.Identifier {
-          setNonNil(state, expr.id, true)
+          let k = hoistedFuncDeclKey(ctx, expr)
+          setNonNil(state, k, true)
         }
       }
     }

@@ -913,7 +913,7 @@ fn handleHover(state, msg) {
     push(lines, header)
   }
   let ty = r.contents and r.contents.type or nil
-  if ty {
+  if ty and ty != "Unknown" {
     push(lines, "`" + ty + "`")
   }
   let prop = r.contents and r.contents.property or nil

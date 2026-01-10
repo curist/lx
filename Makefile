@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := build
 
+LX ?= lx
 GITHASH = $(shell git rev-parse --short HEAD)
 ARCH = $(shell uname)
 DATE = $(shell date "+%Y.%m.%d")
@@ -23,7 +24,13 @@ LX_LX_SOURCES := $(shell find lx \
 include/lx:
 	@mkdir -p include/lx
 
-include/lx/lxlx.h: $(LX_LX_SOURCES) API.md include/native_fn.h scripts/gen-builtin-docs.lx include/chunk.h | include/lx
+# Generate bundled builtin hover docs data
+lx/scripts/builtins_docs_data.lx: API.md include/native_fn.h lx/globals.lx scripts/gen-builtin-docs.lx
+	@echo "Generating builtin docs data..."
+	$(LX) run scripts/gen-builtin-docs.lx
+	@echo "Done\n"
+
+include/lx/lxlx.h: $(LX_LX_SOURCES) builtindocs include/chunk.h | include/lx
 	./scripts/build-lxlx.sh
 
 include/lx/lxglobals.h: $(LX_LX_SOURCES) include/chunk.h | include/lx
@@ -32,6 +39,8 @@ include/lx/lxglobals.h: $(LX_LX_SOURCES) include/chunk.h | include/lx
 lxlx: include/lx/lxlx.h
 
 lxglobals: include/lx/lxglobals.h
+
+builtindocs: lx/scripts/builtins_docs_data.lx
 
 lxversion:
 	@echo "const char* LX_VERSION = \"$(DATE)-$(GITHASH) ($(ARCH))\";" > include/lx/lxversion.h

@@ -1,4 +1,4 @@
-let data = import "services/builtins_docs_data.lx"
+let data = import "scripts/builtins_docs_data.lx"
 
 // Data is now loaded directly as proper lx data structures.
 // No parsing needed - just use the hashmaps directly.

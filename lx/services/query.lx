@@ -6,7 +6,7 @@
 // Read-only: no inference, no unification, just table lookups + span selection.
 
 let types = import "src/types.lx"
-let builtinsData = import "services/builtins_docs_data.lx"
+let builtinsData = import "scripts/builtins_docs_data.lx"
 let queryNilCheck = import "services/nilcheck.lx"
 
 let NODE = types.NODE

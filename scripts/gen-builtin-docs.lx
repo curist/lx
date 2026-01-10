@@ -5,7 +5,7 @@
 // - `include/native_fn.h` for builtin names that exist (undocumented placeholders)
 //
 // Output:
-// - `lx/services/builtins_docs_data.lx` (checked into repo, embedded into lxlx bytecode)
+// - `lx/scripts/builtins_docs_data.lx` (checked into repo, embedded into lxlx bytecode)
 
 fn readFile(path) {
   Lx.fs.readFile(path)
@@ -366,7 +366,7 @@ fn writeBuiltinsDocs(docs, nativeNames, preludeNames) {
   push(out, "}")
   push(out, "")
 
-  writeFile("lx/services/builtins_docs_data.lx", join(out, "\n"))
+  writeFile("lx/scripts/builtins_docs_data.lx", join(out, "\n"))
 }
 
 fn main() {

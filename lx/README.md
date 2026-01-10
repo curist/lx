@@ -42,6 +42,4 @@ Native builtins are documented in `../API.md` (this is the source of truth for e
 - `each(arr: array, cb: fn(x, i, arr, abort)) -> nil` Iterate; call `abort()` to stop early.
 - `fold(arr: array, acc, cb: fn(acc, x, i, abort) -> acc) -> any` Left fold.
 - Prefer `collect` expressions for mapping/filtering arrays.
-- `max(a, b) -> any` Maximum of two values.
-- `min(a, b) -> any` Minimum of two values.
 - `sort(arr: array, less: fn(a, b) -> bool) -> array` Stable-ish merge sort returning a new array.

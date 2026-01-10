@@ -10,9 +10,6 @@ fn fold(arr, acc, cb) {
   acc
 }
 
-fn max(a, b) { if a > b { a } else { b } }
-fn min(a, b) { if a < b { a } else { b } }
-
 fn sort(arr, compare) {
   // Merge sort (avoid quicksort recursion worst-case stack overflow).
   let length = len(arr)
@@ -50,7 +47,5 @@ return .{
   last,
   each,
   fold,
-  max,
-  min,
   sort,
 }

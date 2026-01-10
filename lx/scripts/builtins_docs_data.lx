@@ -358,6 +358,20 @@ let DOCS = .{
     markdown: "`Math.floor(n: number) -> number`\nFloor (round down) to an integer.",
     source: "API.md",
   },
+  ["Math.max"]: .{
+    name: "Math.max",
+    signature: "Math.max(...values: number) -> number",
+    description: "Returns the maximum value from the arguments.",
+    markdown: "`Math.max(...values: number) -> number`\nReturns the maximum value from the arguments.",
+    source: "API.md",
+  },
+  ["Math.min"]: .{
+    name: "Math.min",
+    signature: "Math.min(...values: number) -> number",
+    description: "Returns the minimum value from the arguments.",
+    markdown: "`Math.min(...values: number) -> number`\nReturns the minimum value from the arguments.",
+    source: "API.md",
+  },
   ["Math.random"]: .{
     name: "Math.random",
     signature: "Math.random() -> number",
@@ -597,6 +611,8 @@ let NATIVE_NAMES = .{
   ["Lx.zlib.inflate"]: true,
   ["Math"]: true,
   ["Math.floor"]: true,
+  ["Math.max"]: true,
+  ["Math.min"]: true,
   ["Math.random"]: true,
   ["Math.sqrt"]: true,
   ["chr"]: true,
@@ -630,8 +646,6 @@ let PRELUDE_NAMES = .{
   ["first"]: true,
   ["fold"]: true,
   ["last"]: true,
-  ["max"]: true,
-  ["min"]: true,
   ["sort"]: true,
 }
 

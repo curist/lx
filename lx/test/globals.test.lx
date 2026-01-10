@@ -59,13 +59,15 @@ test("Date.format optional format", fn(assert) {
 })
 
 test("min/max", fn(assert) {
-  assert.equal(min(1, 2), 1)
-  assert.equal(min(2, 2), 2)
-  assert.equal(min(2, 1), 1)
+  assert.equal(Math.min(1, 2), 1)
+  assert.equal(Math.min(2, 2), 2)
+  assert.equal(Math.min(2, 1), 1)
+  assert.equal(Math.min(5, 3, 7, 1, 9), 1)
 
-  assert.equal(max(1, 2), 2)
-  assert.equal(max(2, 2), 2)
-  assert.equal(max(2, 1), 2)
+  assert.equal(Math.max(1, 2), 2)
+  assert.equal(Math.max(2, 2), 2)
+  assert.equal(Math.max(2, 1), 2)
+  assert.equal(Math.max(5, 3, 7, 1, 9), 9)
 })
 
 test("sort", fn(assert) {

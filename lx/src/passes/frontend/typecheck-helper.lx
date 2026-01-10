@@ -73,9 +73,9 @@ fn scc(nodes, edgesFor) {
     for w in neighbors {
       if indexBy[w] == nil {
         strongConnect(w)
-        lowBy[v] = min(lowBy[v], lowBy[w])
+        lowBy[v] = Math.min(lowBy[v], lowBy[w])
       } else if onStack[w] {
-        lowBy[v] = min(lowBy[v], indexBy[w])
+        lowBy[v] = Math.min(lowBy[v], indexBy[w])
       }
     }
 

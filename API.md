@@ -46,6 +46,8 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `Math.floor(n: number) -> number` Floor (round down) to an integer.
 - `Math.sqrt(n: number) -> number` Square root.
 - `Math.random() -> number` Random float in `[0, 1)`.
+- `Math.max(...values: number) -> number` Returns the maximum value from the arguments.
+- `Math.min(...values: number) -> number` Returns the minimum value from the arguments.
 
 ### `Lx` namespace (native)
 

@@ -197,6 +197,60 @@ static bool mathFloorNative(int argCount, Value *args) {
   return true;
 }
 
+static bool mathMaxNative(int argCount, Value *args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Math.max takes at least 1 arg.");
+    return false;
+  }
+
+  double maxVal = AS_NUMBER(args[0]);
+  if (!IS_NUMBER(args[0])) {
+    args[-1] = CSTRING_VAL("Error: All args must be numbers.");
+    return false;
+  }
+
+  for (int i = 1; i < argCount; i++) {
+    if (!IS_NUMBER(args[i])) {
+      args[-1] = CSTRING_VAL("Error: All args must be numbers.");
+      return false;
+    }
+    double val = AS_NUMBER(args[i]);
+    if (val > maxVal) {
+      maxVal = val;
+    }
+  }
+
+  args[-1] = NUMBER_VAL(maxVal);
+  return true;
+}
+
+static bool mathMinNative(int argCount, Value *args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Math.min takes at least 1 arg.");
+    return false;
+  }
+
+  double minVal = AS_NUMBER(args[0]);
+  if (!IS_NUMBER(args[0])) {
+    args[-1] = CSTRING_VAL("Error: All args must be numbers.");
+    return false;
+  }
+
+  for (int i = 1; i < argCount; i++) {
+    if (!IS_NUMBER(args[i])) {
+      args[-1] = CSTRING_VAL("Error: All args must be numbers.");
+      return false;
+    }
+    double val = AS_NUMBER(args[i]);
+    if (val < minVal) {
+      minVal = val;
+    }
+  }
+
+  args[-1] = NUMBER_VAL(minVal);
+  return true;
+}
+
 static bool chrNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Arg must be a number.");
@@ -2280,6 +2334,8 @@ static void defineMathNatives() {
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "floor", mathFloorNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "sqrt", sqrtNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "random", randomNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "max", mathMaxNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "min", mathMinNative);
 
   pop();
   pop();

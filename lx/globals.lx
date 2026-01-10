@@ -18,24 +18,6 @@ fn sort(arr, compare) {
   let length = len(arr)
   if length <= 1 { return arr }
 
-  // Insertion sort for small arrays (less allocation overhead).
-  if length <= 16 {
-    let out = []
-    for let i = 0; i < length; i = i + 1 {
-      let x = arr[i]
-      // Insert x into out
-      let j = len(out)
-      push(out, x)
-      for j > 0 and compare(out[j], out[j - 1]) {
-        let tmp = out[j - 1]
-        out[j - 1] = out[j]
-        out[j] = tmp
-        j = j - 1
-      }
-    }
-    return out
-  }
-
   let mid = Math.floor(length / 2)
   let left = []
   let right = []

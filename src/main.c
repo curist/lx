@@ -8,8 +8,9 @@
 #include "lx/lxlx.h"
 
 int main(int argc, const char* argv[]) {
-  srand(time(NULL));
-  rand();
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  srand(ts.tv_sec * 1000000000 + ts.tv_nsec);
 
   LX_ARGC = argc;
   LX_ARGV = argv;

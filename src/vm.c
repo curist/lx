@@ -1637,6 +1637,39 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_CMP_LOCAL_K: {
+        // Superinstruction: push(local cmp k)
+        uint8_t slot = READ_BYTE();
+        uint8_t k = READ_BYTE();
+        uint8_t cmp_kind = READ_BYTE();
+        Value local = slots[slot];
+
+        if (!IS_NUMBER(local)) {
+          runtimeError("CMP_LOCAL_K operand must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Convert both to double for comparison
+        double a = IS_FIXNUM(local) ? (double)AS_FIXNUM(local) : AS_NUMBER(local);
+        double b = (double)k;
+        bool result = false;
+
+        switch (cmp_kind) {
+          case CMP_LT: result = (a < b); break;   // <
+          case CMP_LE: result = (a <= b); break;  // <=
+          case CMP_GT: result = (a > b); break;   // >
+          case CMP_GE: result = (a >= b); break;  // >=
+          case CMP_EQ: result = (a == b); break;  // ==
+          case CMP_NE: result = (a != b); break;  // !=
+          default:
+            runtimeError("Invalid comparison kind in CMP_LOCAL_K.");
+            return INTERPRET_RUNTIME_ERROR;
+        }
+
+        push(BOOL_VAL(result));
+        break;
+      }
+
       case OP_GET_PROPERTY: {
         // Superinstruction: GET_LOCAL + CONSTANT + GET_BY_INDEX
         uint8_t objSlot = READ_BYTE();
@@ -1838,10 +1871,10 @@ static InterpretResult runUntil(int stopFrameCount) {
         bool shouldEnter = false;
 
         switch (cmp_kind) {
-          case 0: shouldEnter = ((double)i_int < limit_dbl); break;   // <
-          case 1: shouldEnter = ((double)i_int <= limit_dbl); break;  // <=
-          case 2: shouldEnter = ((double)i_int > limit_dbl); break;   // >
-          case 3: shouldEnter = ((double)i_int >= limit_dbl); break;  // >=
+          case CMP_LT: shouldEnter = ((double)i_int < limit_dbl); break;   // <
+          case CMP_LE: shouldEnter = ((double)i_int <= limit_dbl); break;  // <=
+          case CMP_GT: shouldEnter = ((double)i_int > limit_dbl); break;   // >
+          case CMP_GE: shouldEnter = ((double)i_int >= limit_dbl); break;  // >=
           default:
             runtimeError("Invalid comparison kind in FORPREP.");
             return INTERPRET_RUNTIME_ERROR;
@@ -1895,10 +1928,10 @@ static InterpretResult runUntil(int stopFrameCount) {
         bool shouldContinue = false;
 
         switch (cmp_kind) {
-          case 0: shouldContinue = ((double)i_int < limit_dbl); break;   // <
-          case 1: shouldContinue = ((double)i_int <= limit_dbl); break;  // <=
-          case 2: shouldContinue = ((double)i_int > limit_dbl); break;   // >
-          case 3: shouldContinue = ((double)i_int >= limit_dbl); break;  // >=
+          case CMP_LT: shouldContinue = ((double)i_int < limit_dbl); break;   // <
+          case CMP_LE: shouldContinue = ((double)i_int <= limit_dbl); break;  // <=
+          case CMP_GT: shouldContinue = ((double)i_int > limit_dbl); break;   // >
+          case CMP_GE: shouldContinue = ((double)i_int >= limit_dbl); break;  // >=
           default:
             runtimeError("Invalid comparison kind in FORLOOP.");
             return INTERPRET_RUNTIME_ERROR;

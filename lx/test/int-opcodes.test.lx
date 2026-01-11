@@ -119,9 +119,11 @@ f()
 
   let bc = fnObj.chunk.bytecode
   assert.truthy(containsOp(bc, OP.ADD_INT))
-  assert.truthy(containsOp(bc, OP.MULTIPLY_INT))
+  // b = a * 3 now uses OP.MUL_LOCAL_K (better optimization)
+  assert.truthy(containsOp(bc, OP.MUL_LOCAL_K))
   assert.truthy(containsOp(bc, OP.NEGATE_INT))
-  assert.truthy(containsOp(bc, OP.SUBTRACT_INT))
+  // c - 1 now uses OP.SUB_LOCAL_K (better optimization)
+  assert.truthy(containsOp(bc, OP.SUB_LOCAL_K))
 
   assert.equal(containsOp(bc, OP.ADD), false)
   assert.equal(containsOp(bc, OP.MULTIPLY), false)
@@ -155,7 +157,7 @@ f()
   assert.truthy(containsOp(bc, OP.ADD_INT))
 })
 
-test("fastcheck: builtin int returns participate in *_INT ops (len)", fn(assert) {
+test("fastcheck: builtin int returns participate in ADD_LOCAL_K ops (len)", fn(assert) {
   let src = .{
     ["main.lx"]: "
 fn f() {
@@ -177,7 +179,7 @@ f()
   assert.equal(v.success, true)
 
   let bc = fnObj.chunk.bytecode
-  assert.truthy(containsOp(bc, OP.ADD_INT))
+  assert.truthy(containsOp(bc, OP.ADD_LOCAL_K))
 })
 
 test("fastcheck: imported-module enum propagation enables *_INT ops", fn(assert) {

@@ -4,6 +4,15 @@
 #include "value.h"
 
 typedef enum {
+  CMP_LT = 0,   // <
+  CMP_LE = 1,   // <=
+  CMP_GT = 2,   // >
+  CMP_GE = 3,   // >=
+  CMP_EQ = 4,   // ==
+  CMP_NE = 5,   // !=
+} CmpKind;
+
+typedef enum {
   // Control flow
   OP_NOP,
   OP_JUMP,
@@ -104,6 +113,7 @@ typedef enum {
   OP_SUB_LOCAL_K,         // GET_LOCAL + CONST_BYTE + SUB (push local - k)
   OP_MUL_LOCAL_K,         // GET_LOCAL + CONST_BYTE + MUL (push local * k)
   OP_DIV_LOCAL_K,         // GET_LOCAL + CONST_BYTE + DIV (push local / k)
+  OP_CMP_LOCAL_K,         // GET_LOCAL + CONST_BYTE + CMP (push comparison result)
 
   // Special/optimization
   OP_COALESCE_CONST,      // Replace TOS with constant if TOS is falsy

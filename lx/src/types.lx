@@ -69,6 +69,15 @@ let KEYWORDS = keys(TOKEN)->fold(.{}, fn(acc, k) {
   acc
 })
 
+let CmpKind = enum {
+  LT,  // <
+  LE,  // <=
+  GT,  // >
+  GE,  // >=
+  EQ,  // ==
+  NE,  // !=
+}
+
 // NOTE: need to keep this in sync with clox
 let OP = enum {
   // Control flow
@@ -171,6 +180,7 @@ let OP = enum {
   SUB_LOCAL_K,      // GET_LOCAL + CONST_BYTE + SUB (push local - k)
   MUL_LOCAL_K,      // GET_LOCAL + CONST_BYTE + MUL (push local * k)
   DIV_LOCAL_K,      // GET_LOCAL + CONST_BYTE + DIV (push local / k)
+  CMP_LOCAL_K,      // GET_LOCAL + CONST_BYTE + CMP (push comparison result)
 
   // Special/optimization
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy
@@ -238,6 +248,7 @@ let NODE = enum {
 .{
   TOKEN,
   KEYWORDS,
+  CmpKind,
   OP,
   ValueType,
   NODE,

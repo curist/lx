@@ -124,6 +124,7 @@ let STACK_MIN = .{
   [OP.SUB_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + SUB: reads from local slot
   [OP.MUL_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + MUL: reads from local slot
   [OP.DIV_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + DIV: reads from local slot
+  [OP.CMP_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + CMP: reads from local slot
   [OP.GET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_BY_INDEX: reads from local slot
   [OP.SET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX: reads from local slots
 
@@ -232,6 +233,7 @@ let STACK_EFFECTS = .{
   [OP.SUB_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + SUB: net +1 (push result)
   [OP.MUL_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + MUL: net +1 (push result)
   [OP.DIV_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + DIV: net +1 (push result)
+  [OP.CMP_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + CMP: net +1 (push bool result)
   [OP.GET_PROPERTY]:  1,     // GET_LOCAL + CONSTANT + GET_BY_INDEX: net +1
   [OP.SET_PROPERTY]:  0,     // obj.field = val or obj[const] = val (statement-only, no value on stack)
 
@@ -335,6 +337,7 @@ let INSTRUCTION_LENGTHS = .{
   [OP.SUB_LOCAL_K]:    3,  // opcode + slot + k
   [OP.MUL_LOCAL_K]:    3,  // opcode + slot + k
   [OP.DIV_LOCAL_K]:    3,  // opcode + slot + k
+  [OP.CMP_LOCAL_K]:    4,  // opcode + slot + k + cmp_kind
   [OP.GET_PROPERTY]:  3,  // opcode + obj_slot + const_idx
   [OP.SET_PROPERTY]:  4,  // opcode + obj_slot + const_idx + val_slot
 

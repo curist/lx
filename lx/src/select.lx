@@ -11,7 +11,7 @@
 // - May read gen.fastcheck (today) or gen.rep (future).
 // - Must be deterministic and side-effect free.
 
-let .{ OP, NODE } = import "src/types.lx"
+let .{ OP, NODE, CmpKind } = import "src/types.lx"
 
 // -----------------------------------------------------------------------------
 // Facts access (fastcheck today, rep analysis tomorrow)
@@ -63,21 +63,38 @@ fn selectUnaryOpcode(gen, node) {
 // Binary expression superinstructions (local op constant)
 // -----------------------------------------------------------------------------
 
-// Returns: .{ kind: "LOCAL_K", opcode, binding, k } or nil
-// Matches: local +/-/*// k (where local is identifier bound to local, k is literal 0-255)
+// Returns: .{ kind: "LOCAL_K", opcode, binding, k } or
+//          .{ kind: "CMP_LOCAL_K", cmpKind, binding, k } or nil
+// Matches: local +/-/*/÷/</<=/>/>=/<=/!= k (where local is identifier bound to local, k is literal 0-255)
 fn selectBinaryLocalK(gen, node) {
   if !node or node.type != NODE.Binary { return nil }
 
   let op = node.operator and node.operator.lexeme or ""
-  let opcodes = .{
+
+  // Arithmetic operations
+  let arithmeticOps = .{
     ["+"]: OP.ADD_LOCAL_K,
     ["-"]: OP.SUB_LOCAL_K,
     ["*"]: OP.MUL_LOCAL_K,
     ["/"]: OP.DIV_LOCAL_K,
   }
 
-  let opcode = opcodes[op]
-  if !opcode { return nil }
+  // Comparison operations
+  let comparisonOps = .{
+    ["<"]:  CmpKind.LT,
+    ["<="]: CmpKind.LE,
+    [">"]:  CmpKind.GT,
+    [">="]: CmpKind.GE,
+    ["=="]: CmpKind.EQ,
+    ["!="]: CmpKind.NE,
+  }
+
+  let arithmeticOp = arithmeticOps[op]
+  let comparisonOp = comparisonOps[op]
+
+  if !arithmeticOp and !comparisonOp {
+    return nil  // Not a supported operator
+  }
 
   // Check pattern: left is identifier bound to local, right is number constant
   if !node.left or node.left.type != NODE.Identifier { return nil }
@@ -98,16 +115,27 @@ fn selectBinaryLocalK(gen, node) {
   let rightNum = isNumericClass(rightCls)
 
   // For addition, we must ensure it's not string concatenation
+  // For -, *, /, comparisons: they would error at runtime if not numeric, safe to optimize
   if op == "+" {
     if !leftNum or !rightNum {
       return nil  // Could be strings, don't optimize
     }
   }
-  // For -, *, /, they're always numeric operations (would error at runtime otherwise)
+  // Comparisons and -, *, / are always numeric operations
+
+  // Return appropriate structure
+  if comparisonOp {
+    return .{
+      kind: "CMP_LOCAL_K",
+      cmpKind: comparisonOp,
+      binding: binding,
+      k: Math.floor(k),
+    }
+  }
 
   return .{
     kind: "LOCAL_K",
-    opcode: opcode,
+    opcode: arithmeticOp,
     binding: binding,
     k: Math.floor(k),
   }

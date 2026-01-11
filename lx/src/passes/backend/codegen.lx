@@ -512,14 +512,20 @@ fn compileBinary(gen, node) {
   // Note: Pattern optimizations (x % N → MOD_CONST_BYTE, x == M → EQ_CONST_BYTE)
   // are done in ANF phase, not here, to work correctly with ANF transformations
 
-  // Try LOCAL_K pattern first (local op constant)
+  // Try LOCAL_K pattern first (local op constant or comparison)
   if let plan = select.binaryLocalK(gen, node) {
-    // Emit fused instruction: opcode slot k
     let absoluteSlot = computeAbsoluteSlot(gen, plan.binding)
     let operandSlot = localSlot(absoluteSlot)
     if operandSlot < 256 {
-      emit3(gen, plan.opcode, operandSlot, plan.k, node.line)
-      return
+      if plan.kind == "CMP_LOCAL_K" {
+        // Emit comparison: opcode slot k cmp_kind (4 bytes)
+        emit4(gen, OP.CMP_LOCAL_K, operandSlot, plan.k, plan.cmpKind, node.line)
+        return
+      } else {
+        // Emit arithmetic: opcode slot k (3 bytes)
+        emit3(gen, plan.opcode, operandSlot, plan.k, node.line)
+        return
+      }
     }
     // Cannot encode in u8; fall through to regular codegen
   }

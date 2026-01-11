@@ -107,6 +107,8 @@ let STACK_MIN = .{
 
   // CALL is dynamic: needs argCount + 1 (callee + args)
   // Handled specially in processInstruction
+  // CALL_LOCAL / CALL_SELF are dynamic: need argCount (args only)
+  // Handled specially in processInstruction
 
   // UNWIND is dynamic: needs count values
   // Handled specially in processInstruction
@@ -133,6 +135,10 @@ let STACK_MIN = .{
   [OP.FORLOOP_1]:          0,  // Operates on locals only
   [OP.FORPREP]:            0,  // Operates on locals only
   [OP.FORLOOP]:            0,  // Operates on locals only
+
+  // Dynamic calls (handled specially)
+  [OP.CALL_LOCAL]:         0,
+  [OP.CALL_SELF]:          0,
 }
 
 // Static table of stack effects for each opcode
@@ -263,6 +269,7 @@ let INSTRUCTION_LENGTHS = .{
   [OP.GET_UPVALUE]:   2,
   [OP.SET_UPVALUE]:   2,
   [OP.CALL]:          2,
+  [OP.CALL_SELF]:     2,
   [OP.COALESCE_CONST]: 2,  // opcode + constant index
 
   // 2-byte operand (length = 3)
@@ -313,6 +320,7 @@ let INSTRUCTION_LENGTHS = .{
   [OP.ARRAY]:         1,
   [OP.LENGTH]:        1,
   [OP.CLOSE_UPVALUE]: 1,
+  [OP.CALL_LOCAL]:    3,  // opcode + slot + argc
   [OP.UNWIND]:        3,  // opcode + count + keep
   [OP.RETURN]:        1,
   [OP.MOD_CONST_BYTE]: 2,  // opcode + imm8
@@ -350,7 +358,7 @@ let INSTRUCTION_LENGTHS = .{
 
 fn stackEffect(opcode, operand, operand2) {
   // Returns: stack delta for this instruction
-  // operand: used for CALL (argCount) and UNWIND (count)
+  // operand: used for CALL/CALL_LOCAL/CALL_SELF (argCount) and UNWIND (count)
   // operand2: used for UNWIND (keep)
   // Returns: nil if opcode is unknown (caller must handle error)
 
@@ -358,6 +366,12 @@ fn stackEffect(opcode, operand, operand2) {
   // pop (argCount + 1), push 1 → net effect: -argCount
   if opcode == OP.CALL {
     return 0 - operand
+  }
+
+  // Special case: CALL_LOCAL/CALL_SELF have dynamic effect based on argCount
+  // pop (argCount), push 1 → net effect: 1 - argCount
+  if opcode == OP.CALL_LOCAL or opcode == OP.CALL_SELF {
+    return 1 - operand
   }
 
   // Special case: UNWIND has dynamic effect based on count and keep
@@ -552,6 +566,22 @@ fn processInstruction(verifier, ip) {
       return nil  // Out of bounds (safeReadByte returns nil on error)
     }
   }
+  if opcode == OP.CALL_LOCAL {
+    let slot = safeReadByte(code, ip + 1, verifier, ip)
+    if !slot and slot != 0 {
+      return nil
+    }
+    operand = safeReadByte(code, ip + 2, verifier, ip)  // argc
+    if !operand and operand != 0 {
+      return nil
+    }
+  }
+  if opcode == OP.CALL_SELF {
+    operand = safeReadByte(code, ip + 1, verifier, ip)  // argc
+    if !operand and operand != 0 {
+      return nil
+    }
+  }
   if opcode == OP.UNWIND {
     operand = safeReadByte(code, ip + 1, verifier, ip)  // count
     if !operand and operand != 0 {
@@ -568,6 +598,9 @@ fn processInstruction(verifier, ip) {
   let minRequired = STACK_MIN[opcode]
   if opcode == OP.CALL {
     minRequired = operand + 1  // callee + args
+  }
+  if opcode == OP.CALL_LOCAL or opcode == OP.CALL_SELF {
+    minRequired = operand  // args only
   }
   if opcode == OP.UNWIND {
     // keep=0: needs count values

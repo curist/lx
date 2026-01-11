@@ -431,6 +431,21 @@ static bool callValue(Value callee, int argCount) {
   return false;
 }
 
+static inline bool insertCalleeBelowArgs(Value callee, int argCount) {
+  if (vm.stackTop >= vm.stack + STACK_MAX) {
+    runtimeError("Stack overflow.");
+    return false;
+  }
+
+  Value* argsBase = vm.stackTop - argCount;  // Points at arg0 (or stackTop if argCount==0)
+  for (int i = argCount; i > 0; i--) {
+    argsBase[i] = argsBase[i - 1];
+  }
+  argsBase[0] = callee;
+  vm.stackTop++;
+  return true;
+}
+
 static ObjUpvalue* captureUpvalue(Value* local) {
   ObjUpvalue* prevUpvalue = NULL;
   ObjUpvalue* upvalue = vm.openUpvalues;
@@ -1284,6 +1299,49 @@ static InterpretResult runUntil(int stopFrameCount) {
         if (!callValue(peek(argCount), argCount)) {
           return INTERPRET_RUNTIME_ERROR;
         }
+        frame = &vm.frames[vm.frameCount - 1];
+        closure = frame->closure;
+        slots = frame->slots;
+        break;
+      }
+
+      case OP_CALL_LOCAL: {
+        uint8_t calleeSlot = READ_BYTE();
+        int argCount = (int)READ_BYTE();
+        Value callee = slots[calleeSlot];
+
+        if (!insertCalleeBelowArgs(callee, argCount)) {
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        if (IS_OBJ(callee) && OBJ_TYPE(callee) == OBJ_CLOSURE) {
+          if (!call(AS_CLOSURE(callee), argCount)) {
+            return INTERPRET_RUNTIME_ERROR;
+          }
+        } else {
+          if (!callValue(callee, argCount)) {
+            return INTERPRET_RUNTIME_ERROR;
+          }
+        }
+
+        frame = &vm.frames[vm.frameCount - 1];
+        closure = frame->closure;
+        slots = frame->slots;
+        break;
+      }
+
+      case OP_CALL_SELF: {
+        int argCount = (int)READ_BYTE();
+        ObjClosure* callee = frame->closure;
+
+        if (!insertCalleeBelowArgs(OBJ_VAL(callee), argCount)) {
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        if (!call(callee, argCount)) {
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
         frame = &vm.frames[vm.frameCount - 1];
         closure = frame->closure;
         slots = frame->slots;

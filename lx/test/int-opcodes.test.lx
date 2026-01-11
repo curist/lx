@@ -92,6 +92,14 @@ fn containsOp(bytecode, op) {
   false
 }
 
+fn countOp(bytecode, op) {
+  let n = 0
+  for let i = 0; i < len(bytecode); i = i + 1 {
+    if bytecode[i] == op { n = n + 1 }
+  }
+  n
+}
+
 test("codegen emits *_INT ops for proven integers (in function body)", fn(assert) {
   let src = .{
     ["main.lx"]: "
@@ -211,6 +219,62 @@ out
 
   let bc = fnObj.chunk.bytecode
   assert.truthy(containsOp(bc, OP.ADD_INT))
+})
+
+test("codegen emits OP_CALL_SELF for self recursion (fib)", fn(assert) {
+  let src = .{
+    ["main.lx"]: "
+fn fib(n) {
+  if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+}
+fib(10)
+",
+  }
+
+  let out = compileToBytecode(src, "main.lx")
+  assert.equal(out.r.success, true)
+  assert.equal(out.fc.success, true)
+  assert.equal(out.cg.success, true)
+
+  let fnObj = findFunctionConstantByName(out.cg.function.chunk, "fib")
+  assert.truthy(fnObj)
+
+  let v = verify.verifyFunction(fnObj)
+  assert.equal(v.success, true)
+
+  let bc = fnObj.chunk.bytecode
+  assert.truthy(countOp(bc, OP.CALL_SELF) >= 2)
+})
+
+test("codegen emits OP_CALL_LOCAL for local callee (let f = fib; f(n))", fn(assert) {
+  let src = .{
+    ["main.lx"]: "
+fn fib(n) {
+  if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn g(n) {
+  let f = fib
+  f(n)
+}
+
+g(10)
+",
+  }
+
+  let out = compileToBytecode(src, "main.lx")
+  assert.equal(out.r.success, true)
+  assert.equal(out.fc.success, true)
+  assert.equal(out.cg.success, true)
+
+  let fnObj = findFunctionConstantByName(out.cg.function.chunk, "g")
+  assert.truthy(fnObj)
+
+  let v = verify.verifyFunction(fnObj)
+  assert.equal(v.success, true)
+
+  let bc = fnObj.chunk.bytecode
+  assert.truthy(containsOp(bc, OP.CALL_LOCAL))
 })
 
 test("fastcheck: identifies string concatenation candidates (for future OP_ADD_STR)", fn(assert) {

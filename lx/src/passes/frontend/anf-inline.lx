@@ -106,37 +106,17 @@ fn isInlineSafeExprImpl(node, depth) {
 }
 
 // ------------------------------------------------------------
-// Block-local de-ANF helpers
-// ------------------------------------------------------------
-
-fn unwrapAnfSyntheticSingleExpr(node) {
-  if node and node.type == NODE.Block and node.anfSynthetic {
-    let exprs = node.expressions or []
-    if len(exprs) == 1 { return exprs[0] }
-  }
-  node
-}
-
-fn getDeclaredAt(node, resolvedNames) {
-  // Get declaredAt for an identifier node, or nil
-  if !node or node.type != NODE.Identifier or !node.id { return nil }
-  let resolved = resolvedNames[node.id]
-  if resolved and resolved.declaredAt { return resolved.declaredAt }
-  nil
-}
-
-// ------------------------------------------------------------
 // Walker (single traversal)
 // ------------------------------------------------------------
 
-fn walk(node, resolvedNames, state, parent, parentField, parentIndex, curBlockId, curExprIndex) {
+fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
   if !node { return }
   let t = type(node)
 
   if t == "array" {
     for item, i in node {
       // Parent is this array; field name is nil; index is i
-      walk(item, resolvedNames, state, node, nil, i, curBlockId, curExprIndex)
+      walk(item, resolvedNames, state, node, nil, i)
     }
     return
   }
@@ -147,10 +127,9 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex, curBlockId
   if node.type == NODE.Block and node.id != nil {
     state.blockById[node.id] = node
     // Traverse expressions with precise parent info
-    // Each expression becomes the current expr index within this block
     let exprs = node.expressions or []
     for expr, i in exprs {
-      walk(expr, resolvedNames, state, node, "expressions", i, node.id, i)
+      walk(expr, resolvedNames, state, node, "expressions", i)
     }
     return
   }
@@ -175,7 +154,7 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex, curBlockId
     }
 
     // Traverse init only (skip binder name)
-    walk(node.init, resolvedNames, state, node, "init", nil, curBlockId, curExprIndex)
+    walk(node.init, resolvedNames, state, node, "init", nil)
     return
   }
 
@@ -193,8 +172,6 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex, curBlockId
           parent: parent,
           field: parentField,
           index: parentIndex,
-          useBlockId: curBlockId,
-          useExprIndex: curExprIndex,
         }
       } else if c == 2 {
         // No longer single-use
@@ -205,7 +182,7 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex, curBlockId
 
   // Specialized traversal for Let (non-temp or non-ANF let): init only
   if node.type == NODE.Let {
-    walk(node.init, resolvedNames, state, node, "init", nil, curBlockId, curExprIndex)
+    walk(node.init, resolvedNames, state, node, "init", nil)
     return
   }
 
@@ -214,54 +191,25 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex, curBlockId
   let nt = node.type
 
   if nt == NODE.Binary or nt == NODE.Logical {
-    walk(node.left, resolvedNames, state, node, "left", nil, curBlockId, curExprIndex)
-    walk(node.right, resolvedNames, state, node, "right", nil, curBlockId, curExprIndex)
+    walk(node.left, resolvedNames, state, node, "left", nil)
+    walk(node.right, resolvedNames, state, node, "right", nil)
     return
   }
 
   if nt == NODE.Unary {
-    walk(node.operand, resolvedNames, state, node, "operand", nil, curBlockId, curExprIndex)
+    walk(node.operand, resolvedNames, state, node, "operand", nil)
     return
   }
 
   if nt == NODE.Dot {
-    walk(node.object, resolvedNames, state, node, "object", nil, curBlockId, curExprIndex)
-    walk(node.property, resolvedNames, state, node, "property", nil, curBlockId, curExprIndex)
+    walk(node.object, resolvedNames, state, node, "object", nil)
+    walk(node.property, resolvedNames, state, node, "property", nil)
     return
   }
 
   if nt == NODE.Index {
-    walk(node.object, resolvedNames, state, node, "object", nil, curBlockId, curExprIndex)
-    walk(node.index, resolvedNames, state, node, "index", nil, curBlockId, curExprIndex)
-    return
-  }
-
-  if nt == NODE.IntrinsicCall {
-    let args = node.args or []
-    for a, i in args {
-      walk(a, resolvedNames, state, node, "args", i, curBlockId, curExprIndex)
-    }
-    return
-  }
-
-  if nt == NODE.Call {
-    walk(node.callee, resolvedNames, state, node, "callee", nil, curBlockId, curExprIndex)
-    let args = node.args or []
-    for a, i in args {
-      walk(a, resolvedNames, state, node, "args", i, curBlockId, curExprIndex)
-    }
-    return
-  }
-
-  if nt == NODE.If {
-    walk(node.condition, resolvedNames, state, node, "condition", nil, curBlockId, curExprIndex)
-    walk(node.then, resolvedNames, state, node, "then", nil, curBlockId, curExprIndex)
-    walk(node.else, resolvedNames, state, node, "else", nil, curBlockId, curExprIndex)
-    return
-  }
-
-  if nt == NODE.Return {
-    walk(node.value, resolvedNames, state, node, "value", nil, curBlockId, curExprIndex)
+    walk(node.object, resolvedNames, state, node, "object", nil)
+    walk(node.index, resolvedNames, state, node, "index", nil)
     return
   }
 
@@ -276,7 +224,7 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex, curBlockId
     let v = node[k]
     let vt = type(v)
     if vt == "map" or vt == "array" {
-      walk(v, resolvedNames, state, node, k, nil, curBlockId, curExprIndex)
+      walk(v, resolvedNames, state, node, k, nil)
     }
   }
 }
@@ -348,13 +296,12 @@ fn anfInline(ast, resolveResult) {
   }
 
   // One traversal builds all maps
-  walk(ast, resolvedNames, state, nil, nil, nil, nil, nil)
+  walk(ast, resolvedNames, state, nil, nil, nil)
 
   // Apply edits
   let removedByBlockId = .{} // blockId -> { index:true }
   let inlined = 0
 
-  // Phase 1: Pure inlining (safe everywhere)
   for declId in keys(state.letByDeclId) {
     let info = state.letByDeclId[declId]
     let letNode = info and info.letNode
@@ -368,14 +315,10 @@ fn anfInline(ast, resolveResult) {
     let site = state.useSite[declId]
     if !site { continue }
 
-    // Only inline pure expressions in this phase
     if !isInlineSafeExpr(letNode.init) { continue }
 
-    // Unwrap synthetic single-expression blocks
-    let rhs = unwrapAnfSyntheticSingleExpr(letNode.init)
-
     // Replace the unique use-site with RHS (structural sharing).
-    if !replaceInParent(site, rhs) {
+    if !replaceInParent(site, letNode.init) {
       return .{
         success: false,
         error: "ANF-inline: failed to replace single-use site for declId " + str(declId),
@@ -390,132 +333,6 @@ fn anfInline(ast, resolveResult) {
     }
 
     inlined = inlined + 1
-  }
-
-  // Phase 2: Block-local de-ANF (safe, preserves evaluation order)
-  // Only handle Binary consumers initially (sufficient for fib case)
-  for blockId in keys(state.blockById) {
-    let block = state.blockById[blockId]
-    if !block { continue }
-    let exprs = block.expressions or []
-    if len(exprs) < 2 { continue }
-
-    // Find runs of ANF temp lets followed by a Binary consumer
-    let i = 0
-    for true {
-      if i >= len(exprs) { break }
-
-      // Find start of run: an ANF temp let
-      let expr = exprs[i]
-      if !expr or expr.type != NODE.Let or !expr.name or !isAnfTempName(expr.name.name) or !expr.name.id {
-        i = i + 1
-        continue
-      }
-
-      // Collect run of single-use ANF lets
-      let runStart = i
-      let runDeclIds = []
-      for true {
-        if i >= len(exprs) { break }
-        let e = exprs[i]
-        if !e or e.type != NODE.Let or !e.name or !isAnfTempName(e.name.name) or !e.name.id {
-          break
-        }
-        let declId = e.name.id
-        let uses = state.useCount[declId] or 0
-        if uses != 1 {
-          break // Not single-use
-        }
-        push(runDeclIds, declId)
-        i = i + 1
-      }
-
-      // Need consumer expression after the run
-      if i >= len(exprs) or len(runDeclIds) == 0 {
-        continue
-      }
-
-      let consumerIndex = i
-      let consumerExpr = exprs[consumerIndex]
-
-      // Conservative: only handle Binary consumers (covers fib case: t1 + t2)
-      if !consumerExpr or consumerExpr.type != NODE.Binary {
-        i = i + 1
-        continue
-      }
-
-      // Verify all temps in run are used in THIS specific consumer
-      let allInConsumer = true
-      for declId in runDeclIds {
-        let site = state.useSite[declId]
-        if !site or site.useBlockId != blockId or site.useExprIndex != consumerIndex {
-          allInConsumer = false
-          break
-        }
-      }
-
-      if !allInConsumer {
-        i = i + 1
-        continue
-      }
-
-      // For Binary with 2 temps: verify operand order matches run order
-      // (this enforces evaluation order preservation)
-      if len(runDeclIds) == 2 {
-        let leftDeclAt = getDeclaredAt(consumerExpr.left, resolvedNames)
-        let rightDeclAt = getDeclaredAt(consumerExpr.right, resolvedNames)
-
-        if leftDeclAt != runDeclIds[0] or rightDeclAt != runDeclIds[1] {
-          i = i + 1
-          continue
-        }
-      } else if len(runDeclIds) == 1 {
-        // Single temp: verify it's used in the binary (either left or right)
-        let leftDeclAt2 = getDeclaredAt(consumerExpr.left, resolvedNames)
-        let rightDeclAt2 = getDeclaredAt(consumerExpr.right, resolvedNames)
-
-        if leftDeclAt2 != runDeclIds[0] and rightDeclAt2 != runDeclIds[0] {
-          i = i + 1
-          continue
-        }
-      } else {
-        // More than 2 temps: skip for now (could be nested within operands)
-        i = i + 1
-        continue
-      }
-
-      // Apply replacements using the already-collected useSite pointers
-      for declId in runDeclIds {
-        let info2 = state.letByDeclId[declId]
-        if !info2 or !info2.letNode { continue }
-
-        let site = state.useSite[declId]
-        if !site { continue }
-
-        let rhs2 = unwrapAnfSyntheticSingleExpr(info2.letNode.init)
-
-        // Replace using the exact site pointer
-        if !replaceInParent(site, rhs2) {
-          return .{
-            success: false,
-            error: "ANF-inline Phase 2: failed to replace declId " + str(declId),
-            declId: declId,
-            ast: ast,
-          }
-        }
-      }
-
-      // Mark all lets in run for removal
-      for declId in runDeclIds {
-        let info3 = state.letByDeclId[declId]
-        if info3 and info3.blockId == blockId and info3.index != nil {
-          markRemoval(removedByBlockId, blockId, info3.index)
-          inlined = inlined + 1
-        }
-      }
-
-      i = i + 1
-    }
   }
 
   // Compact each affected block once

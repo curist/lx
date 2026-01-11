@@ -15,6 +15,7 @@ PY_BIN="${PYTHON:-python3}"
 LUA_BIN="${LUA:-lua}"
 LUAJIT_BIN="${LUAJIT:-luajit}"
 CHEZ_BIN="${CHEZ:-chez}"
+NODE_BIN="${NODE:-node}"
 TIME_BIN="${TIME_BIN:-}"
 
 # pick a time command and format
@@ -40,6 +41,9 @@ N_FIZZ=${N_FIZZ:-20000000}
 N_FIB=${N_FIB:-5000000}
 N_ARRAY=${N_ARRAY:-10000000}
 N_MAP=${N_MAP:-5000000}
+N_FIB_REC=${N_FIB_REC:-40}
+N_CLOSURE=${N_CLOSURE:-1000000}
+N_SIEVE=${N_SIEVE:-10000000}
 REPEAT=${REPEAT:-1}
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -79,6 +83,9 @@ run_lang() {
   bench "$ROOT/$script_dir/fib_iter.$ext" "$N_FIB"
   bench "$ROOT/$script_dir/array_fill.$ext" "$N_ARRAY"
   bench "$ROOT/$script_dir/map_hit_miss.$ext" "$N_MAP"
+  bench "$ROOT/$script_dir/fib_recursive.$ext" "$N_FIB_REC"
+  bench "$ROOT/$script_dir/closure_heavy.$ext" "$N_CLOSURE"
+  bench "$ROOT/$script_dir/sieve.$ext" "$N_SIEVE"
 }
 
 run_lang "lx" "$LX_BIN" "lx" "lx"
@@ -86,3 +93,4 @@ run_lang "py" "$PY_BIN" "py" "py"
 run_lang "lua" "$LUA_BIN" "lua" "lua"
 run_lang "luajit" "$LUAJIT_BIN" "lua" "lua"
 run_lang "chez" "$CHEZ_BIN" "chez" "ss"
+run_lang "js" "$NODE_BIN" "js" "js"

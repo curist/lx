@@ -1,0 +1,25 @@
+(define (sieve n)
+  (if (< n 2)
+      0
+      (let ((is-prime (make-vector (+ n 1) #t)))
+        (vector-set! is-prime 0 #f)
+        (vector-set! is-prime 1 #f)
+
+        (do ((i 2 (+ i 1)))
+            ((> (* i i) n))
+          (when (vector-ref is-prime i)
+            (do ((j (* i i) (+ j i)))
+                ((> j n))
+              (vector-set! is-prime j #f))))
+
+        (let ((count 0))
+          (do ((i 2 (+ i 1)))
+              ((> i n) count)
+            (when (vector-ref is-prime i)
+              (set! count (+ count 1))))))))
+
+(let ((n (if (> (length (command-line-arguments)) 0)
+             (string->number (car (command-line-arguments)))
+             0)))
+  (display (sieve n))
+  (newline))

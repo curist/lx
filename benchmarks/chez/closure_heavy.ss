@@ -1,0 +1,20 @@
+(define (make-adder x)
+  (lambda (y)
+    (+ x y)))
+
+(define (closure-heavy n)
+  (let ((closures (make-vector n)))
+    (do ((i 0 (+ i 1)))
+        ((>= i n))
+      (vector-set! closures i (make-adder i)))
+
+    (let ((sum 0))
+      (do ((i 0 (+ i 1)))
+          ((>= i n) sum)
+        (set! sum (+ sum ((vector-ref closures i) i)))))))
+
+(let ((n (if (> (length (command-line-arguments)) 0)
+             (string->number (car (command-line-arguments)))
+             0)))
+  (display (closure-heavy n))
+  (newline))

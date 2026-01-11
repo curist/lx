@@ -1,0 +1,20 @@
+fn makeAdder(x) {
+  fn(y) { x + y }
+}
+
+fn closureHeavy(n) {
+  let closures = []
+  for let i = 0; i < n; i = i + 1 {
+    push(closures, makeAdder(i))
+  }
+
+  let sum = 0
+  for let i = 0; i < n; i = i + 1 {
+    sum = sum + closures[i](i)
+  }
+  sum
+}
+
+let raw = Lx.args[3]
+let n = raw and tonumber(raw) or 0
+print(closureHeavy(n))

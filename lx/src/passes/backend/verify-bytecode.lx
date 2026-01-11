@@ -120,6 +120,10 @@ let STACK_MIN = .{
   [OP.SUB_LOCALS]: 0,  // GET_LOCAL×2 + SUB + SET_LOCAL: reads all from local slots
   [OP.MUL_LOCALS]: 0,  // GET_LOCAL×2 + MUL + SET_LOCAL: reads all from local slots
   [OP.DIV_LOCALS]: 0,  // GET_LOCAL×2 + DIV + SET_LOCAL: reads all from local slots
+  [OP.ADD_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + ADD: reads from local slot
+  [OP.SUB_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + SUB: reads from local slot
+  [OP.MUL_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + MUL: reads from local slot
+  [OP.DIV_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + DIV: reads from local slot
   [OP.GET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_BY_INDEX: reads from local slot
   [OP.SET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX: reads from local slots
 
@@ -224,6 +228,10 @@ let STACK_EFFECTS = .{
   [OP.SUB_LOCALS]: 0,     // dest = lhs - rhs (statement-only, no value on stack)
   [OP.MUL_LOCALS]: 0,     // dest = lhs * rhs (statement-only, no value on stack)
   [OP.DIV_LOCALS]: 0,     // dest = lhs / rhs (statement-only, no value on stack)
+  [OP.ADD_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + ADD: net +1 (push result)
+  [OP.SUB_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + SUB: net +1 (push result)
+  [OP.MUL_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + MUL: net +1 (push result)
+  [OP.DIV_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + DIV: net +1 (push result)
   [OP.GET_PROPERTY]:  1,     // GET_LOCAL + CONSTANT + GET_BY_INDEX: net +1
   [OP.SET_PROPERTY]:  0,     // obj.field = val or obj[const] = val (statement-only, no value on stack)
 
@@ -323,6 +331,10 @@ let INSTRUCTION_LENGTHS = .{
   [OP.SUB_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
   [OP.MUL_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
   [OP.DIV_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
+  [OP.ADD_LOCAL_K]:    3,  // opcode + slot + k
+  [OP.SUB_LOCAL_K]:    3,  // opcode + slot + k
+  [OP.MUL_LOCAL_K]:    3,  // opcode + slot + k
+  [OP.DIV_LOCAL_K]:    3,  // opcode + slot + k
   [OP.GET_PROPERTY]:  3,  // opcode + obj_slot + const_idx
   [OP.SET_PROPERTY]:  4,  // opcode + obj_slot + const_idx + val_slot
 

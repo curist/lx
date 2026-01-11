@@ -512,14 +512,27 @@ fn compileBinary(gen, node) {
   // Note: Pattern optimizations (x % N → MOD_CONST_BYTE, x == M → EQ_CONST_BYTE)
   // are done in ANF phase, not here, to work correctly with ANF transformations
 
-  compileValue(gen, node.left)
-  compileValue(gen, node.right)
+  // Try LOCAL_K pattern first (local op constant)
+  if let plan = select.binaryLocalK(gen, node) {
+    // Emit fused instruction: opcode slot k
+    let absoluteSlot = computeAbsoluteSlot(gen, plan.binding)
+    let operandSlot = localSlot(absoluteSlot)
+    if operandSlot < 256 {
+      emit3(gen, plan.opcode, operandSlot, plan.k, node.line)
+      return
+    }
+    // Cannot encode in u8; fall through to regular codegen
+  }
 
+  // Regular path: select opcode, compile operands, emit
   let code = select.binaryCode(gen, node)
   if !code {
     addError(gen, node, "Unsupported binary op: " + (node.operator and node.operator.lexeme or ""))
     return
   }
+
+  compileValue(gen, node.left)
+  compileValue(gen, node.right)
 
   if type(code) == "array" {
     emit2(gen, code[0], code[1], node.line)

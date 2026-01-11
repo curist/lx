@@ -1535,6 +1535,108 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_ADD_LOCAL_K: {
+        // Superinstruction: push(local + k)
+        uint8_t slot = READ_BYTE();
+        uint8_t k = READ_BYTE();
+        Value local = slots[slot];
+        if (!IS_NUMBER(local)) {
+          runtimeError("ADD_LOCAL_K operand must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        Value result;
+        if (IS_FIXNUM(local)) {
+          int64_t a = AS_FIXNUM(local);
+          int64_t r;
+          if (__builtin_add_overflow(a, (int64_t)k, &r)) {
+            result = NUMBER_VAL((double)a + (double)k);
+          } else if (fixnumFitsInt64(r)) {
+            result = FIXNUM_VAL(r);
+          } else {
+            result = NUMBER_VAL((double)r);
+          }
+        } else {
+          result = NUMBER_VAL(AS_NUMBER(local) + (double)k);
+        }
+        push(result);
+        break;
+      }
+
+      case OP_SUB_LOCAL_K: {
+        // Superinstruction: push(local - k)
+        uint8_t slot = READ_BYTE();
+        uint8_t k = READ_BYTE();
+        Value local = slots[slot];
+        if (!IS_NUMBER(local)) {
+          runtimeError("SUB_LOCAL_K operand must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        Value result;
+        if (IS_FIXNUM(local)) {
+          int64_t a = AS_FIXNUM(local);
+          int64_t r;
+          if (__builtin_sub_overflow(a, (int64_t)k, &r)) {
+            result = NUMBER_VAL((double)a - (double)k);
+          } else if (fixnumFitsInt64(r)) {
+            result = FIXNUM_VAL(r);
+          } else {
+            result = NUMBER_VAL((double)r);
+          }
+        } else {
+          result = NUMBER_VAL(AS_NUMBER(local) - (double)k);
+        }
+        push(result);
+        break;
+      }
+
+      case OP_MUL_LOCAL_K: {
+        // Superinstruction: push(local * k)
+        uint8_t slot = READ_BYTE();
+        uint8_t k = READ_BYTE();
+        Value local = slots[slot];
+        if (!IS_NUMBER(local)) {
+          runtimeError("MUL_LOCAL_K operand must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        Value result;
+        if (IS_FIXNUM(local)) {
+          int64_t a = AS_FIXNUM(local);
+          int64_t r;
+          if (__builtin_mul_overflow(a, (int64_t)k, &r)) {
+            result = NUMBER_VAL((double)a * (double)k);
+          } else if (fixnumFitsInt64(r)) {
+            result = FIXNUM_VAL(r);
+          } else {
+            result = NUMBER_VAL((double)r);
+          }
+        } else {
+          result = NUMBER_VAL(AS_NUMBER(local) * (double)k);
+        }
+        push(result);
+        break;
+      }
+
+      case OP_DIV_LOCAL_K: {
+        // Superinstruction: push(local / k)
+        uint8_t slot = READ_BYTE();
+        uint8_t k = READ_BYTE();
+        Value local = slots[slot];
+        if (!IS_NUMBER(local)) {
+          runtimeError("DIV_LOCAL_K operand must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        if (k == 0) {
+          runtimeError("Division by zero.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        // Division always produces floating point result in lx
+        // Convert fixnum to double if needed
+        double a = IS_FIXNUM(local) ? (double)AS_FIXNUM(local) : AS_NUMBER(local);
+        Value result = NUMBER_VAL(a / (double)k);
+        push(result);
+        break;
+      }
+
       case OP_GET_PROPERTY: {
         // Superinstruction: GET_LOCAL + CONSTANT + GET_BY_INDEX
         uint8_t objSlot = READ_BYTE();

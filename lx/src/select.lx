@@ -60,14 +60,68 @@ fn selectUnaryOpcode(gen, node) {
 }
 
 // -----------------------------------------------------------------------------
+// Binary expression superinstructions (local op constant)
+// -----------------------------------------------------------------------------
+
+// Returns: .{ kind: "LOCAL_K", opcode, binding, k } or nil
+// Matches: local +/-/*// k (where local is identifier bound to local, k is literal 0-255)
+fn selectBinaryLocalK(gen, node) {
+  if !node or node.type != NODE.Binary { return nil }
+
+  let op = node.operator and node.operator.lexeme or ""
+  let opcodes = .{
+    ["+"]: OP.ADD_LOCAL_K,
+    ["-"]: OP.SUB_LOCAL_K,
+    ["*"]: OP.MUL_LOCAL_K,
+    ["/"]: OP.DIV_LOCAL_K,
+  }
+
+  let opcode = opcodes[op]
+  if !opcode { return nil }
+
+  // Check pattern: left is identifier bound to local, right is number constant
+  if !node.left or node.left.type != NODE.Identifier { return nil }
+  if !node.right or node.right.type != NODE.Number { return nil }
+
+  // Check constant is in range [0, 255] and integral
+  let k = node.right.value
+  if k < 0 or k >= 256 or Math.floor(k) != k { return nil }
+
+  // Check left is a local binding
+  let binding = gen.resolvedNames[node.left.id]
+  if !binding or binding.kind != "local" { return nil }
+
+  // Type safety: ensure both operands are numeric (following selectBinaryCode pattern)
+  let leftCls = classOf(gen, node.left)
+  let rightCls = classOf(gen, node.right)
+  let leftNum = isNumericClass(leftCls)
+  let rightNum = isNumericClass(rightCls)
+
+  // For addition, we must ensure it's not string concatenation
+  if op == "+" {
+    if !leftNum or !rightNum {
+      return nil  // Could be strings, don't optimize
+    }
+  }
+  // For -, *, /, they're always numeric operations (would error at runtime otherwise)
+
+  return .{
+    kind: "LOCAL_K",
+    opcode: opcode,
+    binding: binding,
+    k: Math.floor(k),
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Binary selection
 // -----------------------------------------------------------------------------
 
 // Returns either:
 // - single opcode (number), or
-// - array [opcode1, opcode2] for 2-step sequences (e.g. "!=").
+// - array [opcode1, opcode2] for 2-step sequences (e.g. "!=")
 fn selectBinaryCode(gen, node) {
-  // node: NODE.Binary, operands already compiled by codegen.
+  // node: NODE.Binary
   let op = node.operator and node.operator.lexeme or ""
 
   let leftCls = classOf(gen, node.left)
@@ -342,6 +396,7 @@ let select = .{
   // unary/binary
   unaryOpcode: selectUnaryOpcode,
   binaryCode: selectBinaryCode,
+  binaryLocalK: selectBinaryLocalK,
 
   // logical OR coalesce (pure match)
   logicalOrCoalesceConst: selectLogicalOrCoalesceConst,

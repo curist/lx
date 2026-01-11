@@ -99,6 +99,12 @@ typedef enum {
   OP_MUL_LOCALS,          // GET_LOCAL×2 + MUL + SET_LOCAL (dest = lhs * rhs)
   OP_DIV_LOCALS,          // GET_LOCAL×2 + DIV + SET_LOCAL (dest = lhs / rhs)
 
+  // Local arithmetic with constant (expression form - pushes result)
+  OP_ADD_LOCAL_K,         // GET_LOCAL + CONST_BYTE + ADD (push local + k)
+  OP_SUB_LOCAL_K,         // GET_LOCAL + CONST_BYTE + SUB (push local - k)
+  OP_MUL_LOCAL_K,         // GET_LOCAL + CONST_BYTE + MUL (push local * k)
+  OP_DIV_LOCAL_K,         // GET_LOCAL + CONST_BYTE + DIV (push local / k)
+
   // Special/optimization
   OP_COALESCE_CONST,      // Replace TOS with constant if TOS is falsy
   OP_COALESCE_CONST_LONG,

@@ -166,6 +166,12 @@ let OP = enum {
   MUL_LOCALS,       // GET_LOCAL×2 + MUL + SET_LOCAL (dest = lhs * rhs)
   DIV_LOCALS,       // GET_LOCAL×2 + DIV + SET_LOCAL (dest = lhs / rhs)
 
+  // Local arithmetic with constant (expression form - pushes result)
+  ADD_LOCAL_K,      // GET_LOCAL + CONST_BYTE + ADD (push local + k)
+  SUB_LOCAL_K,      // GET_LOCAL + CONST_BYTE + SUB (push local - k)
+  MUL_LOCAL_K,      // GET_LOCAL + CONST_BYTE + MUL (push local * k)
+  DIV_LOCAL_K,      // GET_LOCAL + CONST_BYTE + DIV (push local / k)
+
   // Special/optimization
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy
   COALESCE_CONST_LONG,

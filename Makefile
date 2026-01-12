@@ -26,9 +26,14 @@ include/lx:
 
 # Generate bundled builtin hover docs data
 lx/scripts/builtins_docs_data.lx: API.md include/native_fn.h lx/globals.lx scripts/gen-builtin-docs.lx
-	@echo "Generating builtin docs data..."
-	$(LX) run scripts/gen-builtin-docs.lx
-	@echo "Done\n"
+	@if ! command -v "$(LX)" >/dev/null 2>&1; then \
+		echo "Skipping builtin docs data (no lx on PATH)."; \
+		touch $@; \
+	else \
+		echo "Generating builtin docs data..."; \
+		$(LX) run scripts/gen-builtin-docs.lx; \
+		echo "Done\n"; \
+	fi
 
 include/lx/lxlx.h: $(LX_LX_SOURCES) builtindocs include/chunk.h | include/lx
 	./scripts/build-lxlx.sh

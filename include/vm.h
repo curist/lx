@@ -17,19 +17,36 @@ typedef struct {
 } CallFrame;
 
 typedef struct {
-  CallFrame frames[FRAMES_MAX];
-  int frameCount;
+  // Fiber context
+  ObjFiber* currentFiber;
 
-  Value stack[STACK_MAX];
+  // Execution registers (pointers to either fiber or direct-mode storage)
+  Value* stack;
   Value* stackTop;
-  Value lastResult;
-  Value lastError;
-  jmp_buf* errorJmp;
+  int stackCapacity;
 
-  Table globals;
-  Table strings;
+  CallFrame* frames;
+  int frameCount;
+  int frameCapacity;
+
   ObjUpvalue* openUpvalues;
 
+  Value lastError;
+  jmp_buf* errorJmp;
+  int nonYieldableDepth;
+
+  // VM-global result (not per-fiber)
+  Value lastResult;
+
+  // Direct-mode backing storage (Phase 2A only)
+  Value mainStack[STACK_MAX];
+  CallFrame mainFrames[FRAMES_MAX];
+
+  // Global tables
+  Table globals;
+  Table strings;
+
+  // GC state
   size_t bytesAllocated;
   size_t nextGC;
   Obj* objects;

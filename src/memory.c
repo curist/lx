@@ -223,6 +223,11 @@ void freeObjects() {
 }
 
 static void markRoots() {
+  // Mark current fiber (keeps fiber object + its stack/frames alive)
+  if (vm.currentFiber != NULL) {
+    markObject((Obj*)vm.currentFiber);
+  }
+
   for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
     markValue(*slot);
   }

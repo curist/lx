@@ -17,10 +17,53 @@
 
 VM vm;
 
-static void resetStack() {
-  vm.stackTop = vm.stack;
+static void enterDirectMode() {
+  vm.currentFiber = NULL;
+
+  vm.stack = vm.mainStack;
+  vm.stackTop = vm.mainStack;
+  vm.stackCapacity = STACK_MAX;
+
+  vm.frames = vm.mainFrames;
   vm.frameCount = 0;
+  vm.frameCapacity = FRAMES_MAX;
+
   vm.openUpvalues = NULL;
+  vm.errorJmp = NULL;
+  vm.nonYieldableDepth = 0;
+}
+
+static void syncFromVM() {
+  ObjFiber* f = vm.currentFiber;
+  if (!f) return;
+
+  f->stackTop = vm.stackTop;
+  f->frameCount = vm.frameCount;
+  f->openUpvalues = vm.openUpvalues;
+  f->lastError = vm.lastError;
+}
+
+__attribute__((unused))
+static void switchToFiber(ObjFiber* f) {
+  // Save outgoing context
+  syncFromVM();
+
+  vm.currentFiber = f;
+
+  vm.stack = f->stack;
+  vm.stackTop = f->stackTop;
+  vm.stackCapacity = f->stackCapacity;
+
+  vm.frames = (CallFrame*)f->frames;
+  vm.frameCount = f->frameCount;
+  vm.frameCapacity = f->frameCapacity;
+
+  vm.openUpvalues = f->openUpvalues;
+  vm.lastError = f->lastError;
+
+  // Clear errorJmp to avoid longjmp into stale C stack
+  // (pcall protection doesn't span fiber switches until per-fiber error handling is added)
+  vm.errorJmp = NULL;
 }
 
 static Value buildRuntimeErrorValue(const char* message) {
@@ -132,7 +175,7 @@ static void runtimeError(const char* format, ...) {
   if (message == NULL) {
     // Worst case: print and bail.
     fputs("Error\n", stderr);
-    resetStack();
+    enterDirectMode();
     return;
   }
 
@@ -177,7 +220,7 @@ static void runtimeError(const char* format, ...) {
       fprintf(stderr, "%s()\n", function->name->chars);
     }
   }
-  resetStack();
+  enterDirectMode();
 }
 
 static bool valueToInt64Exact(Value value, int64_t* out, const char* context) {
@@ -286,7 +329,7 @@ static bool installExportsIntoGlobals(Value exportsVal) {
 }
 
 void initVM() {
-  resetStack();
+  enterDirectMode();
   vm.objects = NULL;
   vm.bytesAllocated = 0;
   vm.nextGC = 1024 * 1024;
@@ -368,7 +411,7 @@ void freeVM() {
 static bool call(ObjClosure* closure, int argCount) {
   int arity = closure->function->arity;
 
-  if (vm.frameCount == FRAMES_MAX) {
+  if (vm.frameCount >= vm.frameCapacity) {
     runtimeError("Stack overflow.");
     return false;
   }
@@ -432,7 +475,7 @@ static bool callValue(Value callee, int argCount) {
 }
 
 static inline bool insertCalleeBelowArgs(Value callee, int argCount) {
-  if (vm.stackTop >= vm.stack + STACK_MAX) {
+  if ((vm.stackTop - vm.stack) >= vm.stackCapacity) {
     runtimeError("Stack overflow.");
     return false;
   }

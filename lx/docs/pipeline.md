@@ -8,7 +8,7 @@ The goal is not to redesign individual passes, but to **clarify ownership, order
 
 * analyses are never stale,
 * whole-program phases run at the correct time,
-* backend stages are no longer “special wiring,” and
+* emit/verify stages are no longer “special wiring,” and
 * compilation targets (compiler vs tooling) are explicit and reliable.
 
 ---
@@ -30,7 +30,7 @@ LX currently has three overlapping orchestration layers:
    * import caching
    * some whole-program phases (typecheck, whole-program DCE)
 
-3. **Backend wiring**
+3. **Emit/verify wiring**
    `commands/common.lx` performs work *outside* the pass system:
 
    * selects an AST variant manually
@@ -70,7 +70,7 @@ As a result:
 Two schedulers exist:
 
 * `pipeline.runPasses()` decides AST transforms and analyses
-* `compileWithDriver()` decides backend work
+* `compileWithDriver()` decides emit/verify work
 
 Neither knows the full dependency graph.
 
@@ -78,7 +78,7 @@ Consequences:
 
 * duplicated logic (“which AST do I use?”)
 * implicit assumptions about pass order
-* backend analyses must be manually injected
+* analysis/emit stages must be manually injected
 
 ---
 
@@ -352,7 +352,7 @@ In practice, LX adopts the simple, robust rule:
 | Rerunning analyses before codegen | Codegen depends on artifacts, not pass timing |
 | Whole-program DCE placement       | Modeled as a prerequisite artifact            |
 | Manual AST selection              | Single canonical `ast.final`                  |
-| Backend special-casing            | Backend stages are normal artifact producers  |
+| Backend special-casing            | Emit/verify stages are normal artifact producers |
 | Fragile ordering                  | Dependencies, not lists, define order         |
 
 ---
@@ -381,7 +381,7 @@ By centering the pipeline around canonical artifacts and dependency-driven plann
 
 * correctness without reruns
 * predictable whole-program behavior
-* cleaner backend integration
+* cleaner emit/verify integration
 * a natural foundation for tooling and incremental compilation
 
 This model scales without introducing new conceptual debt—and removes several classes of bugs outright.

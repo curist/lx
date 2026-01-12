@@ -12,7 +12,7 @@ CFLAGS += -lm -lz
 ifeq ($(MODE),debug)
 	CFLAGS += -DDEBUG -O0
 else
-	CFLAGS += -O3 -flto
+	CFLAGS += -O3
 endif
 
 # All .lx sources needed to build embedded compiler/globals bytecode.

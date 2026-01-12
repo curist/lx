@@ -1,3 +1,448 @@
+// ========================================================
+// Type Constructors
+// ========================================================
+// Reusable type representations for any type system implementation.
+
+fn typeAny()     { .{ kind: "Any" } }
+fn typeNil()     { .{ kind: "Nil" } }
+fn typeNumber()  { .{ kind: "Number" } }
+fn typeBool()    { .{ kind: "Bool" } }
+fn typeString()  { .{ kind: "String" } }
+fn typeEnum(fields) { .{ kind: "Enum", fields: fields } }
+
+fn typeVar(id) {
+  .{ kind: "TypeVar", id: id }
+}
+
+fn typeFunction(params, ret) {
+  .{ kind: "Function", params: params, return: ret }
+}
+
+fn typeArray(elem) {
+  .{ kind: "Array", elem: elem }
+}
+
+fn typeRecord(fields) {
+  .{ kind: "Record", fields: fields }
+}
+
+fn typeMap(key, elem) {
+  .{ kind: "Map", key: key, elem: elem }
+}
+
+fn typeOption(value) {
+  // Avoid Option[Option[T]]
+  value and value.kind == "Option" and value or .{ kind: "Option", value: value }
+}
+
+fn typeIndexable(elem, key, nodeId) {
+  .{
+    kind: "Indexable",
+    elem: elem,
+    key: key,
+    nodeId: nodeId,
+    sawNumericIndex: false,
+  }
+}
+
+// ========================================================
+// Type Variable Management
+// ========================================================
+
+fn freshTypeVar(checker) {
+  let id = checker.nextTypeVarId
+  checker.nextTypeVarId = id + 1
+  typeVar(id)
+}
+
+fn getTypeVarBinding(checker, id) {
+  checker.typeVarBindings[id]
+}
+
+fn bindTypeVar(checker, id, type) {
+  let old = checker.typeVarBindings[id]
+  if !old {
+    checker.typeVarBindings[id] = type
+    if checker.changed != nil { checker.changed = true }
+    return
+  }
+
+  // Avoid counting no-op rebindings as progress.
+  if typeEquals(checker, old, type) {
+    return
+  }
+
+  checker.typeVarBindings[id] = type
+  if checker.changed != nil { checker.changed = true }
+}
+
+// ========================================================
+// Type Utilities
+// ========================================================
+
+// Follow type variable bindings until fixed point
+fn deref(checker, type) {
+  if type.kind == "TypeVar" {
+    let bound = getTypeVarBinding(checker, type.id)
+    if bound {
+      return deref(checker, bound)
+    }
+  }
+  type
+}
+
+// Dereference and return both root TypeVar (if any) and final type
+fn derefWithRootVar(checker, t) {
+  let root = nil
+  for t and t.kind == "TypeVar" {
+    root = t
+    let bound = getTypeVarBinding(checker, t.id)
+    if !bound { break }
+    t = bound
+  }
+  .{ root: root, type: t }
+}
+
+// Structural type equality
+fn typeEquals(checker, a, b) {
+  let eq
+  eq = fn(x, y, depth) {
+    if depth > 200 {
+      // Defensive: if something went cyclic due to a bug, be conservative and
+      // treat as not equal so we don't suppress progress.
+      return false
+    }
+    x = x and deref(checker, x) or x
+    y = y and deref(checker, y) or y
+
+    if !x and !y { return true }
+    if !x or !y { return false }
+
+    // Fast paths
+    if x.kind != y.kind { return false }
+    if x.kind == "Any" or x.kind == "Nil" or x.kind == "Number" or
+       x.kind == "Bool" or x.kind == "String" {
+      return true
+    }
+    if x.kind == "TypeVar" { return x.id == y.id }
+
+    if x.kind == "Array" { return eq(x.elem, y.elem, depth + 1) }
+    if x.kind == "Map" { return eq(x.key, y.key, depth + 1) and eq(x.elem, y.elem, depth + 1) }
+    if x.kind == "Option" { return eq(x.value, y.value, depth + 1) }
+    if x.kind == "Indexable" { return eq(x.key, y.key, depth + 1) and eq(x.elem, y.elem, depth + 1) }
+    if x.kind == "Function" {
+      let xMin = (x.minArity != nil) and x.minArity or len(x.params)
+      let yMin = (y.minArity != nil) and y.minArity or len(y.params)
+      if xMin != yMin { return false }
+      if len(x.params) != len(y.params) { return false }
+      for xParam, i in x.params {
+        if !eq(xParam, y.params[i], depth + 1) { return false }
+      }
+      return eq(x.return, y.return, depth + 1)
+    }
+    if x.kind == "Record" {
+      let kx = keys(x.fields)
+      let ky = keys(y.fields)
+      if len(kx) != len(ky) { return false }
+      for k in kx {
+        if !y.fields[k] { return false }
+        if !eq(x.fields[k], y.fields[k], depth + 1) { return false }
+      }
+      return true
+    }
+    if x.kind == "Enum" {
+      // Compare enum field sets
+      if !x.fields or !y.fields { return false }
+      let kx = keys(x.fields)
+      let ky = keys(y.fields)
+      if len(kx) != len(ky) { return false }
+      for k in kx {
+        if y.fields[k] == nil { return false }
+      }
+      return true
+    }
+
+    // Fallback: treat as not equal.
+    false
+  }
+
+  eq(a, b, 0)
+}
+
+// Occurs check: prevent infinite types
+fn occurs(checker, typeVarId, type) {
+  type = deref(checker, type)
+
+  if type.kind == "TypeVar" {
+    return type.id == typeVarId
+  }
+
+  if type.kind == "Function" {
+    for param in type.params {
+      if occurs(checker, typeVarId, param) {
+        return true
+      }
+    }
+    return occurs(checker, typeVarId, type.return)
+  }
+
+  if type.kind == "Array" {
+    return occurs(checker, typeVarId, type.elem)
+  }
+
+  if type.kind == "Map" {
+    return occurs(checker, typeVarId, type.key) or occurs(checker, typeVarId, type.elem)
+  }
+
+  if type.kind == "Option" {
+    return occurs(checker, typeVarId, type.value)
+  }
+
+  if type.kind == "Record" {
+    for k in keys(type.fields) {
+      if occurs(checker, typeVarId, type.fields[k]) {
+        return true
+      }
+    }
+  }
+
+  false
+}
+
+// Recursively dereference all type variables in a type
+fn derefAll(checker, t) {
+  t = deref(checker, t)
+  if !t { return t }
+
+  if t.kind == "Function" {
+    let ps = []
+    for param in t.params {
+      push(ps, derefAll(checker, param))
+    }
+    return typeFunction(ps, derefAll(checker, t.return))
+  }
+
+  if t.kind == "Array" {
+    return typeArray(derefAll(checker, t.elem))
+  }
+
+  if t.kind == "Map" {
+    return typeMap(derefAll(checker, t.key), derefAll(checker, t.elem))
+  }
+
+  if t.kind == "Option" {
+    let v = derefAll(checker, t.value)
+    if v and v.kind == "Nil" {
+      return typeNil()
+    }
+    return typeOption(v)
+  }
+
+  if t.kind == "Indexable" {
+    // Should be finalized away; default to Map for a stable printed type.
+    return typeMap(derefAll(checker, t.key), derefAll(checker, t.elem))
+  }
+
+  if t.kind == "Record" {
+    let fields = .{}
+    for k in keys(t.fields) {
+      fields[k] = derefAll(checker, t.fields[k])
+    }
+    return typeRecord(fields)
+  }
+
+  t
+}
+
+// ========================================================
+// Builtin Type Signatures
+// ========================================================
+// Comprehensive catalog of stdlib function types.
+// Note: Some builtins (push, pop, concat, reverse, slice, each, fold, take, drop, sort, _1, _2)
+// use freshTypeVar and thus require a checker context with nextTypeVarId.
+
+let BUILTIN_TYPES = .{
+  // Basic I/O (variadic-ish): model as 0-arg fn returning Nil
+  print: typeFunction([], typeNil()),
+  println: typeFunction([], typeNil()),
+
+  // String operations
+  str: typeFunction([typeAny()], typeString()),
+  join: typeFunction([typeArray(typeAny()), typeString()], typeString()),
+  split: typeFunction([typeString(), typeString()], typeArray(typeString())),
+  substr: typeFunction([typeString(), typeNumber()], typeString()),
+  startsWith: typeFunction([typeString(), typeString()], typeBool()),
+  endsWith: typeFunction([typeString(), typeString()], typeBool()),
+  contains: typeFunction([typeAny(), typeAny()], typeBool()),
+  tolower: typeFunction([typeString()], typeString()),
+  toupper: typeFunction([typeString()], typeString()),
+  tonumber: typeFunction([typeString()], typeNumber()),
+  chr: typeFunction([typeNumber()], typeString()),
+  ord: typeFunction([typeString()], typeNumber()),
+
+  // Reflection
+  type: typeFunction([typeAny()], typeString()),
+  nameOf: .{ kind: "Function", params: [typeAny(), typeAny()], return: typeOption(typeString()), builtinName: "nameOf" },
+
+  // Collections (special handling at call sites)
+  len: .{ kind: "Function", params: [typeAny()], return: typeNumber(), builtinName: "len" },
+  range: .{ kind: "Function", params: [typeAny()], return: typeArray(typeAny()), builtinName: "range" },
+  keys: .{ kind: "Function", params: [typeAny()], return: typeArray(typeAny()), builtinName: "keys" },
+
+  // Namespaced builtins
+  Math: typeRecord(.{
+    floor: typeFunction([typeNumber()], typeNumber()),
+    sqrt: typeFunction([typeNumber()], typeNumber()),
+    random: typeFunction([], typeNumber()),
+    max: typeFunction([], typeNumber()),  // variadic
+    min: typeFunction([], typeNumber()),  // variadic
+  }),
+
+  Date: typeRecord(.{
+    RFC3339: typeString(),
+    now: typeFunction([], typeNumber()),
+    nanotime: typeFunction([], typeNumber()),
+    format: typeFunction([typeNumber()], typeString()),
+    parse: typeFunction([typeString(), typeString()], typeNumber()),
+  }),
+
+  Lx: typeRecord(.{
+    args: typeArray(typeString()),
+    env: typeMap(typeString(), typeString()),
+    version: typeString(),
+    globals: typeFunction([], typeArray(typeAny())),
+    doubleToUint8Array: typeFunction([typeNumber()], typeArray(typeNumber())),
+    isLxObj: typeFunction([typeAny()], typeBool()),
+    loadObj: typeFunction([typeAny()], typeAny()),
+    pcall: typeFunction([typeAny()], typeRecord(.{
+      ok: typeBool(),
+      value: typeAny(),
+      error: typeAny(),
+    })),
+    error: typeFunction([typeAny()], typeNil()),
+    fs: typeRecord(.{
+      cwd: typeFunction([], typeString()),
+      exists: typeFunction([typeString()], typeBool()),
+      stat: typeFunction([typeString()], typeOption(typeAny())),
+      realpath: typeFunction([typeString()], typeOption(typeString())),
+      readFile: typeFunction([typeString()], typeString()),
+      writeFile: typeFunction([typeString(), typeString()], typeBool()),
+    }),
+    path: typeRecord(.{
+      join: typeFunction([], typeString()),
+      dirname: typeFunction([typeString()], typeString()),
+      basename: typeFunction([typeString()], typeString()),
+    }),
+    stdout: typeRecord(.{
+      flush: typeFunction([], typeNil()),
+      isTTY: typeFunction([], typeBool()),
+      putc: typeFunction([], typeNil()),
+    }),
+    stderr: typeRecord(.{
+      print: typeFunction([], typeNil()),
+      println: typeFunction([], typeNil()),
+      flush: typeFunction([], typeNil()),
+      isTTY: typeFunction([], typeBool()),
+    }),
+    stdin: typeRecord(.{
+      readAll: typeFunction([], typeString()),
+      readLine: typeFunction([], typeOption(typeString())),
+      readBytes: typeFunction([typeNumber()], typeOption(typeString())),
+      readFd: typeFunction([typeNumber()], typeOption(typeString())),
+      poll: typeFunction([typeNumber()], typeBool()),
+      unbuffered: typeFunction([], typeNil()),
+    }),
+    proc: typeRecord(.{
+      system: typeFunction([typeString()], typeNumber()),
+      exec: typeFunction([typeString()], typeRecord(.{
+        code: typeNumber(),
+        out: typeString(),
+      })),
+    }),
+    zlib: typeRecord(.{
+      deflate: typeFunction([typeArray(typeNumber())], typeArray(typeNumber())),
+      inflate: typeFunction([typeArray(typeNumber())], typeArray(typeNumber())),
+      crc32: typeFunction([typeAny()], typeNumber()),
+    }),
+    exit: typeFunction([], typeNil()),
+  }),
+
+  // Prelude builtins (from globals.lx)
+  first: typeFunction([typeAny()], typeAny()),
+  last: typeFunction([typeAny()], typeAny()),
+}
+
+let PARAMETRIC_BUILTIN_TYPES = .{
+  // Array operations
+  push: fn(checker) {
+    let elem = freshTypeVar(checker)
+    let arr = typeArray(elem)
+    typeFunction([arr, elem], arr)
+  },
+  pop: fn(checker) {
+    let elem = freshTypeVar(checker)
+    typeFunction([typeArray(elem)], typeOption(elem))
+  },
+  concat: fn(checker) {
+    let elem = freshTypeVar(checker)
+    let arr = typeArray(elem)
+    typeFunction([arr, arr], arr)
+  },
+  reverse: fn(checker) {
+    let elem = freshTypeVar(checker)
+    typeFunction([typeArray(elem)], typeArray(elem))
+  },
+  slice: fn(checker) {
+    let elem = freshTypeVar(checker)
+    typeFunction([typeArray(elem), typeNumber()], typeArray(elem))
+  },
+
+  // Prelude collection helpers
+  each: fn(checker) {
+    let t = freshTypeVar(checker)
+    let abort = typeFunction([], typeNil())
+    let cb = typeFunction([t, typeNumber(), typeArray(t), abort], typeAny())
+    typeFunction([typeArray(t), cb], typeNil())
+  },
+  fold: fn(checker) {
+    let t = freshTypeVar(checker)
+    let acc = freshTypeVar(checker)
+    let abort = typeFunction([], typeNil())
+    let cb = typeFunction([acc, t, typeNumber(), abort], acc)
+    typeFunction([typeArray(t), acc, cb], acc)
+  },
+  take: fn(checker) {
+    let t = freshTypeVar(checker)
+    typeFunction([typeArray(t), typeNumber()], typeArray(t))
+  },
+  drop: fn(checker) {
+    let t = freshTypeVar(checker)
+    typeFunction([typeArray(t), typeNumber()], typeArray(t))
+  },
+  sort: fn(checker) {
+    let t = freshTypeVar(checker)
+    let cmp = typeFunction([t, t], typeBool())
+    typeFunction([typeArray(t), cmp], typeArray(t))
+  },
+}
+
+fn builtinTypeByName(checker, name) {
+  // Check static table first (O(1) lookup)
+  if let staticType = BUILTIN_TYPES[name] {
+    return staticType
+  }
+
+  // Check parametric table (O(1) lookup + function call)
+  if let parametricFn = PARAMETRIC_BUILTIN_TYPES[name] {
+    return parametricFn(checker) 
+  }
+
+  nil
+}
+
+// ========================================================
+// Worklist Solver
+// ========================================================
 // Repeatedly scans `items`, removing the ones `trySolve(item)` can solve.
 // Returns the remaining (unsolved) items once no progress is made.
 fn solveWorklist(items, trySolve, opts = .{}) {
@@ -165,7 +610,42 @@ fn sccTopo(nodes, edgesFor) {
   }
 }
 
+// ========================================================
+// Exports
+// ========================================================
+
 .{
+  // Type constructors
+  typeAny,
+  typeNil,
+  typeNumber,
+  typeBool,
+  typeString,
+  typeEnum,
+  typeVar,
+  typeFunction,
+  typeArray,
+  typeRecord,
+  typeMap,
+  typeOption,
+  typeIndexable,
+
+  // Type variable management
+  freshTypeVar,
+  getTypeVarBinding,
+  bindTypeVar,
+
+  // Type utilities
+  deref,
+  derefWithRootVar,
+  typeEquals,
+  occurs,
+  derefAll,
+
+  // Builtin catalog
+  builtinTypeByName,
+
+  // Algorithms
   solveWorklist,
   scc,
   sccTopo,

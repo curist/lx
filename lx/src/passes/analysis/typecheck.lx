@@ -1,446 +1,75 @@
-// Typechecker - best-effort monomorphic type inference with constraints.
+// Typechecker Skeleton - Infrastructure and Patterns
 //
-// Pipeline assumptions:
-// - Runs on lowered AST (no Arrow nodes; root is an implicit Block).
-// - Uses resolver side tables to map Identifier → declaration (`declaredAt`).
-// - Resolver marks unknown/global names as `builtin`; we type known builtins via
-//   `builtinTypeByName` and otherwise fall back to Any.
+// This file demonstrates the essential patterns for building a type checker:
+// 1. How to integrate with other passes (resolve, etc.)
+// 2. How to traverse the AST
+// 3. How to gather and return results
 //
-// Features in this implementation:
-// - Structural types: Array[T], Map[K,V], Record{...} (closed), Option[T], Function(...)
-// - Constraints: Eq, HasField (read/write), Call, Index/IndexSet, KeyLike.
-// - Indexable: internal shape-var for `x[i]` / `x[i]=v` that defaults to Map.
-// - Calls: extra args allowed; too-few args is an error.
-// - Option: `if` without else yields Option[T] (except `Option[Nil]` normalizes to Nil);
-//   Option.field reads yield Option[field], writes are rejected.
-// - Solver: worklist runs to a fixed point on binding changes (`checker.changed`),
-//   then refines function bodies once and finalizes remaining constraints to Any.
+// WHAT THIS FILE CONTAINS:
+// - Integration patterns: how to access resolveResult, enumInfo, program data
+// - Traversal patterns: how to dispatch on node types and recurse through AST
+// - Result gathering: how to store types per node and collect errors
+// - Basic type assignments for literals, binaries, functions, etc.
+//
+// WHAT WAS REMOVED:
+// - Constraint generation and solving (Eq, HasField, Call, Index)
+// - Type variable unification and binding
+// - Function type refinement across multiple passes
+// - Indexable shape variables and finalization
+// - Option type propagation
+// - Complex bidirectional type checking
+//
+// The reusable components have been extracted to typecheck-helper.lx:
+// - Type constructors (typeArray, typeFunction, etc.)
+// - Builtin type catalog (builtinTypeByName with hash table lookup)
+// - Type utilities (deref, typeEquals, occurs check)
+// - Worklist solver and SCC algorithms
+//
+// This skeleton just assigns simple types (mostly Any) to demonstrate the
+// traversal and integration patterns. A real type checker would build on
+// these patterns to implement proper type inference.
 
 let helper = import "src/passes/analysis/typecheck-helper.lx"
 let .{ NODE } = import "src/types.lx"
-let DEBUG = false
 
 // ========================================================
-// Type Constructors
+// Type Constructors (from helper)
 // ========================================================
+// These are available in typecheck-helper.lx and can be reused
 
-fn typeAny()     { .{ kind: "Any" } }
-fn typeNil()     { .{ kind: "Nil" } }
-fn typeNumber()  { .{ kind: "Number" } }
-fn typeBool()    { .{ kind: "Bool" } }
-fn typeString()  { .{ kind: "String" } }
-fn typeEnum(fields) { .{ kind: "Enum", fields: fields } }
+let typeAny = helper.typeAny
+let typeNil = helper.typeNil
+let typeNumber = helper.typeNumber
+let typeBool = helper.typeBool
+let typeString = helper.typeString
+let typeArray = helper.typeArray
+let typeFunction = helper.typeFunction
 
-fn typeVar(id) {
-  .{ kind: "TypeVar", id: id }
-}
+// ========================================================
+// Checker State
+// ========================================================
+// Shows how to structure the checker context with data from other passes
 
-fn typeFunction(params, ret) {
-  .{ kind: "Function", params: params, return: ret }
-}
-
-fn typeArray(elem) {
-  .{ kind: "Array", elem: elem }
-}
-
-fn typeRecord(fields) {
-  .{ kind: "Record", fields: fields }
-}
-
-fn typeMap(key, elem) {
-  .{ kind: "Map", key: key, elem: elem }
-}
-
-fn typeOption(value) {
-  // Avoid Option[Option[T]]
-  value and value.kind == "Option" and value or .{ kind: "Option", value: value }
-}
-
-fn typeIndexable(elem, key, nodeId) {
+fn makeChecker(resolveResult, opts = .{}) {
   .{
-    kind: "Indexable",
-    elem: elem,
-    key: key,
-    nodeId: nodeId,
-    sawNumericIndex: false,
+    // === Data from other passes ===
+    resolveResult: resolveResult,
+    resolvedNames: resolveResult.resolvedNames,  // Identifier -> binding info
+    enumInfo: opts.enumInfo or .{},              // Node ID -> enum metadata
+    program: opts.program,                       // Program-level context
+
+    // === Result accumulation ===
+    types: .{},                                  // Node ID -> inferred type
+    errors: [],                                  // Collected errors
+    hadError: false,
+
+    // === Working state (example) ===
+    nextTypeVarId: 1,                            // For generating fresh type vars
   }
 }
 
 // ========================================================
-// Type Variable Management
-// ========================================================
-
-fn freshTypeVar(checker) {
-  let id = checker.nextTypeVarId
-  checker.nextTypeVarId = id + 1
-  typeVar(id)
-}
-
-fn builtinTypeByName(checker, name) {
-  // Basic I/O (variadic-ish): model as 0-arg fn returning Nil so calls with
-  // extra args are allowed by the call solver.
-  if name == "print" or name == "println" {
-    return typeFunction([], typeNil())
-  }
-
-  if name == "str" { return typeFunction([typeAny()], typeString()) }
-  if name == "join" { return typeFunction([typeArray(typeAny()), typeString()], typeString()) }
-  if name == "split" { return typeFunction([typeString(), typeString()], typeArray(typeString())) }
-  if name == "tolower" { return typeFunction([typeString()], typeString()) }
-  if name == "toupper" { return typeFunction([typeString()], typeString()) }
-  if name == "tonumber" { return typeFunction([typeString()], typeNumber()) }
-  if name == "chr" { return typeFunction([typeNumber()], typeString()) }
-  if name == "ord" { return typeFunction([typeString()], typeNumber()) }
-  if name == "type" { return typeFunction([typeAny()], typeString()) }
-  if name == "nameOf" { return .{ kind: "Function", params: [typeAny(), typeAny()], return: typeOption(typeString()), builtinName: "nameOf" } }
-
-  // Collection helpers (best-effort; some are polymorphic in runtime).
-  // Some builtins have special typing behavior at call sites (handled in the
-  // Call constraint solver) but still need a function-ish type so they can be
-  // referenced/aliased.
-  if name == "len" { return .{ kind: "Function", params: [typeAny()], return: typeNumber(), builtinName: "len" } }
-  if name == "range" { return .{ kind: "Function", params: [typeAny()], return: typeArray(typeAny()), builtinName: "range" } }
-  if name == "keys" { return .{ kind: "Function", params: [typeAny()], return: typeArray(typeAny()), builtinName: "keys" } }
-  if name == "lines" { return typeFunction([typeString()], typeArray(typeString())) }
-
-  // Array ops: typed with fresh vars per use.
-  if name == "push" {
-    let elem = freshTypeVar(checker)
-    let arr = typeArray(elem)
-    return typeFunction([arr, elem], arr)
-  }
-  if name == "pop" {
-    let elem = freshTypeVar(checker)
-    return typeFunction([typeArray(elem)], typeOption(elem))
-  }
-  if name == "concat" {
-    let elem = freshTypeVar(checker)
-    let arr = typeArray(elem)
-    return typeFunction([arr, arr], arr)
-  }
-
-  // I/O helpers
-  if name == "getline" { return typeFunction([], typeOption(typeString())) }
-  if name == "read" { return typeFunction([typeNumber()], typeOption(typeString())) }
-
-  // Shell/process helpers (keep coarse types to avoid modeling filesystem).
-  // Namespaced builtins: model as records so `Date.now()` / `Lx.args` typecheck.
-  if name == "Math" {
-    return typeRecord(.{
-      floor: typeFunction([typeNumber()], typeNumber()),
-      sqrt: typeFunction([typeNumber()], typeNumber()),
-      random: typeFunction([], typeNumber()),
-    })
-  }
-  if name == "Date" {
-    return typeRecord(.{
-      RFC3339: typeString(),
-      now: typeFunction([], typeNumber()),
-      nanotime: typeFunction([], typeNumber()),
-      // format(ts, fmt?) -> String; model required arg only, extra args allowed.
-      format: typeFunction([typeNumber()], typeString()),
-      parse: typeFunction([typeString(), typeString()], typeNumber()),
-    })
-  }
-  if name == "Lx" {
-    return typeRecord(.{
-      args: typeArray(typeString()),
-      env: typeMap(typeString(), typeString()),
-      version: typeString(),
-      globals: typeFunction([], typeArray(typeAny())),
-      doubleToUint8Array: typeFunction([typeNumber()], typeArray(typeNumber())),
-      isLxObj: typeFunction([typeAny()], typeBool()),
-      loadObj: typeFunction([typeAny()], typeAny()),
-      pcall: typeFunction([typeAny()], typeRecord(.{
-        ok: typeBool(),
-        value: typeAny(),
-        error: typeAny(),
-      })),
-      error: typeFunction([typeAny()], typeNil()),
-      fs: typeRecord(.{
-        cwd: typeFunction([], typeString()),
-        exists: typeFunction([typeString()], typeBool()),
-        stat: typeFunction([typeString()], typeOption(typeAny())),
-        realpath: typeFunction([typeString()], typeOption(typeString())),
-        readFile: typeFunction([typeString()], typeString()),
-        writeFile: typeFunction([typeString(), typeString()], typeBool()),
-      }),
-      path: typeRecord(.{
-        join: typeFunction([], typeString()),
-        dirname: typeFunction([typeString()], typeString()),
-        basename: typeFunction([typeString()], typeString()),
-      }),
-      stdout: typeRecord(.{
-        flush: typeFunction([], typeNil()),
-        putc: typeFunction([], typeNil()),
-      }),
-      stderr: typeRecord(.{
-        print: typeFunction([], typeNil()),
-        println: typeFunction([], typeNil()),
-        flush: typeFunction([], typeNil()),
-      }),
-      stdin: typeRecord(.{
-        readAll: typeFunction([], typeString()),
-        readLine: typeFunction([], typeOption(typeString())),
-        readBytes: typeFunction([typeNumber()], typeOption(typeString())),
-        readFd: typeFunction([typeNumber()], typeOption(typeString())),
-        poll: typeFunction([typeNumber()], typeBool()),
-        unbuffered: typeFunction([], typeNil()),
-      }),
-      proc: typeRecord(.{
-        system: typeFunction([typeString()], typeNumber()),
-        exec: typeFunction([typeString()], typeRecord(.{
-          code: typeNumber(),
-          out: typeString(),
-        })),
-      }),
-      // exit(code?) -> Nil; model as 0-arg fn so `Lx.exit()` works, and extra args are allowed.
-      exit: typeFunction([], typeNil()),
-    })
-  }
-
-  // Prelude builtins from `globals.lx`
-  if name == "_1" {
-    let a = freshTypeVar(checker)
-    let b = freshTypeVar(checker)
-    return typeFunction([typeFunction([a], b)], typeFunction([a], b))
-  }
-  if name == "_2" {
-    let a = freshTypeVar(checker)
-    let b = freshTypeVar(checker)
-    let c = freshTypeVar(checker)
-    return typeFunction([typeFunction([a, b], c)], typeFunction([a, b], c))
-  }
-
-  // Collection helpers (array-focused; some prelude fns also accept strings at runtime).
-  if name == "each" {
-    let t = freshTypeVar(checker)
-    let abort = typeFunction([], typeNil())
-    // cb(elem, i, arr, abort) -> Any
-    let cb = typeFunction([t, typeNumber(), typeArray(t), abort], typeAny())
-    return typeFunction([typeArray(t), cb], typeNil())
-  }
-  if name == "fold" {
-    let t = freshTypeVar(checker)
-    let acc = freshTypeVar(checker)
-    let abort = typeFunction([], typeNil())
-    // cb(acc, x, i, abort) -> acc
-    let cb = typeFunction([acc, t, typeNumber(), abort], acc)
-    return typeFunction([typeArray(t), acc, cb], acc)
-  }
-  if name == "take" or name == "drop" {
-    let t = freshTypeVar(checker)
-    return typeFunction([typeArray(t), typeNumber()], typeArray(t))
-  }
-
-  if name == "sort" {
-    let t = freshTypeVar(checker)
-    let cmp = typeFunction([t, t], typeBool())
-    return typeFunction([typeArray(t), cmp], typeArray(t))
-  }
-
-  if name == "startsWith" or name == "endsWith" {
-    return typeFunction([typeString(), typeString()], typeBool())
-  }
-
-  if name == "max" or name == "min" {
-    return typeFunction([typeNumber(), typeNumber()], typeNumber())
-  }
-
-  // These prelude fns are intentionally typed coarsely for now.
-  if name == "first" or name == "last" {
-    return typeFunction([typeAny()], typeAny())
-  }
-  if name == "contains" {
-    return typeFunction([typeAny(), typeAny()], typeBool())
-  }
-
-  nil
-}
-
-fn getTypeVarBinding(checker, id) {
-  checker.typeVarBindings[id]
-}
-
-// Follow bindings until fixed point
-fn deref(checker, type) {
-  if type.kind == "TypeVar" {
-    let bound = getTypeVarBinding(checker, type.id)
-    if bound {
-      return deref(checker, bound)
-    }
-  }
-  type
-}
-
-fn typeEquals(checker, a, b) {
-  let eq
-  eq = fn(x, y, depth) {
-    if depth > 200 {
-      // Defensive: if something went cyclic due to a bug, be conservative and
-      // treat as not equal so we don't suppress progress.
-      return false
-    }
-    x = x and deref(checker, x) or x
-    y = y and deref(checker, y) or y
-
-    if !x and !y { return true }
-    if !x or !y { return false }
-
-    // Fast paths
-    if x.kind != y.kind { return false }
-    if x.kind == "Any" or x.kind == "Nil" or x.kind == "Number" or
-       x.kind == "Bool" or x.kind == "String" {
-      return true
-    }
-    if x.kind == "TypeVar" { return x.id == y.id }
-
-    if x.kind == "Array" { return eq(x.elem, y.elem, depth + 1) }
-    if x.kind == "Map" { return eq(x.key, y.key, depth + 1) and eq(x.elem, y.elem, depth + 1) }
-    if x.kind == "Option" { return eq(x.value, y.value, depth + 1) }
-    if x.kind == "Indexable" { return eq(x.key, y.key, depth + 1) and eq(x.elem, y.elem, depth + 1) }
-    if x.kind == "Function" {
-      let xMin = (x.minArity != nil) and x.minArity or len(x.params)
-      let yMin = (y.minArity != nil) and y.minArity or len(y.params)
-      if xMin != yMin { return false }
-      if len(x.params) != len(y.params) { return false }
-      for xParam, i in x.params {
-        if !eq(xParam, y.params[i], depth + 1) { return false }
-      }
-      return eq(x.return, y.return, depth + 1)
-    }
-    if x.kind == "Record" {
-      let kx = keys(x.fields)
-      let ky = keys(y.fields)
-      if len(kx) != len(ky) { return false }
-      for k in kx {
-        if !y.fields[k] { return false }
-        if !eq(x.fields[k], y.fields[k], depth + 1) { return false }
-      }
-      return true
-    }
-
-    // Fallback: treat as not equal.
-    false
-  }
-
-  eq(a, b, 0)
-}
-
-fn bindTypeVar(checker, id, type) {
-  let old = checker.typeVarBindings[id]
-  if !old {
-    checker.typeVarBindings[id] = type
-    checker.changed = true
-    return
-  }
-
-  // Avoid counting no-op rebindings as progress.
-  if typeEquals(checker, old, type) {
-    return
-  }
-
-  checker.typeVarBindings[id] = type
-  checker.changed = true
-}
-
-fn derefWithRootVar(checker, t) {
-  let root = nil
-  for t and t.kind == "TypeVar" {
-    root = t
-    let bound = getTypeVarBinding(checker, t.id)
-    if !bound { break }
-    t = bound
-  }
-  .{ root: root, type: t }
-}
-
-// Occurs check: prevent infinite types
-fn occurs(checker, typeVarId, type) {
-  type = deref(checker, type)
-
-  if type.kind == "TypeVar" {
-    return type.id == typeVarId
-  }
-
-  if type.kind == "Function" {
-    for param in type.params {
-      if occurs(checker, typeVarId, param) {
-        return true
-      }
-    }
-    return occurs(checker, typeVarId, type.return)
-  }
-
-  if type.kind == "Array" {
-    return occurs(checker, typeVarId, type.elem)
-  }
-
-  if type.kind == "Map" {
-    return occurs(checker, typeVarId, type.key) or occurs(checker, typeVarId, type.elem)
-  }
-
-  if type.kind == "Option" {
-    return occurs(checker, typeVarId, type.value)
-  }
-
-  if type.kind == "Record" {
-    for k in keys(type.fields) {
-      if occurs(checker, typeVarId, type.fields[k]) {
-        return true
-      }
-    }
-  }
-
-  false
-}
-
-fn derefAll(checker, t) {
-  t = deref(checker, t)
-  if !t { return t }
-
-  if t.kind == "Function" {
-    let ps = []
-    for param in t.params {
-      push(ps, derefAll(checker, param))
-    }
-    return typeFunction(ps, derefAll(checker, t.return))
-  }
-
-  if t.kind == "Array" {
-    return typeArray(derefAll(checker, t.elem))
-  }
-
-  if t.kind == "Map" {
-    return typeMap(derefAll(checker, t.key), derefAll(checker, t.elem))
-  }
-
-  if t.kind == "Option" {
-    let v = derefAll(checker, t.value)
-    if v and v.kind == "Nil" {
-      return typeNil()
-    }
-    return typeOption(v)
-  }
-
-  if t.kind == "Indexable" {
-    // Should be finalized away; default to Map for a stable printed type.
-    return typeMap(derefAll(checker, t.key), derefAll(checker, t.elem))
-  }
-
-  if t.kind == "Record" {
-    let fields = .{}
-    for k in keys(t.fields) {
-      fields[k] = derefAll(checker, t.fields[k])
-    }
-    return typeRecord(fields)
-  }
-
-  t
-}
-
-// ========================================================
-// Error Handling
+// Error Reporting Pattern
 // ========================================================
 
 fn addError(checker, nodeId, message) {
@@ -452,1371 +81,15 @@ fn addError(checker, nodeId, message) {
   })
 }
 
-
 // ========================================================
-// Unification (Eager, Structural)
+// AST Traversal Pattern
 // ========================================================
+// Shows how to traverse and analyze different node types
 
-fn unify(checker, t1, t2) {
-  let d1 = derefWithRootVar(checker, t1)
-  let d2 = derefWithRootVar(checker, t2)
+let synthExpr  // Forward declaration for mutual recursion
 
-  let root1 = d1.root
-  let root2 = d2.root
-
-  t1 = d1.type
-  t2 = d2.type
-
-  // Fast path
-  if t1.kind == t2.kind {
-    if t1.kind == "TypeVar" {
-      if t1.id == t2.id { return true }
-      bindTypeVar(checker, t1.id, t2)
-      return true
-    }
-
-    if t1.kind == "Function" {
-      if len(t1.params) != len(t2.params) { return false }
-      for t1Param, i in t1.params {
-        if !unify(checker, t1Param, t2.params[i]) {
-          return false
-        }
-      }
-      return unify(checker, t1.return, t2.return)
-    }
-
-    if t1.kind == "Array" {
-      return unify(checker, t1.elem, t2.elem)
-    }
-
-    if t1.kind == "Map" {
-      return unify(checker, t1.key, t2.key) and unify(checker, t1.elem, t2.elem)
-    }
-
-    if t1.kind == "Option" {
-      return unify(checker, t1.value, t2.value)
-    }
-
-    if t1.kind == "Record" {
-      let k1 = keys(t1.fields)
-      let k2 = keys(t2.fields)
-      if len(k1) != len(k2) { return false }
-      for k in k1 {
-        if !t2.fields[k] { return false }
-        if !unify(checker, t1.fields[k], t2.fields[k]) {
-          return false
-        }
-      }
-      return true
-    }
-
-    // Primitive types
-    return true
-  }
-
-  // Any absorbs everything (but still bind TypeVars so they don't stay unconstrained).
-  if t1.kind == "Any" {
-    if root2 and root2.kind == "TypeVar" { bindTypeVar(checker, root2.id, t1) }
-    return true
-  }
-  if t2.kind == "Any" {
-    if root1 and root1.kind == "TypeVar" { bindTypeVar(checker, root1.id, t2) }
-    return true
-  }
-
-  // Indexable can be committed by unifying with a concrete container type.
-  if t1.kind == "Indexable" and root1 and root1.kind == "TypeVar" {
-    if t2.kind == "Array" {
-      unify(checker, t1.elem, t2.elem)
-      unify(checker, t1.key, typeNumber())
-      bindTypeVar(checker, root1.id, typeArray(t1.elem))
-      return true
-    }
-    if t2.kind == "Map" {
-      unify(checker, t1.key, t2.key)
-      unify(checker, t1.elem, t2.elem)
-      bindTypeVar(checker, root1.id, typeMap(t1.key, t1.elem))
-      return true
-    }
-    if t2.kind == "String" {
-      unify(checker, t1.key, typeNumber())
-      unify(checker, t1.elem, typeString())
-      bindTypeVar(checker, root1.id, typeString())
-      return true
-    }
-  }
-  if t2.kind == "Indexable" and root2 and root2.kind == "TypeVar" {
-    if t1.kind == "Array" {
-      unify(checker, t2.elem, t1.elem)
-      unify(checker, t2.key, typeNumber())
-      bindTypeVar(checker, root2.id, typeArray(t2.elem))
-      return true
-    }
-    if t1.kind == "Map" {
-      unify(checker, t2.key, t1.key)
-      unify(checker, t2.elem, t1.elem)
-      bindTypeVar(checker, root2.id, typeMap(t2.key, t2.elem))
-      return true
-    }
-    if t1.kind == "String" {
-      unify(checker, t2.key, typeNumber())
-      unify(checker, t2.elem, typeString())
-      bindTypeVar(checker, root2.id, typeString())
-      return true
-    }
-  }
-
-  // Nil promotes to Option[T] (without double-wrapping).
-  // This is how `nil` participates in "optional" types.
-  fn optionizeRoot(root, baseType) {
-    if !root or root.kind != "TypeVar" { return false }
-    // Avoid binding a typevar to Option(of itself).
-    let inner = baseType
-    if baseType and baseType.kind == "TypeVar" and baseType.id == root.id {
-      inner = freshTypeVar(checker)
-    }
-    bindTypeVar(checker, root.id, typeOption(inner))
-    true
-  }
-
-  if t1.kind == "Nil" {
-    if t2.kind == "Option" { return true }
-    // Prefer to annotate the non-nil side's root var when possible.
-    if optionizeRoot(root2, t2) { return true }
-    if optionizeRoot(root1, t2) { return true }
-    return true
-  }
-
-  if t2.kind == "Nil" {
-    if t1.kind == "Option" { return true }
-    if optionizeRoot(root1, t1) { return true }
-    if optionizeRoot(root2, t1) { return true }
-    return true
-  }
-
-  // Option[T] can unify with T only when the Option originated from a TypeVar
-  // binding AND the other side is not a TypeVar. This preserves Option at the
-  // binding site (e.g. `let x = if ...`) while still allowing `x = 1` when `x`
-  // is already Option[_], without accidentally unwrapping optionals at use sites
-  // (e.g. function call results).
-  if t1.kind == "Option" and root1 and root1.kind == "TypeVar" and t2.kind != "TypeVar" {
-    return unify(checker, t1.value, t2)
-  }
-  if t2.kind == "Option" and root2 and root2.kind == "TypeVar" and t1.kind != "TypeVar" {
-    return unify(checker, t1, t2.value)
-  }
-
-  // TypeVar binding
-  if t1.kind == "TypeVar" {
-    if occurs(checker, t1.id, t2) { return false }
-    bindTypeVar(checker, t1.id, t2)
-    return true
-  }
-
-  if t2.kind == "TypeVar" {
-    if occurs(checker, t2.id, t1) { return false }
-    bindTypeVar(checker, t2.id, t1)
-    return true
-  }
-
-  false
-}
-
-fn constrain(checker, t1, t2, nodeId, msg) {
-  if !unify(checker, t1, t2) {
-    addError(checker, nodeId, msg)
-    return typeAny()
-  }
-  t1
-}
-
-// ========================================================
-// Constraints (Phase 2)
-// ========================================================
-
-fn emitEq(checker, t1, t2, nodeId, msg) {
-  push(checker.constraints, .{
-    kind: "Eq",
-    t1: t1,
-    t2: t2,
-    nodeId: nodeId,
-    msg: msg,
-  })
-  t2
-}
-
-fn emitHasFieldMode(checker, base, name, fieldType, nodeId, msg, mode) {
-  push(checker.constraints, .{
-    kind: "HasField",
-    base: base,
-    fieldName: name,
-    fieldType: fieldType,
-    nodeId: nodeId,
-    msg: msg,
-    mode: mode or "read",
-    innerFieldType: nil,
-  })
-  fieldType
-}
-
-fn emitHasField(checker, base, name, fieldType, nodeId, msg) {
-  emitHasFieldMode(checker, base, name, fieldType, nodeId, msg, "read")
-}
-
-fn emitCall(checker, callee, args, argNodeIds, out, nodeId) {
-  push(checker.constraints, .{
-    kind: "Call",
-    callee: callee,
-    args: args,
-    argNodeIds: argNodeIds,
-    out: out,
-    nodeId: nodeId,
-  })
-  out
-}
-
-fn emitKeyLike(checker, t, nodeId) {
-  push(checker.constraints, .{
-    kind: "KeyLike",
-    t: t,
-    nodeId: nodeId,
-    msg: "Hashmap key type must be number or string.",
-  })
-  t
-}
-
-fn emitIndex(checker, base, index, out, nodeId) {
-  push(checker.constraints, .{
-    kind: "Index",
-    base: base,
-    index: index,
-    // If index expression is a literal String/Number (possibly via Grouping),
-    // carry the key so Records can enforce closed-shape access.
-    literalKey: nil,
-    out: out,
-    nodeId: nodeId,
-  })
-  out
-}
-
-fn emitIndexSet(checker, base, index, value, nodeId) {
-  push(checker.constraints, .{
-    kind: "IndexSet",
-    base: base,
-    index: index,
-    literalKey: nil,
-    value: value,
-    nodeId: nodeId,
-  })
-  value
-}
-
-fn containEqFailure(checker, t1, t2) {
-  if t1.kind == "TypeVar" { bindTypeVar(checker, t1.id, typeAny()) }
-  if t2.kind == "TypeVar" { bindTypeVar(checker, t2.id, typeAny()) }
-}
-
-fn containHasFieldFailure(checker, fieldType) {
-  if fieldType.kind == "TypeVar" {
-    bindTypeVar(checker, fieldType.id, typeAny())
-  }
-}
-
-fn markConstraintError(c) { c.emittedError = true }
-
-fn debugAssert(checker, ok, nodeId, msg) {
-  if DEBUG and !ok {
-    addError(checker, nodeId, msg)
-  }
-}
-
-fn unifyOrContain(checker, nodeId, msg, t1, t2) {
-  if unify(checker, t1, t2) { return true }
-  addError(checker, nodeId, msg)
-  containEqFailure(checker, deref(checker, t1), deref(checker, t2))
-  false
-}
-
-fn markIndexableNumeric(checker, root, base) {
-  if root and root.kind == "TypeVar" {
-    let binding = checker.typeVarBindings[root.id]
-    if binding and binding.kind == "Indexable" {
-      binding.sawNumericIndex = true
-      return
-    }
-  }
-  if base and base.kind == "Indexable" {
-    base.sawNumericIndex = true
-  }
-}
-
-fn unwrapOptionalForField(checker, c, mode, base, ft) {
-  // Option[T].field
-  // - read: Option[field]
-  // - write: error (cannot assign through optional base)
-  if mode == "write" {
-    addError(checker, c.nodeId, "Cannot assign to field on optional value")
-    markConstraintError(c)
-    containHasFieldFailure(checker, ft)
-    return .{ status: "solved" }
-  }
-
-  if !c.innerFieldType {
-    c.innerFieldType = freshTypeVar(checker)
-    if !unify(checker, c.fieldType, typeOption(c.innerFieldType)) {
-      addError(checker, c.nodeId, "Optional field access mismatch")
-      markConstraintError(c)
-      containHasFieldFailure(checker, ft)
-      return .{ status: "solved" }
-    }
-  }
-
-  ft = deref(checker, c.innerFieldType)
-
-  if !base.value {
-    return .{ status: "defer" }
-  }
-
-  let innerBase = deref(checker, base.value)
-  // Avoid getting stuck on Option[Option[T]] via TypeVar indirection.
-  if innerBase.kind == "Option" and innerBase.value {
-    innerBase = deref(checker, innerBase.value)
-  }
-
-  if innerBase.kind == "TypeVar" and !getTypeVarBinding(checker, innerBase.id) {
-    return .{ status: "defer" }
-  }
-
-  if innerBase.kind == "Any" {
-    if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
-    return .{ status: "solved", base: typeAny(), ft: ft }
-  }
-
-  .{ status: "solved", base: innerBase, ft: ft }
-}
-
-fn overloadCase(name, matches, apply) {
-  .{ name: name, matches: matches, apply: apply }
-}
-
-fn overloadCasesByName(name) {
-  if name == "len" {
-    return [
-      overloadCase("len:tooFew", fn(checker, c) { len(c.args) < 1 and "match" or "no" }, fn(checker, c) {
-        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        true
-      }),
-
-      overloadCase("len:any", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Any" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
-        true
-      }),
-
-      overloadCase("len:array", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Array" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
-        true
-      }),
-
-      overloadCase("len:string", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "String" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
-        true
-      }),
-
-      // Lenable route: do not guess or default unknown bases. Keep a deferred
-      // check so we can report an error if it becomes known-non-lenable later.
-      overloadCase("len:unresolved", fn(checker, c) {
-        let baseInfo = derefWithRootVar(checker, c.args[0])
-        let root = baseInfo.root
-        let base = deref(checker, baseInfo.type)
-        if base.kind == "Indexable" { return "defer" }
-        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
-        "no"
-      }, fn(checker, c) { true }),
-
-      overloadCase("len:invalid", fn(checker, c) {
-        let baseInfo = derefWithRootVar(checker, c.args[0])
-        let root = baseInfo.root
-        let base = deref(checker, baseInfo.type)
-        if base.kind == "Any" { return "no" }
-        if base.kind == "Array" { return "no" }
-        if base.kind == "String" { return "no" }
-        if base.kind == "Indexable" { return "defer" }
-        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
-        "match"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
-        let baseInfo = derefWithRootVar(checker, c.args[0])
-        let root = baseInfo.root
-        addError(checker, c.nodeId, "len() requires array or string")
-        if root and root.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
-          bindTypeVar(checker, root.id, typeAny())
-        }
-        true
-      }),
-    ]
-  }
-
-  if name == "range" {
-    return [
-      overloadCase("range:tooFew", fn(checker, c) { len(c.args) < 1 and "match" or "no" }, fn(checker, c) {
-        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        true
-      }),
-
-      // range(Array[T]) -> Array[T] (identity)
-      overloadCase("range:array", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Array" and "match" or "no"
-      }, fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, base)
-        true
-      }),
-
-      // range(Number) -> Array[Number]
-      overloadCase("range:number", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Number" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(typeNumber()))
-        true
-      }),
-
-      // range(String) -> Array[String] (split into UTF-8 chars)
-      overloadCase("range:string", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "String" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(typeString()))
-        true
-      }),
-
-      // range(Map[K,V]) -> Array[K]
-      overloadCase("range:map", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Map" and "match" or "no"
-      }, fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        emitKeyLike(checker, base.key, c.nodeId)
-        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(base.key))
-        true
-      }),
-
-      // range(Record{...}) -> Array[String|Number|Any] (keys)
-      overloadCase("range:record", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Record" and "match" or "no"
-      }, fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        let fs = keys(base.fields)
-        let sawString = false
-        let sawNumber = false
-        for k in fs {
-          if type(k) == "string" { sawString = true } else { sawNumber = true }
-        }
-        let kt = (sawString and sawNumber) and typeAny() or (sawString and typeString() or typeNumber())
-        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(kt))
-        true
-      }),
-
-      overloadCase("range:enum", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Enum" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(typeString()))
-        true
-      }),
-
-      // Unknown/unresolved base: defer and allow later refinement.
-      overloadCase("range:unresolved", fn(checker, c) {
-        let baseInfo = derefWithRootVar(checker, c.args[0])
-        let root = baseInfo.root
-        let base = deref(checker, baseInfo.type)
-        if base.kind == "Indexable" { return "defer" }
-        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
-        "no"
-      }, fn(checker, c) { true }),
-
-      // For all other *known* types, runtime returns an empty Array. Do not
-      // apply this fallback while the base is still unknown, otherwise we lose
-      // the ability to refine the result once evidence appears.
-      overloadCase("range:other", fn(checker, c) {
-        let baseInfo = derefWithRootVar(checker, c.args[0])
-        let root = baseInfo.root
-        let base = deref(checker, baseInfo.type)
-        if base.kind == "Indexable" { return "defer" }
-        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
-        "match"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(typeAny()))
-        true
-      }),
-    ]
-  }
-
-  if name == "keys" {
-    return [
-      overloadCase("keys:tooFew", fn(checker, c) { len(c.args) < 1 and "match" or "no" }, fn(checker, c) {
-        addError(checker, c.nodeId, "Too few arguments: expected at least 1, got 0")
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        true
-      }),
-
-      overloadCase("keys:any", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Any" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(typeAny()))
-        true
-      }),
-
-      overloadCase("keys:map", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Map" and "match" or "no"
-      }, fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        emitKeyLike(checker, base.key, c.nodeId)
-        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(base.key))
-        true
-      }),
-
-      overloadCase("keys:record", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Record" and "match" or "no"
-      }, fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        let fs = keys(base.fields)
-        let sawString = false
-        let sawNumber = false
-        for k in fs {
-          if type(k) == "string" { sawString = true } else { sawNumber = true }
-        }
-        let kt = (sawString and sawNumber) and typeAny() or (sawString and typeString() or typeNumber())
-        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(kt))
-        true
-      }),
-
-      overloadCase("keys:enum", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Enum" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(typeString()))
-        true
-      }),
-
-      // Unknown/unresolved base: do not guess; record a deferred check.
-      overloadCase("keys:unresolved", fn(checker, c) {
-        let baseInfo = derefWithRootVar(checker, c.args[0])
-        let root = baseInfo.root
-        let base = deref(checker, baseInfo.type)
-        if base.kind == "Indexable" { return "defer" }
-        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
-        "no"
-      }, fn(checker, c) { true }),
-
-      overloadCase("keys:invalid", fn(checker, c) {
-        let baseInfo = derefWithRootVar(checker, c.args[0])
-        let root = baseInfo.root
-        let base = deref(checker, baseInfo.type)
-        if base.kind == "Any" { return "no" }
-        if base.kind == "Map" { return "no" }
-        if base.kind == "Record" { return "no" }
-        if base.kind == "Enum" { return "no" }
-        if base.kind == "Indexable" { return "defer" }
-        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
-        "match"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(typeAny()))
-        addError(checker, c.nodeId, "keys() requires map, record, or enum")
-        true
-      }),
-    ]
-  }
-
-  if name == "nameOf" {
-    return [
-      overloadCase("nameOf:tooFew", fn(checker, c) { len(c.args) < 2 and "match" or "no" }, fn(checker, c) {
-        addError(checker, c.nodeId, "Too few arguments: expected at least 2, got " + str(len(c.args)))
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        true
-      }),
-
-      overloadCase("nameOf:any", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Any" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
-        true
-      }),
-
-      overloadCase("nameOf:enum", fn(checker, c) {
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        base.kind == "Enum" and "match" or "no"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
-
-        let base = deref(checker, derefWithRootVar(checker, c.args[0]).type)
-        let fs = keys(base.fields)
-        if len(fs) == 0 { return true }
-
-        // If all field types are the same, use that as the expected value type.
-        // Otherwise, fall back to Any (nameOf is still well-defined).
-        let expected = deref(checker, base.fields[fs[0]])
-        for let i = 1; i < len(fs); i = i + 1 {
-          let ft = deref(checker, base.fields[fs[i]])
-          if !typeEquals(checker, expected, ft) {
-            expected = typeAny()
-            break
-          }
-        }
-
-        if expected.kind != "Any" {
-          let nid = (c.argNodeIds and len(c.argNodeIds) > 1) and c.argNodeIds[1] or c.nodeId
-          unifyOrContain(checker, nid, "nameOf() value mismatch", c.args[1], expected)
-        }
-
-        true
-      }),
-
-      // Unknown/unresolved base: do not guess; record a deferred check.
-      overloadCase("nameOf:unresolved", fn(checker, c) {
-        let baseInfo = derefWithRootVar(checker, c.args[0])
-        let root = baseInfo.root
-        let base = deref(checker, baseInfo.type)
-        if base.kind == "Indexable" { return "defer" }
-        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
-        "no"
-      }, fn(checker, c) { true }),
-
-      overloadCase("nameOf:invalid", fn(checker, c) {
-        let baseInfo = derefWithRootVar(checker, c.args[0])
-        let root = baseInfo.root
-        let base = deref(checker, baseInfo.type)
-        if base.kind == "Any" { return "no" }
-        if base.kind == "Enum" { return "no" }
-        if base.kind == "Indexable" { return "defer" }
-        if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) { return "defer" }
-        "match"
-      }, fn(checker, c) {
-        unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
-        addError(checker, c.nodeId, "nameOf() requires enum")
-        true
-      }),
-    ]
-  }
-
-  nil
-}
-
-fn applyOverloadDefer(checker, c) {
-  if c.builtinName == "len" {
-    unifyOrContain(checker, c.nodeId, "len() result mismatch", c.out, typeNumber())
-    return
-  }
-  if c.builtinName == "keys" {
-    if !c.deferKeyVar {
-      c.deferKeyVar = freshTypeVar(checker)
-    }
-    unifyOrContain(checker, c.nodeId, "keys() result mismatch", c.out, typeArray(c.deferKeyVar))
-    return
-  }
-  if c.builtinName == "range" {
-    if !c.deferElemVar {
-      c.deferElemVar = freshTypeVar(checker)
-    }
-    unifyOrContain(checker, c.nodeId, "range() result mismatch", c.out, typeArray(c.deferElemVar))
-    return
-  }
-  if c.builtinName == "nameOf" {
-    unifyOrContain(checker, c.nodeId, "nameOf() result mismatch", c.out, typeOption(typeString()))
-    return
-  }
-}
-
-fn trySolveOverloadCall(checker, c) {
-  if !c.cases {
-    c.cases = overloadCasesByName(c.builtinName)
-  }
-  if !c.cases {
-    addError(checker, c.nodeId, "Internal error: missing overload cases for " + str(c.builtinName))
-    if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-    return true
-  }
-
-  let sawDefer = false
-
-  for cs in c.cases {
-    let status = cs.matches(checker, c)
-    if status == "match" {
-      return cs.apply(checker, c)
-    } else if status == "defer" {
-      sawDefer = true
-    }
-  }
-
-  if sawDefer {
-    // Best-effort: allow a monotone approximation for tooling while keeping
-    // the overload constraint pending so it can refine later.
-    applyOverloadDefer(checker, c)
-    return false
-  }
-
-  addError(checker, c.nodeId, "No overload matches " + str(c.builtinName))
-  if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-  true
-}
-
-fn trySolveConstraint(checker, c) {
-  if c.kind == "Eq" {
-    if !unify(checker, c.t1, c.t2) {
-      addError(checker, c.nodeId, c.msg)
-      containEqFailure(checker, deref(checker, c.t1), deref(checker, c.t2))
-    }
-    return true
-  }
-
-  if c.kind == "OverloadCall" {
-    return trySolveOverloadCall(checker, c)
-  }
-
-  if c.kind == "HasField" {
-    // Preserve the root typevar (for better containment), but do not "grow" records.
-    let baseInfo = derefWithRootVar(checker, c.base)
-    let root = baseInfo.root
-    let base = deref(checker, baseInfo.type)
-    if root and root.kind == "TypeVar" {
-      let binding = getTypeVarBinding(checker, root.id)
-      if binding {
-        base = deref(checker, binding)
-        base = deref(checker, base)
-      }
-    }
-
-    let mode = c.mode or "read"
-    let ft = deref(checker, c.fieldType)
-
-	    // Option[T].field
-    if base.kind == "Option" {
-      let unwrapped = unwrapOptionalForField(checker, c, mode, base, ft)
-      if unwrapped.status == "defer" { return false }
-      if unwrapped.status == "solved" and !unwrapped.base { return true }
-      base = unwrapped.base
-      ft = unwrapped.ft
-    }
-
-	    if base.kind == "Any" {
-	      if ft.kind == "TypeVar" { bindTypeVar(checker, ft.id, typeAny()) }
-	      return true
-	    }
-
-    // If we reached here with a TypeVar base, it's still unresolved; defer.
-    if base.kind == "TypeVar" { return false }
-
-    // Closed record / enum: must contain the field (and enums are immutable).
-    if base.kind == "Enum" and mode == "write" {
-      addError(checker, c.nodeId, "Enum is immutable.")
-      markConstraintError(c)
-      containHasFieldFailure(checker, ft)
-      return true
-    }
-    if base.kind == "Record" or base.kind == "Enum" {
-      let field = base.fields[c.fieldName]
-      if field {
-        if !unify(checker, field, ft) {
-          addError(checker, c.nodeId, c.msg)
-          markConstraintError(c)
-          containHasFieldFailure(checker, ft)
-        }
-      } else {
-        addError(checker, c.nodeId, c.msg)
-        markConstraintError(c)
-        containHasFieldFailure(checker, ft)
-      }
-      return true
-    }
-
-    // Non-record base
-    addError(checker, c.nodeId, c.msg)
-    markConstraintError(c)
-    containHasFieldFailure(checker, ft)
-    return true
-  }
-
-  if c.kind == "Call" {
-    let callee = derefWithRootVar(checker, c.callee)
-    let root = callee.root
-    let t = callee.type
-
-    // If callee is still an unbound typevar, infer it as a function with
-    // required param count equal to the call arg count (extra args remain allowed).
-    if root and root.kind == "TypeVar" and t.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
-      let params = []
-      for arg in c.args {
-        push(params, freshTypeVar(checker))
-      }
-      let fnT = typeFunction(params, c.out)
-      fnT.minArity = len(params)
-      fnT.inferredFromCall = true
-      bindTypeVar(checker, root.id, fnT)
-      return true
-    }
-
-    t = deref(checker, t)
-
-    // If the callee was inferred as a function, allow the minimum arity to grow
-    // when later calls pass more arguments.
-    if root and root.kind == "TypeVar" and t.kind == "Function" and t.inferredFromCall and len(t.params) < len(c.args) {
-      let params = []
-      for param in t.params {
-        push(params, param)
-      }
-      for let i = len(t.params); i < len(c.args); i = i + 1 {
-        push(params, freshTypeVar(checker))
-      }
-      let newFn = typeFunction(params, t.return)
-      newFn.minArity = t.minArity or len(t.params)
-      if t.inferredFromCall { newFn.inferredFromCall = true }
-      bindTypeVar(checker, root.id, newFn)
-      t = newFn
-    }
-
-    if t.kind == "Any" {
-      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      return true
-    }
-
-    if t.kind != "Function" {
-      addError(checker, c.nodeId, "Call requires function")
-      markConstraintError(c)
-      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      return true
-    }
-
-    // Overload-builtins (preserved even when aliased through locals).
-    let overloadCases = t.builtinName and overloadCasesByName(t.builtinName)
-    if overloadCases {
-      c.kind = "OverloadCall"
-      c.builtinName = t.builtinName
-      c.cases = overloadCases
-      return trySolveOverloadCall(checker, c)
-    }
-
-    let params = t.params
-    let args = c.args
-
-    let required = (t.minArity != nil) and t.minArity or len(params)
-    if len(args) < required {
-      addError(checker, c.nodeId,
-        "Too few arguments: expected at least " + str(required) + ", got " + str(len(args)))
-      markConstraintError(c)
-      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      return true
-    }
-
-    // Constrain only the required args; ignore extras.
-    let limit = len(params) < len(args) and len(params) or len(args)
-    for let i = 0; i < limit; i = i + 1 {
-      let ok = true
-
-      // Special-case function arguments: passing a shorter-arity function where
-      // a longer callback is expected is safe (extra args ignored), but passing
-      // a longer-arity function where fewer args are provided is unsafe.
-      let argT = deref(checker, args[i])
-      let paramT = deref(checker, params[i])
-      if paramT.kind == "Function" {
-        if argT.kind == "Function" {
-          if len(argT.params) > len(paramT.params) {
-            ok = false
-          } else {
-            for argTParam, p in argT.params {
-              if !unify(checker, argTParam, paramT.params[p]) {
-                ok = false
-                break
-              }
-            }
-            if ok and !unify(checker, argT.return, paramT.return) { ok = false }
-          }
-        } else if argT.kind == "TypeVar" and !getTypeVarBinding(checker, argT.id) {
-          // If the argument is still unknown, assume it is a function of the
-          // expected callback shape.
-          bindTypeVar(checker, argT.id, paramT)
-        } else {
-          ok = unify(checker, args[i], params[i])
-        }
-      } else {
-        ok = unify(checker, args[i], params[i])
-      }
-
-      if !ok {
-        let nid = (c.argNodeIds and c.argNodeIds[i]) or c.nodeId
-        addError(checker, nid, "Argument mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, args[i]), deref(checker, params[i]))
-      }
-    }
-
-    if !unify(checker, c.out, t.return) {
-      addError(checker, c.nodeId, "Return mismatch")
-      markConstraintError(c)
-      containEqFailure(checker, deref(checker, c.out), deref(checker, t.return))
-      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-    }
-
-    return true
-  }
-
-  if c.kind == "KeyLike" {
-    let info = derefWithRootVar(checker, c.t)
-    let root = info.root
-    let t = deref(checker, info.type)
-
-    if t.kind == "Any" { return true }
-    if t.kind == "Number" or t.kind == "String" { return true }
-
-    if root and root.kind == "TypeVar" and t.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
-      return false
-    }
-
-    addError(checker, c.nodeId, c.msg)
-    if root and root.kind == "TypeVar" { bindTypeVar(checker, root.id, typeAny()) }
-    return true
-  }
-
-  if c.kind == "Index" {
-    let baseInfo = derefWithRootVar(checker, c.base)
-    let root = baseInfo.root
-    let base = deref(checker, baseInfo.type)
-    let idx = deref(checker, c.index)
-
-    if base.kind == "Any" {
-      if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      return true
-    }
-
-    if base.kind == "Record" or base.kind == "Enum" {
-      if c.literalKey == nil {
-        // Dynamic record/enum indexing is allowed (runtime returns nil if missing).
-        // Enforce key-like index type, then approximate result as Option[join(fields)].
-        if !c.emittedKeyLike {
-          emitKeyLike(checker, c.index, c.nodeId)
-          c.emittedKeyLike = true
-        }
-
-        // If index is still unknown, defer to allow KeyLike to refine.
-        if idx.kind == "TypeVar" {
-          let idxInfo = derefWithRootVar(checker, c.index)
-          if idxInfo and idxInfo.root and idxInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, idxInfo.root.id) {
-            return false
-          }
-        }
-
-        // Join all field value types; fall back to Any if heterogeneous.
-        let keysList = keys(base.fields)
-        let joined = nil
-        if len(keysList) == 0 {
-          joined = typeAny()
-        } else {
-          let tv = freshTypeVar(checker)
-          for k in keysList {
-            let ft = base.fields[k]
-            if !unify(checker, tv, ft) {
-              bindTypeVar(checker, tv.id, typeAny())
-              break
-            }
-          }
-          joined = deref(checker, tv)
-        }
-
-        let outT = typeOption(joined)
-        if !unify(checker, c.out, outT) {
-          addError(checker, c.nodeId, "Index result mismatch")
-          markConstraintError(c)
-          containEqFailure(checker, deref(checker, c.out), deref(checker, outT))
-          if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        }
-        return true
-      }
-      let ft = base.fields[c.literalKey]
-      if !ft {
-        addError(checker, c.nodeId, "Missing field: " + str(c.literalKey))
-        markConstraintError(c)
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-        return true
-      }
-      if !unify(checker, c.out, ft) {
-        addError(checker, c.nodeId, "Index result mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.out), deref(checker, ft))
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      }
-      return true
-    }
-
-    if base.kind == "Array" {
-      if !unify(checker, c.index, typeNumber()) {
-        addError(checker, c.nodeId, "Array index must be a number")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.index), typeNumber())
-      }
-      if !unify(checker, c.out, base.elem) {
-        addError(checker, c.nodeId, "Index result mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.out), deref(checker, base.elem))
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      }
-      return true
-    }
-    if base.kind == "Map" {
-      emitKeyLike(checker, base.key, c.nodeId)
-      if !unify(checker, c.index, base.key) {
-        addError(checker, c.nodeId, "Map key mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.index), deref(checker, base.key))
-      }
-      if !unify(checker, c.out, base.elem) {
-        addError(checker, c.nodeId, "Index result mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.out), deref(checker, base.elem))
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      }
-      return true
-    }
-    if base.kind == "String" {
-      if !unify(checker, c.index, typeNumber()) {
-        addError(checker, c.nodeId, "String index must be a number")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.index), typeNumber())
-      }
-      if !unify(checker, c.out, typeString()) {
-        addError(checker, c.nodeId, "Index result mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.out), typeString())
-        if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      }
-      return true
-    }
-
-    if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
-      let elemT = freshTypeVar(checker)
-      let keyT = freshTypeVar(checker)
-      bindTypeVar(checker, root.id, typeIndexable(elemT, keyT, c.nodeId))
-      emitKeyLike(checker, keyT, c.nodeId)
-      return false
-    }
-
-    if base.kind == "Indexable" {
-      // Always unify output with element; commit decisions come from index evidence.
-      unify(checker, c.out, base.elem)
-
-      // If index is non-number, array/string cannot apply -> commit to Map.
-      if idx and idx.kind != "TypeVar" and idx.kind != "Number" {
-        // KeyLike already enforced; now commit to Map.
-        bindTypeVar(checker, root.id, typeMap(base.key, base.elem))
-        if !unify(checker, base.key, c.index) {
-          addError(checker, c.nodeId, "Map key mismatch")
-          markConstraintError(c)
-          containEqFailure(checker, deref(checker, base.key), deref(checker, c.index))
-        }
-        return true
-      }
-
-      // Numeric evidence: allow defaulting Indexable to Array at finalize time.
-      if idx and idx.kind == "Number" {
-        markIndexableNumeric(checker, root, base)
-      }
-
-      // Numeric or unknown: still ambiguous; keep constraint.
-      return false
-    }
-
-    // Not indexable
-    addError(checker, c.nodeId, "Only array / map / enum / string can get value by index.")
-    markConstraintError(c)
-    if c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-    return true
-  }
-
-  if c.kind == "IndexSet" {
-    let baseInfo = derefWithRootVar(checker, c.base)
-    let root = baseInfo.root
-    let base = deref(checker, baseInfo.type)
-    let idx = deref(checker, c.index)
-
-    if base.kind == "Any" { return true }
-
-    if base.kind == "Enum" {
-      addError(checker, c.nodeId, "Enum is immutable.")
-      markConstraintError(c)
-      return true
-    }
-    if base.kind == "Record" {
-      if c.literalKey == nil {
-        addError(checker, c.nodeId, "Record index assignment must use a literal string or number key")
-        markConstraintError(c)
-        return true
-      }
-      let ft = base.fields[c.literalKey]
-      if !ft {
-        addError(checker, c.nodeId, "Missing field: " + str(c.literalKey))
-        markConstraintError(c)
-        return true
-      }
-      if !unify(checker, c.value, ft) {
-        addError(checker, c.nodeId, "Index assignment mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.value), deref(checker, ft))
-      }
-      return true
-    }
-
-    if base.kind == "Array" {
-      if !unify(checker, c.index, typeNumber()) {
-        addError(checker, c.nodeId, "Array index must be a number")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.index), typeNumber())
-      }
-      if !unify(checker, c.value, base.elem) {
-        addError(checker, c.nodeId, "Index assignment mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.value), deref(checker, base.elem))
-      }
-      return true
-    }
-    if base.kind == "Map" {
-      emitKeyLike(checker, base.key, c.nodeId)
-      if !unify(checker, c.index, base.key) {
-        addError(checker, c.nodeId, "Map key mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.index), deref(checker, base.key))
-      }
-      if !unify(checker, c.value, base.elem) {
-        addError(checker, c.nodeId, "Index assignment mismatch")
-        markConstraintError(c)
-        containEqFailure(checker, deref(checker, c.value), deref(checker, base.elem))
-      }
-      return true
-    }
-    if base.kind == "String" {
-      addError(checker, c.nodeId, "Cannot assign into string by index.")
-      markConstraintError(c)
-      return true
-    }
-
-    if root and root.kind == "TypeVar" and base.kind == "TypeVar" and !getTypeVarBinding(checker, root.id) {
-      let elemT = freshTypeVar(checker)
-      let keyT = freshTypeVar(checker)
-      bindTypeVar(checker, root.id, typeIndexable(elemT, keyT, c.nodeId))
-      emitKeyLike(checker, keyT, c.nodeId)
-      return false
-    }
-
-    if base.kind == "Indexable" {
-      unify(checker, c.value, base.elem)
-
-      if idx and idx.kind != "TypeVar" and idx.kind != "Number" {
-        bindTypeVar(checker, root.id, typeMap(base.key, base.elem))
-        if !unify(checker, base.key, c.index) {
-          addError(checker, c.nodeId, "Map key mismatch")
-          markConstraintError(c)
-          containEqFailure(checker, deref(checker, base.key), deref(checker, c.index))
-        }
-        return true
-      }
-
-      if idx and idx.kind == "Number" {
-        markIndexableNumeric(checker, root, base)
-      }
-
-      return false
-    }
-
-    addError(checker, c.nodeId, "Only array / hashmap / string can set value by index.")
-    markConstraintError(c)
-    return true
-  }
-
-  false
-}
-
-fn solveConstraints(checker) {
-  let out = helper.solveWorklist(
-    checker.constraints,
-    fn(c) { trySolveConstraint(checker, c) },
-    .{
-      maxRounds: 1000,
-      resetProgress: fn() { checker.changed = false },
-      progress: fn() { checker.changed },
-      onMaxRounds: fn(meta) { checker.solverHitMaxRounds = meta },
-    },
-  )
-  checker.constraints = out.remaining
-
-  if out.hitMaxRounds {
-    let kinds = []
-    for let i = 0; i < len(out.remaining) and i < 10; i = i + 1 {
-      let c = out.remaining[i]
-      push(kinds, c.kind)
-    }
-    let nodeId = (len(out.remaining) > 0 and out.remaining[0].nodeId) or 0
-    addError(checker, nodeId,
-      "Constraint solver exceeded maxRounds (" + str(out.rounds) + "); remaining: " +
-      str(len(out.remaining)) + " (" + join(kinds, ", ") + ")")
-  }
-}
-
-fn finalizeConstraints(checker) {
-  // Any remaining constraints are unsolvable with the collected info;
-  // report errors and contain to Any so downstream tooling doesn't crash.
-  let remaining = checker.constraints
-  checker.constraints = []
-
-  for c in remaining {
-    if trySolveConstraint(checker, c) { continue }
-
-    if c.kind == "HasField" {
-      addError(checker, c.nodeId, c.msg)
-      containHasFieldFailure(checker, deref(checker, c.fieldType))
-      // If base is still unconstrained, contain it to Any.
-      let baseInfo = derefWithRootVar(checker, c.base)
-      if baseInfo and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
-        bindTypeVar(checker, baseInfo.root.id, typeAny())
-      }
-    }
-
-    if c.kind == "Call" {
-      if !c.emittedError {
-        addError(checker, c.nodeId, "Unresolved call")
-      }
-      if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      let callee = derefWithRootVar(checker, c.callee)
-      if callee and callee.root and callee.root.kind == "TypeVar" and !getTypeVarBinding(checker, callee.root.id) {
-        bindTypeVar(checker, callee.root.id, typeAny())
-      }
-    }
-
-    if c.kind == "Index" {
-      if !c.emittedError {
-        addError(checker, c.nodeId, "Unresolved index")
-      }
-      if c.out and c.out.kind == "TypeVar" { bindTypeVar(checker, c.out.id, typeAny()) }
-      let baseInfo = derefWithRootVar(checker, c.base)
-      if baseInfo and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
-        bindTypeVar(checker, baseInfo.root.id, typeAny())
-      }
-    }
-
-    if c.kind == "IndexSet" {
-      if !c.emittedError {
-        addError(checker, c.nodeId, "Unresolved index assignment")
-      }
-      let baseInfo = derefWithRootVar(checker, c.base)
-      if baseInfo and baseInfo.root and baseInfo.root.kind == "TypeVar" and !getTypeVarBinding(checker, baseInfo.root.id) {
-        bindTypeVar(checker, baseInfo.root.id, typeAny())
-      }
-    }
-
-    if c.kind == "KeyLike" {
-      // If still unbound at finalize time, degrade to Any without emitting
-      // an additional error (no evidence the key is invalid).
-      let info = derefWithRootVar(checker, c.t)
-      if info and info.root and info.root.kind == "TypeVar" and !getTypeVarBinding(checker, info.root.id) {
-        bindTypeVar(checker, info.root.id, typeAny())
-      } else {
-        // Otherwise, force solver to report a concrete mismatch.
-        addError(checker, c.nodeId, c.msg)
-      }
-    }
-  }
-}
-
-fn finalizeIndexables(checker) {
-  for id in keys(checker.typeVarBindings) {
-    // Defensively ensure we use numeric ids as stored by typeVarBindings.
-    if type(id) == "string" { id = Math.floor(tonumber(id) or 0) }
-
-    let t = deref(checker, checker.typeVarBindings[id])
-    if t and t.kind == "Indexable" {
-      let nid = t.nodeId or 0
-      let keyT = deref(checker, t.key)
-      if t.sawNumericIndex and keyT.kind == "String" {
-        addError(checker, nid, "Conflicting index evidence: saw numeric index but key is String")
-        bindTypeVar(checker, id, typeMap(t.key, t.elem))
-        continue
-      }
-      if t.sawNumericIndex {
-        // Numeric indexing is overwhelmingly used for arrays. Prefer Array over
-        // Map when we've only observed numeric indices and no other evidence.
-        unify(checker, t.key, typeNumber())
-        bindTypeVar(checker, id, typeArray(t.elem))
-        continue
-      }
-      if keyT.kind == "String" {
-        bindTypeVar(checker, id, typeMap(t.key, t.elem))
-        continue
-      }
-      addError(checker, nid, "Ambiguous indexed container; defaulting to Map")
-      bindTypeVar(checker, id, typeMap(t.key, t.elem))
-    }
-  }
-}
-
-
-// ========================================================
-// Type Environment (Lexical, No Cloning)
-// ========================================================
-
-fn TypeEnv(parent) {
-  .{
-    parent: parent,
-    bindings: .{}, // declNodeId -> TypeVar
-  }
-}
-
-fn lookupDecl(checker, declNodeId) {
-  let env = checker.currentEnv
-  for env {
-    let t = env.bindings[declNodeId]
-    if t { return t }
-    env = env.parent
-  }
-  nil
-}
-
-fn bindDecl(checker, declNodeId) {
-  let tv = freshTypeVar(checker)
-  checker.currentEnv.bindings[declNodeId] = tv
-  tv
-}
-
-fn enterScope(checker) {
-  checker.currentEnv = TypeEnv(checker.currentEnv)
-}
-
-fn exitScope(checker) {
-  checker.currentEnv = checker.currentEnv.parent
-}
-
-
-// ========================================================
-// Expression Checking (Pure Phase 1)
-// ========================================================
-
-let synthExpr
-
-// Some lowers wrap expressions as statements.
+// Pattern: ExprStmt wrapper - common in lowered AST
 fn checkExprStmt(checker, node) {
-  // Lower often wraps top-level statements this way.
   let t = typeNil()
   if node.expr {
     t = synthExpr(checker, node.expr)
@@ -1825,6 +98,7 @@ fn checkExprStmt(checker, node) {
   t
 }
 
+// Pattern: Literal nodes
 fn checkLiteral(checker, node) {
   let t =
     node.type == NODE.Number and typeNumber() or
@@ -1832,12 +106,16 @@ fn checkLiteral(checker, node) {
     node.type == NODE.Bool   and typeBool()   or
     typeNil()
 
+  // Store result per node ID
   checker.types[node.id] = t
   t
 }
 
+// Pattern: Identifier nodes - shows resolver integration
 fn checkIdentifier(checker, node) {
+  // Access resolver data via node ID
   let binding = checker.resolvedNames[node.id]
+
   if !binding {
     addError(checker, node.id, "Unresolved identifier: " + node.name)
     let t = typeAny()
@@ -1845,1008 +123,228 @@ fn checkIdentifier(checker, node) {
     return t
   }
 
-  // Builtins/external names are not tracked by declaredAt.
-  // Treat them as Any at this phase.
+  // Example: Handle builtins differently
   if binding.kind == "builtin" {
-    let bt = builtinTypeByName(checker, binding.name)
+    let bt = helper.builtinTypeByName(checker, binding.name)
     if !bt { bt = typeAny() }
     checker.types[node.id] = bt
     return bt
   }
 
-  let declId = binding.declaredAt
-  if !declId {
-    // Compiler bug / unexpected resolver output; contain to Any.
-    addError(checker, node.id, "Missing declaredAt for identifier: " + node.name)
-    let t = typeAny()
-    checker.types[node.id] = t
-    return t
-  }
-  let tv = lookupDecl(checker, declId)
-  if !tv {
-    tv = bindDecl(checker, declId)
-  }
-
-  checker.types[node.id] = tv
-  tv
+  // For local/upvalue bindings, you'd track their types here
+  // This is where type inference would happen
+  let t = typeAny()
+  checker.types[node.id] = t
+  t
 }
 
-// Bidirectional type checking: check expression against expected type.
-// This is used for hot paths like calls, returns, and operators to reduce
-// constraint volume by eagerly unifying when we have type expectations.
-fn checkExpr(checker, node, expected, blameNodeId, msg) {
-  let actual = synthExpr(checker, node)
-
-  // Use unify eagerly for bidirectional hot paths (lower latency, fewer constraints).
-  if !unify(checker, actual, expected) {
-    addError(checker, blameNodeId or node.id, msg or "Type mismatch")
-    // Containment: bind unresolved typevars to Any to prevent cascading errors.
-    containEqFailure(checker, deref(checker, actual), deref(checker, expected))
-  }
-
-  checker.types[node.id] = expected
-  expected
-}
-
-// Bidirectional type checking with precomputed actual type.
-// Use this when you've already synthesized the expression to avoid double-synth.
-fn checkExprWithActual(checker, node, actual, expected, blameNodeId, msg) {
-  if !unify(checker, actual, expected) {
-    addError(checker, blameNodeId or node.id, msg or "Type mismatch")
-    containEqFailure(checker, deref(checker, actual), deref(checker, expected))
-  }
-  checker.types[node.id] = expected
-  expected
-}
-
+// Pattern: Binary operations - shows recursive traversal
 fn checkBinary(checker, node) {
   let op = node.operator.lexeme
 
-  // Bidirectional typing: for arithmetic and comparison operators, check operands
-  if op == "+" {
-    // Synth first to detect string concatenation
-    let lt = synthExpr(checker, node.left)
-    let rt = synthExpr(checker, node.right)
-    let l = deref(checker, lt)
-    let r = deref(checker, rt)
+  // Recurse into children
+  let leftType = synthExpr(checker, node.left)
+  let rightType = synthExpr(checker, node.right)
 
-    // Overloaded: Number + Number -> Number, String + String -> String
-    if l.kind == "String" or r.kind == "String" {
-      checkExprWithActual(checker, node.left, lt, typeString(), node.left.id, "Expected string")
-      checkExprWithActual(checker, node.right, rt, typeString(), node.right.id, "Expected string")
-      let t = typeString()
-      checker.types[node.id] = t
-      return t
-    }
+  // Infer result type based on operator
+  let resultType =
+    (op == "+" or op == "-" or op == "*" or op == "/" or op == "%") and typeNumber() or
+    (op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>") and typeNumber() or
+    (op == "==" or op == "!=" or op == "<" or op == ">" or op == "<=" or op == ">=") and typeBool() or
+    typeAny()
 
-    // Default: numeric add (also helps inference for `fn add(a,b){a+b}`).
-    checkExprWithActual(checker, node.left, lt, typeNumber(), node.left.id, "Expected number")
-    checkExprWithActual(checker, node.right, rt, typeNumber(), node.right.id, "Expected number")
-    let t = typeNumber()
-    checker.types[node.id] = t
-    return t
-  }
-
-  if op == "-" or op == "*" or op == "/" or op == "%" or
-     op == "<<" or op == ">>" or op == "&" or op == "|" or op == "^" {
-    let lt = synthExpr(checker, node.left)
-    let rt = synthExpr(checker, node.right)
-    checkExprWithActual(checker, node.left, lt, typeNumber(), node.left.id, "Expected number")
-    checkExprWithActual(checker, node.right, rt, typeNumber(), node.right.id, "Expected number")
-    let t = typeNumber()
-    checker.types[node.id] = t
-    return t
-  }
-
-  if op == "==" or op == "!=" {
-    // For equality, we don't constrain types - any types can be compared
-    synthExpr(checker, node.left)
-    synthExpr(checker, node.right)
-    checker.types[node.id] = typeBool()
-    return typeBool()
-  }
-
-  if op == "<" or op == "<=" or op == ">" or op == ">=" {
-    let lt = synthExpr(checker, node.left)
-    let rt = synthExpr(checker, node.right)
-    checkExprWithActual(checker, node.left, lt, typeNumber(), node.left.id, "Expected number")
-    checkExprWithActual(checker, node.right, rt, typeNumber(), node.right.id, "Expected number")
-    checker.types[node.id] = typeBool()
-    return typeBool()
-  }
-
-  addError(checker, node.id, "Unsupported binary operator")
-  let t = typeAny()
-  checker.types[node.id] = t
-  t
+  checker.types[node.id] = resultType
+  resultType
 }
 
-fn checkCall(checker, node) {
-  let calleeT = synthExpr(checker, node.callee)
-
-  // Synth args once so types table is populated
-  let argsNodes = node.args or []
-  let argsTs = []
-  for argNode in argsNodes {
-    push(argsTs, synthExpr(checker, argNode))
-  }
-
-  // Bidirectional typing: if callee is known to be a Function, check args immediately.
-  // However, skip this for builtins with special overload handling (they need constraint solver).
-  let calleeD = deref(checker, calleeT)
-  if calleeD.kind == "Function" and !calleeD.builtinName {
-    let params = calleeD.params
-    let required = (calleeD.minArity != nil) and calleeD.minArity or len(params)
-
-    if len(argsNodes) < required {
-      addError(checker, node.id, "Too few arguments: expected at least " + str(required) + ", got " + str(len(argsNodes)))
-      let t = typeAny()
-      checker.types[node.id] = t
-      return t
-    }
-
-    let limit = len(params) < len(argsNodes) and len(params) or len(argsNodes)
-    for let i = 0; i < limit; i = i + 1 {
-      let paramT = params[i]
-      let paramD = deref(checker, paramT)
-
-      // Special-case function arguments: preserve callback arity rule.
-      // Passing shorter-arity function where longer callback expected is safe.
-      if paramD.kind == "Function" {
-        let argT = argsTs[i]
-        let argD = deref(checker, argT)
-        if argD.kind == "Function" {
-          // Check arity compatibility
-          if len(argD.params) > len(paramD.params) {
-            addError(checker, argsNodes[i].id, "Argument mismatch: function has too many parameters")
-            containEqFailure(checker, argD, paramD)
-          } else {
-            // Check param types and return type
-            for argDParam, p in argD.params {
-              if !unify(checker, argDParam, paramD.params[p]) {
-                addError(checker, argsNodes[i].id, "Argument mismatch: function parameter type")
-                containEqFailure(checker, deref(checker, argDParam), deref(checker, paramD.params[p]))
-              }
-            }
-            if !unify(checker, argD.return, paramD.return) {
-              addError(checker, argsNodes[i].id, "Argument mismatch: function return type")
-              containEqFailure(checker, deref(checker, argD.return), deref(checker, paramD.return))
-            }
-          }
-        } else if argD.kind == "TypeVar" and !getTypeVarBinding(checker, argD.id) {
-          // Unknown arg, assume it matches expected function type
-          bindTypeVar(checker, argD.id, paramT)
-        } else {
-          // Non-function arg where function expected
-          if !unify(checker, argsTs[i], paramT) {
-            addError(checker, argsNodes[i].id, "Argument mismatch")
-            containEqFailure(checker, deref(checker, argsTs[i]), deref(checker, paramT))
-          }
-        }
-      } else {
-        // Non-function parameter: use checkExprWithActual (args already synthesized)
-        checkExprWithActual(checker, argsNodes[i], argsTs[i], paramT, argsNodes[i].id, "Argument mismatch")
-      }
-    }
-
-    // Return type
-    checker.types[node.id] = calleeD.return
-    return calleeD.return
-  }
-
-  // Fallback: emit Call constraint for unknown callee
-  let argNodeIds = []
-  for argNode in argsNodes {
-    push(argNodeIds, argNode.id)
-  }
-  let out = freshTypeVar(checker)
-  emitCall(checker, calleeT, argsTs, argNodeIds, out, node.id)
-  checker.types[node.id] = out
-  out
-}
-
-fn checkIntrinsicCall(checker, node) {
-  // Type check intrinsic calls (array_new, array_append, etc.)
-  let argTypes = []
-  for arg in (node.args or []) {
-    push(argTypes, synthExpr(checker, arg))
-  }
-
-  // Return type based on intrinsic
-  let t = typeAny()
-  if node.intrinsic == "array_new" {
-    // array_new expects 0 args
-    if len(argTypes) != 0 {
-      addError(checker, node.id, "Internal error: array_new expects 0 args, got " + str(len(argTypes)))
-      // Fall through with Any
-    } else {
-      // array_new returns an array
-      t = typeArray(freshTypeVar(checker))
-    }
-  } else if node.intrinsic == "array_append" {
-    // array_append expects 2 args: array, value
-    if len(argTypes) != 2 {
-      addError(checker, node.id, "Internal error: array_append expects 2 args, got " + str(len(argTypes)))
-      // Fall through with Any
-    } else {
-      // array_append(arr, value) returns arr, and constrains arr's element type
-      let arrType = deref(checker, argTypes[0])
-      let elemType = argTypes[1]
-
-      // Ensure arrType is Array[T]
-      let elemTypeVar = freshTypeVar(checker)
-      let expectedArrType = typeArray(elemTypeVar)
-      unify(checker, arrType, expectedArrType)
-
-      // Constrain the element being appended matches the array element type
-      unify(checker, elemTypeVar, elemType)
-
-      // Return the array type
-      t = arrType
-    }
-  } else if node.intrinsic == "is_even" {
-    // is_even expects 1 arg: number
-    if len(argTypes) != 1 {
-      addError(checker, node.id, "Internal error: is_even expects 1 arg, got " + str(len(argTypes)))
-      // Fall through with Any
-    } else {
-      // Constrain argument to be a number
-      unify(checker, argTypes[0], typeNumber())
-      // is_even returns Bool
-      t = typeBool()
-    }
-  } else if node.intrinsic == "mod_const" {
-    // mod_const expects 1 arg: value, plus modulus field (u8)
-    if len(argTypes) != 1 {
-      addError(checker, node.id, "Internal error: mod_const expects 1 arg, got " + str(len(argTypes)))
-      // Fall through with Any
-    } else if node.modulus == nil or type(node.modulus) != "number" or
-              node.modulus != Math.floor(node.modulus) or node.modulus < 0 or node.modulus > 255 {
-      addError(checker, node.id, "Internal error: mod_const requires modulus in [0,255]")
-      // Fall through with Any
-    } else {
-      // Mirrors `%` typing: number -> number
-      unify(checker, argTypes[0], typeNumber())
-      t = typeNumber()
-    }
-  } else if node.intrinsic == "eq_const" {
-    // eq_const expects 1 arg: value, plus compareTo field (u8)
-    if len(argTypes) != 1 {
-      addError(checker, node.id, "Internal error: eq_const expects 1 arg, got " + str(len(argTypes)))
-      // Fall through with Any
-    } else if node.compareTo == nil or type(node.compareTo) != "number" or
-              node.compareTo != Math.floor(node.compareTo) or node.compareTo < 0 or node.compareTo > 255 {
-      addError(checker, node.id, "Internal error: eq_const requires compareTo in [0,255]")
-      // Fall through with Any
-    } else {
-      // Mirrors `==` typing: any -> bool (no constraint on operand)
-      t = typeBool()
-    }
-  } else {
-    addError(checker, node.id, "Internal error: unknown intrinsic: " + node.intrinsic)
-  }
-
-  checker.types[node.id] = t
-  t
-}
-
-fn checkFunction(checker, node) {
-  // If this function is named (hoisted), ensure its declaration binding exists.
-  let fnBinding = nil
-  if node.name {
-    fnBinding = lookupDecl(checker, node.id)
-    if !fnBinding {
-      fnBinding = bindDecl(checker, node.id)
-    }
-  }
-
-  // Capture the lexical environment where this function is defined so the
-  // refinement pass can see outer bindings (closures).
-  let defEnv = checker.currentEnv
-
-  enterScope(checker)
-
-  let params = []
-  for param in node.params {
-    let tv = bindDecl(checker, param.id)
-    checker.types[param.id] = tv
-    push(params, tv)
-  }
-
-  let ret = freshTypeVar(checker)
-  let prevReturn = checker.currentReturn
-  checker.currentReturn = ret
-  let bodyT = synthExpr(checker, node.body)
-  checker.currentReturn = prevReturn
-  emitEq(checker, bodyT, ret, node.body.id, "Return mismatch")
-
-  exitScope(checker)
-
-  // Store the function type with current bindings resolved.
-  let resolvedParams = []
-  for param in params {
-    push(resolvedParams, deref(checker, param))
-  }
-  let fnT = typeFunction(resolvedParams, deref(checker, ret))
-
-  // Calculate minArity based on default arguments
-  // minArity is the index of the first parameter with a default value
-  if node.defaults and len(node.defaults) > 0 {
-    let firstDefaultIdx = nil
-    for defaultVal, i in node.defaults {
-      if defaultVal {
-        firstDefaultIdx = i
-        break
-      }
-    }
-    if firstDefaultIdx != nil {
-      fnT.minArity = firstDefaultIdx
-    }
-  }
-
-  checker.types[node.id] = fnT
-  if fnBinding {
-    emitEq(checker, fnBinding, fnT, node.id, "Function declaration mismatch")
-    checker.types[node.name.id] = fnBinding
-  }
-
-  // Track for second-pass refinement
-  push(checker.functionInfos, .{
-    node: node,
-    defEnv: defEnv,
-    params: params,
-    ret: ret,
-    fnType: fnT,
-  })
-  fnT
-}
-
-fn dotPropertyName(node) {
-  if !node or node.type != NODE.Dot { return nil }
-  if node.property and node.property.type == NODE.Identifier { return node.property.name }
-  if node.property and node.property.type == NODE.String { return node.property.value }
-  nil
-}
-
-fn enumMembersMapFromInfo(info) {
-  if !info or !info.members { return nil }
-  let m = .{}
-  for mem in info.members {
-    if mem and mem.name != nil and mem.value != nil {
-      m[mem.name] = mem.value
-    }
-  }
-  m
-}
-
-fn findEnumMemberMapInModuleResult(moduleResult, fieldName) {
-  if !moduleResult or !fieldName { return nil }
-  let parseResult = moduleResult.passes and moduleResult.passes.parse
-  if !parseResult or !parseResult.ast { return nil }
-
-  let enumInfo = parseResult.enumInfo or .{}
-  let ast = parseResult.ast
-  if ast.type != NODE.Block or !ast.expressions { return nil }
-
-  for n in ast.expressions {
-    // Pattern A: `let X = enum {...}`
-    if n and n.type == NODE.Let and n.name and n.name.type == NODE.Identifier and n.name.name == fieldName {
-      let init = n.init
-      if init and init.type == NODE.Hashmap and enumInfo[init.id] {
-        return enumMembersMapFromInfo(enumInfo[init.id])
-      }
-    }
-
-    // Pattern B: `something.FIELD = enum {...}` (common in `types.lx`)
-    if n and n.type == NODE.Assignment and n.target and n.target.type == NODE.Dot {
-      let prop = dotPropertyName(n.target)
-      if prop == fieldName {
-        let v = n.value
-        if v and v.type == NODE.Hashmap and enumInfo[v.id] {
-          return enumMembersMapFromInfo(enumInfo[v.id])
-        }
-      }
-    }
-  }
-
-  nil
-}
-
-fn checkLet(checker, node) {
-  let tv = bindDecl(checker, node.name.id)
-  checker.types[node.name.id] = tv
-
-  if node.init {
-    let it = synthExpr(checker, node.init)
-    constrain(checker, tv, it, node.init.id, "Initializer mismatch")
-
-    // Record enum literal member values so we can treat `E.Member` as a literal
-    // key in record/hashmap literals and record indexing.
-    if node.init.type == NODE.Hashmap and checker.enumInfo and checker.enumInfo[node.init.id] {
-      let info = checker.enumInfo[node.init.id]
-      if info and info.members {
-        checker.enumDeclValues[node.name.id] = enumMembersMapFromInfo(info)
-      }
-    }
-
-    // Alias propagation:
-    // - ANF may rewrite `let x = import ...` into `let t = import ...; let x = t`.
-    // - Preserve import/enum metadata across simple identifier aliases.
-    if node.init.type == NODE.Identifier {
-      let src = checker.resolvedNames and checker.resolvedNames[node.init.id]
-      let srcDeclId = src and src.declaredAt
-      if srcDeclId {
-        let imported = checker.importResultsByDeclId and checker.importResultsByDeclId[srcDeclId]
-        if imported {
-          checker.importResultsByDeclId[node.name.id] = imported
-        }
-        let em = checker.enumDeclValues and checker.enumDeclValues[srcDeclId]
-        if em {
-          checker.enumDeclValues[node.name.id] = em
-        }
-      }
-    }
-
-    // If this let binds an import result, keep it around so later lets can pull
-    // enum tables out of imported modules via `let X = imported.FIELD`.
-    if node.init.type == NODE.Import {
-      let info = checker.resolveResult and checker.resolveResult.importInfoByNodeId and
-                 checker.resolveResult.importInfoByNodeId[node.init.id]
-      let imported = info and info.importResult
-      if imported {
-        checker.importResultsByDeclId[node.name.id] = imported
-      }
-    }
-
-    // Bridge: `let TOKEN = types.TOKEN` where `types` came from an import, and
-    // the imported module assigns `*.TOKEN = enum {...}`.
-    if node.init.type == NODE.Dot and node.init.object and node.init.object.type == NODE.Identifier {
-      let baseBinding = checker.resolvedNames and checker.resolvedNames[node.init.object.id]
-      let baseDeclId = baseBinding and baseBinding.declaredAt
-      let imported = baseDeclId and checker.importResultsByDeclId and checker.importResultsByDeclId[baseDeclId]
-      let fieldName = dotPropertyName(node.init)
-      if imported and fieldName {
-        let m = findEnumMemberMapInModuleResult(imported, fieldName)
-        if m {
-          checker.enumDeclValues[node.name.id] = m
-        }
-      }
-    }
-  }
-
-  checker.types[node.id] = typeNil()
-  typeNil()
-}
-
-fn checkIf(checker, node) {
-  synthExpr(checker, node.condition)
-  let thenT = synthExpr(checker, node.then)
-
-  if node.else {
-    let elseT = synthExpr(checker, node.else)
-    let outT = freshTypeVar(checker)
-    constrain(checker, outT, thenT, node.then.id, "Branch mismatch")
-    constrain(checker, outT, elseT, node.else.id, "Branch mismatch")
-    checker.types[node.id] = outT
-    return outT
-  }
-
-  // If without else returns Option[T].
-  let t = typeOption(thenT)
-  checker.types[node.id] = t
-  t
-}
-
+// Pattern: Block - shows iteration over expressions
 fn checkBlock(checker, node) {
-  enterScope(checker)
+  let exprs = node.expressions or []
+  let lastType = typeNil()
 
-  let lastT = typeNil()
-  if node.expressions {
-    for expr in node.expressions {
-      lastT = synthExpr(checker, expr)
-    }
+  for expr in exprs {
+    lastType = synthExpr(checker, expr)
   }
 
-  exitScope(checker)
-
-  checker.types[node.id] = lastT
-  lastT
+  // Blocks return the last expression value
+  checker.types[node.id] = lastType
+  lastType
 }
 
-fn checkGrouping(checker, node) {
-  let t = synthExpr(checker, node.expression)
+// Pattern: Function - shows how to handle scope
+fn checkFunction(checker, node) {
+  // You would enter a new scope here
+  // let params = node.params or []
+
+  // Analyze body
+  if node.body {
+    synthExpr(checker, node.body)
+  }
+
+  // Functions are typed as Function(params, ret)
+  // For skeleton, just use Any->Any
+  let t = typeFunction([typeAny()], typeAny())
   checker.types[node.id] = t
   t
 }
 
-fn checkUnary(checker, node) {
-  let op = node.operator.lexeme
+// Pattern: If expression - shows control flow handling
+fn checkIf(checker, node) {
+  // Check condition
+  synthExpr(checker, node.condition)
 
-  // Bidirectional typing: check operand against expected type
-  if op == "-" {
-    checkExpr(checker, node.operand, typeNumber(), node.operand.id, "Expected number")
-    let t = typeNumber()
-    checker.types[node.id] = t
-    return t
-  }
+  // Check both branches
+  let thenType = synthExpr(checker, node.then)
+  let elseType = node.else and synthExpr(checker, node.else) or typeNil()
 
-  if op == "!" {
-    checkExpr(checker, node.operand, typeBool(), node.operand.id, "Expected bool")
-    let t = typeBool()
-    checker.types[node.id] = t
-    return t
-  }
-
-  // Unknown unary -> Any, but still traverse operand
-  synthExpr(checker, node.operand)
-  let t = typeAny()
-  checker.types[node.id] = t
-  t
+  // Result is union/join of branches
+  // For skeleton, just pick the then type
+  checker.types[node.id] = thenType
+  thenType
 }
 
-fn typeOptionNormalized(checker, t) {
-  t = derefAll(checker, t)
-  if t.kind == "Nil" { return typeNil() }
-  if t.kind == "Option" { return t }
-  typeOption(t)
-}
-
-fn joinTypes(checker, t1, t2) {
-  t1 = derefAll(checker, t1)
-  t2 = derefAll(checker, t2)
-
-  if t1.kind == "Any" or t2.kind == "Any" { return typeAny() }
-  if typeEquals(checker, t1, t2) { return t1 }
-
-  if t1.kind == "Nil" { return typeOptionNormalized(checker, t2) }
-  if t2.kind == "Nil" { return typeOptionNormalized(checker, t1) }
-
-  if t1.kind == "Option" and t2.kind == "Option" {
-    return typeOptionNormalized(checker, joinTypes(checker, t1.value, t2.value))
-  }
-  if t1.kind == "Option" {
-    return typeOptionNormalized(checker, joinTypes(checker, t1.value, t2))
-  }
-  if t2.kind == "Option" {
-    return typeOptionNormalized(checker, joinTypes(checker, t1, t2.value))
-  }
-
-  // No unions yet: fall back to Any.
-  typeAny()
-}
-
-fn definitelyTruthyNode(node) {
-  if !node { return nil }
-  if node.type == NODE.Grouping { return definitelyTruthyNode(node.expression) }
-
-  if node.type == NODE.Nil { return false }
-  if node.type == NODE.Bool { return node.value == true }
-
-  // Literal-ish nodes are always truthy.
-  if node.type == NODE.Number { return true }
-  if node.type == NODE.String { return true }
-  if node.type == NODE.Array { return true }
-  if node.type == NODE.Hashmap { return true }
-  if node.type == NODE.Function { return true }
-
-  nil
-}
-
-fn checkLogical(checker, node) {
-  // NOTE: pick semantics. If Lx is Lua-like and returns operands,
-  // you cannot type it as Bool in general.
-  let lt = synthExpr(checker, node.left)
-  let rt = synthExpr(checker, node.right)
-  let op = node.operator.lexeme
-
-  if op == "and" or op == "or" {
-    let truthy = definitelyTruthyNode(node.left)
-    if truthy == true {
-      // left always truthy -> `and` yields right; `or` yields left
-      let t = op == "and" and rt or lt
-      checker.types[node.id] = t
-      return t
-    }
-    if truthy == false {
-      // left always falsy -> `and` yields left; `or` yields right
-      let t = op == "and" and lt or rt
-      checker.types[node.id] = t
-      return t
-    }
-
-    let t = joinTypes(checker, lt, rt)
-    checker.types[node.id] = t
-    return t
-  }
-
-  let t = typeAny()
-  checker.types[node.id] = t
-  t
-}
-
-fn checkFor(checker, node) {
-  enterScope(checker)
-
-  if node.init      { synthExpr(checker, node.init) }
-  if node.condition {
-    let ct = synthExpr(checker, node.condition)
-    // If you want: constrain condition to Bool
-    emitEq(checker, ct, typeBool(), node.condition.id, "Expected bool")
-  }
-  if node.update    { synthExpr(checker, node.update) }
-
-  // Body can be Block or any stmt/expr
-  if node.body      { synthExpr(checker, node.body) }
-
-  exitScope(checker)
-
-  checker.types[node.id] = typeNil()
-  typeNil()
-}
-
-fn checkReturn(checker, node) {
-  let rt = typeNil()
-
-  // Bidirectional typing: if we have an expected return type, check against it
-  if checker.currentReturn and node.value {
-    rt = checkExpr(checker, node.value, checker.currentReturn, node.id, "Return mismatch")
-  } else if node.value {
-    rt = synthExpr(checker, node.value)
-  }
-
-  // If we have a return expectation but no value, unify Nil with expectation
-  if checker.currentReturn and !node.value {
-    if !unify(checker, typeNil(), checker.currentReturn) {
-      addError(checker, node.id, "Return mismatch")
-      containEqFailure(checker, typeNil(), deref(checker, checker.currentReturn))
-    }
-  }
-
-  // Treat `return expr` as having the expression's type so block "last expr"
-  // can still drive function return inference.
-  checker.types[node.id] = rt
-  rt
-}
-
-fn checkBreak(checker, node) {
-  checker.types[node.id] = typeNil()
-  typeNil()
-}
-
-fn checkContinue(checker, node) {
-  checker.types[node.id] = typeNil()
-  typeNil()
-}
-
+// Pattern: Array literal - shows collection handling
 fn checkArray(checker, node) {
-  let elemT = freshTypeVar(checker)
-  if node.elements {
-    for element in node.elements {
-      let it = synthExpr(checker, element)
-      emitEq(checker, it, elemT, element.id, "Array element mismatch")
-    }
+  let elems = node.elements or []
+
+  // Check all elements
+  for elem in elems {
+    synthExpr(checker, elem)
   }
-  let t = typeArray(elemT)
+
+  // Infer Array[T] - for skeleton just use Array[Any]
+  let t = typeArray(typeAny())
   checker.types[node.id] = t
   t
 }
 
-fn checkHashmap(checker, node) {
-  // Hashmap/record literals:
-  // - Empty `.{}` is a Map (hashmap).
-  // - Any non-empty `.{ ... }` is a closed Record.
-  // - Computed keys in a Record must be statically resolvable (literal
-  //   String/Number, or an enum member like `E.A`).
-  let fields = .{}
-
-  let isEnum = checker.enumInfo and checker.enumInfo[node.id]
-
-  // Empty literal `.{}` is treated as an empty hashmap, but empty `enum {}` is an Enum.
-  if !node.pairs or len(node.pairs) == 0 {
-    if isEnum {
-      let t = typeEnum(.{})
-      checker.types[node.id] = t
-      return t
-    }
-    let keyT = freshTypeVar(checker)
-    let elemT = freshTypeVar(checker)
-    let t = typeMap(keyT, elemT)
-    emitKeyLike(checker, keyT, node.id)
-    checker.types[node.id] = t
-    return t
-  }
-
-  let enumKeyOrigins = .{}
-  let sawInvalidKey = false
-
-  for p in node.pairs {
-    let vType = p.value and synthExpr(checker, p.value) or typeAny()
-
-    // Determine record field key.
-    let keyInfo = literalKeyInfoFromIndexExpr(checker, p.key)
-    let key = keyInfo and keyInfo.key or nil
-    if key == nil {
-      sawInvalidKey = true
-      addError(checker, (p.key and p.key.id) or node.id,
-        "Record literal computed key must be a literal string, number, or enum member.")
-      continue
-    }
-    if keyInfo and keyInfo.origin {
-      enumKeyOrigins[key] = keyInfo.origin
-    }
-
-    let existing = fields[key]
-    let nid = (p.value and p.value.id) or node.id
-    if existing {
-      emitEq(checker, vType, existing, nid, "Record field mismatch")
-    } else {
-      let fieldT = freshTypeVar(checker)
-      emitEq(checker, vType, fieldT, nid, "Record field mismatch")
-      fields[key] = fieldT
+// Pattern: Let binding - shows how to track declarations
+fn checkLet(checker, node) {
+  // Check initializer if present
+  if node.init {
+    let initType = synthExpr(checker, node.init)
+    // In a real checker, you'd track this binding for the name
+    if node.name and node.name.id {
+      checker.types[node.name.id] = initType
     }
   }
 
-  let t = isEnum and typeEnum(fields) or typeRecord(fields)
-
+  // Let statements return nil
+  let t = typeNil()
   checker.types[node.id] = t
-  if len(keys(enumKeyOrigins)) > 0 {
-    checker.recordEnumKeyOrigins[node.id] = enumKeyOrigins
-  }
-  if sawInvalidKey and !isEnum {
-    addError(checker, node.id,
-      "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value")
-  }
   t
 }
 
-fn literalKeyInfoFromEnumMemberExpr(checker, node) {
-  if !checker or !node or node.type != NODE.Dot { return nil }
-  if !node.object or node.object.type != NODE.Identifier { return nil }
+// Pattern: Call - shows function application
+fn checkCall(checker, node) {
+  // Check callee
+  synthExpr(checker, node.callee)
 
-  let memberName = nil
-  if node.property and node.property.type == NODE.Identifier {
-    memberName = node.property.name
-  } else if node.property and node.property.type == NODE.String {
-    memberName = node.property.value
-  } else {
-    return nil
-  }
-  if memberName == nil { return nil }
-
-  let binding = checker.resolvedNames and checker.resolvedNames[node.object.id]
-  if !binding or binding.kind == "builtin" or !binding.declaredAt { return nil }
-
-  let m = checker.enumDeclValues and checker.enumDeclValues[binding.declaredAt]
-  if !m { return nil }
-  let v = m[memberName]
-  if v == nil { return nil }
-  .{
-    key: v,
-    origin: .{ enumDeclId: binding.declaredAt, enumName: node.object.name, member: memberName },
-  }
-}
-
-fn literalKeyInfoFromIndexExpr(checker, node) {
-  if !node { return nil }
-  if node.type == NODE.Grouping {
-    return literalKeyInfoFromIndexExpr(checker, node.expression)
-  }
-  if node.type == NODE.String { return .{ key: node.value, origin: nil } }
-  if node.type == NODE.Number { return .{ key: node.value, origin: nil } }
-  if node.type == NODE.Dot { return literalKeyInfoFromEnumMemberExpr(checker, node) }
-  nil
-}
-
-fn literalKeyFromIndexExpr(checker, node) {
-  let info = literalKeyInfoFromIndexExpr(checker, node)
-  info and info.key or nil
-}
-
-fn checkIndex(checker, node) {
-  let objT = synthExpr(checker, node.object)
-  let idxT = synthExpr(checker, node.index)
-  let out = freshTypeVar(checker)
-  let c = .{
-    kind: "Index",
-    base: objT,
-    index: idxT,
-    literalKey: literalKeyFromIndexExpr(checker, node.index),
-    out: out,
-    nodeId: node.id,
-  }
-  push(checker.constraints, c)
-  checker.types[node.id] = out
-  out
-}
-
-fn checkDot(checker, node) {
-  let objT = synthExpr(checker, node.object)
-  // property is a Node (Identifier or StringKey)
-  let propName = nil
-  if node.property and node.property.type == NODE.Identifier {
-    propName = node.property.name
-  } else if node.property and node.property.type == NODE.String {
-    propName = node.property.value
-  } else {
-    if node.property { synthExpr(checker, node.property) }
+  // Check arguments
+  let args = node.args or []
+  for arg in args {
+    synthExpr(checker, arg)
   }
 
-  if !propName {
-    let t = typeAny()
-    checker.types[node.id] = t
-    return t
-  }
-
-  let fieldT = freshTypeVar(checker)
-  emitHasFieldMode(checker, objT, propName, fieldT, node.id, "Missing field: " + propName, "read")
-  checker.types[node.id] = fieldT
-  fieldT
-}
-
-fn checkAssignment(checker, node) {
-  let vt = synthExpr(checker, node.value)
-
-  // Minimal: only support assignment to Identifier in Phase 1
-  if node.target and node.target.type == NODE.Identifier {
-    let lt = synthExpr(checker, node.target)
-    emitEq(checker, lt, vt, node.id, "Assignment mismatch")
-    checker.types[node.id] = vt
-    return vt
-  }
-
-  // Property assignment: base.field = value
-  if node.target and node.target.type == NODE.Dot {
-    let objT = synthExpr(checker, node.target.object)
-
-    let propName = nil
-    if node.target.property and node.target.property.type == NODE.Identifier {
-      propName = node.target.property.name
-    } else if node.target.property and node.target.property.type == NODE.String {
-      propName = node.target.property.value
-    } else {
-      if node.target.property { synthExpr(checker, node.target.property) }
-    }
-
-    if propName {
-      let fieldT = freshTypeVar(checker)
-      emitHasFieldMode(checker, objT, propName, fieldT, node.target.id, "Missing field: " + propName, "write")
-      emitEq(checker, fieldT, vt, node.id, "Assignment mismatch")
-      checker.types[node.target.id] = fieldT
-      checker.types[node.id] = vt
-      return vt
-    }
-  }
-
-  // Index assignment: base[index] = value
-  if node.target and node.target.type == NODE.Index {
-    let objT = synthExpr(checker, node.target.object)
-    let idxT = synthExpr(checker, node.target.index)
-    push(checker.constraints, .{
-      kind: "IndexSet",
-      base: objT,
-      index: idxT,
-      literalKey: literalKeyFromIndexExpr(checker, node.target.index),
-      value: vt,
-      nodeId: node.id,
-    })
-    checker.types[node.id] = vt
-    return vt
-  }
-
-  // Traverse target anyway
-  if node.target { synthExpr(checker, node.target) }
-
+  // Result type would be inferred from callee type
+  // For skeleton, just return Any
   let t = typeAny()
   checker.types[node.id] = t
   t
 }
 
-fn checkImport(checker, node) {
-  // Path is usually String or Identifier
-  if node.path { synthExpr(checker, node.path) }
+// Pattern: Unary operations
+fn checkUnary(checker, node) {
+  let op = node.operator and node.operator.lexeme or ""
+  synthExpr(checker, node.operand)
 
-  // Check resolve side table for module type information
-  let importInfo = checker.resolveResult and
-                   checker.resolveResult.importInfoByNodeId and
-                   checker.resolveResult.importInfoByNodeId[node.id]
+  let t =
+    op == "-" and typeNumber() or
+    op == "!" and typeBool() or
+    typeAny()
 
-  if importInfo and importInfo.importType {
-    checker.types[node.id] = importInfo.importType
-    return importInfo.importType
-  }
+  checker.types[node.id] = t
+  t
+}
 
-  // Whole-program mode: use the export type of the imported module (if available).
-  if checker.program and checker.program.exports and node.path and node.path.type == NODE.String {
-    let t = checker.program.exports[node.path.value]
-    if t {
-      checker.types[node.id] = t
-      return t
-    }
-  }
+// Pattern: Logical operations (and/or)
+fn checkLogical(checker, node) {
+  synthExpr(checker, node.left)
+  synthExpr(checker, node.right)
 
+  // Logical ops can return either operand - for skeleton use Any
   let t = typeAny()
   checker.types[node.id] = t
   t
 }
 
-fn refineFunctions(checker) {
-  for info in checker.functionInfos {
-    checker.currentEnv = info.defEnv or checker.rootEnv
-    enterScope(checker)
+// Pattern: For loops
+fn checkFor(checker, node) {
+  if node.init { synthExpr(checker, node.init) }
+  if node.condition { synthExpr(checker, node.condition) }
+  if node.update { synthExpr(checker, node.update) }
+  if node.body { synthExpr(checker, node.body) }
 
-    if info.node.name {
-      checker.currentEnv.bindings[info.node.id] = lookupDecl(checker, info.node.id) or info.fnType
-    }
-
-    for param, p in info.params {
-      let paramNode = info.node.params[p]
-      checker.currentEnv.bindings[paramNode.id] = param
-      checker.types[paramNode.id] = param
-    }
-
-    let prevReturn = checker.currentReturn
-    checker.currentReturn = info.ret
-    let bodyT = synthExpr(checker, info.node.body)
-    checker.currentReturn = prevReturn
-    emitEq(checker, bodyT, info.ret, info.node.body.id, "Return mismatch")
-
-    exitScope(checker)
-  }
+  // For loops return nil
+  let t = typeNil()
+  checker.types[node.id] = t
+  t
 }
 
-
-// ========================================================
-// Dispatcher
-// ========================================================
-
+// Main expression synthesizer - dispatches by node type
 synthExpr = fn(checker, node) {
   if !node { return typeNil() }
 
-  // Literals
+  // ExprStmt is very common in lowered AST
+  if node.type == NODE.ExprStmt {
+    return checkExprStmt(checker, node)
+  }
+
+  // Dispatch based on node type
   if node.type == NODE.Number or node.type == NODE.String or
      node.type == NODE.Bool or node.type == NODE.Nil {
     return checkLiteral(checker, node)
   }
+  if node.type == NODE.Identifier {
+    return checkIdentifier(checker, node)
+  }
+  if node.type == NODE.Binary {
+    return checkBinary(checker, node)
+  }
+  if node.type == NODE.Unary {
+    return checkUnary(checker, node)
+  }
+  if node.type == NODE.Logical {
+    return checkLogical(checker, node)
+  }
+  if node.type == NODE.Block {
+    return checkBlock(checker, node)
+  }
+  if node.type == NODE.Function {
+    return checkFunction(checker, node)
+  }
+  if node.type == NODE.If {
+    return checkIf(checker, node)
+  }
+  if node.type == NODE.Array {
+    return checkArray(checker, node)
+  }
+  if node.type == NODE.Let {
+    return checkLet(checker, node)
+  }
+  if node.type == NODE.Call {
+    return checkCall(checker, node)
+  }
+  if node.type == NODE.For {
+    return checkFor(checker, node)
+  }
 
-  // Names / bindings
-  if node.type == NODE.Identifier { return checkIdentifier(checker, node) }
-
-  // Structural containers / wrappers
-  if node.type == NODE.Block    { return checkBlock(checker, node) }
-  if node.type == NODE.Grouping { return checkGrouping(checker, node) }
-
-  // Operators
-  if node.type == NODE.Unary      { return checkUnary(checker, node) }
-  if node.type == NODE.Binary     { return checkBinary(checker, node) }
-  if node.type == NODE.Logical    { return checkLogical(checker, node) }
-  if node.type == NODE.Assignment { return checkAssignment(checker, node) }
-
-  // Calls / access
-  if node.type == NODE.Call  { return checkCall(checker, node) }
-  if node.type == NODE.IntrinsicCall { return checkIntrinsicCall(checker, node) }
-  if node.type == NODE.Dot   { return checkDot(checker, node) }
-  if node.type == NODE.Index { return checkIndex(checker, node) }
-
-  // Collections
-  if node.type == NODE.Array   { return checkArray(checker, node) }
-  if node.type == NODE.Hashmap { return checkHashmap(checker, node) }
-
-  // Declarations / definitions
-  if node.type == NODE.Let      { return checkLet(checker, node) }
-  if node.type == NODE.Function { return checkFunction(checker, node) }
-  if node.type == NODE.Import   { return checkImport(checker, node) }
-
-  // Control flow
-  if node.type == NODE.If       { return checkIf(checker, node) }
-  if node.type == NODE.For      { return checkFor(checker, node) }
-  if node.type == NODE.Return   { return checkReturn(checker, node) }
-  if node.type == NODE.Break    { return checkBreak(checker, node) }
-  if node.type == NODE.Continue { return checkContinue(checker, node) }
-
-  // XXX: should be unreachable, can we catch this?
-  addError(checker, node.id, "Unsupported node: " + (nameOf(NODE, node.type) or str(node.type)))
+  // TODO: Handle other node types (Dot, Index, Hashmap, Return, etc.)
+  // For unhandled nodes, assign Any to avoid crashes
   let t = typeAny()
-  checker.types[node.id] = t
+  if node.id {
+    checker.types[node.id] = t
+  }
   t
 }
 
@@ -2854,104 +352,35 @@ synthExpr = fn(checker, node) {
 // Public API
 // ========================================================
 
-fn makeChecker(resolveResult, opts = .{}) {
-  let root = TypeEnv(nil)
-  .{
-    types: .{},
-    typeVarBindings: .{},
-    errors: [],
-    hadError: false,
-
-    resolveResult: resolveResult,
-    resolvedNames: resolveResult.resolvedNames,
-
-    nextTypeVarId: 1,
-    currentEnv: root,
-    rootEnv: root,
-
-    constraints: [],
-    functionInfos: [],
-
-    currentReturn: nil,
-
-    program: opts.program,
-    enumInfo: opts.enumInfo or .{},
-    enumDeclValues: .{}, // let declNodeId -> { memberName -> number }
-    recordEnumKeyOrigins: .{}, // recordLiteralNodeId -> { key -> { enumDeclId, enumName, member } }
-    importResultsByDeclId: .{}, // let declNodeId -> moduleResult (for imported modules)
-
-    changed: false,
-    solverHitMaxRounds: nil,
-  }
-}
-
-fn predeclareTopLevel(checker, ast) {
-  if !ast or ast.type != NODE.Block or !ast.expressions { return }
-
-  for node in ast.expressions {
-    if node.type == NODE.Let and node.name {
-      if !lookupDecl(checker, node.name.id) {
-        bindDecl(checker, node.name.id)
-      }
-    } else if node.type == NODE.Function and node.name {
-      if !lookupDecl(checker, node.id) {
-        bindDecl(checker, node.id)
-      }
-      let binding = checker.resolvedNames[node.name.id]
-      if binding and binding.declaredAt {
-        debugAssert(checker, binding.declaredAt == node.id, node.name.id,
-          "Internal error: function name binding does not resolve to function node id")
-      }
-    }
-  }
-}
-
 fn typecheck(ast, resolveResult, opts) {
+  // Check preconditions
   if !resolveResult.success {
     return .{
       success: false,
       types: .{},
-      typeVarBindings: .{},
       errors: [.{ message: "Resolve failed", severity: "error" }],
     }
   }
 
+  if !ast {
+    return .{
+      success: false,
+      types: .{},
+      errors: [.{ message: "Missing AST", severity: "error" }],
+    }
+  }
+
+  // Create checker with data from other passes
   let checker = makeChecker(resolveResult, opts)
 
-  if !ast {
-    // XXX: should we report some errors?
-    return .{ success: false, types: .{}, typeVarBindings: .{}, errors: [] }
-  }
-
-  // Predeclare top-level lets/functions for forward references (Phase 2)
-  predeclareTopLevel(checker, ast)
-
+  // Traverse the AST
   synthExpr(checker, ast)
 
-  // Solve constraints and refine functions once more
-  solveConstraints(checker)
-  refineFunctions(checker)
-  solveConstraints(checker)
-  finalizeIndexables(checker)
-  solveConstraints(checker)
-  finalizeConstraints(checker)
-
-  let outTypes = .{}
-  for k in keys(checker.types) {
-    outTypes[k] = derefAll(checker, checker.types[k])
-  }
-
-  let outBindings = .{}
-  for k in keys(checker.typeVarBindings) {
-    outBindings[k] = derefAll(checker, checker.typeVarBindings[k])
-  }
-
+  // Return results
   .{
     success: !checker.hadError,
-    types: outTypes,
-    typeVarBindings: outBindings,
-    errors: checker.errors,
-    recordEnumKeyOrigins: checker.recordEnumKeyOrigins,
+    types: checker.types,           // Node ID -> type
+    errors: checker.errors,         // List of error objects
   }
 }
 

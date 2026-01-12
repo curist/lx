@@ -243,103 +243,6 @@ fn passEnabled(passName, needs) {
   false
 }
 
-fn lastEnabledPass(needs) {
-  let last = "parse"
-  for passName in PASS_ORDER {
-    if passEnabled(passName, needs) {
-      last = passName
-    }
-  }
-  last
-}
-
-fn stopAfterForArtifact(artifactId, needs) {
-  if artifactId == ARTIFACT.ANALYSIS_RESOLVE { return "resolve" }
-  if artifactId == ARTIFACT.ANALYSIS_DCE_LOCAL {
-    return needs.withDce == true and "dce" or "resolve"
-  }
-  if artifactId == ARTIFACT.PROGRAM_MODULE_GRAPH { return "resolve" }
-  if artifactId == ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM {
-    return needs.withDce == true and "dce" or "resolve"
-  }
-  if artifactId == ARTIFACT.AST_FINAL { return lastEnabledPass(needs) }
-  if artifactId == ARTIFACT.ANALYSIS_FASTCHECK { return lastEnabledPass(needs) }
-  if artifactId == ARTIFACT.ANALYSIS_TYPECHECK { return lastEnabledPass(needs) }
-  if artifactId == ARTIFACT.ANALYSIS_DCE_FINAL { return lastEnabledPass(needs) }
-  if artifactId == ARTIFACT.BYTECODE_FUNCTION { return lastEnabledPass(needs) }
-  if artifactId == ARTIFACT.BYTECODE_VERIFIED { return lastEnabledPass(needs) }
-  lastEnabledPass(needs)
-}
-
-fn planRequirements(artifactId, needs) {
-  if artifactId == "source" { return [] }
-  if artifactId == ARTIFACT.AST_FINAL { return ["ast.pre_resolve", ARTIFACT.ANALYSIS_RESOLVE] }
-  if artifactId == "ast.pre_resolve" { return ["source"] }
-  if artifactId == ARTIFACT.ANALYSIS_RESOLVE { return ["ast.pre_resolve"] }
-  if artifactId == ARTIFACT.ANALYSIS_DCE_LOCAL { return needs.withDce == true and [ARTIFACT.ANALYSIS_RESOLVE] or [ARTIFACT.ANALYSIS_RESOLVE] }
-  if artifactId == ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM {
-    let base = [ARTIFACT.PROGRAM_MODULE_GRAPH]
-    if needs.withDce == true { push(base, ARTIFACT.ANALYSIS_DCE_LOCAL) }
-    return base
-  }
-  if artifactId == ARTIFACT.ANALYSIS_DCE_FINAL {
-    let reqs = [ARTIFACT.ANALYSIS_DCE_LOCAL, ARTIFACT.AST_FINAL]
-    if needs.withDce == true { push(reqs, ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM) }
-    return reqs
-  }
-  if artifactId == ARTIFACT.ANALYSIS_FASTCHECK { return [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE] }
-  if artifactId == ARTIFACT.ANALYSIS_TYPECHECK { return [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE] }
-  if artifactId == ARTIFACT.BYTECODE_FUNCTION {
-    return [
-      ARTIFACT.AST_FINAL,
-      ARTIFACT.ANALYSIS_RESOLVE,
-      ARTIFACT.ANALYSIS_FASTCHECK,
-      ARTIFACT.ANALYSIS_DCE_FINAL,
-    ]
-  }
-  if artifactId == ARTIFACT.BYTECODE_VERIFIED { return [ARTIFACT.BYTECODE_FUNCTION] }
-  if artifactId == ARTIFACT.PROGRAM_MODULE_GRAPH { return ["source"] }
-  return []
-}
-
-fn planArtifactGraph(artifactId, needs) {
-  fn walk(id, visited, graph) {
-    if visited[id] { return }
-    visited[id] = true
-    let reqs = planRequirements(id, needs)
-    graph[id] = reqs
-    for req in reqs { walk(req, visited, graph) }
-  }
-
-  let graph = .{}
-  let visited = .{}
-  walk(artifactId, visited, graph)
-  graph
-}
-
-fn requiredPasses(needs, stopAfter) {
-  let required = []
-  for passName in PASS_ORDER {
-    if passEnabled(passName, needs) {
-      push(required, passName)
-    }
-    if passName == stopAfter { break }
-  }
-  required
-}
-
-fn hasRequiredPasses(result, needs, stopAfter) {
-  if !result or !result.passes { return false }
-  let required = requiredPasses(needs, stopAfter)
-  for passName in required {
-    let passResult = result.passes[passName]
-    if !passResult or passResult.success != true {
-      return false
-    }
-  }
-  true
-}
-
 // ========================================
 // Pass Definitions
 // ========================================
@@ -455,6 +358,238 @@ let PASS_DEFS = .{
   },
 }
 
+let ARTIFACT_SPEC = .{
+  ["source"]: .{
+    requires: [],
+    produces: [],
+  },
+  ["ast.pre_resolve"]: .{
+    requires: ["source"],
+    produces: fn(needs) {
+      let out = ["parse"]
+      if needs.withLower == true { push(out, "lower") }
+      if needs.withAnf == true { push(out, "anf") }
+      out
+    },
+  },
+  [ARTIFACT.ANALYSIS_RESOLVE]: .{
+    requires: ["ast.pre_resolve"],
+    produces: ["resolve"],
+  },
+  [ARTIFACT.ANALYSIS_DCE_LOCAL]: .{
+    requires: [ARTIFACT.ANALYSIS_RESOLVE],
+    produces: fn(needs) { needs.withDce == true and ["dce"] or [] },
+  },
+  [ARTIFACT.AST_FINAL]: .{
+    requires: ["ast.pre_resolve", ARTIFACT.ANALYSIS_RESOLVE],
+    produces: fn(needs) {
+      let out = []
+      if needs.withAnfInline == true { push(out, "anf-inline") }
+      if needs.withLowerIntrinsics == true { push(out, "lower-intrinsics") }
+      out
+    },
+  },
+  [ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM]: .{
+    requires: fn(needs) {
+      let reqs = [ARTIFACT.PROGRAM_MODULE_GRAPH]
+      if needs.withDce == true { push(reqs, ARTIFACT.ANALYSIS_DCE_LOCAL) }
+      reqs
+    },
+    produces: [],
+  },
+  [ARTIFACT.ANALYSIS_DCE_FINAL]: .{
+    requires: fn(needs) {
+      let reqs = [ARTIFACT.ANALYSIS_DCE_LOCAL, ARTIFACT.AST_FINAL]
+      if needs.withDce == true { push(reqs, ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM) }
+      reqs
+    },
+    produces: [],
+  },
+  [ARTIFACT.ANALYSIS_FASTCHECK]: .{
+    requires: [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE],
+    produces: [],
+  },
+  [ARTIFACT.ANALYSIS_TYPECHECK]: .{
+    requires: [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE],
+    produces: [],
+  },
+  [ARTIFACT.BYTECODE_FUNCTION]: .{
+    requires: [
+      ARTIFACT.AST_FINAL,
+      ARTIFACT.ANALYSIS_RESOLVE,
+      ARTIFACT.ANALYSIS_FASTCHECK,
+      ARTIFACT.ANALYSIS_DCE_FINAL,
+    ],
+    produces: [],
+  },
+  [ARTIFACT.BYTECODE_VERIFIED]: .{
+    requires: [ARTIFACT.BYTECODE_FUNCTION],
+    produces: [],
+  },
+  [ARTIFACT.PROGRAM_MODULE_GRAPH]: .{
+    requires: ["source"],
+    produces: [],
+  },
+}
+
+fn artifactRequires(artifactId, needs) {
+  let spec = ARTIFACT_SPEC[artifactId]
+  if !spec { return [] }
+  let reqs = spec.requires or []
+  let evaluated = type(reqs) == "fn" and reqs(needs) or reqs
+  type(evaluated) == "array" and evaluated or []
+}
+
+fn artifactProduces(artifactId, needs) {
+  let spec = ARTIFACT_SPEC[artifactId]
+  if !spec { return [] }
+  let produces = spec.produces or []
+  let evaluated = type(produces) == "fn" and produces(needs) or produces
+  type(evaluated) == "array" and evaluated or []
+}
+
+fn validateArtifactSpec(needs) {
+  let errors = []
+  let artifactIds = keys(ARTIFACT_SPEC)
+  let artifactSet = .{}
+  for id in artifactIds { artifactSet[id] = true }
+
+  for id in artifactIds {
+    let spec = ARTIFACT_SPEC[id]
+    let rawReqs = spec and spec.requires or []
+    let evaluatedReqs = type(rawReqs) == "fn" and rawReqs(needs) or rawReqs
+    if type(evaluatedReqs) != "array" {
+      push(errors, "Artifact '" + id + "' requires must be an array")
+      evaluatedReqs = []
+    }
+    let reqs = evaluatedReqs
+    for req in reqs {
+      if req != "source" and !artifactSet[req] {
+        push(errors, "Artifact '" + id + "' requires unknown '" + req + "'")
+      }
+    }
+
+    let rawProduces = spec and spec.produces or []
+    let evaluatedProduces = type(rawProduces) == "fn" and rawProduces(needs) or rawProduces
+    if type(evaluatedProduces) != "array" {
+      push(errors, "Artifact '" + id + "' produces must be an array")
+      evaluatedProduces = []
+    }
+    let producers = evaluatedProduces
+    for passName in producers {
+      if !PASS_DEFS[passName] {
+        push(errors, "Artifact '" + id + "' produced by unknown pass '" + passName + "'")
+      }
+    }
+  }
+
+  if len(errors) == 0 { return true }
+
+  Lx.stderr.println("Artifact spec validation failed:")
+  for err in errors { Lx.stderr.println("  " + err) }
+  false
+}
+
+fn planArtifactGraph(artifactId, needs) {
+  fn walk(id, visited, graph) {
+    if visited[id] { return }
+    visited[id] = true
+    let reqs = artifactRequires(id, needs)
+    graph[id] = reqs
+    for req in reqs { walk(req, visited, graph) }
+  }
+
+  let graph = .{}
+  let visited = .{}
+  walk(artifactId, visited, graph)
+  graph
+}
+
+fn capabilityProviders() {
+  let providers = .{}
+  for passName in PASS_ORDER {
+    let pass = PASS_DEFS[passName]
+    let caps = pass and pass.provides or []
+    for cap in caps {
+      if !providers[cap] { providers[cap] = [] }
+      push(providers[cap], passName)
+    }
+  }
+  providers
+}
+
+fn derivePassPlan(graph, needs) {
+  let required = .{}
+  let artifactIds = keys(graph)
+  for artifactId in artifactIds {
+    let produced = artifactProduces(artifactId, needs)
+    for passName in produced {
+      if passEnabled(passName, needs) { required[passName] = true }
+    }
+  }
+
+  let providers = capabilityProviders()
+
+  let changed = true
+  for changed {
+    changed = false
+    let provided = .{}
+    for passName in PASS_ORDER {
+      if required[passName] and passEnabled(passName, needs) {
+        let pass = PASS_DEFS[passName]
+        let caps = pass and pass.provides or []
+        for cap in caps { provided[cap] = true }
+      }
+
+      if required[passName] and passEnabled(passName, needs) {
+        let pass = PASS_DEFS[passName]
+        let reqs = pass and pass.requires or []
+        for cap in reqs {
+          if !provided[cap] {
+            let candidates = providers[cap] or []
+            let provider = nil
+            for candidate in candidates {
+              if passEnabled(candidate, needs) {
+                provider = candidate
+                break
+              }
+            }
+            if provider and !required[provider] {
+              required[provider] = true
+              changed = true
+            }
+          }
+        }
+      }
+    }
+  }
+
+  collect passName in PASS_ORDER {
+    if required[passName] and passEnabled(passName, needs) { passName } else { continue }
+  }
+}
+
+fn trimPassPlan(passPlan, stopAfter) {
+  if !stopAfter { return passPlan }
+  let out = []
+  for passName in passPlan {
+    push(out, passName)
+    if passName == stopAfter { break }
+  }
+  out
+}
+
+fn hasRequiredPasses(result, passNames) {
+  if !result or !result.passes { return false }
+  for passName in passNames {
+    let passResult = result.passes[passName]
+    if !passResult or passResult.success != true {
+      return false
+    }
+  }
+  true
+}
+
 // ========================================
 // Driver Factory
 // ========================================
@@ -526,6 +661,16 @@ fn make(opts) {
   // Defaults to top-level behavior unless overridden.
   let withImportLower = opts["withImportLower"]
   if withImportLower == nil { withImportLower = withLower }
+
+  let planNeeds = .{
+    withLower: withLower == true,
+    withAnf: withAnf == true,
+    withAnfInline: withAnfInline == true,
+    withLowerIntrinsics: withLowerIntrinsics == true,
+    withTypecheck: withTypecheck == true,
+    withDce: withDce == true,
+  }
+  if !validateArtifactSpec(planNeeds) { return nil }
 
   // Debug flags (optional)
   let debug = opts["debug"]
@@ -699,7 +844,12 @@ fn make(opts) {
       withDce: effectiveWithDce == true,
     }
 
-    let stopAfter = stopAfterForArtifact(targetArtifact or defaultTarget, needs)
+    let target = targetArtifact or defaultTarget
+    let graph = planArtifactGraph(target, needs)
+    let passNames = derivePassPlan(graph, needs)
+    if debug and debug.stopAfter {
+      passNames = trimPassPlan(passNames, debug.stopAfter)
+    }
 
     // Load source to compute hash for cache validation
     let source = nil
@@ -739,7 +889,7 @@ fn make(opts) {
       }
       // Check if cached result matches current configuration via stamp
       // This now includes source content, so file edits invalidate cache
-      if cached.astStamp == currentStamp and hasRequiredPasses(cached, needs, stopAfter) {
+      if cached.astStamp == currentStamp and hasRequiredPasses(cached, passNames) {
         return cached
       }
       // Otherwise: upgrade/downgrade by recompiling with current needs.
@@ -777,9 +927,6 @@ fn make(opts) {
       },
       debug: debug or .{},
     }
-    if ctx.debug and !ctx.debug.stopAfter {
-      ctx.debug.stopAfter = stopAfter
-    }
 
     // Build initial state
     let state = .{
@@ -791,7 +938,7 @@ fn make(opts) {
     }
 
     // Execute passes
-    let passList = collect passName in PASS_ORDER {
+    let passList = collect passName in passNames {
       let pass = PASS_DEFS[passName]
       if pass { pass } else { continue }
     }
@@ -849,8 +996,8 @@ fn make(opts) {
       withDce: withDce == true,
     }
 
-    let stopAfter = stopAfterForArtifact(artifactId or defaultTarget, needs)
-    requiredPasses(needs, stopAfter)
+    let graph = planArtifactGraph(artifactId or defaultTarget, needs)
+    derivePassPlan(graph, needs)
   }
 
   fn planArtifactGraphForTarget(artifactId) {

@@ -220,137 +220,193 @@ fn getProfile(name) {
   nil
 }
 
+fn getDefaultTarget(profileName) {
+  if profileName == "query" { return ARTIFACT.ANALYSIS_RESOLVE }
+  if profileName == "typecheck" { return ARTIFACT.ANALYSIS_TYPECHECK }
+  ARTIFACT.AST_FINAL
+}
+
 // ========================================
-// Build Pass List
+// Build Pass Plan
 // ========================================
 
-fn buildPassList(ctx) {
-  // Build the list of passes with their adapters
-  // ctx contains: importCache, compileModule, opts (withAnf, withAnfInline, withLowerIntrinsics, withTypecheck)
+let PASS_ORDER = ["parse", "lower", "anf", "resolve", "dce", "anf-inline", "lower-intrinsics"]
 
-  [
-    // PASS 1: Parse
-    .{
-      name: "parse",
-      mutatesAst: false,
-      provides: ["ast", "parseTree"],
-      run: fn(ctx, state) {
-        parse(state.source, state.path)
-      },
+fn passEnabled(passName, needs) {
+  if passName == "parse" { return true }
+  if passName == "lower" { return needs.withLower == true }
+  if passName == "anf" { return needs.withAnf == true }
+  if passName == "resolve" { return true }
+  if passName == "dce" { return needs.withDce == true }
+  if passName == "anf-inline" { return needs.withAnfInline == true }
+  if passName == "lower-intrinsics" { return needs.withLowerIntrinsics == true }
+  false
+}
+
+fn lastEnabledPass(needs) {
+  let last = "parse"
+  for passName in PASS_ORDER {
+    if passEnabled(passName, needs) {
+      last = passName
+    }
+  }
+  last
+}
+
+fn stopAfterForArtifact(artifactId, needs) {
+  if artifactId == ARTIFACT.ANALYSIS_RESOLVE { return "resolve" }
+  if artifactId == ARTIFACT.ANALYSIS_DCE_LOCAL {
+    return needs.withDce == true and "dce" or "resolve"
+  }
+  if artifactId == ARTIFACT.PROGRAM_MODULE_GRAPH { return "resolve" }
+  if artifactId == ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM {
+    return needs.withDce == true and "dce" or "resolve"
+  }
+  if artifactId == ARTIFACT.AST_FINAL { return lastEnabledPass(needs) }
+  if artifactId == ARTIFACT.ANALYSIS_FASTCHECK { return lastEnabledPass(needs) }
+  if artifactId == ARTIFACT.ANALYSIS_TYPECHECK { return lastEnabledPass(needs) }
+  if artifactId == ARTIFACT.ANALYSIS_DCE_FINAL { return lastEnabledPass(needs) }
+  if artifactId == ARTIFACT.BYTECODE_FUNCTION { return lastEnabledPass(needs) }
+  if artifactId == ARTIFACT.BYTECODE_VERIFIED { return lastEnabledPass(needs) }
+  lastEnabledPass(needs)
+}
+
+fn requiredPasses(needs, stopAfter) {
+  let required = []
+  for passName in PASS_ORDER {
+    if passEnabled(passName, needs) {
+      push(required, passName)
+    }
+    if passName == stopAfter { break }
+  }
+  required
+}
+
+fn hasRequiredPasses(result, needs, stopAfter) {
+  if !result or !result.passes { return false }
+  let required = requiredPasses(needs, stopAfter)
+  for passName in required {
+    let passResult = result.passes[passName]
+    if !passResult or passResult.success != true {
+      return false
+    }
+  }
+  true
+}
+
+// ========================================
+// Pass Definitions
+// ========================================
+
+let PASS_DEFS = .{
+  parse: .{
+    name: "parse",
+    mutatesAst: false,
+    provides: ["ast", "parseTree"],
+    run: fn(ctx, state) {
+      parse(state.source, state.path)
     },
+  },
+  lower: .{
+    name: "lower",
+    mutatesAst: false,
+    requires: ["ast"],
+    provides: ["loweredAst"],
+    // enabled: auto-checked via ctx.opts.withLower by pipeline
+    run: fn(ctx, state) {
+      let result = lower(state.ast, .{ startNodeId: state.nextNodeId })
 
-    // PASS 2: Lower
-    .{
-      name: "lower",
-      mutatesAst: false,
-      requires: ["ast"],
-      provides: ["loweredAst"],
-      // enabled: auto-checked via ctx.opts.withLower by pipeline
-      run: fn(ctx, state) {
-        let result = lower(state.ast, .{ startNodeId: state.nextNodeId })
-
-        // Remap parse enum info (if present) onto lowered node IDs via origin.
-        let parseResult = state.passes and state.passes.parse
-        if parseResult and parseResult.enumInfo and result and result.origin {
-          let remapped = remapEnumInfo(parseResult.enumInfo, result.origin)
-          return .{
-            success: result.success,
-            ast: result.ast,
-            origin: result.origin,
-            errors: result.errors,
-            nextNodeId: result.nextNodeId,
-            enumInfo: remapped,
-          }
+      // Remap parse enum info (if present) onto lowered node IDs via origin.
+      let parseResult = state.passes and state.passes.parse
+      if parseResult and parseResult.enumInfo and result and result.origin {
+        let remapped = remapEnumInfo(parseResult.enumInfo, result.origin)
+        return .{
+          success: result.success,
+          ast: result.ast,
+          origin: result.origin,
+          errors: result.errors,
+          nextNodeId: result.nextNodeId,
+          enumInfo: remapped,
         }
+      }
 
-        result
-      },
+      result
     },
+  },
+  anf: .{
+    name: "anf",
+    mutatesAst: false,
+    requires: ["loweredAst"],
+    provides: ["anfAst", "loweredAst"],  // ANF is a refinement, still satisfies loweredAst contracts
+    // enabled: auto-checked via ctx.opts.withAnf by pipeline
+    run: fn(ctx, state) {
+      let result = anf(state.ast, .{ startNodeId: state.nextNodeId })
 
-    // PASS 3: ANF (optional, default on)
-    .{
-      name: "anf",
-      mutatesAst: false,
-      requires: ["loweredAst"],
-      provides: ["anfAst", "loweredAst"],  // ANF is a refinement, still satisfies loweredAst contracts
-      // enabled: auto-checked via ctx.opts.withAnf by pipeline
-      run: fn(ctx, state) {
-        let result = anf(state.ast, .{ startNodeId: state.nextNodeId })
-
-        // Remap enum info through ANF transform (node IDs change again).
-        let prev = state.passes and state.passes.lower
-        if prev and prev.enumInfo and result and result.origin {
-          let remapped = remapEnumInfo(prev.enumInfo, result.origin)
-          return .{
-            success: result.success,
-            ast: result.ast,
-            origin: result.origin,
-            errors: result.errors,
-            nextNodeId: result.nextNodeId,
-            enumInfo: remapped,
-          }
+      // Remap enum info through ANF transform (node IDs change again).
+      let prev = state.passes and state.passes.lower
+      if prev and prev.enumInfo and result and result.origin {
+        let remapped = remapEnumInfo(prev.enumInfo, result.origin)
+        return .{
+          success: result.success,
+          ast: result.ast,
+          origin: result.origin,
+          errors: result.errors,
+          nextNodeId: result.nextNodeId,
+          enumInfo: remapped,
         }
+      }
 
-        result
-      },
+      result
     },
-
-    // PASS 5: Resolve
-    .{
-      name: "resolve",
-      mutatesAst: false,  // Phase 2: import metadata moved to side tables
-      requires: ["ast"],  // Works on parse, lowered, or ANF AST
-      provides: ["resolution", "scopeInfo"],
-      run: fn(ctx, state) {
-        let opts = .{
-          importCache: ctx.importCache,
-          compileModule: ctx.compileModule,
-        }
-        resolve(state.ast, opts)
-      },
+  },
+  resolve: .{
+    name: "resolve",
+    mutatesAst: false,  // Phase 2: import metadata moved to side tables
+    requires: ["ast"],  // Works on parse, lowered, or ANF AST
+    provides: ["resolution", "scopeInfo"],
+    run: fn(ctx, state) {
+      let opts = .{
+        importCache: ctx.importCache,
+        compileModule: ctx.compileModule,
+      }
+      resolve(state.ast, opts)
     },
-
-    // PASS 5.5: DCE (on by default)
-    .{
-      name: "dce",
-      mutatesAst: false,  // Produces side tables only
-      requires: ["resolution"],
-      provides: ["dce"],
-      enabled: fn(ctx, state) {
-        ctx.opts.withDce != false
-      },
-      run: fn(ctx, state) {
-        let resolveResult = state.passes.resolve
-        dce(state.ast, resolveResult)
-      },
+  },
+  dce: .{
+    name: "dce",
+    mutatesAst: false,  // Produces side tables only
+    requires: ["resolution"],
+    provides: ["dce"],
+    enabled: fn(ctx, state) {
+      ctx.opts.withDce != false
     },
-
-    // PASS 6: ANF Inline Optimization (optional, default on, post-resolve)
-    .{
-      name: "anf-inline",
-      mutatesAst: true,  // Explicitly mutates AST in-place
-      requires: ["anfAst", "resolution"],  // Pipeline auto-checks these requirements
-      provides: ["optimizedAst"],
-      // enabled: auto-checked via ctx.opts.withAnfInline by pipeline
-      run: fn(ctx, state) {
-        let resolveResult = state.passes.resolve
-        anfInline(state.ast, resolveResult)
-      },
+    run: fn(ctx, state) {
+      let resolveResult = state.passes.resolve
+      dce(state.ast, resolveResult)
     },
-
-    // PASS 7: Intrinsic Lowering (optional, default on, post-resolve)
-    .{
-      name: "lower-intrinsics",
-      mutatesAst: true,  // Mutates AST in-place (preserves node IDs)
-      requires: ["anfAst", "resolution"],
-      provides: ["intrinsicsLoweredAst"],
-      // enabled: auto-checked via ctx.opts.withLowerIntrinsics by pipeline
-      run: fn(ctx, state) {
-        let resolveResult = state.passes.resolve
-        lowerIntrinsics(state.ast, resolveResult, nil)
-      },
+  },
+  ["anf-inline"]: .{
+    name: "anf-inline",
+    mutatesAst: true,  // Explicitly mutates AST in-place
+    requires: ["anfAst", "resolution"],  // Pipeline auto-checks these requirements
+    provides: ["optimizedAst"],
+    // enabled: auto-checked via ctx.opts.withAnfInline by pipeline
+    run: fn(ctx, state) {
+      let resolveResult = state.passes.resolve
+      anfInline(state.ast, resolveResult)
     },
-  ]
+  },
+  ["lower-intrinsics"]: .{
+    name: "lower-intrinsics",
+    mutatesAst: true,  // Mutates AST in-place (preserves node IDs)
+    requires: ["anfAst", "resolution"],
+    provides: ["intrinsicsLoweredAst"],
+    // enabled: auto-checked via ctx.opts.withLowerIntrinsics by pipeline
+    run: fn(ctx, state) {
+      let resolveResult = state.passes.resolve
+      lowerIntrinsics(state.ast, resolveResult, nil)
+    },
+  },
 }
 
 // ========================================
@@ -366,6 +422,7 @@ fn make(opts) {
   // Use `opts["..."]` for optional keys so callers can omit them.
   let profileName = opts["profile"] or "default"
   let profileDefaults = getProfile(profileName)
+  let defaultTarget = getDefaultTarget(profileName)
 
   if !profileDefaults {
     // Unknown profile - error
@@ -433,38 +490,7 @@ fn make(opts) {
   let wholeProgramDceArtifact = nil  // Cached artifact for ANALYSIS_DCE_WHOLE_PROGRAM
   let compileDepth = 0
 
-  let compileModule = nil
-
-  fn inferCaps(result) {
-    let passes = result and result.passes or .{}
-    .{
-      withLower: passes.lower != nil,
-      withAnf: passes.anf != nil,
-      withAnfInline: passes["anf-inline"] != nil,
-      withLowerIntrinsics: passes["lower-intrinsics"] != nil,
-      withTypecheck: passes.typecheck != nil,
-    }
-  }
-
-  fn meetsNeeds(result, needs) {
-    if !result { return false }
-    let caps = (result.buildOpts and .{
-      withLower: result.buildOpts.withLower == true,
-      withAnf: result.buildOpts.withAnf == true,
-      withAnfInline: result.buildOpts.withAnfInline == true,
-      withLowerIntrinsics: result.buildOpts.withLowerIntrinsics == true,
-      withTypecheck: result.buildOpts.withTypecheck == true,
-    }) or inferCaps(result)
-
-    if needs.withLower == true and caps.withLower != true { return false }
-    if needs.withAnf == true and caps.withAnf != true { return false }
-    if needs.withAnfInline == true and caps.withAnfInline != true { return false }
-    if needs.withLowerIntrinsics == true and caps.withLowerIntrinsics != true { return false }
-    if needs.withTypecheck == true and caps.withTypecheck != true { return false }
-    true
-  }
-
-  let runWholeProgramTypecheck = fn(entryResult) {
+  fn runWholeProgramTypecheck(entryResult) {
     // Typecheck in reverse discovery order so imports are processed first.
 
     // Check if we need to rerun based on programStamp
@@ -512,7 +538,7 @@ fn make(opts) {
     entryResult
   }
 
-  let runWholeProgramDce = fn(entryResult) {
+  fn runWholeProgramDce(entryResult) {
     // DEPRECATED: This function is no longer used in the artifact-driven pipeline.
     // Whole-program DCE is now handled via:
     //   buildProgram(entry, ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM)
@@ -598,7 +624,7 @@ fn make(opts) {
     entryResult
   }
 
-  let compileModuleInternal = fn compileModuleInternal(path) {
+  fn compileModuleInternal(path, targetArtifact) {
     let isImport = compileDepth > 1
     let effectiveWithLower = isImport and withImportLower or withLower
     let effectiveWithAnf = withAnf
@@ -626,6 +652,8 @@ fn make(opts) {
       withTypecheck: effectiveWithTypecheck == true,
       withDce: effectiveWithDce == true,
     }
+
+    let stopAfter = stopAfterForArtifact(targetArtifact or defaultTarget, needs)
 
     // Load source to compute hash for cache validation
     let source = nil
@@ -665,7 +693,7 @@ fn make(opts) {
       }
       // Check if cached result matches current configuration via stamp
       // This now includes source content, so file edits invalidate cache
-      if cached.astStamp == currentStamp and meetsNeeds(cached, needs) {
+      if cached.astStamp == currentStamp and hasRequiredPasses(cached, needs, stopAfter) {
         return cached
       }
       // Otherwise: upgrade/downgrade by recompiling with current needs.
@@ -701,7 +729,10 @@ fn make(opts) {
         withTypecheck: effectiveWithTypecheck,
         withDce: effectiveWithDce,
       },
-      debug: debug,
+      debug: debug or .{},
+    }
+    if ctx.debug and !ctx.debug.stopAfter {
+      ctx.debug.stopAfter = stopAfter
     }
 
     // Build initial state
@@ -714,7 +745,10 @@ fn make(opts) {
     }
 
     // Execute passes
-    let passList = buildPassList(ctx)
+    let passList = collect passName in PASS_ORDER {
+      let pass = PASS_DEFS[passName]
+      if pass { pass } else { continue }
+    }
     let pipelineResult = pipeline.runPasses(passList, ctx, state)
 
     // Build result with pipeline fields
@@ -738,10 +772,10 @@ fn make(opts) {
     return result
   }
 
-  compileModule = fn compileModule(path) {
+  fn compileModuleForArtifact(path, artifactId) {
     compileDepth = compileDepth + 1
     let isTop = compileDepth == 1
-    let result = compileModuleInternal(path)
+    let result = compileModuleInternal(path, artifactId)
     compileDepth = compileDepth - 1
 
     if isTop and withTypecheck != false and !wholeProgramTypecheckDone {
@@ -753,6 +787,10 @@ fn make(opts) {
     // This preserves local DCE as pristine and derives final DCE without mutation.
 
     result
+  }
+
+  fn compileModule(path) {
+    compileModuleForArtifact(path, defaultTarget)
   }
 
   // ========================================
@@ -862,7 +900,7 @@ fn make(opts) {
     // Returns: Artifact payload or nil on error
 
     // First, ensure the module is compiled
-    let result = compileModule(path)
+    let result = compileModuleForArtifact(path, artifactId)
     if !result or result.status != "done" {
       return nil
     }
@@ -979,7 +1017,12 @@ fn make(opts) {
     // Returns: Artifact payload or nil on error
 
     // Compile the entry module (this recursively compiles all imports)
-    let entryResult = compileModule(entryPath)
+    let compileTarget =
+      artifactId == ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM and ARTIFACT.ANALYSIS_DCE_LOCAL or
+      artifactId == ARTIFACT.PROGRAM_MODULE_GRAPH and ARTIFACT.ANALYSIS_RESOLVE or
+      defaultTarget
+
+    let entryResult = compileModuleForArtifact(entryPath, compileTarget)
     if !entryResult or entryResult.status != "done" {
       return nil
     }
@@ -998,7 +1041,7 @@ fn make(opts) {
       // This artifact represents the complete program-level dead code analysis
 
       // Ensure all modules are compiled
-      compileModule(entryPath)
+      compileModuleForArtifact(entryPath, ARTIFACT.ANALYSIS_DCE_LOCAL)
 
       // Check if we have a cached result
       let programStamp = computeProgramStamp(compiledModules)

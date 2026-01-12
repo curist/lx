@@ -794,7 +794,7 @@ static bool strNative(int argCount, Value *args) {
   char *s = NULL;
   int slen = tostring(&s, args[0]);
   if (slen < 0) slen = 0;
-  args[-1] = OBJ_VAL(copyString(s, slen));
+  args[-1] = OBJ_VAL(copyString(s, (size_t)slen));
   free(s);
   return true;
 }
@@ -898,7 +898,7 @@ static bool joinNative(int argCount, Value *args) {
   free(lengths);
   free(owned);
 
-  args[-1] = OBJ_VAL(copyString(result, (int)total_length));
+  args[-1] = OBJ_VAL(copyString(result, total_length));
   free(result);
   return true;
 }
@@ -1017,7 +1017,7 @@ static bool substrNative(int argCount, Value *args) {
   }
 
   size_t startIndex = (size_t)start;
-  int outLength = (int)(end - start);
+  size_t outLength = (size_t)(end - start);
 
   args[-1] = OBJ_VAL(copyString(input->chars + startIndex, outLength));
   return true;
@@ -1223,7 +1223,7 @@ static bool execNative(int argCount, Value *args) {
     if (result_size > (size_t)INT_MAX) {
       push(CSTRING_VAL("Error: exec output too large."));
     } else {
-      push(OBJ_VAL(copyString(result, (int)result_size)));
+      push(OBJ_VAL(copyString(result, result_size)));
     }
     free(result);
   } else {
@@ -2173,7 +2173,7 @@ static bool sliceNative(int argCount, Value *args) {
 
 static void defineTableFunction(Table *table, const char *name,
                                 NativeFn function) {
-  push(OBJ_VAL(copyString(name, (int)strlen(name))));
+  push(OBJ_VAL(copyString(name, strlen(name))));
   ObjString *nameString = COPY_CSTRING(name);
   push(OBJ_VAL(nameString));
   push(OBJ_VAL(newNative(function, nameString)));
@@ -2213,8 +2213,8 @@ static void defineLxNatives() {
       char* eq = strchr(entry, '=');
       if (eq == NULL || eq == entry) continue;
       size_t keyLen = (size_t)(eq - entry);
-      ObjString* key = copyString(entry, (int)keyLen);
-      ObjString* value = copyString(eq + 1, (int)strlen(eq + 1));
+      ObjString* key = copyString(entry, keyLen);
+      ObjString* value = copyString(eq + 1, strlen(eq + 1));
       push(OBJ_VAL(key));
       push(OBJ_VAL(value));
       tableSet(&AS_HASHMAP(vm.stack[3]), vm.stack[4], vm.stack[5]);

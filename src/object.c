@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -164,6 +165,10 @@ ObjString* takeString(char* chars, int length) {
 }
 
 ObjString* copyString(const char* chars, size_t length) {
+  if (length > (size_t)PTRDIFF_MAX) {
+    // Guard against invalid length from signed conversion.
+    length = 0;
+  }
   uint64_t hash = hashString(chars, length);
 
   if (length <= (size_t)INTERN_MAX_LEN) {

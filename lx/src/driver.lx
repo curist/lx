@@ -1000,6 +1000,30 @@ fn make(opts) {
     derivePassPlan(graph, needs)
   }
 
+  fn planPassesDetailed(artifactId) {
+    let needs = .{
+      withLower: withLower == true,
+      withAnf: withAnf == true,
+      withAnfInline: withAnfInline == true,
+      withLowerIntrinsics: withLowerIntrinsics == true,
+      withTypecheck: withTypecheck == true,
+      withDce: withDce == true,
+    }
+
+    let graph = planArtifactGraph(artifactId or defaultTarget, needs)
+    let required = derivePassPlan(graph, needs)
+    let requiredSet = .{}
+    for passName in required { requiredSet[passName] = true }
+
+    collect passName in PASS_ORDER {
+      .{
+        name: passName,
+        enabled: passEnabled(passName, needs),
+        required: requiredSet[passName] == true,
+      }
+    }
+  }
+
   fn planArtifactGraphForTarget(artifactId) {
     let needs = .{
       withLower: withLower == true,
@@ -1317,6 +1341,7 @@ fn make(opts) {
     debug: debug,
     compileModule: compileModule,
     planPasses: planPasses,
+    planPassesDetailed: planPassesDetailed,
     planArtifactGraph: planArtifactGraphForTarget,
     buildModule: buildModule,
     buildProgram: buildProgram,

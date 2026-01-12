@@ -46,9 +46,20 @@ fn printPlan(artifactId) {
   println("Build plan for " + artifactId)
   let planner = driver.make(.{})
   let passPlan = planner and planner.planPasses and planner.planPasses(artifactId)
+  let passDetails = planner and planner.planPassesDetailed and planner.planPassesDetailed(artifactId)
   let graph = planner and planner.planArtifactGraph and planner.planArtifactGraph(artifactId) or .{}
   if passPlan and len(passPlan) > 0 {
     println("Passes: " + join(passPlan, " -> "))
+  }
+  if passDetails and len(passDetails) > 0 {
+    println("Pass flags:")
+    for detail in passDetails {
+      let status =
+        detail.required == true and "required" or
+        detail.enabled == true and "enabled" or
+        "disabled"
+      println("  " + detail.name + ": " + status)
+    }
   }
   println("")
   let visited = .{}

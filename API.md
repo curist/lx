@@ -75,11 +75,13 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `Lx.stdin.unbuffered() -> nil` Disable stdin stdio buffering (recommended if mixing `poll` with `readLine`/`readBytes`).
 - `Lx.stdout` - stdout helpers namespace.
 - `Lx.stdout.flush() -> nil` Flush stdout.
+- `Lx.stdout.isTTY() -> bool` Return true when stdout is a TTY.
 - `Lx.stdout.putc(...codes: number) -> nil` Write bytes/chars to stdout.
 - `Lx.stderr` - stderr helpers namespace.
 - `Lx.stderr.print(...values) -> nil` Print values to stderr separated by spaces.
 - `Lx.stderr.println(...values) -> nil` Print values to stderr separated by spaces and a trailing newline.
 - `Lx.stderr.flush() -> nil` Flush stderr.
+- `Lx.stderr.isTTY() -> bool` Return true when stderr is a TTY.
 - `Lx.proc` - process helpers namespace.
 - `Lx.proc.exec(cmd: string) -> {code,out}` Run a shell command and capture stdout.
 - `Lx.proc.system(cmd: string) -> number` Run a shell command (inherits stdio), returning exit code.

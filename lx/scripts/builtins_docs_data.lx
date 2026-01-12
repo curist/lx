@@ -225,6 +225,13 @@ let DOCS = .{
     markdown: "`Lx.stderr.flush() -> nil`\nFlush stderr.",
     source: "API.md",
   },
+  ["Lx.stderr.isTTY"]: .{
+    name: "Lx.stderr.isTTY",
+    signature: "Lx.stderr.isTTY() -> bool",
+    description: "Return true when stderr is a TTY.",
+    markdown: "`Lx.stderr.isTTY() -> bool`\nReturn true when stderr is a TTY.",
+    source: "API.md",
+  },
   ["Lx.stderr.print"]: .{
     name: "Lx.stderr.print",
     signature: "Lx.stderr.print(...values) -> nil",
@@ -300,6 +307,13 @@ let DOCS = .{
     signature: "Lx.stdout.flush() -> nil",
     description: "Flush stdout.",
     markdown: "`Lx.stdout.flush() -> nil`\nFlush stdout.",
+    source: "API.md",
+  },
+  ["Lx.stdout.isTTY"]: .{
+    name: "Lx.stdout.isTTY",
+    signature: "Lx.stdout.isTTY() -> bool",
+    description: "Return true when stdout is a TTY.",
+    markdown: "`Lx.stdout.isTTY() -> bool`\nReturn true when stdout is a TTY.",
     source: "API.md",
   },
   ["Lx.stdout.putc"]: .{
@@ -592,6 +606,7 @@ let NATIVE_NAMES = .{
   ["Lx.proc.system"]: true,
   ["Lx.stderr"]: true,
   ["Lx.stderr.flush"]: true,
+  ["Lx.stderr.isTTY"]: true,
   ["Lx.stderr.print"]: true,
   ["Lx.stderr.println"]: true,
   ["Lx.stdin"]: true,
@@ -603,6 +618,7 @@ let NATIVE_NAMES = .{
   ["Lx.stdin.unbuffered"]: true,
   ["Lx.stdout"]: true,
   ["Lx.stdout.flush"]: true,
+  ["Lx.stdout.isTTY"]: true,
   ["Lx.stdout.putc"]: true,
   ["Lx.version"]: true,
   ["Lx.zlib"]: true,

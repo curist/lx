@@ -128,6 +128,15 @@ static bool stdoutFlushNative(int argCount, Value *args) {
   return true;
 }
 
+static bool stdoutIsTtyNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.stdout.isTTY takes 0 args.");
+    return false;
+  }
+  args[-1] = BOOL_VAL(isatty(fileno(stdout)) == 1);
+  return true;
+}
+
 static bool stderrFlushNative(int argCount, Value *args) {
   if (argCount != 0) {
     args[-1] = CSTRING_VAL("Error: Lx.stderr.flush takes 0 args.");
@@ -135,6 +144,15 @@ static bool stderrFlushNative(int argCount, Value *args) {
   }
   fflush(stderr);
   args[-1] = NIL_VAL;
+  return true;
+}
+
+static bool stderrIsTtyNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.stderr.isTTY takes 0 args.");
+    return false;
+  }
+  args[-1] = BOOL_VAL(isatty(fileno(stderr)) == 1);
   return true;
 }
 
@@ -2267,6 +2285,7 @@ static void defineLxNatives() {
   pop();
   pop();
   defineTableFunction(&stdoutTable->table, "flush", stdoutFlushNative);
+  defineTableFunction(&stdoutTable->table, "isTTY", stdoutIsTtyNative);
   defineTableFunction(&stdoutTable->table, "putc", putcNative);
   pop(); // stdout
 
@@ -2281,6 +2300,7 @@ static void defineLxNatives() {
   defineTableFunction(&stderrTable->table, "print", groanNative);
   defineTableFunction(&stderrTable->table, "println", groanlnNative);
   defineTableFunction(&stderrTable->table, "flush", stderrFlushNative);
+  defineTableFunction(&stderrTable->table, "isTTY", stderrIsTtyNative);
   pop(); // stderr
 
   // Lx.proc

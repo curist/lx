@@ -388,6 +388,33 @@ This turns compilation into a small, deterministic build graph rather than a fix
 
 ---
 
+## Adding a Pass
+
+When you add a new pass, you must update the **artifact spec** and **pass
+definitions** so the planner and scheduler stay in sync.
+
+Checklist:
+
+1. **Define the pass implementation** (AST transform or analysis).
+2. **Register the pass in `PASS_DEFS`** with:
+   * `name`
+   * `requires` / `provides`
+   * `run` function
+3. **Declare or extend the artifact it produces** in `ARTIFACT_SPEC`:
+   * add a new artifact if needed
+   * list its `requires`
+   * list the pass in `produces`
+4. **Verify the plan** with:
+   * `lx compile --plan --artifact <target>`
+
+Notes:
+
+* `PASS_DEFS` lives in `lx/src/driver.lx`.
+* `ARTIFACT_SPEC` is the single source of truth for artifact dependencies.
+* The planner validates these at startup; invalid references fail fast.
+
+---
+
 ## AST-Level Passes
 
 ### **parse.lx** — AST transform (syntax → AST)

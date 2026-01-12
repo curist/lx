@@ -1689,11 +1689,27 @@ static bool zlibInflateNative(int argCount, Value *args) {
   return true;
 }
 
-// Lx.zlib.crc32(data: Array[Number]) -> Number
-// Calculate CRC32 checksum of byte array
+// Lx.zlib.crc32(data: String | Array[Number]) -> Number
+// Calculate CRC32 checksum of string or byte array
 static bool zlibCrc32Native(int argCount, Value *args) {
-  if (argCount < 1 || !IS_ARRAY(args[0])) {
-    args[-1] = CSTRING_VAL("Error: Lx.zlib.crc32 requires an array of bytes");
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Lx.zlib.crc32 requires a string or array of bytes");
+    return false;
+  }
+
+  uLong crc = crc32(0L, Z_NULL, 0);
+
+  // Handle string input
+  if (IS_STRING(args[0])) {
+    ObjString* str = AS_STRING(args[0]);
+    crc = crc32(crc, (const uint8_t*)str->chars, str->length);
+    args[-1] = NUMBER_VAL((double)crc);
+    return true;
+  }
+
+  // Handle array of bytes input
+  if (!IS_ARRAY(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.zlib.crc32 requires a string or array of bytes");
     return false;
   }
 
@@ -1712,7 +1728,6 @@ static bool zlibCrc32Native(int argCount, Value *args) {
   }
 
   // Calculate CRC32
-  uLong crc = crc32(0L, Z_NULL, 0);
   crc = crc32(crc, inputBuf, inputLen);
 
   FREE_ARRAY(uint8_t, inputBuf, inputLen);

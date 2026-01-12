@@ -271,6 +271,52 @@ fn stopAfterForArtifact(artifactId, needs) {
   lastEnabledPass(needs)
 }
 
+fn planRequirements(artifactId, needs) {
+  if artifactId == "source" { return [] }
+  if artifactId == ARTIFACT.AST_FINAL { return ["ast.pre_resolve", ARTIFACT.ANALYSIS_RESOLVE] }
+  if artifactId == "ast.pre_resolve" { return ["source"] }
+  if artifactId == ARTIFACT.ANALYSIS_RESOLVE { return ["ast.pre_resolve"] }
+  if artifactId == ARTIFACT.ANALYSIS_DCE_LOCAL { return needs.withDce == true and [ARTIFACT.ANALYSIS_RESOLVE] or [ARTIFACT.ANALYSIS_RESOLVE] }
+  if artifactId == ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM {
+    let base = [ARTIFACT.PROGRAM_MODULE_GRAPH]
+    if needs.withDce == true { push(base, ARTIFACT.ANALYSIS_DCE_LOCAL) }
+    return base
+  }
+  if artifactId == ARTIFACT.ANALYSIS_DCE_FINAL {
+    let reqs = [ARTIFACT.ANALYSIS_DCE_LOCAL, ARTIFACT.AST_FINAL]
+    if needs.withDce == true { push(reqs, ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM) }
+    return reqs
+  }
+  if artifactId == ARTIFACT.ANALYSIS_FASTCHECK { return [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE] }
+  if artifactId == ARTIFACT.ANALYSIS_TYPECHECK { return [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE] }
+  if artifactId == ARTIFACT.BYTECODE_FUNCTION {
+    return [
+      ARTIFACT.AST_FINAL,
+      ARTIFACT.ANALYSIS_RESOLVE,
+      ARTIFACT.ANALYSIS_FASTCHECK,
+      ARTIFACT.ANALYSIS_DCE_FINAL,
+    ]
+  }
+  if artifactId == ARTIFACT.BYTECODE_VERIFIED { return [ARTIFACT.BYTECODE_FUNCTION] }
+  if artifactId == ARTIFACT.PROGRAM_MODULE_GRAPH { return ["source"] }
+  return []
+}
+
+fn planArtifactGraph(artifactId, needs) {
+  fn walk(id, visited, graph) {
+    if visited[id] { return }
+    visited[id] = true
+    let reqs = planRequirements(id, needs)
+    graph[id] = reqs
+    for req in reqs { walk(req, visited, graph) }
+  }
+
+  let graph = .{}
+  let visited = .{}
+  walk(artifactId, visited, graph)
+  graph
+}
+
 fn requiredPasses(needs, stopAfter) {
   let required = []
   for passName in PASS_ORDER {
@@ -793,6 +839,32 @@ fn make(opts) {
     compileModuleForArtifact(path, defaultTarget)
   }
 
+  fn planPasses(artifactId) {
+    let needs = .{
+      withLower: withLower == true,
+      withAnf: withAnf == true,
+      withAnfInline: withAnfInline == true,
+      withLowerIntrinsics: withLowerIntrinsics == true,
+      withTypecheck: withTypecheck == true,
+      withDce: withDce == true,
+    }
+
+    let stopAfter = stopAfterForArtifact(artifactId or defaultTarget, needs)
+    requiredPasses(needs, stopAfter)
+  }
+
+  fn planArtifactGraphForTarget(artifactId) {
+    let needs = .{
+      withLower: withLower == true,
+      withAnf: withAnf == true,
+      withAnfInline: withAnfInline == true,
+      withLowerIntrinsics: withLowerIntrinsics == true,
+      withTypecheck: withTypecheck == true,
+      withDce: withDce == true,
+    }
+    planArtifactGraph(artifactId or defaultTarget, needs)
+  }
+
   // ========================================
   // Backend Artifact Producers
   // ========================================
@@ -1097,6 +1169,8 @@ fn make(opts) {
     withAnfInline: withAnfInline,
     debug: debug,
     compileModule: compileModule,
+    planPasses: planPasses,
+    planArtifactGraph: planArtifactGraphForTarget,
     buildModule: buildModule,
     buildProgram: buildProgram,
   }

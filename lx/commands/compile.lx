@@ -16,132 +16,43 @@ let PLAN_ARTIFACTS = [
   ARTIFACT.PROGRAM_MODULE_GRAPH,
 ]
 
-let PSEUDO_AST_PRE_RESOLVE = "ast.pre_resolve"
-
-fn artifactInfo(artifactId) {
-  if artifactId == ARTIFACT.AST_FINAL {
-    return .{
-      label: "ast.final",
-      producer: "passes: anf-inline -> lower-intrinsics (mutate in place)",
-      requires: [PSEUDO_AST_PRE_RESOLVE, ARTIFACT.ANALYSIS_RESOLVE],
-    }
-  }
-  if artifactId == PSEUDO_AST_PRE_RESOLVE {
-    return .{
-      label: PSEUDO_AST_PRE_RESOLVE,
-      producer: "passes: parse -> lower -> anf",
-      requires: ["source"],
-    }
-  }
-  if artifactId == ARTIFACT.ANALYSIS_RESOLVE {
-    return .{
-      label: "analysis.resolve",
-      producer: "pass: resolve",
-      requires: [PSEUDO_AST_PRE_RESOLVE],
-    }
-  }
-  if artifactId == ARTIFACT.ANALYSIS_DCE_LOCAL {
-    return .{
-      label: "analysis.dce.local",
-      producer: "pass: dce",
-      requires: [ARTIFACT.ANALYSIS_RESOLVE],
-    }
-  }
-  if artifactId == ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM {
-    return .{
-      label: "analysis.dce.whole_program",
-      producer: "program analysis",
-      requires: [ARTIFACT.ANALYSIS_DCE_LOCAL, ARTIFACT.PROGRAM_MODULE_GRAPH],
-    }
-  }
-  if artifactId == ARTIFACT.ANALYSIS_DCE_FINAL {
-    return .{
-      label: "analysis.dce.final",
-      producer: "derived: local + whole-program",
-      requires: [ARTIFACT.ANALYSIS_DCE_LOCAL, ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM, ARTIFACT.AST_FINAL],
-    }
-  }
-  if artifactId == ARTIFACT.ANALYSIS_FASTCHECK {
-    return .{
-      label: "analysis.fastcheck",
-      producer: "analysis: fastcheck",
-      requires: [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE],
-    }
-  }
-  if artifactId == ARTIFACT.ANALYSIS_TYPECHECK {
-    return .{
-      label: "analysis.typecheck",
-      producer: "analysis: typecheck",
-      requires: [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE],
-    }
-  }
-  if artifactId == ARTIFACT.BYTECODE_FUNCTION {
-    return .{
-      label: "bytecode.function",
-      producer: "emit: codegen",
-      requires: [
-        ARTIFACT.AST_FINAL,
-        ARTIFACT.ANALYSIS_RESOLVE,
-        ARTIFACT.ANALYSIS_FASTCHECK,
-        ARTIFACT.ANALYSIS_DCE_FINAL,
-      ],
-    }
-  }
-  if artifactId == ARTIFACT.BYTECODE_VERIFIED {
-    return .{
-      label: "bytecode.verified",
-      producer: "verify: verify-bytecode",
-      requires: [ARTIFACT.BYTECODE_FUNCTION],
-    }
-  }
-  if artifactId == ARTIFACT.PROGRAM_MODULE_GRAPH {
-    return .{
-      label: "program.module_graph",
-      producer: "module discovery",
-      requires: ["source"],
-    }
-  }
-  nil
-}
-
 fn isKnownArtifact(artifactId) {
-  if artifactId == PSEUDO_AST_PRE_RESOLVE { return true }
+  if artifactId == "ast.pre_resolve" { return true }
   for id in PLAN_ARTIFACTS {
     if id == artifactId { return true }
   }
   false
 }
 
-fn printPlanTree(artifactId, prefix, isLast, visited) {
+fn printPlanTree(artifactId, graph, prefix, isLast, isRoot, visited) {
+  let linePrefix = isRoot and "" or (isLast and "`- " or "|- ")
+  let childPrefix = prefix + (isRoot and "" or (isLast and "   " or "|  "))
+
   if visited[artifactId] {
-    let linePrefix = prefix == "" and "" or (isLast and "`- " or "|- ")
     println(prefix + linePrefix + artifactId + " (already listed)")
     return
   }
   visited[artifactId] = true
 
-  let info = artifactInfo(artifactId)
-  if !info {
-    let linePrefix = prefix == "" and "" or (isLast and "`- " or "|- ")
-    println(prefix + linePrefix + artifactId)
-    return
-  }
-
-  let linePrefix = prefix == "" and "" or (isLast and "`- " or "|- ")
-  println(prefix + linePrefix + info.label + " [" + info.producer + "]")
-  let reqs = info.requires or []
+  println(prefix + linePrefix + artifactId)
+  let reqs = graph and graph[artifactId] or []
   for let i = 0; i < len(reqs); i = i + 1 {
     let childIsLast = i == len(reqs) - 1
-    let nextPrefix = prefix + (isLast and "   " or "|  ")
-    printPlanTree(reqs[i], nextPrefix, childIsLast, visited)
+    printPlanTree(reqs[i], graph, childPrefix, childIsLast, false, visited)
   }
 }
 
 fn printPlan(artifactId) {
   println("Build plan for " + artifactId)
+  let planner = driver.make(.{})
+  let passPlan = planner and planner.planPasses and planner.planPasses(artifactId)
+  let graph = planner and planner.planArtifactGraph and planner.planArtifactGraph(artifactId) or .{}
+  if passPlan and len(passPlan) > 0 {
+    println("Passes: " + join(passPlan, " -> "))
+  }
   println("")
   let visited = .{}
-  printPlanTree(artifactId, "", true, visited)
+  printPlanTree(artifactId, graph, "", true, true, visited)
   println("")
   println("Note: ast.pre_resolve is a shorthand for the pre-resolve AST pipeline.")
 }

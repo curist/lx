@@ -45,7 +45,7 @@ lx run scripts/bootstrap-codegen.lx globals.lx   # Outputs to /tmp/globals.lxobj
 ```
 
 **Features:**
-- Uses `profile: "default"` (all passes including ANF inline optimization)
+- Uses `profile: "default"` (all passes except typecheck; ANF inline enabled)
 - Recursively compiles all imported modules
 - Runs bytecode verification on all functions
 - Outputs to `/tmp/{basename}.lxobj` (e.g., `lx/main.lx` → `/tmp/main.lxobj`)

@@ -642,7 +642,7 @@ The driver:
 * Orchestrates pass execution
 * Owns the import cache
 * Manages module lifecycle
-* Supports curated **profiles** (compiler, tooling, O0, etc.)
+* Supports curated **profiles** (compiler, typecheck, query)
 
 Profiles select *targets*, not arbitrary pass subsets. This avoids invalid combinations and simplifies reasoning.
 

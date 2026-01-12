@@ -20,7 +20,7 @@ fn run(ctx) {
 
   let resolver = ModuleResolution.forEntry(entry)
   let d = driver.make(.{
-    profile: "tooling",
+    profile: "typecheck",
     withTypecheck: true,
     loadSource: fn(p) { resolver.slurp(p) },
   }) or {

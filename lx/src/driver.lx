@@ -181,18 +181,17 @@ fn getProfile(name) {
 
   if name == "default" {
     // Current compiler semantics: all passes enabled
-    // parse → lower → anf → resolve → anf-inline → lower-intrinsics → typecheck (non-fatal)
+    // parse → lower → anf → resolve → anf-inline → lower-intrinsics
     return .{
       withLower: true,
       withAnf: true,
       withAnfInline: true,
       withLowerIntrinsics: true,
-      withTypecheck: true,
+      withTypecheck: false,
     }
   }
 
-  if name == "tooling" {
-    // Best AST/tables for IDE/LSP
+  if name == "typecheck" {
     // Same as default: parse → lower → anf → resolve → anf-inline → lower-intrinsics → typecheck (non-fatal)
     return .{
       withLower: true,
@@ -203,18 +202,6 @@ fn getProfile(name) {
     }
   }
 
-  if name == "O0" {
-    // No optimizations, but keep passes that establish correctness invariants
-    // parse → lower → anf → resolve → typecheck (non-fatal)
-    // Skip post-resolve optimizations
-    return .{
-      withLower: true,
-      withAnf: true,
-      withAnfInline: false,
-      withLowerIntrinsics: false,
-      withTypecheck: true,
-    }
-  }
 
   if name == "query" {
     // Fast, tooling-oriented pipeline for IDE queries that don't require type inference:
@@ -222,19 +209,6 @@ fn getProfile(name) {
     // (Query service prefers non-ANF AST so imports/structure stay intact.)
     return .{
       withLower: true,
-      withAnf: false,
-      withAnfInline: false,
-      withLowerIntrinsics: false,
-      withTypecheck: false,
-    }
-  }
-
-  if name == "resolve" {
-    // Fastest name-resolution pipeline for IDE queries:
-    // parse → resolve
-    // Skips lowering/ANF/typecheck entirely.
-    return .{
-      withLower: false,
       withAnf: false,
       withAnfInline: false,
       withLowerIntrinsics: false,
@@ -396,7 +370,7 @@ fn make(opts) {
   if !profileDefaults {
     // Unknown profile - error
     Lx.stderr.println("Error: Unknown profile '" + profileName + "'")
-    Lx.stderr.println("Available profiles: default, tooling, O0, query, resolve")
+    Lx.stderr.println("Available profiles: default, typecheck, query")
     return nil
   }
 

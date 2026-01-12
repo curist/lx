@@ -33,6 +33,7 @@ let parse = import "src/passes/parse/parser.lx"
 let lower = import "src/passes/transform/lower.lx"
 let anf = import "src/passes/transform/anf.lx"
 let anfInline = import "src/passes/transform/anf-inline.lx"
+let lowerIntrinsics = import "src/passes/transform/lower-intrinsics.lx"
 let resolve = import "src/passes/analysis/resolve.lx"
 let dce = import "src/passes/analysis/dce.lx"
 let pipeline = import "src/passes/pipeline.lx"
@@ -42,8 +43,8 @@ let ModuleResolution = import "src/module_resolution.lx"
 let NODE = types.NODE
 
 // Valid pass names
-let VALID_PASSES = ["parse", "lower", "anf", "resolve", "anf-inline", "dce"]
-let DEFAULT_PASS = "dce"
+let VALID_PASSES = ["parse", "lower", "anf", "resolve", "dce", "anf-inline", "lower-intrinsics"]
+let DEFAULT_PASS = "lower-intrinsics"
 
 fn pad(n) {
   let s = ""
@@ -1234,6 +1235,7 @@ fn printMetadataHelp() {
   println("  anf:          Origin tracking")
   println("  resolve:      Name bindings, scope info, plus origin from previous passes")
   println("  anf-inline:   All metadata from resolve, plus any new origins")
+  println("  lower-intrinsics: Same metadata as resolve (in-place rewrite)")
 }
 
 fn buildPassList(resolver, importCache, compileImportedModule) {
@@ -1278,6 +1280,16 @@ fn buildPassList(resolver, importCache, compileImportedModule) {
       },
     },
     .{
+      name: "dce",
+      mutatesAst: false,
+      requires: ["resolution"],
+      provides: ["dce"],
+      run: fn(ctx, state) {
+        let resolveResult = state.passes.resolve
+        dce(state.ast, resolveResult)
+      },
+    },
+    .{
       name: "anf-inline",
       mutatesAst: true,
       requires: ["anfAst", "resolution"],
@@ -1288,13 +1300,13 @@ fn buildPassList(resolver, importCache, compileImportedModule) {
       },
     },
     .{
-      name: "dce",
-      mutatesAst: false,
-      requires: ["resolution"],
-      provides: ["dce"],
+      name: "lower-intrinsics",
+      mutatesAst: true,
+      requires: ["anfAst", "resolution"],
+      provides: ["intrinsicsLoweredAst"],
       run: fn(ctx, state) {
         let resolveResult = state.passes.resolve
-        dce(state.ast, resolveResult)
+        lowerIntrinsics(state.ast, resolveResult, nil)
       },
     },
   ]

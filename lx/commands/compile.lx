@@ -1,32 +1,224 @@
 let common = import "commands/common.lx"
+let driver = import "src/driver.lx"
+
+let ARTIFACT = driver.ARTIFACT
+
+let PLAN_ARTIFACTS = [
+  ARTIFACT.AST_FINAL,
+  ARTIFACT.ANALYSIS_RESOLVE,
+  ARTIFACT.ANALYSIS_DCE_LOCAL,
+  ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM,
+  ARTIFACT.ANALYSIS_DCE_FINAL,
+  ARTIFACT.ANALYSIS_FASTCHECK,
+  ARTIFACT.ANALYSIS_TYPECHECK,
+  ARTIFACT.BYTECODE_FUNCTION,
+  ARTIFACT.BYTECODE_VERIFIED,
+  ARTIFACT.PROGRAM_MODULE_GRAPH,
+]
+
+let PSEUDO_AST_PRE_RESOLVE = "ast.pre_resolve"
+
+fn artifactInfo(artifactId) {
+  if artifactId == ARTIFACT.AST_FINAL {
+    return .{
+      label: "ast.final",
+      producer: "passes: anf-inline -> lower-intrinsics (mutate in place)",
+      requires: [PSEUDO_AST_PRE_RESOLVE, ARTIFACT.ANALYSIS_RESOLVE],
+    }
+  }
+  if artifactId == PSEUDO_AST_PRE_RESOLVE {
+    return .{
+      label: PSEUDO_AST_PRE_RESOLVE,
+      producer: "passes: parse -> lower -> anf",
+      requires: ["source"],
+    }
+  }
+  if artifactId == ARTIFACT.ANALYSIS_RESOLVE {
+    return .{
+      label: "analysis.resolve",
+      producer: "pass: resolve",
+      requires: [PSEUDO_AST_PRE_RESOLVE],
+    }
+  }
+  if artifactId == ARTIFACT.ANALYSIS_DCE_LOCAL {
+    return .{
+      label: "analysis.dce.local",
+      producer: "pass: dce",
+      requires: [ARTIFACT.ANALYSIS_RESOLVE],
+    }
+  }
+  if artifactId == ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM {
+    return .{
+      label: "analysis.dce.whole_program",
+      producer: "program analysis",
+      requires: [ARTIFACT.ANALYSIS_DCE_LOCAL, ARTIFACT.PROGRAM_MODULE_GRAPH],
+    }
+  }
+  if artifactId == ARTIFACT.ANALYSIS_DCE_FINAL {
+    return .{
+      label: "analysis.dce.final",
+      producer: "derived: local + whole-program",
+      requires: [ARTIFACT.ANALYSIS_DCE_LOCAL, ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM, ARTIFACT.AST_FINAL],
+    }
+  }
+  if artifactId == ARTIFACT.ANALYSIS_FASTCHECK {
+    return .{
+      label: "analysis.fastcheck",
+      producer: "analysis: fastcheck",
+      requires: [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE],
+    }
+  }
+  if artifactId == ARTIFACT.ANALYSIS_TYPECHECK {
+    return .{
+      label: "analysis.typecheck",
+      producer: "analysis: typecheck",
+      requires: [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE],
+    }
+  }
+  if artifactId == ARTIFACT.BYTECODE_FUNCTION {
+    return .{
+      label: "bytecode.function",
+      producer: "emit: codegen",
+      requires: [
+        ARTIFACT.AST_FINAL,
+        ARTIFACT.ANALYSIS_RESOLVE,
+        ARTIFACT.ANALYSIS_FASTCHECK,
+        ARTIFACT.ANALYSIS_DCE_FINAL,
+      ],
+    }
+  }
+  if artifactId == ARTIFACT.BYTECODE_VERIFIED {
+    return .{
+      label: "bytecode.verified",
+      producer: "verify: verify-bytecode",
+      requires: [ARTIFACT.BYTECODE_FUNCTION],
+    }
+  }
+  if artifactId == ARTIFACT.PROGRAM_MODULE_GRAPH {
+    return .{
+      label: "program.module_graph",
+      producer: "module discovery",
+      requires: ["source"],
+    }
+  }
+  nil
+}
+
+fn isKnownArtifact(artifactId) {
+  if artifactId == PSEUDO_AST_PRE_RESOLVE { return true }
+  for id in PLAN_ARTIFACTS {
+    if id == artifactId { return true }
+  }
+  false
+}
+
+fn printPlanTree(artifactId, prefix, isLast, visited) {
+  if visited[artifactId] {
+    let linePrefix = prefix == "" and "" or (isLast and "`- " or "|- ")
+    println(prefix + linePrefix + artifactId + " (already listed)")
+    return
+  }
+  visited[artifactId] = true
+
+  let info = artifactInfo(artifactId)
+  if !info {
+    let linePrefix = prefix == "" and "" or (isLast and "`- " or "|- ")
+    println(prefix + linePrefix + artifactId)
+    return
+  }
+
+  let linePrefix = prefix == "" and "" or (isLast and "`- " or "|- ")
+  println(prefix + linePrefix + info.label + " [" + info.producer + "]")
+  let reqs = info.requires or []
+  for let i = 0; i < len(reqs); i = i + 1 {
+    let childIsLast = i == len(reqs) - 1
+    let nextPrefix = prefix + (isLast and "   " or "|  ")
+    printPlanTree(reqs[i], nextPrefix, childIsLast, visited)
+  }
+}
+
+fn printPlan(artifactId) {
+  println("Build plan for " + artifactId)
+  println("")
+  let visited = .{}
+  printPlanTree(artifactId, "", true, visited)
+  println("")
+  println("Note: ast.pre_resolve is a shorthand for the pre-resolve AST pipeline.")
+}
+
+fn printUsage(prog) {
+  println("Usage: " + prog + " compile <path> [-o|--output <output>]")
+  println("       " + prog + " compile --plan [--artifact <id>] [<path>]")
+  println("")
+  println("Options:")
+  println("  -o, --output <path>  Write lxobj output to file")
+  println("  --plan               Print artifact dependency plan and exit")
+  println("  --artifact <id>      Artifact to plan (default: " + ARTIFACT.BYTECODE_VERIFIED + ")")
+  println("")
+  println("Examples:")
+  println("  " + prog + " compile hello.lx -o out/hello.lxobj")
+  println("  " + prog + " compile --plan --artifact analysis.dce.final")
+  println("")
+  println("Known artifacts: " + join(PLAN_ARTIFACTS, ", "))
+}
 
 fn run(ctx) {
   let argsLength = len(ctx.argv)
-  let usageMessage = "Usage: " + ctx.prog + " compile <path> [-o|--output <output>]"
   if argsLength < 3 {
-    Lx.stderr.println(usageMessage)
+    printUsage(ctx.prog)
     Lx.exit(28)
   }
 
   let path = nil
   let outputPath = nil
+  let showPlan = false
+  let planArtifact = ARTIFACT.BYTECODE_VERIFIED
   let i = 2
   for i < argsLength {
     let arg = ctx.argv[i]
     if arg == "-o" or arg == "--output" {
       if i + 1 >= argsLength {
-        Lx.stderr.println(usageMessage)
+        printUsage(ctx.prog)
         Lx.exit(28)
       }
       outputPath = ctx.argv[i + 1]
       i = i + 2
       continue
     }
+    if arg == "--plan" {
+      showPlan = true
+      i = i + 1
+      continue
+    }
+    if arg == "--help" or arg == "-h" {
+      printUsage(ctx.prog)
+      return
+    }
+    if arg == "--artifact" {
+      if i + 1 >= argsLength {
+        printUsage(ctx.prog)
+        Lx.exit(28)
+      }
+      planArtifact = ctx.argv[i + 1]
+      i = i + 2
+      continue
+    }
     if !path { path = arg }
     i = i + 1
   }
+
+  if showPlan {
+    if !isKnownArtifact(planArtifact) {
+      Lx.stderr.println("Unknown artifact: " + planArtifact)
+      Lx.stderr.println("Known artifacts: " + join(PLAN_ARTIFACTS, ", "))
+      Lx.exit(28)
+    }
+    printPlan(planArtifact)
+    return
+  }
+
   if !path {
-    Lx.stderr.println(usageMessage)
+    printUsage(ctx.prog)
     Lx.exit(28)
   }
 
@@ -48,7 +240,7 @@ fn run(ctx) {
 .{
   name: "compile",
   aliases: ["c"],
-  usage: "compile <path> [-o|--output <output>]",
-  summary: "Compile source to lxobj (-o/--output <output>)",
+  usage: "compile <path> [-o|--output <output>]\n       compile --plan [--artifact <id>] [<path>]",
+  summary: "Compile source to lxobj (-o/--output <output>), or show build plan (--plan)",
   run: run,
 }

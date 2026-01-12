@@ -16,6 +16,34 @@ let PLAN_ARTIFACTS = [
   ARTIFACT.PROGRAM_MODULE_GRAPH,
 ]
 
+let COLOR = .{
+  reset: "\e[0m",
+  bold: "\e[1m",
+  dim: "\e[2m",
+  cyan: "\e[36m",
+  green: "\e[32m",
+  yellow: "\e[33m",
+  gray: "\e[90m",
+}
+
+fn wantsColor() {
+  let env = Lx.env or .{}
+  if env["NO_COLOR"] { return false }
+  if env["FORCE_COLOR"] { return true }
+  let out = Lx.stdout
+  out and out.isTTY and out.isTTY() == true
+}
+
+fn colorize(text, code, enabled) {
+  enabled and code + text + COLOR.reset or text
+}
+
+fn colorArtifact(name, enabled) {
+  if !enabled { return name }
+  if name == "source" { return colorize(name, COLOR.gray, enabled) }
+  colorize(name, COLOR.cyan, enabled)
+}
+
 fn isKnownArtifact(artifactId) {
   if artifactId == "ast.pre_resolve" { return true }
   for id in PLAN_ARTIFACTS {
@@ -24,48 +52,60 @@ fn isKnownArtifact(artifactId) {
   false
 }
 
-fn printPlanTree(artifactId, graph, prefix, isLast, isRoot, visited) {
+fn printPlanTree(artifactId, graph, prefix, isLast, isRoot, visited, useColor) {
   let linePrefix = isRoot and "" or (isLast and "`- " or "|- ")
   let childPrefix = prefix + (isRoot and "" or (isLast and "   " or "|  "))
 
   if visited[artifactId] {
-    println(prefix + linePrefix + artifactId + " (already listed)")
+    let label = colorArtifact(artifactId, useColor)
+    let note = colorize(" (already listed)", COLOR.dim, useColor)
+    println(prefix + linePrefix + label + note)
     return
   }
   visited[artifactId] = true
 
-  println(prefix + linePrefix + artifactId)
+  let label = colorArtifact(artifactId, useColor)
+  println(prefix + linePrefix + label)
   let reqs = graph and graph[artifactId] or []
   for let i = 0; i < len(reqs); i = i + 1 {
     let childIsLast = i == len(reqs) - 1
-    printPlanTree(reqs[i], graph, childPrefix, childIsLast, false, visited)
+    printPlanTree(reqs[i], graph, childPrefix, childIsLast, false, visited, useColor)
   }
 }
 
 fn printPlan(artifactId) {
-  println("Build plan for " + artifactId)
+  let useColor = wantsColor()
+  let title = colorize("Build plan for ", COLOR.bold, useColor) +
+    colorArtifact(artifactId, useColor)
+  println(title)
   let planner = driver.make(.{})
   let passPlan = planner and planner.planPasses and planner.planPasses(artifactId)
   let passDetails = planner and planner.planPassesDetailed and planner.planPassesDetailed(artifactId)
   let graph = planner and planner.planArtifactGraph and planner.planArtifactGraph(artifactId) or .{}
   if passPlan and len(passPlan) > 0 {
-    println("Passes: " + join(passPlan, " -> "))
+    let label = colorize("Passes:", COLOR.bold, useColor)
+    println(label + " " + join(passPlan, " -> "))
   }
   if passDetails and len(passDetails) > 0 {
-    println("Pass flags:")
+    println(colorize("Pass flags:", COLOR.bold, useColor))
     for detail in passDetails {
       let status =
         detail.required == true and "required" or
         detail.enabled == true and "enabled" or
         "disabled"
-      println("  " + detail.name + ": " + status)
+      let colored =
+        status == "required" and colorize(status, COLOR.green, useColor) or
+        status == "enabled" and colorize(status, COLOR.yellow, useColor) or
+        colorize(status, COLOR.gray, useColor)
+      println("  " + detail.name + ": " + colored)
     }
   }
   println("")
   let visited = .{}
-  printPlanTree(artifactId, graph, "", true, true, visited)
+  printPlanTree(artifactId, graph, "", true, true, visited, useColor)
   println("")
-  println("Note: ast.pre_resolve is a shorthand for the pre-resolve AST pipeline.")
+  let note = "Note: ast.pre_resolve is a shorthand for the pre-resolve AST pipeline."
+  println(colorize(note, COLOR.dim, useColor))
 }
 
 fn printUsage(prog) {

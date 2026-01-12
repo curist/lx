@@ -29,8 +29,8 @@ typedef struct Writer Writer;
 #define AS_ENUM_REVERSE(value) (((ObjEnum*)AS_OBJ(value))->reverse)
 #define AS_ARRAY(value)        (((ObjArray*)AS_OBJ(value))->array)
 
-#define COPY_CSTRING(string)   copyString(string, (int)strlen(string))
-#define CSTRING_VAL(string)    OBJ_VAL(copyString(string, (int)strlen(string)))
+#define COPY_CSTRING(string)   copyString(string, strlen(string))
+#define CSTRING_VAL(string)    OBJ_VAL(copyString(string, strlen(string)))
 
 typedef enum {
   OBJ_CLOSURE,
@@ -108,7 +108,7 @@ ObjClosure* newClosure(ObjFunction* function);
 ObjFunction* newFunction();
 ObjNative* newNative(NativeFn function, ObjString* name);
 ObjString* takeString(char* chars, int length);
-ObjString* copyString(const char* chars, int length);
+ObjString* copyString(const char* chars, size_t length);
 ObjUpvalue* newUpvalue(Value* slot);
 ObjHashmap* newHashmap();
 ObjEnum* newEnum();

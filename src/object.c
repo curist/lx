@@ -163,10 +163,10 @@ ObjString* takeString(char* chars, int length) {
   return string;
 }
 
-ObjString* copyString(const char* chars, int length) {
-  uint64_t hash = hashString(chars, (size_t)length);
+ObjString* copyString(const char* chars, size_t length) {
+  uint64_t hash = hashString(chars, length);
 
-  if (length <= INTERN_MAX_LEN) {
+  if (length <= (size_t)INTERN_MAX_LEN) {
     ObjString* interned = tableFindString(&vm.strings, chars, length, hash);
     if (interned != NULL) return interned;
   }
@@ -175,7 +175,7 @@ ObjString* copyString(const char* chars, int length) {
   memcpy(heapChars, chars, length);
   heapChars[length] = '\0';
 
-  if (length <= INTERN_MAX_LEN) {
+  if (length <= (size_t)INTERN_MAX_LEN) {
     return allocateString(heapChars, length, hash);
   }
 

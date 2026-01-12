@@ -4,9 +4,9 @@
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
-let parse = import "src/passes/frontend/parser.lx"
-let lower = import "src/passes/frontend/lower.lx"
-let resolve = import "src/passes/frontend/resolve.lx"
+let parse = import "src/passes/parse/parser.lx"
+let lower = import "src/passes/transform/lower.lx"
+let resolve = import "src/passes/analysis/resolve.lx"
 let makeResolveHelpers = import "test/resolveTestHelpers.lx"
 let types = import "src/types.lx"
 let ModuleResolution = import "src/module_resolution.lx"

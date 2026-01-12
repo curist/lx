@@ -2,8 +2,8 @@ let suite = (import "test/makeTestSuite.lx")()
 fn test(name, cb) { suite.defineTest("fused-for-loop-disasm - " + name, cb) }
 
 let driver = import "src/driver.lx"
-let fastcheck = import "src/passes/backend/fastcheck.lx"
-let codegen = import "src/passes/backend/codegen.lx"
+let fastcheck = import "src/passes/analysis/fastcheck.lx"
+let codegen = import "src/passes/emit/codegen.lx"
 let types = import "src/types.lx"
 
 let OP = types.OP

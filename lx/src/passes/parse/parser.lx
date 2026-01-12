@@ -1,5 +1,5 @@
 let .{ TOKEN, NODE } = import "src/types.lx"
-let initScanner = import "src/passes/frontend/scanner.lx"
+let initScanner = import "src/passes/scanner.lx"
 
 let PREC = enum {
   NONE,        // 0

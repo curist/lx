@@ -2,9 +2,9 @@ let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
 
 let driver = import "src/driver.lx"
-let fastcheck = import "src/passes/backend/fastcheck.lx"
-let codegen = import "src/passes/backend/codegen.lx"
-let verify = import "src/passes/backend/verify-bytecode.lx"
+let fastcheck = import "src/passes/analysis/fastcheck.lx"
+let codegen = import "src/passes/emit/codegen.lx"
+let verify = import "src/passes/verify/verify-bytecode.lx"
 let types = import "src/types.lx"
 let object = import "src/object.lx"
 

@@ -10,15 +10,15 @@
 // - Loop lowering runs post-ANF, pre-resolve (always on with ANF, materializes loop limits)
 // - ANF inline runs post-resolve (optional, default on)
 
-let parse = import "src/passes/frontend/parser.lx"
-let lower = import "src/passes/frontend/lower.lx"
-let anf = import "src/passes/frontend/anf.lx"
-let anfInline = import "src/passes/frontend/anf-inline.lx"
-let lowerIntrinsics = import "src/passes/frontend/lower-intrinsics.lx"
-let resolve = import "src/passes/frontend/resolve.lx"
-let typecheck = import "src/passes/frontend/typecheck.lx"
-let dce = import "src/passes/backend/dce.lx"
-let peephole = (import "src/passes/backend/peephole-bytecode.lx").peephole
+let parse = import "src/passes/parse/parser.lx"
+let lower = import "src/passes/transform/lower.lx"
+let anf = import "src/passes/transform/anf.lx"
+let anfInline = import "src/passes/transform/anf-inline.lx"
+let lowerIntrinsics = import "src/passes/transform/lower-intrinsics.lx"
+let resolve = import "src/passes/analysis/resolve.lx"
+let typecheck = import "src/passes/analysis/typecheck.lx"
+let dce = import "src/passes/analysis/dce.lx"
+let peephole = (import "src/passes/opt/peephole-bytecode.lx").peephole
 let pipeline = import "src/passes/pipeline.lx"
 let .{ NODE } = import "src/types.lx"
 

@@ -1,8 +1,8 @@
 let driver = import "src/driver.lx"
-let codegen = import "src/passes/backend/codegen.lx"
-let fastcheck = import "src/passes/backend/fastcheck.lx"
-let peephole = (import "src/passes/backend/peephole-bytecode.lx").peephole
-let verify = import "src/passes/backend/verify-bytecode.lx"
+let codegen = import "src/passes/emit/codegen.lx"
+let fastcheck = import "src/passes/analysis/fastcheck.lx"
+let peephole = (import "src/passes/opt/peephole-bytecode.lx").peephole
+let verify = import "src/passes/verify/verify-bytecode.lx"
 let objbuilder = import "src/objbuilder.lx"
 let errors = import "src/errors.lx"
 let ModuleResolution = import "src/module_resolution.lx"

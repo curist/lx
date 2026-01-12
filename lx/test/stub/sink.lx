@@ -1,4 +1,4 @@
-let initScanner = import "src/passes/frontend/scanner.lx"
+let initScanner = import "src/passes/scanner.lx"
 let types = import "src/types.lx"
 let ModuleResolution = import "src/module_resolution.lx"
 let TOKEN = types.TOKEN

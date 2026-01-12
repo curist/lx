@@ -11,7 +11,7 @@
 // - Short-circuit fusions
 
 let .{ OP } = import "src/types.lx"
-let verify = import "src/passes/backend/verify-bytecode.lx"
+let verify = import "src/passes/verify/verify-bytecode.lx"
 
 fn peephole(chunk) {
   let bytecode = chunk.bytecode

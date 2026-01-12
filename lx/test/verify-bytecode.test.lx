@@ -2,7 +2,7 @@
 
 let suite = (import "test/makeTestSuite.lx")()
 let test = suite.defineTest
-let verify = import "src/passes/backend/verify-bytecode.lx"
+let verify = import "src/passes/verify/verify-bytecode.lx"
 let types = import "src/types.lx"
 let OP = types.OP
 

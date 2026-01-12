@@ -1,8 +1,8 @@
-let parse = import "src/passes/frontend/parser.lx"
-let lower = import "src/passes/frontend/lower.lx"
-let anf = import "src/passes/frontend/anf.lx"
-let resolve = import "src/passes/frontend/resolve.lx"
-let anfInline = import "src/passes/frontend/anf-inline.lx"
+let parse = import "src/passes/parse/parser.lx"
+let lower = import "src/passes/transform/lower.lx"
+let anf = import "src/passes/transform/anf.lx"
+let resolve = import "src/passes/analysis/resolve.lx"
+let anfInline = import "src/passes/transform/anf-inline.lx"
 let .{ NODE } = import "src/types.lx"
 
 fn parseLowerAnf(src) {

@@ -267,6 +267,7 @@ Minimal stamping model:
 * **`astStamp`**
   Derived from:
 
+  * source inputs (per-module contents and options)
   * enabled AST transforms
   * transform configuration
   * node ID space
@@ -288,16 +289,17 @@ An artifact is reusable only if:
 
 To build `bytecode.verified` for a module:
 
-1. Build `ast.final` using the configured AST transforms.
-2. Build required AST analyses:
+1. Build `program.module_graph` for the entry program.
+2. Build `ast.final` using the configured AST transforms.
+3. Build required AST analyses:
 
    * `analysis.resolve`
    * `analysis.fastcheck`
    * `analysis.dce.local`
-3. If enabled, build `analysis.dce.whole_program`.
-4. Derive `analysis.dce.final` for the module.
-5. Build `bytecode.function`.
-6. Build `bytecode.verified`.
+4. If enabled, build `analysis.dce.whole_program`.
+5. Derive `analysis.dce.final` for the module.
+6. Build `bytecode.function`.
+7. Build `bytecode.verified`.
 
 No analysis runs twice unless its inputs changed.
 
@@ -339,7 +341,6 @@ This implies:
 
 In practice, LX adopts the simple, robust rule:
 
-* `resolve` may run earlier
 * `fastcheck` and `dce` run after the last AST mutation
 
 ---

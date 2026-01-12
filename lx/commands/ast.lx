@@ -29,12 +29,12 @@
 //     - N local variables declared
 //     - M upvalues (captured variables from outer scopes)
 
-let parse = import "src/passes/frontend/parser.lx"
-let lower = import "src/passes/frontend/lower.lx"
-let anf = import "src/passes/frontend/anf.lx"
-let anfInline = import "src/passes/frontend/anf-inline.lx"
-let resolve = import "src/passes/frontend/resolve.lx"
-let dce = import "src/passes/backend/dce.lx"
+let parse = import "src/passes/parse/parser.lx"
+let lower = import "src/passes/transform/lower.lx"
+let anf = import "src/passes/transform/anf.lx"
+let anfInline = import "src/passes/transform/anf-inline.lx"
+let resolve = import "src/passes/analysis/resolve.lx"
+let dce = import "src/passes/analysis/dce.lx"
 let pipeline = import "src/passes/pipeline.lx"
 let types = import "src/types.lx"
 let ModuleResolution = import "src/module_resolution.lx"

@@ -7,6 +7,7 @@
 #include "table.h"
 
 typedef struct Writer Writer;
+struct CallFrame;
 
 #define OBJ_TYPE(value)        (AS_OBJ(value)->type)
 
@@ -17,6 +18,7 @@ typedef struct Writer Writer;
 #define IS_HASHMAP(value)      isObjType(value, OBJ_HASHMAP)
 #define IS_ENUM(value)         isObjType(value, OBJ_ENUM)
 #define IS_ARRAY(value)        isObjType(value, OBJ_ARRAY)
+#define IS_FIBER(value)        isObjType(value, OBJ_FIBER)
 
 #define AS_CLOSURE(value)      ((ObjClosure*)AS_OBJ(value))
 #define AS_FUNCTION(value)     ((ObjFunction*)AS_OBJ(value))
@@ -28,6 +30,7 @@ typedef struct Writer Writer;
 #define AS_ENUM_FORWARD(value) (((ObjEnum*)AS_OBJ(value))->forward)
 #define AS_ENUM_REVERSE(value) (((ObjEnum*)AS_OBJ(value))->reverse)
 #define AS_ARRAY(value)        (((ObjArray*)AS_OBJ(value))->array)
+#define AS_FIBER(value)        ((ObjFiber*)AS_OBJ(value))
 
 #define COPY_CSTRING(string)   copyString(string, strlen(string))
 #define CSTRING_VAL(string)    OBJ_VAL(copyString(string, strlen(string)))
@@ -41,6 +44,7 @@ typedef enum {
   OBJ_HASHMAP,
   OBJ_ENUM,
   OBJ_ARRAY,
+  OBJ_FIBER,
 } ObjType;
 
 struct Obj {
@@ -104,6 +108,37 @@ typedef struct {
   int upvalueCount;
 } ObjClosure;
 
+typedef enum {
+  FIBER_NEW,
+  FIBER_RUNNING,
+  FIBER_SUSPENDED,
+  FIBER_DONE,
+  FIBER_ERROR
+} FiberState;
+
+struct ErrorHandler;
+
+typedef struct ObjFiber {
+  Obj obj;
+  FiberState state;
+
+  Value* stack;
+  Value* stackTop;
+  int stackCapacity;
+
+  struct CallFrame* frames;
+  int frameCount;
+  int frameCapacity;
+
+  ObjUpvalue* openUpvalues;
+
+  Value lastError;
+  struct ErrorHandler* errorHandler;
+
+  struct ObjFiber* caller;
+  bool cancelled;
+} ObjFiber;
+
 ObjClosure* newClosure(ObjFunction* function);
 ObjFunction* newFunction();
 ObjNative* newNative(NativeFn function, ObjString* name);
@@ -113,6 +148,7 @@ ObjUpvalue* newUpvalue(Value* slot);
 ObjHashmap* newHashmap();
 ObjEnum* newEnum();
 ObjArray* newArray();
+ObjFiber* newFiber();
 void printObject(FILE* fd, Value value);
 void writeObject(Writer* writer, Value value);
 

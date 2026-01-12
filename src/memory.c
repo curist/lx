@@ -117,6 +117,37 @@ static void blackenObject(Obj* object) {
       markArray(&((ObjArray*)object)->array);
       break;
     }
+    case OBJ_FIBER: {
+      ObjFiber* fiber = (ObjFiber*)object;
+
+      // Mark stack values (NULL guard to avoid undefined pointer comparison)
+      if (fiber->stack != NULL && fiber->stackTop != NULL) {
+        for (Value* slot = fiber->stack; slot < fiber->stackTop; slot++) {
+          markValue(*slot);
+        }
+      }
+
+      // Mark call frames (closures)
+      if (fiber->frames != NULL) {
+        CallFrame* frames = (CallFrame*)fiber->frames;
+        for (int i = 0; i < fiber->frameCount; i++) {
+          markObject((Obj*)frames[i].closure);
+        }
+      }
+
+      // Mark open upvalues
+      for (ObjUpvalue* upvalue = fiber->openUpvalues; upvalue != NULL; upvalue = upvalue->next) {
+        markObject((Obj*)upvalue);
+      }
+
+      // Mark error state
+      markValue(fiber->lastError);
+
+      // Mark caller fiber
+      markObject((Obj*)fiber->caller);
+
+      break;
+    }
   }
 }
 
@@ -168,6 +199,13 @@ static void freeObject(Obj* object) {
       ObjArray* a = (ObjArray*)object;
       freeValueArray(&a->array);
       FREE(ObjArray, object);
+      break;
+    }
+    case OBJ_FIBER: {
+      ObjFiber* fiber = (ObjFiber*)object;
+      FREE_ARRAY(Value, fiber->stack, fiber->stackCapacity);
+      FREE_ARRAY(CallFrame, fiber->frames, fiber->frameCapacity);
+      FREE(ObjFiber, object);
       break;
     }
   }

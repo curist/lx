@@ -7,7 +7,11 @@ cd "$ROOT"
 
 LX=${LX:-lx}
 if ! command -v "$LX" >/dev/null 2>&1 && ! [ -x "$LX" ]; then
-  echo skip building lxglobals.h
+  echo "skip building lxglobals.h (no lx on PATH)"
+  exit 0
+fi
+if ! "$LX" version >/dev/null 2>&1; then
+  echo "skip building lxglobals.h (invalid lx)"
   exit 0
 fi
 

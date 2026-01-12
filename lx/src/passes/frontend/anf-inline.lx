@@ -34,12 +34,21 @@ let .{ NODE } = import "src/types.lx"
 // Helpers
 // ------------------------------------------------------------
 
+let SAFE_LITERAL_TYPES = .{
+  [NODE.Number]: true,
+  [NODE.String]: true,
+  [NODE.Bool]: true,
+  [NODE.Nil]: true,
+}
+
+fn debugLog(enabled, msg) {
+  if !enabled { return }
+  Lx.stderr.println(msg)
+}
+
 fn isAnfTempName(name) {
   if !name or type(name) != "string" { return false }
-  if len(name) < 6 { return false }
-  // Check "$anf." prefix
-  name[0] == "$" and name[1] == "a" and name[2] == "n" and
-  name[3] == "f" and name[4] == "."
+  name->startsWith("$anf.")
 }
 
 // ------------------------------------------------------------
@@ -277,13 +286,7 @@ fn compactBlock(block, flags) {
   block.expressions = out
 }
 
-// ------------------------------------------------------------
-// Entrypoint
-// ------------------------------------------------------------
-
-fn anfInline(ast, resolveResult) {
-  let resolvedNames = (resolveResult and resolveResult.resolvedNames) or .{}
-
+fn buildState(ast, resolvedNames) {
   let state = .{
     // declId -> { letNode, blockId, index }
     letByDeclId: .{},
@@ -295,8 +298,285 @@ fn anfInline(ast, resolveResult) {
     blockById: .{},
   }
 
-  // One traversal builds all maps
   walk(ast, resolvedNames, state, nil, nil, nil)
+  state
+}
+
+fn compactRemoved(state, removedByBlockId) {
+  for bid in keys(removedByBlockId) {
+    let block = state.blockById[bid]
+    if !block {
+      return .{
+        success: false,
+        error: "ANF-inline: missing block for id " + str(bid),
+        blockId: bid,
+      }
+    }
+    compactBlock(block, removedByBlockId[bid])
+  }
+
+  .{ success: true }
+}
+
+// ------------------------------------------------------------
+// Grouped temp inlining (batch pattern for consecutive temps)
+// ------------------------------------------------------------
+
+fn isTempLetOfCall(letNode) {
+  if !letNode or letNode.type != NODE.Let { return false }
+  let tempName = letNode.name and letNode.name.name
+  if !isAnfTempName(tempName) { return false }
+  if !letNode.init { return false }
+
+  // Check if init is a Call directly
+  if letNode.init.type == NODE.Call { return true }
+
+  // Check for a synthetic block with a call tree in the last expression.
+  if letNode.init.type == NODE.Block {
+    if !letNode.init.anfSynthetic { return false }
+    if blockHasLet(letNode.init) { return false }
+    let exprs = letNode.init.expressions or []
+    if len(exprs) == 0 { return false }
+    let last = exprs[len(exprs) - 1]
+    if isCallTree(last) { return true }
+  }
+
+  false
+}
+
+fn extractCallExpr(letNode) {
+  // Extract the init expression to inline (Call or synthetic Block with call tree last expr).
+  if !letNode or !letNode.init { return nil }
+
+  if letNode.init.type == NODE.Call {
+    return letNode.init
+  }
+
+  if letNode.init.type == NODE.Block {
+    if !letNode.init.anfSynthetic { return nil }
+    if blockHasLet(letNode.init) { return nil }
+    let exprs = letNode.init.expressions or []
+    if len(exprs) > 0 and isCallTree(exprs[len(exprs) - 1]) {
+      return letNode.init
+    }
+  }
+
+  nil
+}
+
+fn isSafeLiteral(node) {
+  if !node { return false }
+  if node.type == NODE.Grouping {
+    return isSafeLiteral(node.expression)
+  }
+  SAFE_LITERAL_TYPES[node.type] == true
+}
+
+fn blockHasLet(block) {
+  if !block or block.type != NODE.Block { return false }
+  let exprs = block.expressions or []
+  for expr in exprs {
+    if expr and expr.type == NODE.Let { return true }
+  }
+  false
+}
+
+fn isCallTree(node) {
+  if !node { return false }
+  if node.type == NODE.Call { return true }
+  if isSafeLiteral(node) { return true }
+  if node.type == NODE.Binary {
+    return isCallTree(node.left) and isCallTree(node.right)
+  }
+  false
+}
+
+fn isSingleUseInSameBlock(state, declId, blockId) {
+  let uses = state.useCount[declId] or 0
+  if uses != 1 { return false }
+
+  let site = state.useSite[declId]
+  if !site { return false }
+
+  // The let must be in this block (we'll verify use-site location in the main loop)
+  let info = state.letByDeclId[declId]
+  if !info or info.blockId != blockId { return false }
+
+  true
+}
+
+fn collectBinaryIdentDecls(node, resolvedNames, out) {
+  if !node { return false }
+
+  if node.type == NODE.Identifier and node.id {
+    let resolved = resolvedNames[node.id]
+    if !resolved or !resolved.declaredAt { return false }
+    push(out, resolved.declaredAt)
+    return true
+  }
+
+  if isSafeLiteral(node) {
+    return true
+  }
+
+  if node.type == NODE.Grouping {
+    return collectBinaryIdentDecls(node.expression, resolvedNames, out)
+  }
+
+  if node.type == NODE.Binary {
+    if !collectBinaryIdentDecls(node.left, resolvedNames, out) { return false }
+    if !collectBinaryIdentDecls(node.right, resolvedNames, out) { return false }
+    return true
+  }
+
+  false
+}
+
+fn inlineGroupedTempsInBlock(block, state, resolvedNames, removedByBlockId) {
+  let exprs = block.expressions or []
+  let i = 0
+  let debug = Lx.env and Lx.env["LX_DEBUG_ANF_INLINE"]
+
+  for i < len(exprs) {
+    let fileLabel = block.filename or "<no-file>"
+    debugLog(debug, "anf-inline: block " + str(block.id) + " run start at " + str(i) + " file " + fileLabel)
+    // 1) Collect a run of consecutive temp lets of Call
+    let start = i
+    let run = []  // each item: { letNode, declId, index }
+
+    for i < len(exprs) {
+      if !isTempLetOfCall(exprs[i]) {
+        debugLog(debug, "anf-inline: stop run at " + str(i) + " expr " +
+          (exprs[i] and nameOf(NODE, exprs[i].type) or "nil"))
+        break
+      }
+
+      let letNode = exprs[i]
+      let declId = letNode.name.id
+
+      // Only consider single-use temps in this block
+      if !isSingleUseInSameBlock(state, declId, block.id) {
+        debugLog(debug, "anf-inline: stop run at " + str(i) + " declId " +
+          str(declId) + " not single-use in block")
+        break
+      }
+
+      push(run, .{ letNode: letNode, declId: declId, index: i })
+      i = i + 1
+    }
+
+    if len(run) == 0 {
+      i = i + 1
+      continue
+    }
+
+    // 2) Next expr is the candidate user
+    if i >= len(exprs) { break }
+    let useExpr = exprs[i]
+    debugLog(debug, "anf-inline: block " + str(block.id) + " run size " +
+      str(len(run)) + " next expr " + (useExpr and nameOf(NODE, useExpr.type) or "nil"))
+
+    // 3) Guard: binary chain of identifiers in evaluation order
+    if useExpr.type != NODE.Binary {
+      debugLog(debug, "anf-inline: reject non-binary")
+      i = i + 1
+      continue
+    }
+
+    if len(run) == 2 {
+      let left = useExpr.left
+      let right = useExpr.right
+      if !left or !right or left.type != NODE.Identifier or right.type != NODE.Identifier {
+        debugLog(debug, "anf-inline: non-identifier operands")
+        i = i + 1
+        continue
+      }
+
+      let leftDecl = resolvedNames[left.id] and resolvedNames[left.id].declaredAt
+      let rightDecl = resolvedNames[right.id] and resolvedNames[right.id].declaredAt
+      if leftDecl != run[0].declId or rightDecl != run[1].declId {
+        debugLog(debug, "anf-inline: left/right decl mismatch")
+        i = i + 1
+        continue
+      }
+    } else {
+      let useDecls = []
+      if !collectBinaryIdentDecls(useExpr, resolvedNames, useDecls) {
+        debugLog(debug, "anf-inline: reject non-ident binary tree")
+        i = i + 1
+        continue
+      }
+
+      if len(useDecls) != len(run) {
+        debugLog(debug, "anf-inline: reject decl count mismatch")
+        i = i + 1
+        continue
+      }
+
+      let orderMatches = true
+      for let j = 0; j < len(run); j = j + 1 {
+        if useDecls[j] != run[j].declId {
+          orderMatches = false
+          break
+        }
+      }
+      if !orderMatches {
+        debugLog(debug, "anf-inline: reject decl order mismatch")
+        i = i + 1
+        continue
+      }
+    }
+
+    // 5) Perform replacements: replace identifiers with init expressions
+    if len(run) == 2 {
+      let leftInit = extractCallExpr(run[0].letNode)
+      let rightInit = extractCallExpr(run[1].letNode)
+      if !leftInit or !rightInit {
+        debugLog(debug, "anf-inline: missing init expr")
+        i = i + 1
+        continue
+      }
+      useExpr.left = leftInit
+      useExpr.right = rightInit
+      markRemoval(removedByBlockId, block.id, run[0].index)
+      markRemoval(removedByBlockId, block.id, run[1].index)
+      debugLog(debug, "anf-inline: inlined run at block " + str(block.id))
+    } else {
+      for item in run {
+        let declId = item.declId
+        let site = state.useSite[declId]
+        if !site {
+          debugLog(debug, "anf-inline: missing useSite for decl " + str(declId))
+          continue
+        }
+        let initExpr = extractCallExpr(item.letNode)
+        if !initExpr {
+          debugLog(debug, "anf-inline: missing init expr")
+          continue
+        }
+        if !replaceInParent(site, initExpr) {
+          debugLog(debug, "anf-inline: replace failed")
+          continue
+        }
+        markRemoval(removedByBlockId, block.id, item.index)
+      }
+    }
+
+    // 6) Move past the user expr
+    i = i + 1
+  }
+
+  true
+}
+
+// ------------------------------------------------------------
+// Entrypoint
+// ------------------------------------------------------------
+
+fn anfInline(ast, resolveResult) {
+  let resolvedNames = (resolveResult and resolveResult.resolvedNames) or .{}
+
+  let state = buildState(ast, resolvedNames)
 
   // Apply edits
   let removedByBlockId = .{} // blockId -> { index:true }
@@ -335,18 +615,39 @@ fn anfInline(ast, resolveResult) {
     inlined = inlined + 1
   }
 
-  // Compact each affected block once
-  for bid in keys(removedByBlockId) {
-    let block = state.blockById[bid]
-    if !block {
+  // Compact lets removed by safe inlining before grouped passes.
+  let compactResult = compactRemoved(state, removedByBlockId)
+  if !compactResult.success {
+    return .{
+      success: false,
+      error: compactResult.error,
+      blockId: compactResult.blockId,
+      ast: ast,
+    }
+  }
+
+  // Apply grouped temp inlining (consecutive temps into Binary).
+  // Run a few passes to allow inner blocks to be simplified before outer ones.
+  for let pass = 0; pass < 3; pass = pass + 1 {
+    let groupedState = buildState(ast, resolvedNames)
+    let groupedRemoved = .{}
+
+    for bid in keys(groupedState.blockById) {
+      let block = groupedState.blockById[bid]
+      if !block { continue }
+      inlineGroupedTempsInBlock(block, groupedState, resolvedNames, groupedRemoved)
+    }
+
+    if len(keys(groupedRemoved)) == 0 { break }
+    let groupedCompact = compactRemoved(groupedState, groupedRemoved)
+    if !groupedCompact.success {
       return .{
         success: false,
-        error: "ANF-inline: missing block for id " + str(bid),
-        blockId: bid,
+        error: groupedCompact.error,
+        blockId: groupedCompact.blockId,
         ast: ast,
       }
     }
-    compactBlock(block, removedByBlockId[bid])
   }
 
   // Cheap validation (binder-aware):
@@ -359,7 +660,7 @@ fn anfInline(ast, resolveResult) {
   .{
     success: true,
     ast: ast,          // mutated in place
-    inlined: inlined,
+    inlined: inlined,  // Note: grouped inlining removals are included in the compaction
   }
 }
 

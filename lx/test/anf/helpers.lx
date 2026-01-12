@@ -1,9 +1,9 @@
 let parse = import "src/passes/frontend/parser.lx"
 let lower = import "src/passes/frontend/lower.lx"
 let anf = import "src/passes/frontend/anf.lx"
-let types = import "src/types.lx"
-
-let NODE = types.NODE
+let resolve = import "src/passes/frontend/resolve.lx"
+let anfInline = import "src/passes/frontend/anf-inline.lx"
+let .{ NODE } = import "src/types.lx"
 
 fn parseLowerAnf(src) {
   let parseResult = parse(src, "test.lx")
@@ -20,6 +20,34 @@ fn parseLowerAnf(src) {
     parseResult,
     lowerResult,
     anfResult,
+  }
+}
+
+fn parseLowerAnfInline(src) {
+  let parseResult = parse(src, "test.lx")
+  if !parseResult.success {
+    return .{ success: false, parseResult }
+  }
+  let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
+  if !lowerResult.success {
+    return .{ success: false, lowerResult }
+  }
+  let anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
+  if !anfResult.success {
+    return .{ success: false, anfResult }
+  }
+  let resolveResult = resolve(anfResult.ast)
+  if !resolveResult.success {
+    return .{ success: false, resolveResult }
+  }
+  let anfInlineResult = anfInline(anfResult.ast, resolveResult)
+  .{
+    success: anfInlineResult.success,
+    parseResult,
+    lowerResult,
+    anfResult,
+    resolveResult,
+    anfInlineResult,
   }
 }
 
@@ -238,4 +266,4 @@ fn serializeAst(ast) {
   join(lines, "\n") + "\n"
 }
 
-  .{ parseLowerAnf, serializeAst }
+.{ parseLowerAnf, parseLowerAnfInline, serializeAst }

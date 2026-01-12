@@ -83,4 +83,134 @@ test("anf - call args evaluated left-to-right", fn(assert) {
   assert.equal(call.args[1].name, arg2.name.name)
 })
 
+test("anf-inline - binary chain inlines grouped temps in order", fn(assert) {
+  let result = helpers.parseLowerAnfInline("doA() + doB() + doC()")
+  assert.truthy(result.success)
+
+  let expr = result.anfInlineResult.ast
+  assert.equal(expr.type, NODE.Block)
+  assert.equal(len(expr.expressions), 1)
+
+  let bin = expr.expressions[0]
+  assert.equal(bin.type, NODE.Binary)
+
+  let left = bin.left
+  let right = bin.right
+
+  assert.equal(right.type, NODE.Call)
+  assert.equal(right.callee.name, "doC")
+
+  assert.equal(left.type, NODE.Block)
+  let leftExprs = left.expressions or []
+  assert.equal(len(leftExprs), 1)
+  let leftBin = leftExprs[0]
+  assert.equal(leftBin.type, NODE.Binary)
+  assert.equal(leftBin.left.type, NODE.Call)
+  assert.equal(leftBin.left.callee.name, "doA")
+  assert.equal(leftBin.right.type, NODE.Call)
+  assert.equal(leftBin.right.callee.name, "doB")
+})
+
+test("anf-inline - binary inlines grouped temps", fn(assert) {
+  let result = helpers.parseLowerAnfInline("doA() + doB()")
+  assert.truthy(result.success)
+
+  let expr = result.anfInlineResult.ast
+  assert.equal(expr.type, NODE.Block)
+  assert.equal(len(expr.expressions), 1)
+
+  let bin = expr.expressions[0]
+  assert.equal(bin.type, NODE.Binary)
+  assert.equal(bin.left.type, NODE.Call)
+  assert.equal(bin.left.callee.name, "doA")
+  assert.equal(bin.right.type, NODE.Call)
+  assert.equal(bin.right.callee.name, "doB")
+})
+
+test("anf-inline - skips non-call-tree preludes", fn(assert) {
+  let src = "doA() + { let x = doB(); x }"
+  let result = helpers.parseLowerAnfInline(src)
+  assert.truthy(result.success)
+
+  let expr = result.anfInlineResult.ast
+  assert.equal(expr.type, NODE.Block)
+  assert.equal(len(expr.expressions), 3)
+
+  let leftLet = expr.expressions[0]
+  let rightLet = expr.expressions[1]
+  let bin = expr.expressions[2]
+
+  assert.equal(leftLet.type, NODE.Let)
+  assert.equal(leftLet.init.type, NODE.Call)
+  assert.equal(leftLet.init.callee.name, "doA")
+
+  assert.equal(rightLet.type, NODE.Let)
+  assert.equal(rightLet.init.type, NODE.Block)
+  let rightExprs = rightLet.init.expressions or []
+  assert.equal(len(rightExprs), 3)
+  assert.equal(rightExprs[0].type, NODE.Let)
+  assert.equal(rightExprs[1].type, NODE.Let)
+  assert.equal(rightExprs[2].type, NODE.Identifier)
+
+  assert.equal(bin.type, NODE.Binary)
+  assert.equal(bin.left.type, NODE.Identifier)
+  assert.equal(bin.right.type, NODE.Identifier)
+})
+
+test("anf-inline - allows literal leaves in binary chain", fn(assert) {
+  let src = "doA() + \"/\" + doB()"
+  let result = helpers.parseLowerAnfInline(src)
+  assert.truthy(result.success)
+
+  let expr = result.anfInlineResult.ast
+  assert.equal(expr.type, NODE.Block)
+  assert.equal(len(expr.expressions), 1)
+
+  let bin = expr.expressions[0]
+  assert.equal(bin.type, NODE.Binary)
+
+  let left = bin.left
+  let right = bin.right
+
+  assert.equal(right.type, NODE.Call)
+  assert.equal(right.callee.name, "doB")
+
+  assert.equal(left.type, NODE.Block)
+  let leftExprs = left.expressions or []
+  assert.equal(len(leftExprs), 1)
+  let leftBin = leftExprs[0]
+  assert.equal(leftBin.type, NODE.Binary)
+  assert.equal(leftBin.left.type, NODE.Call)
+  assert.equal(leftBin.left.callee.name, "doA")
+  assert.equal(leftBin.right.type, NODE.String)
+  assert.equal(leftBin.right.value, "/")
+})
+
+test("anf-inline - does not inline blocks with lets", fn(assert) {
+  let src = "println(str(1) + \"/\" + str(str(2)))"
+  let result = helpers.parseLowerAnfInline(src)
+  assert.truthy(result.success)
+
+  let expr = result.anfInlineResult.ast
+  assert.equal(expr.type, NODE.Block)
+  assert.equal(len(expr.expressions), 2)
+
+  let letNode = expr.expressions[0]
+  assert.equal(letNode.type, NODE.Let)
+  assert.equal(letNode.init.type, NODE.Block)
+
+  let initExprs = letNode.init.expressions or []
+  assert.equal(len(initExprs), 3)
+
+  let leftLet = initExprs[0]
+  let rightLet = initExprs[1]
+  let bin = initExprs[2]
+
+  assert.equal(leftLet.type, NODE.Let)
+  assert.equal(leftLet.init.type, NODE.Block)
+  assert.equal(rightLet.type, NODE.Let)
+  assert.equal(rightLet.init.type, NODE.Block)
+  assert.equal(bin.type, NODE.Binary)
+})
+
 suite.run()

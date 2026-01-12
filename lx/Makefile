@@ -21,5 +21,6 @@ runall: $(LX)
 	$(LX) run test/stub/sink.lx
 
 test: $(LX)
-	@$(LX) run scripts/gen-test-runner.lx > /dev/null
-	@LX_TEST_BATCH=1 $(LX) run ../out/run-all-tests.lx
+	@for file in test/*.test.lx; do \
+		$(LX) run "$$file"; \
+	done

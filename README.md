@@ -21,7 +21,7 @@ Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived pr
 
 ```sh
 ❯ lx version
-lx version 2026.01.09-6b8cd78 (Darwin)
+lx version 2026.01.12-15976da (Darwin)
 
 ❯ lx
 Usage:
@@ -32,7 +32,7 @@ Commands:
   run      Run source or lxobj
   eval     Evaluate expression (arg or stdin)
   repl     Start REPL (use :q to quit)
-  compile  Compile source to lxobj (-o/--output <output>)
+  compile  Compile source to lxobj (-o/--output <output>), or show build plan (--plan)
   disasm   Disassemble lxobj or lx source
   ast      Dump AST with metadata at different compilation stages (debug)
   check    Typecheck an entry module (dev)

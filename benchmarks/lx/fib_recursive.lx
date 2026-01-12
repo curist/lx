@@ -8,4 +8,4 @@ fn fib(n) {
 
 let raw = Lx.args[3]
 let n = raw and tonumber(raw) or 0
-print(fib(n))
+println(fib(n))

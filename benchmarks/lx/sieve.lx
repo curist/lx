@@ -27,4 +27,4 @@ fn sieve(n) {
 
 let raw = Lx.args[3]
 let n = raw and tonumber(raw) or 0
-print(sieve(n))
+println(sieve(n))

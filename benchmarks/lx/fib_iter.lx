@@ -14,4 +14,4 @@ fn fibIter(n) {
 
 let raw = Lx.args[3]
 let n = raw and tonumber(raw) or 0
-print(fibIter(n))
+println(fibIter(n))

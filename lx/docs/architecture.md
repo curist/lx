@@ -8,19 +8,28 @@ The architecture is organized around **representations (IR levels)** and **pass 
 
 ## High-Level Compilation Model
 
-Lx compilation is a **multi-stage pipeline** that transforms source text into bytecode, while producing intermediate artifacts (ASTs, analysis tables) that are also consumed by tooling.
+Lx compilation is organized around **artifacts** rather than a single linear pipeline.
+Work is scheduled by dependencies between artifacts (ASTs, analysis tables, bytecode),
+and tooling can stop at any artifact boundary.
 
-Conceptually:
+At a high level:
 
 ```
-Source
-  → Parse (AST transform)
-  → AST transforms (lowering, ANF, inlining, intrinsics)
-  → AST analyses (resolve, DCE, fastcheck, typecheck)
-  → Opcode selection policy (select.lx)
-  → Bytecode transform (codegen)
-  → Bytecode analysis (verify)
-  → Object building / runtime loading
+source
+  → ast.final
+    ├─ analysis.resolve
+    ├─ analysis.dce.local
+    ├─ analysis.fastcheck
+    ├─ analysis.typecheck (optional)
+    └─ analysis.dce.whole_program
+          ↓
+     analysis.dce.final
+          ↓
+     bytecode.function
+          ↓
+     bytecode.verified
+          ↓
+     object.bytes
 ```
 
 Crucially:
@@ -53,36 +62,37 @@ Crucially:
 
 ---
 
-## Directory Structure (Conceptual)
+## Directory Structure (Current)
 
-Passes are organized by **IR level** and **role**:
+Passes are organized by **role**, with infra at the root:
 
 ```
 src/passes/
-  ast/
-    transform/
-      parse.lx
-      lower.lx
-      anf.lx
-      anf-inline.lx
-      lower-intrinsics.lx
-    analysis/
-      resolve.lx
-      dce.lx
-      fastcheck.lx
-      typecheck.lx
-      typecheck-helper.lx
-  bytecode/
-    transform/
-      codegen.lx
-      peephole.lx
-    analysis/
-      verify.lx
+  parse/
+    parser.lx
+  transform/
+    lower.lx
+    anf.lx
+    anf-inline.lx
+    lower-intrinsics.lx
+  analysis/
+    resolve.lx
+    dce.lx
+    fastcheck.lx
+    typecheck.lx
+    typecheck-helper.lx
+  emit/
+    codegen.lx
+  verify/
+    verify-bytecode.lx
+  opt/
+    peephole-bytecode.lx
   pipeline.lx
   node-utils.lx
+  scanner.lx
 ```
 
-Supporting libraries (not passes), such as the scanner/lexer, live outside `passes/` (e.g. `src/frontend/scanner.lx`).
+Supporting libraries (not passes), such as `select.lx`, live outside `passes/` (e.g. `src/select.lx`).
 
 ---
 
@@ -139,7 +149,7 @@ parse
 Properties:
 
 * Exactly one `ast.final` exists per module per compilation.
-* All AST analyses and codegen operate on `ast.final`.
+* Codegen operates on `ast.final`.
 * `nodeId`s in `ast.final` are the authoritative keys for all AST-level side tables.
 * Passes that mutate the AST in place **must preserve `nodeId`** to keep analyses valid.
 
@@ -151,7 +161,7 @@ This eliminates ambiguity about “which AST codegen uses” and prevents stale 
 ## AST Analysis Artifacts
 
 AST analyses do **not** mutate the AST.
-They compute facts *about* `ast.final`.
+They compute facts about a specific AST representation and are keyed by its `nodeId`s.
 
 All AST analysis artifacts are keyed by `nodeId`.
 
@@ -172,6 +182,7 @@ Properties:
 * Required by all binding-aware passes and analyses.
 * Establishes core semantic invariants of the program.
 * Does not depend on other analyses.
+* Treated as representation-agnostic in the current pipeline; downstream transforms must preserve its invariants.
 
 ---
 
@@ -656,4 +667,3 @@ Future direction: a dependency-driven scheduler that builds requested artifacts 
 * Aggressive optimization
 * Perfect soundness
 * SSA or moving GC assumptions
-

@@ -8,8 +8,7 @@ let scanner = initScanner(resolver.slurp("test/stub/sink.lx"))
 
 for true {
   let tok = scanner.scanToken()
-
-  println(tok)
+  // println(tok)
   if tok.type == TOKEN.EOF {
     break
   }
@@ -26,8 +25,6 @@ println(types.TOKEN["RETURN"])
 println(types.KEYWORDS["return"])
 println(types.TOKEN["LET"])
 println(types.KEYWORDS["let"])
-println(types.TOKEN["FALSE"])
-println(types.KEYWORDS["false"])
 println(toupper("let"))
 println(true and TOKEN[toupper("let")] or TOKEN.IDENTIFIER)
 

@@ -35,6 +35,9 @@ typedef struct {
   jmp_buf* errorJmp;
   int nonYieldableDepth;
 
+  // Yield support (for native Fiber.yield())
+  bool shouldYield;
+
   // VM-global result (not per-fiber)
   Value lastResult;
 

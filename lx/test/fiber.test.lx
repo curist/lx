@@ -1,0 +1,226 @@
+let suite = (import "test/makeTestSuite.lx")()
+fn test(name, cb) { suite.defineTest("fiber - " + name, cb) }
+
+test("create and status", fn(assert) {
+  let f = Fiber.create(fn() { "result" })
+  assert.equal(Fiber.status(f), "new")
+})
+
+test("simple execution", fn(assert) {
+  let f = Fiber.create(fn() { 42 })
+  let result = Fiber.resume(f)
+
+  assert.equal(result.tag, "return")
+  assert.equal(result.value, 42)
+  assert.equal(Fiber.status(f), "done")
+})
+
+test("single yield", fn(assert) {
+  let f = Fiber.create(fn() {
+    Fiber.yield("yielded")
+    "final"
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.tag, "yield")
+  assert.equal(r1.value, "yielded")
+  assert.equal(Fiber.status(f), "suspended")
+
+  let r2 = Fiber.resume(f)
+  assert.equal(r2.tag, "return")
+  assert.equal(r2.value, "final")
+  assert.equal(Fiber.status(f), "done")
+})
+
+test("multiple yields", fn(assert) {
+  let f = Fiber.create(fn() {
+    Fiber.yield(1)
+    Fiber.yield(2)
+    Fiber.yield(3)
+    "done"
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.value, 1)
+  assert.equal(r1.tag, "yield")
+
+  let r2 = Fiber.resume(f)
+  assert.equal(r2.value, 2)
+  assert.equal(r2.tag, "yield")
+
+  let r3 = Fiber.resume(f)
+  assert.equal(r3.value, 3)
+  assert.equal(r3.tag, "yield")
+
+  let r4 = Fiber.resume(f)
+  assert.equal(r4.value, "done")
+  assert.equal(r4.tag, "return")
+  assert.equal(Fiber.status(f), "done")
+})
+
+test("upvalues across yield", fn(assert) {
+  let outer = "captured"
+  let f = Fiber.create(fn() {
+    let inner = outer
+    Fiber.yield("first")
+    inner
+  })
+
+  Fiber.resume(f)
+  let result = Fiber.resume(f)
+
+  assert.equal(result.value, "captured")
+})
+
+test("closure in fiber", fn(assert) {
+  let f = Fiber.create(fn() {
+    let x = 10
+    let getter = fn() { x }
+    Fiber.yield(getter())
+
+    x = 20
+    getter()
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.value, 10)
+
+  let r2 = Fiber.resume(f)
+  assert.equal(r2.value, 20)
+})
+
+test("mutation visible across yields", fn(assert) {
+  let f = Fiber.create(fn() {
+    let arr = [1, 2, 3]
+    Fiber.yield(len(arr))
+
+    push(arr, 4)
+    len(arr)
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.value, 3)
+
+  let r2 = Fiber.resume(f)
+  assert.equal(r2.value, 4)
+})
+
+test("error handling", fn(assert) {
+  let f = Fiber.create(fn() {
+    let x = nil
+    x.field  // Trigger error
+  })
+
+  let result = Fiber.resume(f)
+
+  assert.equal(result.tag, "error")
+  assert.equal(Fiber.status(f), "error")
+})
+
+test("fiber with arguments", fn(assert) {
+  let f = Fiber.create(fn(a, b) {
+    Fiber.yield(a + b)
+    a * b
+  })
+
+  let r1 = Fiber.resume(f, 10, 20)
+  assert.equal(r1.value, 30)
+
+  let r2 = Fiber.resume(f)
+  assert.equal(r2.value, 200)
+})
+
+test("resume with value", fn(assert) {
+  let f = Fiber.create(fn() {
+    let x = Fiber.yield("first")
+    x
+  })
+
+  Fiber.resume(f)
+  let r2 = Fiber.resume(f, "passed value")
+
+  assert.equal(r2.value, "passed value")
+})
+
+test("nested closures in fiber", fn(assert) {
+  let f = Fiber.create(fn() {
+    let x = 1
+    let f1 = fn() {
+      let y = 2
+      let f2 = fn() { x + y }
+      f2()
+    }
+    Fiber.yield(f1())
+    x = 10
+    f1()
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.value, 3)
+
+  let r2 = Fiber.resume(f)
+  assert.equal(r2.value, 12)
+})
+
+test("fiber with loop", fn(assert) {
+  let f = Fiber.create(fn() {
+    let sum = 0
+    for let i = 1; i <= 3; i = i + 1 {
+      sum = sum + i
+      Fiber.yield(sum)
+    }
+    sum
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.value, 1)
+
+  let r2 = Fiber.resume(f)
+  assert.equal(r2.value, 3)
+
+  let r3 = Fiber.resume(f)
+  assert.equal(r3.value, 6)
+
+  let r4 = Fiber.resume(f)
+  assert.equal(r4.value, 6)
+})
+
+test("yield nil", fn(assert) {
+  let f = Fiber.create(fn() {
+    Fiber.yield(nil)
+    "done"
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.value, nil)
+
+  let r2 = Fiber.resume(f)
+  assert.equal(r2.value, "done")
+})
+
+test("fiber returns nil", fn(assert) {
+  let f = Fiber.create(fn() {
+    Fiber.yield(1)
+    nil
+  })
+
+  Fiber.resume(f)
+  let r2 = Fiber.resume(f)
+
+  assert.equal(r2.value, nil)
+  assert.equal(Fiber.status(f), "done")
+})
+
+test("cannot resume from inside fiber", fn(assert) {
+  let f = Fiber.create(fn() {
+    let inner = Fiber.create(fn() { "inner" })
+    let result = Fiber.resume(inner)
+    result
+  })
+
+  let result = Fiber.resume(f)
+
+  assert.equal(result.tag, "error")
+})
+
+suite.run()

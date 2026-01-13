@@ -31,6 +31,7 @@ static void enterDirectMode() {
   vm.openUpvalues = NULL;
   vm.errorJmp = NULL;
   vm.nonYieldableDepth = 0;
+  vm.shouldYield = false;
 }
 
 static void syncFromVM() {
@@ -342,6 +343,7 @@ void initVM() {
   vm.lastResult = NIL_VAL;
   vm.lastError = NIL_VAL;
   vm.errorJmp = NULL;
+  vm.shouldYield = false;
 
   initTable(&vm.globals);
   initTable(&vm.strings);
@@ -459,6 +461,30 @@ static bool callValue(Value callee, int argCount) {
           // Result is now at stackBase (callee slot)
           // Set stackTop to callee+1 (pop callee+args, leave 1 result)
           vm.stackTop = stackBase + 1;
+
+          // Check if native function requested a yield (Fiber.yield)
+          if (vm.shouldYield) {
+            vm.shouldYield = false;
+
+            // The yielded value is already on the stack (result of native call)
+            Value yieldedValue = *stackBase;
+            vm.lastResult = yieldedValue;
+
+            // Pop the result from stack
+            vm.stackTop = stackBase;
+
+            // Save current state to fiber
+            syncFromVM();
+
+            // Transition fiber to SUSPENDED state
+            if (vm.currentFiber) {
+              vm.currentFiber->state = FIBER_SUSPENDED;
+            }
+
+            // This will cause the OP_CALL to complete, then runUntil returns
+            // The caller (fiberResume) will see fiber state = SUSPENDED
+          }
+
           return true;
         } else {
           // Error message is in callee slot (stackBase)
@@ -540,6 +566,337 @@ static Value pcallResult(bool ok, Value value, Value error) {
   pcallSetField(out, "error", error);
   pop();
   return OBJ_VAL(out);
+}
+
+// Fiber.resume result builder - tagged union for yield/return/error
+// Returns: {tag: "yield"|"return"|"error", value: ..., error: ...}
+// Note: 'value' will become 'values' array when multi-value yield/resume is added
+static Value fiberResult(const char* tag, Value value, Value error) {
+  ObjHashmap* out = newHashmap();
+  push(OBJ_VAL(out));
+
+  ObjString* tagKey = COPY_CSTRING("tag");
+  push(OBJ_VAL(tagKey));
+  ObjString* tagVal = COPY_CSTRING(tag);
+  push(OBJ_VAL(tagVal));
+  tableSet(&out->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  if (!IS_NIL(value)) {
+    pcallSetField(out, "value", value);
+  }
+
+  if (!IS_NIL(error)) {
+    pcallSetField(out, "error", error);
+  }
+
+  pop();
+  return OBJ_VAL(out);
+}
+
+// Fiber.create(fn) - creates a new fiber from a function
+static bool fiberCreateNative(int argCount, Value* args) {
+  if (argCount != 1) {
+    args[-1] = CSTRING_VAL("Error: Fiber.create takes exactly 1 argument (function).");
+    return false;
+  }
+
+  Value fn = args[0];
+  if (!IS_CLOSURE(fn)) {
+    args[-1] = CSTRING_VAL("Error: Fiber.create argument must be a function.");
+    return false;
+  }
+
+  // Create new fiber
+  ObjFiber* fiber = newFiber();
+  fiber->state = FIBER_NEW;
+
+  // Store the function to be called when fiber is first resumed
+  // We'll set up the call frame in fiberResumeNative
+  fiber->stack[0] = fn;
+  fiber->stackTop = fiber->stack + 1;
+
+  args[-1] = OBJ_VAL(fiber);
+  return true;
+}
+
+// Fiber.resume(fiber, ...args) - resumes a suspended or new fiber
+static bool fiberResumeNative(int argCount, Value* args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Fiber.resume takes at least 1 argument (fiber).");
+    return false;
+  }
+
+  // MVP: Disallow resuming from inside a fiber (no nested fiber calls)
+  if (vm.currentFiber != NULL) {
+    args[-1] = CSTRING_VAL("Error: Cannot call Fiber.resume from inside a fiber (nested fibers not supported yet).");
+    return false;
+  }
+
+  Value fiberVal = args[0];
+  if (!IS_FIBER(fiberVal)) {
+    args[-1] = CSTRING_VAL("Error: Fiber.resume first argument must be a fiber.");
+    return false;
+  }
+
+  ObjFiber* fiber = AS_FIBER(fiberVal);
+
+  // Check fiber state - API misuse should throw, not return error result
+  if (fiber->state == FIBER_RUNNING) {
+    args[-1] = CSTRING_VAL("Error: Cannot resume a running fiber.");
+    return false;
+  }
+
+  if (fiber->state == FIBER_DONE) {
+    args[-1] = CSTRING_VAL("Error: Cannot resume a completed fiber.");
+    return false;
+  }
+
+  if (fiber->state == FIBER_ERROR) {
+    args[-1] = CSTRING_VAL("Error: Cannot resume a fiber that errored.");
+    return false;
+  }
+
+  // Save current context before switching
+  int callerFrameCount = vm.frameCount;
+  Value* callerStackTop = vm.stackTop;
+  ObjUpvalue* callerOpenUpvalues = vm.openUpvalues;
+
+  // Set up error handler for fiber execution
+  jmp_buf jb;
+  jmp_buf* prev = vm.errorJmp;
+  vm.errorJmp = &jb;
+  vm.lastError = NIL_VAL;
+
+  int jumped = setjmp(jb);
+  if (jumped != 0) {
+    // Fiber errored
+    Value err = vm.lastError;
+
+    // Mark fiber as errored and close its upvalues
+    if (vm.currentFiber) {
+      vm.currentFiber->state = FIBER_ERROR;
+      // Close all fiber upvalues (vm.openUpvalues is the fiber's chain)
+      closeUpvalues(vm.stack);
+    }
+
+    // Restore caller context (direct mode)
+    vm.currentFiber = NULL;
+    vm.stack = vm.mainStack;
+    vm.stackTop = callerStackTop;
+    vm.stackCapacity = STACK_MAX;
+    vm.frames = vm.mainFrames;
+    vm.frameCount = callerFrameCount;
+    vm.frameCapacity = FRAMES_MAX;
+    vm.openUpvalues = callerOpenUpvalues;
+    vm.errorJmp = prev;
+
+    args[-1] = fiberResult("error", NIL_VAL, err);
+    return true;
+  }
+
+  // Switch to fiber
+  switchToFiber(fiber);
+
+  // Restore error handler (switchToFiber clears it for safety, but we need it for Fiber.resume)
+  vm.errorJmp = &jb;
+
+  // Handle NEW fiber: set up the initial call frame
+  if (fiber->state == FIBER_NEW) {
+    // Stack should have [closure] at position 0
+    Value fn = vm.stack[0];
+    if (!IS_CLOSURE(fn)) {
+      // Invariant violation: Fiber.create should have validated this
+      // This is an internal consistency check (should never happen)
+      // Restore caller context and throw (API misuse / precondition failure)
+      vm.currentFiber = NULL;
+      vm.stack = vm.mainStack;
+      vm.stackTop = callerStackTop;
+      vm.stackCapacity = STACK_MAX;
+      vm.frames = vm.mainFrames;
+      vm.frameCount = callerFrameCount;
+      vm.frameCapacity = FRAMES_MAX;
+      vm.openUpvalues = callerOpenUpvalues;
+      vm.errorJmp = prev;
+      args[-1] = CSTRING_VAL("Error: Fiber function is not a closure.");
+      return false;
+    }
+
+    ObjClosure* closure = AS_CLOSURE(fn);
+
+    // Push any resume arguments after the closure
+    for (int i = 1; i < argCount; i++) {
+      push(args[i]);
+    }
+
+    // Set up the call frame
+    if (!call(closure, argCount - 1)) {
+      // call() failed (e.g., stack overflow) - treat as fiber execution error
+      // Mark fiber as errored and close its upvalues
+      fiber->state = FIBER_ERROR;
+      closeUpvalues(vm.stack);
+
+      // Restore caller context (don't use enterDirectMode - it corrupts saved state)
+      vm.currentFiber = NULL;
+      vm.stack = vm.mainStack;
+      vm.stackTop = callerStackTop;
+      vm.stackCapacity = STACK_MAX;
+      vm.frames = vm.mainFrames;
+      vm.frameCount = callerFrameCount;
+      vm.frameCapacity = FRAMES_MAX;
+      vm.openUpvalues = callerOpenUpvalues;
+      vm.errorJmp = prev;
+
+      // Return error result (use lastError if set, or synthesize message)
+      Value err = IS_NIL(vm.lastError) ? CSTRING_VAL("Failed to call fiber function.") : vm.lastError;
+      args[-1] = fiberResult("error", NIL_VAL, err);
+      return true;
+    }
+  } else if (fiber->state == FIBER_SUSPENDED) {
+    // MVP: Only support single-value resume for suspended fibers
+    // (multi-value yield/resume not implemented yet)
+    if (argCount > 2) {
+      // API misuse - restore caller context and throw
+      // (don't use enterDirectMode - it corrupts saved state)
+      vm.currentFiber = NULL;
+      vm.stack = vm.mainStack;
+      vm.stackTop = callerStackTop;
+      vm.stackCapacity = STACK_MAX;
+      vm.frames = vm.mainFrames;
+      vm.frameCount = callerFrameCount;
+      vm.frameCapacity = FRAMES_MAX;
+      vm.openUpvalues = callerOpenUpvalues;
+      vm.errorJmp = prev;
+      args[-1] = CSTRING_VAL("Error: Fiber.resume currently only supports 1 resume value for suspended fibers.");
+      return false;
+    }
+
+    // Push resume value for suspended fiber (becomes return value of Fiber.yield())
+    // If no value provided, push nil
+    if (argCount >= 2) {
+      push(args[1]);
+    } else {
+      push(NIL_VAL);
+    }
+  }
+
+  fiber->state = FIBER_RUNNING;
+
+  // Run the fiber until it yields, returns, or errors
+  InterpretResult result = runUntil(0);
+
+  // Check result
+  if (result != INTERPRET_OK) {
+    // Error already handled by setjmp above
+    // Should not reach here, but handle gracefully
+    Value err = vm.lastError;
+
+    // Mark fiber as errored and close its upvalues
+    if (vm.currentFiber) {
+      vm.currentFiber->state = FIBER_ERROR;
+      // Close all fiber upvalues (vm.openUpvalues is the fiber's chain)
+      closeUpvalues(vm.stack);
+    }
+
+    // Restore direct mode
+    vm.currentFiber = NULL;
+    vm.stack = vm.mainStack;
+    vm.stackTop = callerStackTop;
+    vm.stackCapacity = STACK_MAX;
+    vm.frames = vm.mainFrames;
+    vm.frameCount = callerFrameCount;
+    vm.frameCapacity = FRAMES_MAX;
+    vm.openUpvalues = callerOpenUpvalues;
+    vm.errorJmp = prev;
+
+    args[-1] = fiberResult("error", NIL_VAL, err);
+    return true;
+  }
+
+  // Fiber either yielded or completed
+  Value returnValue = vm.lastResult;
+  FiberState finalState = fiber->state;
+
+  // Switch back to direct mode (restore original VM state)
+  vm.currentFiber = NULL;
+  vm.stack = vm.mainStack;
+  vm.stackTop = callerStackTop;
+  vm.stackCapacity = STACK_MAX;
+  vm.frames = vm.mainFrames;
+  vm.frameCount = callerFrameCount;
+  vm.frameCapacity = FRAMES_MAX;
+  vm.openUpvalues = callerOpenUpvalues;
+  vm.errorJmp = prev;
+
+  // Return tagged result based on fiber state
+  if (finalState == FIBER_SUSPENDED) {
+    // Yielded - return {tag: "yield", value: ...}
+    args[-1] = fiberResult("yield", returnValue, NIL_VAL);
+  } else if (finalState == FIBER_DONE) {
+    // Completed - return {tag: "return", value: ...}
+    args[-1] = fiberResult("return", returnValue, NIL_VAL);
+  } else {
+    // Unexpected state - API invariant violation, should throw
+    args[-1] = CSTRING_VAL("Error: Fiber in unexpected state after execution.");
+    return false;
+  }
+
+  return true;
+}
+
+// Fiber.yield(value) - yields from current fiber
+static bool fiberYieldNative(int argCount, Value* args) {
+  // Check that we're in a fiber
+  if (!vm.currentFiber) {
+    args[-1] = CSTRING_VAL("Error: Fiber.yield can only be called inside a fiber.");
+    return false;
+  }
+
+  // Check non-yieldable depth
+  // Note: This native function itself is called from non-yieldable context,
+  // but we'll allow it for now as a special case. Proper solution is to
+  // make the compiler emit OP_YIELD directly.
+  // For now, we set a flag and handle it after the native returns.
+
+  // Get yielded value (default to nil if no args)
+  Value yieldedValue = (argCount > 0) ? args[0] : NIL_VAL;
+
+  // Set yield flag for runUntil() to handle after this native returns
+  vm.shouldYield = true;
+
+  // Store the yielded value
+  args[-1] = yieldedValue;
+  return true;
+}
+
+// Fiber.status(fiber) - returns fiber state as string
+static bool fiberStatusNative(int argCount, Value* args) {
+  if (argCount != 1) {
+    args[-1] = CSTRING_VAL("Error: Fiber.status takes exactly 1 argument (fiber).");
+    return false;
+  }
+
+  Value fiberVal = args[0];
+  if (!IS_FIBER(fiberVal)) {
+    args[-1] = CSTRING_VAL("Error: Fiber.status argument must be a fiber.");
+    return false;
+  }
+
+  ObjFiber* fiber = AS_FIBER(fiberVal);
+
+  const char* statusStr;
+  switch (fiber->state) {
+    case FIBER_NEW:       statusStr = "new"; break;
+    case FIBER_RUNNING:   statusStr = "running"; break;
+    case FIBER_SUSPENDED: statusStr = "suspended"; break;
+    case FIBER_DONE:      statusStr = "done"; break;
+    case FIBER_ERROR:     statusStr = "error"; break;
+    default:              statusStr = "unknown"; break;
+  }
+
+  args[-1] = CSTRING_VAL(statusStr);
+  return true;
 }
 
 static bool pcallNative(int argCount, Value* args) {
@@ -1342,6 +1699,13 @@ static InterpretResult runUntil(int stopFrameCount) {
         if (!callValue(peek(argCount), argCount)) {
           return INTERPRET_RUNTIME_ERROR;
         }
+
+        // Check if a yield occurred during the call (from Fiber.yield native)
+        if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
+          // Fiber yielded, exit runUntil
+          return INTERPRET_OK;
+        }
+
         frame = &vm.frames[vm.frameCount - 1];
         closure = frame->closure;
         slots = frame->slots;
@@ -1367,6 +1731,11 @@ static InterpretResult runUntil(int stopFrameCount) {
           }
         }
 
+        // Check if a yield occurred during the call
+        if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
+          return INTERPRET_OK;
+        }
+
         frame = &vm.frames[vm.frameCount - 1];
         closure = frame->closure;
         slots = frame->slots;
@@ -1383,6 +1752,11 @@ static InterpretResult runUntil(int stopFrameCount) {
 
         if (!call(callee, argCount)) {
           return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Check if a yield occurred during the call
+        if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
+          return INTERPRET_OK;
         }
 
         frame = &vm.frames[vm.frameCount - 1];
@@ -2046,6 +2420,41 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_YIELD: {
+        uint8_t yieldCount = READ_BYTE();
+
+        // Validate: can only yield inside a fiber
+        if (!vm.currentFiber) {
+          runtimeError("Cannot yield outside of a fiber.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Validate: can't yield from non-yieldable context (native calls)
+        if (vm.nonYieldableDepth > 0) {
+          runtimeError("Cannot yield from non-yieldable context.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // For MVP, only support yielding 1 value
+        if (yieldCount != 1) {
+          runtimeError("Fiber yield currently only supports 1 value.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Pop the yielded value and store it for the resumer
+        Value yieldedValue = pop();
+        vm.lastResult = yieldedValue;
+
+        // Save current state to fiber
+        syncFromVM();
+
+        // Transition fiber to SUSPENDED state
+        vm.currentFiber->state = FIBER_SUSPENDED;
+
+        // Return to caller (fiberResume will handle switching back)
+        return INTERPRET_OK;
+      }
+
       case OP_RETURN: {
         Value result = pop();
         closeUpvalues(frame->slots);
@@ -2055,6 +2464,12 @@ static InterpretResult runUntil(int stopFrameCount) {
           vm.lastResult = result;
           vm.stackTop = vm.stack;
           vm.openUpvalues = NULL;
+
+          // If returning from fiber's top level, mark fiber as done
+          if (vm.currentFiber) {
+            vm.currentFiber->state = FIBER_DONE;
+          }
+
           return INTERPRET_OK;
         }
 

@@ -200,6 +200,9 @@ let OP = enum {
   GET_PROPERTY,     // GET_LOCAL + CONSTANT + GET_BY_INDEX (property access)
   SET_PROPERTY,     // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX
 
+  // Fiber operations
+  YIELD,            // Yield from fiber with N values (operand: count byte)
+
   RETURN = 255,
 }
 

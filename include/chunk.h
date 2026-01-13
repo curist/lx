@@ -133,6 +133,9 @@ typedef enum {
   OP_GET_PROPERTY,        // GET_LOCAL + CONSTANT + GET_BY_INDEX (property access)
   OP_SET_PROPERTY,        // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX
 
+  // Fiber operations
+  OP_YIELD,               // Yield from fiber with N values (operand: count byte)
+
   OP_RETURN = 0xff,
 } OpCode;
 

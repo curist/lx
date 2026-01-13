@@ -39,18 +39,6 @@ void* reallocate(void* pointer, size_t oldSize, size_t newSize) {
   return result;
 }
 
-void* reallocateNoGC(void* pointer, size_t oldSize, size_t newSize) {
-  vm.bytesAllocated += newSize - oldSize;
-
-  if (newSize == 0) {
-    free(pointer);
-    return NULL;
-  }
-
-  void* result = realloc(pointer, newSize);
-  if (result == NULL) exit(1);
-  return result;
-}
 
 void markObject(Obj* object) {
   if (object == NULL) return;

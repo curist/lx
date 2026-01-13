@@ -22,7 +22,6 @@
 #define GC_HEAP_GROW_FACTOR 2
 
 void* reallocate(void* pointer, size_t oldSize, size_t newSize);
-void* reallocateNoGC(void* pointer, size_t oldSize, size_t newSize);
 void markObject(Obj* object);
 void markValue(Value value);
 void collectGarbage();

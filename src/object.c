@@ -220,8 +220,8 @@ ObjArray* newArray() {
   return array;
 }
 
-#define INITIAL_FIBER_STACK_CAPACITY 256
-#define INITIAL_FIBER_FRAME_CAPACITY 64
+#define INITIAL_FIBER_STACK_CAPACITY STACK_MAX
+#define INITIAL_FIBER_FRAME_CAPACITY FRAMES_MAX
 
 ObjFiber* newFiber() {
   ObjFiber* fiber = ALLOCATE_OBJ(ObjFiber, OBJ_FIBER);

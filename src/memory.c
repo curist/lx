@@ -19,7 +19,7 @@ void* reallocate(void* pointer, size_t oldSize, size_t newSize) {
   vm.bytesAllocated += newSize - oldSize;
   if (newSize > oldSize) {
     // Never start a GC while one is already running.
-    if (!vm.gcRunning && !vm.suppressGC) {
+    if (!vm.gcRunning) {
 #ifdef DEBUG_STRESS_GC
       collectGarbage();
 #endif
@@ -28,6 +28,19 @@ void* reallocate(void* pointer, size_t oldSize, size_t newSize) {
       }
     }
   }
+
+  if (newSize == 0) {
+    free(pointer);
+    return NULL;
+  }
+
+  void* result = realloc(pointer, newSize);
+  if (result == NULL) exit(1);
+  return result;
+}
+
+void* reallocateNoGC(void* pointer, size_t oldSize, size_t newSize) {
+  vm.bytesAllocated += newSize - oldSize;
 
   if (newSize == 0) {
     free(pointer);

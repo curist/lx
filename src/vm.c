@@ -1,5 +1,6 @@
 #include <stdarg.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -69,6 +70,97 @@ static void syncFromVM() {
   f->openUpvalues = vm.openUpvalues;
   f->lastError = vm.lastError;
   f->nonYieldableDepth = vm.nonYieldableDepth;
+}
+
+static void growStack(int needed) {
+  int oldCapacity = vm.stackCapacity;
+  Value* oldStack = vm.stack;
+  int oldCount = (int)(vm.stackTop - vm.stack);
+
+  int newCapacity = GROW_CAPACITY(oldCapacity);
+  while (newCapacity < needed) {
+    newCapacity = GROW_CAPACITY(newCapacity);
+  }
+
+  if (newCapacity > STACK_MAX) {
+    runtimeError("Stack overflow.");
+    if (CURRENT_ERROR_HANDLER() == NULL) {
+      exit(70);
+    }
+    return;
+  }
+
+  Value* newStack = (Value*)reallocateNoGC(oldStack,
+                                           sizeof(Value) * oldCapacity,
+                                           sizeof(Value) * newCapacity);
+  if (newStack == NULL) {
+    runtimeError("Stack allocation failed.");
+    if (CURRENT_ERROR_HANDLER() == NULL) {
+      exit(70);
+    }
+    return;
+  }
+
+  vm.stack = newStack;
+  vm.stackCapacity = newCapacity;
+  vm.stackTop = newStack + oldCount;
+
+  if (vm.currentFiber != NULL) {
+    vm.currentFiber->stack = newStack;
+    vm.currentFiber->stackTop = vm.stackTop;
+    vm.currentFiber->stackCapacity = newCapacity;
+  }
+
+  for (int i = 0; i < vm.frameCount; i++) {
+    ptrdiff_t offset = vm.frames[i].slots - oldStack;
+    vm.frames[i].slots = newStack + offset;
+  }
+
+  Value* oldEnd = oldStack + oldCapacity;
+  for (ObjUpvalue* upvalue = vm.openUpvalues; upvalue != NULL; upvalue = upvalue->next) {
+    if (upvalue->location >= oldStack && upvalue->location < oldEnd) {
+      ptrdiff_t offset = upvalue->location - oldStack;
+      upvalue->location = newStack + offset;
+    }
+  }
+}
+
+void ensureStackCapacity(int needed) {
+  if (vm.stack == NULL) return;
+  if (needed <= vm.stackCapacity) return;
+  growStack(needed);
+}
+
+bool ensureFrameCapacity(int needed) {
+  if (needed <= vm.frameCapacity) return true;
+
+  int oldCapacity = vm.frameCapacity;
+  int newCapacity = GROW_CAPACITY(oldCapacity);
+  while (newCapacity < needed) {
+    newCapacity = GROW_CAPACITY(newCapacity);
+  }
+
+  if (newCapacity > FRAMES_MAX) {
+    runtimeError("Stack overflow.");
+    return false;
+  }
+
+  CallFrame* newFrames = (CallFrame*)reallocateNoGC(vm.frames,
+                                                    sizeof(CallFrame) * oldCapacity,
+                                                    sizeof(CallFrame) * newCapacity);
+  if (newFrames == NULL) {
+    runtimeError("Frame allocation failed.");
+    return false;
+  }
+
+  vm.frames = newFrames;
+  vm.frameCapacity = newCapacity;
+  if (vm.currentFiber != NULL) {
+    vm.currentFiber->frames = (struct CallFrame*)newFrames;
+    vm.currentFiber->frameCapacity = newCapacity;
+  }
+
+  return true;
 }
 
 __attribute__((unused))
@@ -399,8 +491,6 @@ void initVM() {
   vm.lastResult = NIL_VAL;
   vm.lastError = NIL_VAL;
   vm.shouldYield = false;
-  vm.suppressGC = false;
-
   // Initialize stack/frame pointers to NULL before any allocations
   // (GC markRoots() checks for NULL before iterating)
   vm.stack = NULL;
@@ -415,25 +505,37 @@ void initVM() {
   initTable(&vm.globals);
   initTable(&vm.strings);
 
+  // Bootstrap stack for rooting during VM init
+  int bootstrapCapacity = 1;
+  Value* bootstrapStack = ALLOCATE(Value, bootstrapCapacity);
+  vm.stack = bootstrapStack;
+  vm.stackTop = vm.stack;
+  vm.stackCapacity = bootstrapCapacity;
+
   // Phase 2: Create main fiber (can trigger GC, safe after tables and stack initialized)
   // Use same capacity as old direct mode to maintain behavior
-  vm.suppressGC = true;
   ObjFiber* mainFiber = newFiber();
 
   // Root immediately to prevent GC collection during subsequent allocations
   vm.mainFiber = mainFiber;
 
-  // Grow to same capacity as old direct mode (FRAMES_MAX=1024, STACK_MAX=8192)
-  mainFiber->frames = (struct CallFrame*)reallocate(mainFiber->frames,
-                                                      sizeof(CallFrame) * mainFiber->frameCapacity,
-                                                      sizeof(CallFrame) * FRAMES_MAX);
-  mainFiber->frameCapacity = FRAMES_MAX;
+  // Grow main fiber to a larger baseline to reduce realloc churn in common workloads
+  int desiredStackCapacity = 1024;
+  int desiredFrameCapacity = 1024;
+  if (mainFiber->stackCapacity < desiredStackCapacity) {
+    mainFiber->stack = (Value*)reallocateNoGC(mainFiber->stack,
+                                              sizeof(Value) * mainFiber->stackCapacity,
+                                              sizeof(Value) * desiredStackCapacity);
+    mainFiber->stackTop = mainFiber->stack;
+    mainFiber->stackCapacity = desiredStackCapacity;
+  }
 
-  mainFiber->stack = (Value*)reallocate(mainFiber->stack,
-                                         sizeof(Value) * mainFiber->stackCapacity,
-                                         sizeof(Value) * STACK_MAX);
-  mainFiber->stackTop = mainFiber->stack;  // Reset stackTop after realloc
-  mainFiber->stackCapacity = STACK_MAX;
+  if (mainFiber->frameCapacity < desiredFrameCapacity) {
+    mainFiber->frames = (struct CallFrame*)reallocateNoGC(mainFiber->frames,
+                                                          sizeof(CallFrame) * mainFiber->frameCapacity,
+                                                          sizeof(CallFrame) * desiredFrameCapacity);
+    mainFiber->frameCapacity = desiredFrameCapacity;
+  }
 
   mainFiber->state = FIBER_RUNNING;
   mainFiber->caller = NULL;  // Root fiber
@@ -448,7 +550,9 @@ void initVM() {
   vm.frameCapacity = mainFiber->frameCapacity;
   vm.openUpvalues = NULL;
   vm.nonYieldableDepth = 0;
-  vm.suppressGC = false;
+
+  // Drop bootstrap stack now that main fiber is active
+  FREE_ARRAY(Value, bootstrapStack, bootstrapCapacity);
 
 #ifdef PROFILE_OPCODES
   for (int i = 0; i < 256; i++) {
@@ -515,8 +619,7 @@ void freeVM() {
 static bool call(ObjClosure* closure, int argCount) {
   int arity = closure->function->arity;
 
-  if (vm.frameCount >= vm.frameCapacity) {
-    runtimeError("Stack overflow.");
+  if (!ensureFrameCapacity(vm.frameCount + 1)) {
     return false;
   }
 
@@ -1277,6 +1380,9 @@ static InterpretResult runUntil(int stopFrameCount) {
   } while (false)
 
   for (;;) {
+    if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
+      return INTERPRET_OK;
+    }
     op = READ_BYTE();
 
 #ifdef PROFILE_OPCODES
@@ -2597,7 +2703,7 @@ static InterpretResult runUntil(int stopFrameCount) {
           vm.openUpvalues = NULL;
 
           // If returning from fiber's top level, mark fiber as done
-          if (vm.currentFiber) {
+          if (vm.currentFiber && vm.currentFiber != vm.mainFiber) {
             vm.currentFiber->state = FIBER_DONE;
           }
 
@@ -2634,12 +2740,6 @@ static InterpretResult runUntil(int stopFrameCount) {
 InterpretResult interpret(uint8_t* obj) {
   ObjFunction* function = loadObj(obj, false);
   if (function == NULL) return INTERPRET_COMPILE_ERROR;
-
-  if (vm.currentFiber != NULL) {
-    // Loading embedded bytecode (e.g., globals) can leave main fiber marked DONE.
-    // Reset to RUNNING so user code executes with correct status.
-    vm.currentFiber->state = FIBER_RUNNING;
-  }
 
   push(OBJ_VAL(function));
   ObjClosure* closure = newClosure(function);

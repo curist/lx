@@ -43,7 +43,6 @@ typedef struct {
 
   // Yield support (for native Fiber.yield())
   bool shouldYield;
-  bool suppressGC;
 
   // VM-global result (not per-fiber)
   Value lastResult;
@@ -79,9 +78,14 @@ extern VM vm;
 void initVM();
 void freeVM();
 InterpretResult interpret(uint8_t* obj);
+void ensureStackCapacity(int needed);
+bool ensureFrameCapacity(int needed);
 
 // Inline stack operations for performance
 static inline void push(Value value) {
+  if (vm.stack != NULL && vm.stackTop >= vm.stack + vm.stackCapacity) {
+    ensureStackCapacity((int)(vm.stackTop - vm.stack + 1));
+  }
   *vm.stackTop++ = value;
 }
 

@@ -142,6 +142,40 @@ test("resume with value", fn(assert) {
   assert.equal(r2.value, "passed value")
 })
 
+test("yield inside expression", fn(assert) {
+  let f = Fiber.create(fn() {
+    let value = 1 + Fiber.yield(10) + 3
+    value
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.tag, "yield")
+  assert.equal(r1.value, 10)
+
+  let r2 = Fiber.resume(f, 20)
+  assert.equal(r2.tag, "return")
+  assert.equal(r2.value, 24)
+})
+
+test("yield in helper call", fn(assert) {
+  fn helper() {
+    Fiber.yield("helper")
+  }
+
+  let f = Fiber.create(fn() {
+    helper()
+    "done"
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.tag, "yield")
+  assert.equal(r1.value, "helper")
+
+  let r2 = Fiber.resume(f)
+  assert.equal(r2.tag, "return")
+  assert.equal(r2.value, "done")
+})
+
 test("nested closures in fiber", fn(assert) {
   let f = Fiber.create(fn() {
     let x = 1

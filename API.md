@@ -49,6 +49,18 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `Math.max(...values: number) -> number` Returns the maximum value from the arguments.
 - `Math.min(...values: number) -> number` Returns the minimum value from the arguments.
 
+### `Fiber` namespace (native)
+
+- `Fiber` - runtime fiber namespace.
+- `Fiber.create(fn: fn) -> fiber` Create a new fiber in `new` state.
+- `Fiber.resume(fiber, ...args) -> {tag, value?, error?}` Resume a `new` or `suspended` fiber.
+  * `tag` is `"yield" | "return" | "error"`.
+  * `value` is set for `"yield"` and `"return"`.
+  * `error` is set for `"error"`.
+- `Fiber.yield(value?: any) -> never` Yield from inside a fiber (disallowed from the main fiber).
+- `Fiber.status(fiber) -> string` One of `"new" | "running" | "suspended" | "done" | "error"`.
+- `Fiber.current() -> fiber` Return the currently running fiber (main fiber included).
+
 ### `Lx` namespace (native)
 
 - `Lx` - runtime namespace.

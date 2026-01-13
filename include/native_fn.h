@@ -39,6 +39,7 @@ static bool fiberCreateNative(int argCount, Value *args);
 static bool fiberResumeNative(int argCount, Value *args);
 static bool fiberYieldNative(int argCount, Value *args);
 static bool fiberStatusNative(int argCount, Value *args);
+static bool fiberCurrentNative(int argCount, Value *args);
 
 static bool timeNative(int argCount, Value *args) {
   struct timeval tv;
@@ -451,6 +452,8 @@ static bool typeNative(int argCount, Value *args) {
     args[-1] = CSTRING_VAL("map");
   } else if (IS_ARRAY(arg)) {
     args[-1] = CSTRING_VAL("array");
+  } else if (IS_FIBER(arg)) {
+    args[-1] = CSTRING_VAL("fiber");
   } else {
     args[-1] = CSTRING_VAL("Error: unknown type.");
     return false;
@@ -2202,6 +2205,7 @@ static void defineFiberNatives() {
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "resume", fiberResumeNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "yield", fiberYieldNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "status", fiberStatusNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "current", fiberCurrentNative);
 
   pop();
   pop();

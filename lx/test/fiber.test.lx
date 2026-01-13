@@ -211,7 +211,7 @@ test("fiber returns nil", fn(assert) {
   assert.equal(Fiber.status(f), "done")
 })
 
-test("cannot resume from inside fiber", fn(assert) {
+test("nested fiber resume works", fn(assert) {
   let f = Fiber.create(fn() {
     let inner = Fiber.create(fn() { "inner" })
     let result = Fiber.resume(inner)
@@ -220,7 +220,81 @@ test("cannot resume from inside fiber", fn(assert) {
 
   let result = Fiber.resume(f)
 
-  assert.equal(result.tag, "error")
+  assert.equal(result.tag, "return")
+  assert.equal(result.value.tag, "return")
+  assert.equal(result.value.value, "inner")
+})
+
+test("deeply nested fibers", fn(assert) {
+  let f3 = Fiber.create(fn() { 3 })
+  let f2 = Fiber.create(fn() { Fiber.resume(f3).value })
+  let f1 = Fiber.create(fn() { Fiber.resume(f2).value })
+
+  let r = Fiber.resume(f1)
+  assert.equal(r.value, 3)
+  assert.equal(Fiber.status(f1), "done")
+  assert.equal(Fiber.status(f2), "done")
+  assert.equal(Fiber.status(f3), "done")
+})
+
+test("nested fiber with yield", fn(assert) {
+  let inner = Fiber.create(fn(x) {
+    Fiber.yield(x * 2)
+    x * 3
+  })
+
+  let outer = Fiber.create(fn() {
+    let r1 = Fiber.resume(inner, 10)
+    Fiber.yield(r1.value)
+    let r2 = Fiber.resume(inner)
+    r2.value
+  })
+
+  let r1 = Fiber.resume(outer)
+  assert.equal(r1.value, 20)
+
+  let r2 = Fiber.resume(outer)
+  assert.equal(r2.value, 30)
+})
+
+test("yield from main fiber is an error", fn(assert) {
+  assert.throws(fn() { Fiber.yield(1) }, "Fiber.yield cannot be used from the main fiber")
+})
+
+test("Fiber.current returns running fiber", fn(assert) {
+  let current = Fiber.current()
+  assert.truthy(current)
+  assert.equal(type(current), "fiber")
+  assert.equal(Fiber.status(current), "running")
+
+  assert.throws(fn() { Fiber.resume(current) }, "Cannot resume a running fiber")
+})
+
+test("Fiber.current inside fiber returns itself", fn(assert) {
+  let observed = nil
+  let f = Fiber.create(fn() {
+    observed = Fiber.current()
+    "done"
+  })
+
+  let r = Fiber.resume(f)
+  assert.equal(r.tag, "return")
+  assert.equal(Fiber.status(f), "done")
+  assert.truthy(observed == f)
+})
+
+test("errored fiber stays errored after resume", fn(assert) {
+  let f = Fiber.create(fn() {
+    let x = nil
+    x.field
+  })
+
+  let r1 = Fiber.resume(f)
+  assert.equal(r1.tag, "error")
+  assert.equal(Fiber.status(f), "error")
+
+  assert.throws(fn() { Fiber.resume(f) }, "Cannot resume a fiber that errored")
+  assert.equal(Fiber.status(f), "error")
 })
 
 suite.run()

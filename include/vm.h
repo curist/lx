@@ -19,6 +19,7 @@ typedef struct {
 typedef struct {
   // Fiber context
   ObjFiber* currentFiber;
+  ObjFiber* mainFiber;  // Main execution fiber (root of caller chain)
 
   // Execution registers (pointers to either fiber or direct-mode storage)
   Value* stack;
@@ -37,13 +38,10 @@ typedef struct {
 
   // Yield support (for native Fiber.yield())
   bool shouldYield;
+  bool suppressGC;
 
   // VM-global result (not per-fiber)
   Value lastResult;
-
-  // Direct-mode backing storage (Phase 2A only)
-  Value mainStack[STACK_MAX];
-  CallFrame mainFrames[FRAMES_MAX];
 
   // Global tables
   Table globals;

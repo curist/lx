@@ -19,7 +19,7 @@ void* reallocate(void* pointer, size_t oldSize, size_t newSize) {
   vm.bytesAllocated += newSize - oldSize;
   if (newSize > oldSize) {
     // Never start a GC while one is already running.
-    if (!vm.gcRunning) {
+    if (!vm.gcRunning && !vm.suppressGC) {
 #ifdef DEBUG_STRESS_GC
       collectGarbage();
 #endif
@@ -228,12 +228,23 @@ static void markRoots() {
     markObject((Obj*)vm.currentFiber);
   }
 
-  for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
-    markValue(*slot);
+  // Mark main fiber (root of caller chain)
+  if (vm.mainFiber != NULL) {
+    markObject((Obj*)vm.mainFiber);
   }
 
-  for (int i = 0; i < vm.frameCount; i++) {
-    markObject((Obj*)vm.frames[i].closure);
+  // Mark stack values (only if stack is initialized)
+  if (vm.stack != NULL && vm.stackTop != NULL) {
+    for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
+      markValue(*slot);
+    }
+  }
+
+  // Mark call frames (only if frames are initialized)
+  if (vm.frames != NULL) {
+    for (int i = 0; i < vm.frameCount; i++) {
+      markObject((Obj*)vm.frames[i].closure);
+    }
   }
 
   for (ObjUpvalue* upvalue = vm.openUpvalues; upvalue != NULL; upvalue = upvalue->next) {

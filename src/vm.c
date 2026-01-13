@@ -17,22 +17,8 @@
 
 VM vm;
 
-static void enterDirectMode() {
-  vm.currentFiber = NULL;
-
-  vm.stack = vm.mainStack;
-  vm.stackTop = vm.mainStack;
-  vm.stackCapacity = STACK_MAX;
-
-  vm.frames = vm.mainFrames;
-  vm.frameCount = 0;
-  vm.frameCapacity = FRAMES_MAX;
-
-  vm.openUpvalues = NULL;
-  vm.errorJmp = NULL;
-  vm.nonYieldableDepth = 0;
-  vm.shouldYield = false;
-}
+// Forward declarations
+inline static void closeUpvalues(Value* last);
 
 static void syncFromVM() {
   ObjFiber* f = vm.currentFiber;
@@ -176,7 +162,6 @@ static void runtimeError(const char* format, ...) {
   if (message == NULL) {
     // Worst case: print and bail.
     fputs("Error\n", stderr);
-    enterDirectMode();
     return;
   }
 
@@ -221,7 +206,32 @@ static void runtimeError(const char* format, ...) {
       fprintf(stderr, "%s()\n", function->name->chars);
     }
   }
-  enterDirectMode();
+
+  // Reset main fiber state after uncaught error (for REPL and repeated interpret() calls)
+  if (vm.mainFiber != NULL) {
+    vm.currentFiber = vm.mainFiber;
+    vm.stack = vm.mainFiber->stack;
+    vm.frames = (CallFrame*)vm.mainFiber->frames;
+    vm.stackCapacity = vm.mainFiber->stackCapacity;
+    vm.frameCapacity = vm.mainFiber->frameCapacity;
+    vm.openUpvalues = vm.mainFiber->openUpvalues;
+
+    // Close all open upvalues
+    if (vm.openUpvalues != NULL) {
+      closeUpvalues(vm.mainFiber->stack);
+      vm.mainFiber->openUpvalues = NULL;
+      vm.openUpvalues = NULL;
+    }
+
+    vm.mainFiber->stackTop = vm.mainFiber->stack;
+    vm.mainFiber->frameCount = 0;
+    vm.mainFiber->state = FIBER_RUNNING;
+
+    // Update VM registers to reflect reset state
+    vm.stackTop = vm.mainFiber->stack;
+    vm.frameCount = 0;
+    vm.nonYieldableDepth = 0;
+  }
 }
 
 static bool valueToInt64Exact(Value value, int64_t* out, const char* context) {
@@ -330,7 +340,9 @@ static bool installExportsIntoGlobals(Value exportsVal) {
 }
 
 void initVM() {
-  enterDirectMode();
+  // Phase 1: Initialize GC state (no allocations yet)
+  vm.currentFiber = NULL;
+  vm.mainFiber = NULL;
   vm.objects = NULL;
   vm.bytesAllocated = 0;
   vm.nextGC = 1024 * 1024;
@@ -344,9 +356,56 @@ void initVM() {
   vm.lastError = NIL_VAL;
   vm.errorJmp = NULL;
   vm.shouldYield = false;
+  vm.suppressGC = false;
+
+  // Initialize stack/frame pointers to NULL before any allocations
+  // (GC markRoots() checks for NULL before iterating)
+  vm.stack = NULL;
+  vm.stackTop = NULL;
+  vm.stackCapacity = 0;
+  vm.frames = NULL;
+  vm.frameCount = 0;
+  vm.frameCapacity = 0;
+  vm.openUpvalues = NULL;
+  vm.nonYieldableDepth = 0;
 
   initTable(&vm.globals);
   initTable(&vm.strings);
+
+  // Phase 2: Create main fiber (can trigger GC, safe after tables and stack initialized)
+  // Use same capacity as old direct mode to maintain behavior
+  vm.suppressGC = true;
+  ObjFiber* mainFiber = newFiber();
+
+  // Root immediately to prevent GC collection during subsequent allocations
+  vm.mainFiber = mainFiber;
+
+  // Grow to same capacity as old direct mode (FRAMES_MAX=1024, STACK_MAX=8192)
+  mainFiber->frames = (struct CallFrame*)reallocate(mainFiber->frames,
+                                                      sizeof(CallFrame) * mainFiber->frameCapacity,
+                                                      sizeof(CallFrame) * FRAMES_MAX);
+  mainFiber->frameCapacity = FRAMES_MAX;
+
+  mainFiber->stack = (Value*)reallocate(mainFiber->stack,
+                                         sizeof(Value) * mainFiber->stackCapacity,
+                                         sizeof(Value) * STACK_MAX);
+  mainFiber->stackTop = mainFiber->stack;  // Reset stackTop after realloc
+  mainFiber->stackCapacity = STACK_MAX;
+
+  mainFiber->state = FIBER_RUNNING;
+  mainFiber->caller = NULL;  // Root fiber
+
+  // Phase 3: Switch to main fiber
+  vm.currentFiber = mainFiber;
+  vm.stack = mainFiber->stack;
+  vm.stackTop = mainFiber->stackTop;
+  vm.stackCapacity = mainFiber->stackCapacity;
+  vm.frames = (CallFrame*)mainFiber->frames;
+  vm.frameCount = 0;
+  vm.frameCapacity = mainFiber->frameCapacity;
+  vm.openUpvalues = NULL;
+  vm.nonYieldableDepth = 0;
+  vm.suppressGC = false;
 
 #ifdef PROFILE_OPCODES
   for (int i = 0; i < 256; i++) {
@@ -595,6 +654,18 @@ static Value fiberResult(const char* tag, Value value, Value error) {
   return OBJ_VAL(out);
 }
 
+static ObjFiber* requireCallerOrAbort(ObjFiber* fiber, jmp_buf* prev, const char* message) {
+  ObjFiber* caller = fiber->caller;
+  fiber->caller = NULL;
+  if (caller == NULL) {
+    vm.errorJmp = prev;
+    fputs(message, stderr);
+    fputs("\n", stderr);
+    exit(70);
+  }
+  return caller;
+}
+
 // Fiber.create(fn) - creates a new fiber from a function
 static bool fiberCreateNative(int argCount, Value* args) {
   if (argCount != 1) {
@@ -628,12 +699,6 @@ static bool fiberResumeNative(int argCount, Value* args) {
     return false;
   }
 
-  // MVP: Disallow resuming from inside a fiber (no nested fiber calls)
-  if (vm.currentFiber != NULL) {
-    args[-1] = CSTRING_VAL("Error: Cannot call Fiber.resume from inside a fiber (nested fibers not supported yet).");
-    return false;
-  }
-
   Value fiberVal = args[0];
   if (!IS_FIBER(fiberVal)) {
     args[-1] = CSTRING_VAL("Error: Fiber.resume first argument must be a fiber.");
@@ -641,6 +706,11 @@ static bool fiberResumeNative(int argCount, Value* args) {
   }
 
   ObjFiber* fiber = AS_FIBER(fiberVal);
+
+  if (fiber == vm.currentFiber) {
+    args[-1] = CSTRING_VAL("Error: Cannot resume a running fiber.");
+    return false;
+  }
 
   // Check fiber state - API misuse should throw, not return error result
   if (fiber->state == FIBER_RUNNING) {
@@ -658,10 +728,8 @@ static bool fiberResumeNative(int argCount, Value* args) {
     return false;
   }
 
-  // Save current context before switching
-  int callerFrameCount = vm.frameCount;
-  Value* callerStackTop = vm.stackTop;
-  ObjUpvalue* callerOpenUpvalues = vm.openUpvalues;
+  // Set caller link for nested fibers (fiber-to-fiber switching)
+  fiber->caller = vm.currentFiber;
 
   // Set up error handler for fiber execution
   jmp_buf jb;
@@ -681,15 +749,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
       closeUpvalues(vm.stack);
     }
 
-    // Restore caller context (direct mode)
-    vm.currentFiber = NULL;
-    vm.stack = vm.mainStack;
-    vm.stackTop = callerStackTop;
-    vm.stackCapacity = STACK_MAX;
-    vm.frames = vm.mainFrames;
-    vm.frameCount = callerFrameCount;
-    vm.frameCapacity = FRAMES_MAX;
-    vm.openUpvalues = callerOpenUpvalues;
+    // Restore caller context (fiber-based)
+    ObjFiber* caller = requireCallerOrAbort(fiber, prev,
+                                            "Fatal: Fiber error with no caller (internal error).");
+    switchToFiber(caller);
     vm.errorJmp = prev;
 
     args[-1] = fiberResult("error", NIL_VAL, err);
@@ -710,14 +773,9 @@ static bool fiberResumeNative(int argCount, Value* args) {
       // Invariant violation: Fiber.create should have validated this
       // This is an internal consistency check (should never happen)
       // Restore caller context and throw (API misuse / precondition failure)
-      vm.currentFiber = NULL;
-      vm.stack = vm.mainStack;
-      vm.stackTop = callerStackTop;
-      vm.stackCapacity = STACK_MAX;
-      vm.frames = vm.mainFrames;
-      vm.frameCount = callerFrameCount;
-      vm.frameCapacity = FRAMES_MAX;
-      vm.openUpvalues = callerOpenUpvalues;
+      ObjFiber* caller = requireCallerOrAbort(fiber, prev,
+                                              "Fatal: Fiber invariant violation with no caller.");
+      switchToFiber(caller);
       vm.errorJmp = prev;
       args[-1] = CSTRING_VAL("Error: Fiber function is not a closure.");
       return false;
@@ -737,15 +795,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
       fiber->state = FIBER_ERROR;
       closeUpvalues(vm.stack);
 
-      // Restore caller context (don't use enterDirectMode - it corrupts saved state)
-      vm.currentFiber = NULL;
-      vm.stack = vm.mainStack;
-      vm.stackTop = callerStackTop;
-      vm.stackCapacity = STACK_MAX;
-      vm.frames = vm.mainFrames;
-      vm.frameCount = callerFrameCount;
-      vm.frameCapacity = FRAMES_MAX;
-      vm.openUpvalues = callerOpenUpvalues;
+      // Restore caller context (fiber-based)
+      ObjFiber* caller = requireCallerOrAbort(fiber, prev,
+                                              "Fatal: Fiber call failure with no caller.");
+      switchToFiber(caller);
       vm.errorJmp = prev;
 
       // Return error result (use lastError if set, or synthesize message)
@@ -758,15 +811,9 @@ static bool fiberResumeNative(int argCount, Value* args) {
     // (multi-value yield/resume not implemented yet)
     if (argCount > 2) {
       // API misuse - restore caller context and throw
-      // (don't use enterDirectMode - it corrupts saved state)
-      vm.currentFiber = NULL;
-      vm.stack = vm.mainStack;
-      vm.stackTop = callerStackTop;
-      vm.stackCapacity = STACK_MAX;
-      vm.frames = vm.mainFrames;
-      vm.frameCount = callerFrameCount;
-      vm.frameCapacity = FRAMES_MAX;
-      vm.openUpvalues = callerOpenUpvalues;
+      ObjFiber* caller = requireCallerOrAbort(fiber, prev,
+                                              "Fatal: Fiber API misuse with no caller.");
+      switchToFiber(caller);
       vm.errorJmp = prev;
       args[-1] = CSTRING_VAL("Error: Fiber.resume currently only supports 1 resume value for suspended fibers.");
       return false;
@@ -799,15 +846,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
       closeUpvalues(vm.stack);
     }
 
-    // Restore direct mode
-    vm.currentFiber = NULL;
-    vm.stack = vm.mainStack;
-    vm.stackTop = callerStackTop;
-    vm.stackCapacity = STACK_MAX;
-    vm.frames = vm.mainFrames;
-    vm.frameCount = callerFrameCount;
-    vm.frameCapacity = FRAMES_MAX;
-    vm.openUpvalues = callerOpenUpvalues;
+    // Restore caller context (fiber-based)
+    ObjFiber* caller = requireCallerOrAbort(fiber, prev,
+                                            "Fatal: Fiber execution error with no caller.");
+    switchToFiber(caller);
     vm.errorJmp = prev;
 
     args[-1] = fiberResult("error", NIL_VAL, err);
@@ -818,15 +860,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
   Value returnValue = vm.lastResult;
   FiberState finalState = fiber->state;
 
-  // Switch back to direct mode (restore original VM state)
-  vm.currentFiber = NULL;
-  vm.stack = vm.mainStack;
-  vm.stackTop = callerStackTop;
-  vm.stackCapacity = STACK_MAX;
-  vm.frames = vm.mainFrames;
-  vm.frameCount = callerFrameCount;
-  vm.frameCapacity = FRAMES_MAX;
-  vm.openUpvalues = callerOpenUpvalues;
+  // Switch back to caller fiber
+  ObjFiber* caller = requireCallerOrAbort(fiber, prev,
+                                          "Fatal: Fiber completion with no caller (internal error).");
+  switchToFiber(caller);
   vm.errorJmp = prev;
 
   // Return tagged result based on fiber state
@@ -850,6 +887,10 @@ static bool fiberYieldNative(int argCount, Value* args) {
   // Check that we're in a fiber
   if (!vm.currentFiber) {
     args[-1] = CSTRING_VAL("Error: Fiber.yield can only be called inside a fiber.");
+    return false;
+  }
+  if (vm.currentFiber == vm.mainFiber) {
+    args[-1] = CSTRING_VAL("Error: Fiber.yield cannot be used from the main fiber.");
     return false;
   }
 
@@ -896,6 +937,22 @@ static bool fiberStatusNative(int argCount, Value* args) {
   }
 
   args[-1] = CSTRING_VAL(statusStr);
+  return true;
+}
+
+// Fiber.current() - returns the currently running fiber
+static bool fiberCurrentNative(int argCount, Value* args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Fiber.current takes 0 arguments.");
+    return false;
+  }
+
+  if (vm.currentFiber == NULL) {
+    args[-1] = CSTRING_VAL("Error: No current fiber.");
+    return false;
+  }
+
+  args[-1] = OBJ_VAL(vm.currentFiber);
   return true;
 }
 
@@ -2428,6 +2485,10 @@ static InterpretResult runUntil(int stopFrameCount) {
           runtimeError("Cannot yield outside of a fiber.");
           return INTERPRET_RUNTIME_ERROR;
         }
+        if (vm.currentFiber == vm.mainFiber) {
+          runtimeError("Cannot yield from the main fiber.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
 
         // Validate: can't yield from non-yieldable context (native calls)
         if (vm.nonYieldableDepth > 0) {
@@ -2503,6 +2564,12 @@ static InterpretResult runUntil(int stopFrameCount) {
 InterpretResult interpret(uint8_t* obj) {
   ObjFunction* function = loadObj(obj, false);
   if (function == NULL) return INTERPRET_COMPILE_ERROR;
+
+  if (vm.currentFiber != NULL) {
+    // Loading embedded bytecode (e.g., globals) can leave main fiber marked DONE.
+    // Reset to RUNNING so user code executes with correct status.
+    vm.currentFiber->state = FIBER_RUNNING;
+  }
 
   push(OBJ_VAL(function));
   ObjClosure* closure = newClosure(function);

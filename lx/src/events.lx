@@ -1,0 +1,63 @@
+// Standardized event schema for fiber-based compilation.
+//
+// Events are yielded from compiler fibers to stream diagnostics, progress,
+// and other compilation information without threading callbacks through passes.
+
+// Event kinds (stable contract)
+let EventKind = enum {
+  PROGRESS,
+  DIAG,
+  DEPS,
+  DONE,
+  ERROR
+}
+
+// Diagnostic severity levels
+let Severity = enum {
+  ERROR,
+  WARNING,
+  INFO,
+  HINT
+}
+
+// Create a progress event.
+// - pass: name of the compiler pass (e.g., "parse", "resolve", "typecheck")
+// - phase: current phase within the pass (e.g., "walk", "analyze")
+// - done: number of items processed
+// - total: optional total number of items (for percentage calculation)
+fn progress(pass, phase, done, total) {
+  .{ kind: EventKind.PROGRESS, pass, phase, done, total }
+}
+
+// Create a diagnostic event.
+// - pass: name of the compiler pass that generated this diagnostic
+// - file: file path where the issue occurred
+// - range: source range map with line/column info (e.g., .{start: .{line, col}, end: .{line, col}})
+// - severity: diagnostic severity (use Severity enum)
+// - message: human-readable diagnostic message
+// - code: optional diagnostic code (e.g., "E001")
+fn diag(pass, file, range, severity, message, code) {
+  .{ kind: EventKind.DIAG, pass, file, range, severity, message, code }
+}
+
+// Create a dependency event.
+// - file: file that has dependencies
+// - deps: array of dependency file paths
+fn deps(file, dependencies) {
+  .{ kind: EventKind.DEPS, file, deps: dependencies }
+}
+
+// Create a completion event.
+// - result: the final compilation result
+fn done(result) {
+  .{ kind: EventKind.DONE, result }
+}
+
+// Create an error event.
+// - error: error message or error object
+fn error(err) {
+  .{ kind: EventKind.ERROR, error: err }
+}
+
+// Export enums and constructors
+.{ EventKind, Severity, progress, diag, deps, done, error }

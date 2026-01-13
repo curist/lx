@@ -1,0 +1,88 @@
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+let Events = import "src/events.lx"
+
+test("progress event has correct shape", fn(assert) {
+  let evt = Events.progress("parse", "walk", 10, 100)
+
+  assert.equal(evt.kind, Events.EventKind.PROGRESS, "kind should be PROGRESS")
+  assert.equal(evt.pass, "parse", "pass should be parse")
+  assert.equal(evt.phase, "walk", "phase should be walk")
+  assert.equal(evt.done, 10, "done should be 10")
+  assert.equal(evt.total, 100, "total should be 100")
+})
+
+test("progress event without total", fn(assert) {
+  let evt = Events.progress("resolve", "analyze", 5, nil)
+
+  assert.equal(evt.kind, Events.EventKind.PROGRESS, "kind should be PROGRESS")
+  assert.equal(evt.done, 5, "done should be 5")
+  assert.equal(evt.total, nil, "total should be nil")
+})
+
+test("diag event has correct shape", fn(assert) {
+  let range = .{
+    start: .{ line: 1, col: 5 },
+    end: .{ line: 1, col: 10 }
+  }
+  let evt = Events.diag("typecheck", "test.lx", range, Events.Severity.ERROR, "Type mismatch", "E001")
+
+  assert.equal(evt.kind, Events.EventKind.DIAG, "kind should be DIAG")
+  assert.equal(evt.pass, "typecheck", "pass should be typecheck")
+  assert.equal(evt.file, "test.lx", "file should be test.lx")
+  assert.equal(evt.severity, Events.Severity.ERROR, "severity should be ERROR")
+  assert.equal(evt.message, "Type mismatch", "message should match")
+  assert.equal(evt.code, "E001", "code should be E001")
+  assert.truthy(evt.range, "range should exist")
+})
+
+test("diag event without code", fn(assert) {
+  let range = .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 5 } }
+  let evt = Events.diag("parse", "test.lx", range, Events.Severity.WARNING, "Unused variable", nil)
+
+  assert.equal(evt.code, nil, "code should be nil")
+  assert.equal(evt.severity, Events.Severity.WARNING, "severity should be WARNING")
+})
+
+test("deps event has correct shape", fn(assert) {
+  let evt = Events.deps("main.lx", ["utils.lx", "parser.lx"])
+
+  assert.equal(evt.kind, Events.EventKind.DEPS, "kind should be DEPS")
+  assert.equal(evt.file, "main.lx", "file should be main.lx")
+  assert.equal(len(evt.deps), 2, "should have 2 dependencies")
+  assert.equal(evt.deps[0], "utils.lx", "first dep should be utils.lx")
+  assert.equal(evt.deps[1], "parser.lx", "second dep should be parser.lx")
+})
+
+test("done event has correct shape", fn(assert) {
+  let result = .{ bytecode: [1, 2, 3] }
+  let evt = Events.done(result)
+
+  assert.equal(evt.kind, Events.EventKind.DONE, "kind should be DONE")
+  assert.truthy(evt.result, "result should exist")
+  assert.equal(len(evt.result.bytecode), 3, "result should have bytecode")
+})
+
+test("error event has correct shape", fn(assert) {
+  let evt = Events.error("Unexpected token")
+
+  assert.equal(evt.kind, Events.EventKind.ERROR, "kind should be ERROR")
+  assert.equal(evt.error, "Unexpected token", "error should match")
+})
+
+test("all severity enum values exist", fn(assert) {
+  assert.truthy(Events.Severity.ERROR, "ERROR exists")
+  assert.truthy(Events.Severity.WARNING, "WARNING exists")
+  assert.truthy(Events.Severity.INFO, "INFO exists")
+  assert.truthy(Events.Severity.HINT, "HINT exists")
+})
+
+test("all event kind enum values exist", fn(assert) {
+  assert.truthy(Events.EventKind.PROGRESS, "PROGRESS exists")
+  assert.truthy(Events.EventKind.DIAG, "DIAG exists")
+  assert.truthy(Events.EventKind.DEPS, "DEPS exists")
+  assert.truthy(Events.EventKind.DONE, "DONE exists")
+  assert.truthy(Events.EventKind.ERROR, "ERROR exists")
+})
+
+suite.run()

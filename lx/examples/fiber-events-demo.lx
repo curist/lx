@@ -1,0 +1,71 @@
+// Demo: Using the event schema with fibers
+//
+// This example shows how a compiler pass might yield events
+// and how a driver would consume them.
+
+let Events = import "src/events.lx"
+
+// Simulated compiler pass that yields progress and diagnostic events
+fn mockCompilerPass(files) {
+  // Yield progress at the start
+  Fiber.yield(Events.progress("parse", "init", 0, len(files)))
+
+  for file, i in files {
+    // Simulate processing each file
+    Fiber.yield(Events.progress("parse", "walk", i + 1, len(files)))
+
+    // Simulate finding an error in some files
+    if contains(file, "bad") {
+      let range = .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 5 } }
+      Fiber.yield(Events.diag("parse", file, range, Events.Severity.ERROR, "Syntax error", nil))
+    }
+
+    // Simulate finding dependencies
+    if contains(file, "main") {
+      Fiber.yield(Events.deps(file, ["utils.lx", "types.lx"]))
+    }
+  }
+
+  // Return final result (this becomes a "return" tag in resume)
+  .{ success: true, filesProcessed: len(files) }
+}
+
+// Driver that consumes events from the fiber
+fn runWithDriver(files) {
+  println("=== Starting fiber-based compilation ===")
+
+  let fiber = Fiber.create(fn() {
+    mockCompilerPass(files)
+  })
+
+  let running = true
+  for running {
+    let result = Fiber.resume(fiber)
+
+    if result.tag == "yield" {
+      let event = result.value
+
+      // Handle different event kinds
+      if event.kind == Events.EventKind.PROGRESS {
+        println("[" + event.pass + "] Progress: " + str(event.done) + "/" + str(event.total))
+      } else if event.kind == Events.EventKind.DIAG {
+        let severityName = Events.Severity->nameOf(event.severity)
+        println("[" + event.pass + "] " + severityName + ": " + event.message + " in " + event.file)
+      } else if event.kind == Events.EventKind.DEPS {
+        println("[deps] " + event.file + " depends on: " + join(event.deps, ", "))
+      }
+    } else if result.tag == "return" {
+      println("\n=== Compilation complete ===")
+      println("Result:", str(result.value))
+      running = false
+    } else if result.tag == "error" {
+      println("\n=== Compilation failed ===")
+      println("Error:", result.error)
+      running = false
+    }
+  }
+}
+
+// Run the demo
+let testFiles = ["main.lx", "utils.lx", "bad-file.lx", "types.lx"]
+runWithDriver(testFiles)

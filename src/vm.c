@@ -68,6 +68,7 @@ static void syncFromVM() {
   f->frameCount = vm.frameCount;
   f->openUpvalues = vm.openUpvalues;
   f->lastError = vm.lastError;
+  f->nonYieldableDepth = vm.nonYieldableDepth;
 }
 
 __attribute__((unused))
@@ -87,6 +88,7 @@ static void switchToFiber(ObjFiber* f) {
 
   vm.openUpvalues = f->openUpvalues;
   vm.lastError = f->lastError;
+  vm.nonYieldableDepth = f->nonYieldableDepth;
 
   // Note: Error handler stack is per-fiber and switches automatically.
   // No need to clear anything - the handler lives in f->errorHandler.
@@ -267,6 +269,7 @@ static void runtimeError(const char* format, ...) {
     vm.mainFiber->stackTop = vm.mainFiber->stack;
     vm.mainFiber->frameCount = 0;
     vm.mainFiber->state = FIBER_RUNNING;
+    vm.mainFiber->nonYieldableDepth = 0;
 
     // Update VM registers to reflect reset state
     vm.stackTop = vm.mainFiber->stack;
@@ -770,7 +773,11 @@ static bool fiberResumeNative(int argCount, Value* args) {
   }
 
   // Set caller link for nested fibers (fiber-to-fiber switching)
-  fiber->caller = vm.currentFiber;
+  ObjFiber* callerFiber = vm.currentFiber;
+  if (callerFiber != NULL) {
+    callerFiber->state = FIBER_SUSPENDED;
+  }
+  fiber->caller = callerFiber;
 
   // Allocate scoped handler on C stack before switching
   ScopedErrorHandler scoped;
@@ -798,9 +805,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
     popErrorHandler(&scoped);
 
     // Switch back to caller
-    ObjFiber* caller = requireCallerOrAbort(fiber,
+    ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
                                             "Fatal: Fiber error with no caller.");
-    switchToFiber(caller);
+    switchToFiber(resumeCaller);
+    resumeCaller->state = FIBER_RUNNING;
 
     args[-1] = fiberResult("error", NIL_VAL, err);
     return true;
@@ -813,9 +821,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
     if (!IS_CLOSURE(fn)) {
       // Invariant violation: Fiber.create should have validated this
       popErrorHandler(&scoped);
-      ObjFiber* caller = requireCallerOrAbort(fiber,
+      ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
                                               "Fatal: Fiber invariant violation.");
-      switchToFiber(caller);
+      switchToFiber(resumeCaller);
+      resumeCaller->state = FIBER_RUNNING;
       args[-1] = CSTRING_VAL("Error: Fiber function is not a closure.");
       return false;
     }
@@ -834,9 +843,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
       closeUpvalues(vm.stack);
 
       popErrorHandler(&scoped);
-      ObjFiber* caller = requireCallerOrAbort(fiber,
+      ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
                                               "Fatal: Fiber call failure.");
-      switchToFiber(caller);
+      switchToFiber(resumeCaller);
+      resumeCaller->state = FIBER_RUNNING;
 
       // Return error result (use lastError if set, or synthesize message)
       Value err = IS_NIL(vm.lastError) ? CSTRING_VAL("Failed to call fiber function.") : vm.lastError;
@@ -849,9 +859,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
     if (argCount > 2) {
       // API misuse - restore caller context and throw
       popErrorHandler(&scoped);
-      ObjFiber* caller = requireCallerOrAbort(fiber,
+      ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
                                               "Fatal: Fiber API misuse.");
-      switchToFiber(caller);
+      switchToFiber(resumeCaller);
+      resumeCaller->state = FIBER_RUNNING;
       args[-1] = CSTRING_VAL("Error: Fiber.resume currently only supports 1 resume value for suspended fibers.");
       return false;
     }
@@ -882,9 +893,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
     }
 
     popErrorHandler(&scoped);
-    ObjFiber* caller = requireCallerOrAbort(fiber,
+    ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
                                             "Fatal: Fiber execution error.");
-    switchToFiber(caller);
+    switchToFiber(resumeCaller);
+    resumeCaller->state = FIBER_RUNNING;
 
     args[-1] = fiberResult("error", NIL_VAL, err);
     return true;
@@ -898,9 +910,10 @@ static bool fiberResumeNative(int argCount, Value* args) {
   popErrorHandler(&scoped);
 
   // Switch back to caller fiber
-  ObjFiber* caller = requireCallerOrAbort(fiber,
+  ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
                                           "Fatal: Fiber completion with no caller.");
-  switchToFiber(caller);
+  switchToFiber(resumeCaller);
+  resumeCaller->state = FIBER_RUNNING;
 
   // Return tagged result based on fiber state
   if (finalState == FIBER_SUSPENDED) {

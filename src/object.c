@@ -220,8 +220,8 @@ ObjArray* newArray() {
   return array;
 }
 
-#define INITIAL_FIBER_STACK_CAPACITY 64
-#define INITIAL_FIBER_FRAME_CAPACITY 8
+#define INITIAL_FIBER_STACK_CAPACITY STACK_MAX
+#define INITIAL_FIBER_FRAME_CAPACITY FRAMES_MAX
 
 ObjFiber* newFiber() {
   ObjFiber* fiber = ALLOCATE_OBJ(ObjFiber, OBJ_FIBER);
@@ -235,10 +235,14 @@ ObjFiber* newFiber() {
   fiber->frameCount = 0;
   fiber->frameCapacity = 0;
   fiber->openUpvalues = NULL;
+  fiber->nonYieldableDepth = 0;
   fiber->lastError = NIL_VAL;
   fiber->errorHandler = NULL;
   fiber->caller = NULL;
   fiber->cancelled = false;
+
+  bool prevSuppressGC = vm.suppressGC;
+  vm.suppressGC = true;
 
   // Now allocate stack (can trigger GC, but fiber is in safe state)
   fiber->stack = ALLOCATE(Value, INITIAL_FIBER_STACK_CAPACITY);
@@ -248,6 +252,8 @@ ObjFiber* newFiber() {
   // Allocate frames (can trigger GC, but fiber is in safe state)
   fiber->frames = (struct CallFrame*)ALLOCATE(CallFrame, INITIAL_FIBER_FRAME_CAPACITY);
   fiber->frameCapacity = INITIAL_FIBER_FRAME_CAPACITY;
+
+  vm.suppressGC = prevSuppressGC;
 
   return fiber;
 }

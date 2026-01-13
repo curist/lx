@@ -131,6 +131,7 @@ typedef struct ObjFiber {
   int frameCapacity;
 
   ObjUpvalue* openUpvalues;
+  int nonYieldableDepth;
 
   Value lastError;
   struct ErrorHandler* errorHandler;

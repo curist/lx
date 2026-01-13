@@ -283,6 +283,25 @@ test("Fiber.current inside fiber returns itself", fn(assert) {
   assert.truthy(observed == f)
 })
 
+test("caller suspended while child runs", fn(assert) {
+  let outerRef = nil
+  let inner = Fiber.create(fn() {
+    let status = Fiber.status(outerRef)
+    Fiber.yield(status)
+    "done"
+  })
+
+  let outer = Fiber.create(fn() {
+    outerRef = Fiber.current()
+    let r1 = Fiber.resume(inner)
+    r1.value
+  })
+
+  let r = Fiber.resume(outer)
+  assert.equal(r.tag, "return")
+  assert.equal(r.value, "suspended")
+})
+
 test("errored fiber stays errored after resume", fn(assert) {
   let f = Fiber.create(fn() {
     let x = nil
@@ -404,6 +423,25 @@ test("yield inside pcall is disallowed", fn(assert) {
   let r = Fiber.resume(f)
   assert.equal(r.tag, "return")
   assert.equal(r.value, false)  // pcall caught the yield error
+})
+
+test("yield across fibers is allowed inside pcall", fn(assert) {
+  let inner = Fiber.create(fn() {
+    Fiber.yield("inner")
+    "done"
+  })
+
+  let outer = Fiber.create(fn() {
+    let r = Lx.pcall(fn() {
+      let innerResult = Fiber.resume(inner)
+      innerResult.tag
+    })
+    r.ok and r.value
+  })
+
+  let r = Fiber.resume(outer)
+  assert.equal(r.tag, "return")
+  assert.equal(r.value, "yield")
 })
 
 test("deeply nested fibers with error handling", fn(assert) {

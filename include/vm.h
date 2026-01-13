@@ -43,6 +43,7 @@ typedef struct {
 
   // Yield support (for native Fiber.yield())
   bool shouldYield;
+  bool haltRequested;
 
   // VM-global result (not per-fiber)
   Value lastResult;

@@ -275,6 +275,7 @@ static void runtimeError(const char* format, ...) {
     vm.stackTop = vm.mainFiber->stack;
     vm.frameCount = 0;
     vm.nonYieldableDepth = 0;
+    vm.haltRequested = false;
   }
 }
 
@@ -399,6 +400,7 @@ void initVM() {
   vm.lastResult = NIL_VAL;
   vm.lastError = NIL_VAL;
   vm.shouldYield = false;
+  vm.haltRequested = false;
   // Initialize stack/frame pointers to NULL before any allocations
   // (GC markRoots() checks for NULL before iterating)
   vm.stack = NULL;
@@ -561,6 +563,7 @@ static bool callValue(Value callee, int argCount) {
           // Check if native function requested a yield (Fiber.yield)
           if (vm.shouldYield) {
             vm.shouldYield = false;
+            vm.haltRequested = true;
 
             // The yielded value is already on the stack (result of native call)
             Value yieldedValue = *stackBase;
@@ -1271,7 +1274,8 @@ static InterpretResult runUntil(int stopFrameCount) {
   } while (false)
 
   for (;;) {
-    if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
+    if (UNLIKELY(vm.haltRequested)) {
+      vm.haltRequested = false;
       return INTERPRET_OK;
     }
     op = READ_BYTE();
@@ -2578,6 +2582,7 @@ static InterpretResult runUntil(int stopFrameCount) {
 
         // Transition fiber to SUSPENDED state
         vm.currentFiber->state = FIBER_SUSPENDED;
+        vm.haltRequested = true;
 
         // Return to caller (fiberResume will handle switching back)
         return INTERPRET_OK;

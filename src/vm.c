@@ -443,6 +443,12 @@ void initVM() {
   vm.openUpvalues = NULL;
   vm.nonYieldableDepth = 0;
 
+  if (vm.stack == bootstrapStack) {
+    vm.stack = NULL;
+    vm.stackTop = NULL;
+    vm.stackCapacity = 0;
+  }
+
   // Drop bootstrap stack now that main fiber is active
   FREE_ARRAY(Value, bootstrapStack, bootstrapCapacity);
 
@@ -874,6 +880,9 @@ static bool fiberResumeNative(int argCount, Value* args) {
   }
 
   fiber->state = FIBER_RUNNING;
+
+  // Ensure the halt flag is clear before executing bytecode.
+  vm.haltRequested = false;
 
   // Run the fiber until it yields, returns, or errors
   InterpretResult result = runUntil(0);

@@ -1837,12 +1837,6 @@ static InterpretResult runUntil(int stopFrameCount) {
           return INTERPRET_RUNTIME_ERROR;
         }
 
-        // Check if a yield occurred during the call (from Fiber.yield native)
-        if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
-          // Fiber yielded, exit runUntil
-          return INTERPRET_OK;
-        }
-
         frame = &vm.frames[vm.frameCount - 1];
         closure = frame->closure;
         slots = frame->slots;
@@ -1868,11 +1862,6 @@ static InterpretResult runUntil(int stopFrameCount) {
           }
         }
 
-        // Check if a yield occurred during the call
-        if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
-          return INTERPRET_OK;
-        }
-
         frame = &vm.frames[vm.frameCount - 1];
         closure = frame->closure;
         slots = frame->slots;
@@ -1889,11 +1878,6 @@ static InterpretResult runUntil(int stopFrameCount) {
 
         if (!call(callee, argCount)) {
           return INTERPRET_RUNTIME_ERROR;
-        }
-
-        // Check if a yield occurred during the call
-        if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
-          return INTERPRET_OK;
         }
 
         frame = &vm.frames[vm.frameCount - 1];

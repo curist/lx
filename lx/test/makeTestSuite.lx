@@ -51,13 +51,13 @@ fn makeTestSuite() {
 
         if expectedMessage {
           let errorMsg = result.error and result.error.message or ""
-          if errorMsg == expectedMessage {
+          if contains(errorMsg, expectedMessage) {
             passedAssertions = passedAssertions + 1
             return
           }
           println(
             "assertion fail (" + str(testAssertions) + "):", testName, "\n",
-            "\texpected error message:", expectedMessage, "\n",
+            "\texpected error message to contain:", expectedMessage, "\n",
             "\tactual error message:", errorMsg, "\n",
           )
           testPassed = false

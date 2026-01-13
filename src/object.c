@@ -220,6 +220,47 @@ ObjArray* newArray() {
   return array;
 }
 
+#define INITIAL_FIBER_STACK_CAPACITY STACK_MAX
+#define INITIAL_FIBER_FRAME_CAPACITY FRAMES_MAX
+
+ObjFiber* newFiber() {
+  ObjFiber* fiber = ALLOCATE_OBJ(ObjFiber, OBJ_FIBER);
+
+  // Initialize all fields to safe defaults (GC-safe)
+  fiber->state = FIBER_NEW;
+  fiber->stack = NULL;
+  fiber->stackTop = NULL;
+  fiber->stackCapacity = 0;
+  fiber->frames = NULL;
+  fiber->frameCount = 0;
+  fiber->frameCapacity = 0;
+  fiber->openUpvalues = NULL;
+  fiber->nonYieldableDepth = 0;
+  fiber->lastError = NIL_VAL;
+  fiber->errorHandler = NULL;
+  fiber->caller = NULL;
+  fiber->cancelled = false;
+
+  if (vm.stack != NULL && vm.stackTop != NULL) {
+    push(OBJ_VAL(fiber));
+  }
+
+  // Now allocate stack (can trigger GC, but fiber is in safe state)
+  fiber->stack = ALLOCATE(Value, INITIAL_FIBER_STACK_CAPACITY);
+  fiber->stackTop = fiber->stack;
+  fiber->stackCapacity = INITIAL_FIBER_STACK_CAPACITY;
+
+  // Allocate frames (can trigger GC, but fiber is in safe state)
+  fiber->frames = (struct CallFrame*)ALLOCATE(CallFrame, INITIAL_FIBER_FRAME_CAPACITY);
+  fiber->frameCapacity = INITIAL_FIBER_FRAME_CAPACITY;
+
+  if (vm.stack != NULL && vm.stackTop != NULL) {
+    pop();
+  }
+
+  return fiber;
+}
+
 void printObject(FILE* fd, Value value) {
   Writer writer = writerForFile(fd);
   writeObject(&writer, value);
@@ -313,6 +354,22 @@ void writeObject(Writer* writer, Value value) {
           writeValue(writer, values->values[i]);
         }
         writerWrite(writer, "]", 1);
+        break;
+      }
+    case OBJ_FIBER:
+      {
+        ObjFiber* fiber = AS_FIBER(value);
+        const char* stateStr = "unknown";
+        switch (fiber->state) {
+          case FIBER_NEW: stateStr = "new"; break;
+          case FIBER_RUNNING: stateStr = "running"; break;
+          case FIBER_SUSPENDED: stateStr = "suspended"; break;
+          case FIBER_DONE: stateStr = "done"; break;
+          case FIBER_ERROR: stateStr = "error"; break;
+        }
+        int stackCount = (int)(fiber->stackTop - fiber->stack);
+        writerPrintf(writer, "<fiber %p state=%s stack=%d frames=%d>",
+                     (void*)fiber, stateStr, stackCount, fiber->frameCount);
         break;
       }
   }

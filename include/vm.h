@@ -10,6 +10,12 @@
 #define FRAMES_MAX 1024
 #define STACK_MAX (FRAMES_MAX * UINT8_COUNT)
 
+// Per-fiber error handler stack for nested error boundaries (pcall, fiber.resume)
+typedef struct ErrorHandler {
+  jmp_buf buf;                    // longjmp target for error unwinding
+  struct ErrorHandler* prev;      // previous handler in stack (NULL at bottom)
+} ErrorHandler;
+
 typedef struct {
   ObjClosure* closure;
   uint8_t* ip;
@@ -17,19 +23,36 @@ typedef struct {
 } CallFrame;
 
 typedef struct {
-  CallFrame frames[FRAMES_MAX];
-  int frameCount;
+  // Fiber context
+  ObjFiber* currentFiber;
+  ObjFiber* mainFiber;  // Main execution fiber (root of caller chain)
 
-  Value stack[STACK_MAX];
+  // Execution registers (pointers to either fiber or direct-mode storage)
+  Value* stack;
   Value* stackTop;
-  Value lastResult;
-  Value lastError;
-  jmp_buf* errorJmp;
+  int stackCapacity;
 
-  Table globals;
-  Table strings;
+  CallFrame* frames;
+  int frameCount;
+  int frameCapacity;
+
   ObjUpvalue* openUpvalues;
 
+  Value lastError;
+  int nonYieldableDepth;
+
+  // Yield support (for native Fiber.yield())
+  bool shouldYield;
+  bool haltRequested;
+
+  // VM-global result (not per-fiber)
+  Value lastResult;
+
+  // Global tables
+  Table globals;
+  Table strings;
+
+  // GC state
   size_t bytesAllocated;
   size_t nextGC;
   Obj* objects;

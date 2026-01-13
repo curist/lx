@@ -335,6 +335,8 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return forLoopInstruction("OP_FORPREP", 1, chunk, offset);
     case OP_FORLOOP:
       return forLoopInstruction("OP_FORLOOP", -1, chunk, offset);
+    case OP_YIELD:
+      return byteInstruction("OP_YIELD", chunk, offset);
     case OP_RETURN:
       return simpleInstruction("OP_RETURN", offset);
     default:

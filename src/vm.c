@@ -17,10 +17,81 @@
 
 VM vm;
 
-static void resetStack() {
-  vm.stackTop = vm.stack;
-  vm.frameCount = 0;
-  vm.openUpvalues = NULL;
+// Forward declarations
+inline static void closeUpvalues(Value* last);
+
+// ============================================================================
+// Per-Fiber Error Handling
+// ============================================================================
+
+// Helper to safely manage error handlers across fiber switches
+typedef struct {
+  ObjFiber* fiber;        // Fiber that owns this handler (captured on push)
+  ErrorHandler handler;   // The handler itself (includes jmp_buf)
+} ScopedErrorHandler;
+
+// Push handler onto a specific fiber's stack
+static inline void pushErrorHandler(ScopedErrorHandler* scoped, ObjFiber* fiber) {
+  if (fiber == NULL) {
+    fputs("Fatal: pushErrorHandler requires a valid fiber\n", stderr);
+    exit(70);
+  }
+  scoped->fiber = fiber;
+  scoped->handler.prev = fiber->errorHandler;
+  fiber->errorHandler = &scoped->handler;
+}
+
+// Pop handler from the fiber it was pushed on (safe even after switches)
+static inline void popErrorHandler(ScopedErrorHandler* scoped) {
+  if (scoped->fiber == NULL) {
+    fputs("Fatal: popErrorHandler - fiber is NULL\n", stderr);
+    exit(70);
+  }
+  if (scoped->fiber->errorHandler == NULL) {
+    fputs("Fatal: popErrorHandler - handler stack underflow\n", stderr);
+    exit(70);
+  }
+  scoped->fiber->errorHandler = scoped->handler.prev;
+}
+
+// Macro for getting current handler, safe if currentFiber is NULL
+#define CURRENT_ERROR_HANDLER() \
+  (vm.currentFiber ? vm.currentFiber->errorHandler : NULL)
+
+// ============================================================================
+
+static void syncFromVM() {
+  ObjFiber* f = vm.currentFiber;
+  if (!f) return;
+
+  f->stackTop = vm.stackTop;
+  f->frameCount = vm.frameCount;
+  f->openUpvalues = vm.openUpvalues;
+  f->lastError = vm.lastError;
+  f->nonYieldableDepth = vm.nonYieldableDepth;
+}
+
+__attribute__((unused))
+static void switchToFiber(ObjFiber* f) {
+  // Save outgoing context
+  syncFromVM();
+
+  vm.currentFiber = f;
+
+  vm.stack = f->stack;
+  vm.stackTop = f->stackTop;
+  vm.stackCapacity = f->stackCapacity;
+
+  vm.frames = (CallFrame*)f->frames;
+  vm.frameCount = f->frameCount;
+  vm.frameCapacity = f->frameCapacity;
+
+  vm.openUpvalues = f->openUpvalues;
+  vm.lastError = f->lastError;
+  vm.nonYieldableDepth = f->nonYieldableDepth;
+
+  // Note: Error handler stack is per-fiber and switches automatically.
+  // No need to clear anything - the handler lives in f->errorHandler.
 }
 
 static Value buildRuntimeErrorValue(const char* message) {
@@ -132,16 +203,17 @@ static void runtimeError(const char* format, ...) {
   if (message == NULL) {
     // Worst case: print and bail.
     fputs("Error\n", stderr);
-    resetStack();
     return;
   }
 
-  // Protected mode: capture structured error and abort back to the protected
-  // boundary. The caller is responsible for restoring VM state.
-  if (vm.errorJmp != NULL) {
+  // Per-fiber error handling: check if current fiber has an error boundary.
+  // Note: This only runs when vm.currentFiber is valid (after mainFiber setup).
+  // Early init errors before mainFiber allocation will fall through to fatal path.
+  ErrorHandler* handler = CURRENT_ERROR_HANDLER();
+  if (handler != NULL) {
     vm.lastError = buildRuntimeErrorValue(message);
     free(message);
-    longjmp(*vm.errorJmp, 1);
+    longjmp(handler->buf, 1);
   }
 
   // Default mode: print like before.
@@ -177,7 +249,34 @@ static void runtimeError(const char* format, ...) {
       fprintf(stderr, "%s()\n", function->name->chars);
     }
   }
-  resetStack();
+
+  // Reset main fiber state after uncaught error (for REPL and repeated interpret() calls)
+  if (vm.mainFiber != NULL) {
+    vm.currentFiber = vm.mainFiber;
+    vm.stack = vm.mainFiber->stack;
+    vm.frames = (CallFrame*)vm.mainFiber->frames;
+    vm.stackCapacity = vm.mainFiber->stackCapacity;
+    vm.frameCapacity = vm.mainFiber->frameCapacity;
+    vm.openUpvalues = vm.mainFiber->openUpvalues;
+
+    // Close all open upvalues
+    if (vm.openUpvalues != NULL) {
+      closeUpvalues(vm.mainFiber->stack);
+      vm.mainFiber->openUpvalues = NULL;
+      vm.openUpvalues = NULL;
+    }
+
+    vm.mainFiber->stackTop = vm.mainFiber->stack;
+    vm.mainFiber->frameCount = 0;
+    vm.mainFiber->state = FIBER_RUNNING;
+    vm.mainFiber->nonYieldableDepth = 0;
+
+    // Update VM registers to reflect reset state
+    vm.stackTop = vm.mainFiber->stack;
+    vm.frameCount = 0;
+    vm.nonYieldableDepth = 0;
+    vm.haltRequested = false;
+  }
 }
 
 static bool valueToInt64Exact(Value value, int64_t* out, const char* context) {
@@ -286,7 +385,9 @@ static bool installExportsIntoGlobals(Value exportsVal) {
 }
 
 void initVM() {
-  resetStack();
+  // Phase 1: Initialize GC state (no allocations yet)
+  vm.currentFiber = NULL;
+  vm.mainFiber = NULL;
   vm.objects = NULL;
   vm.bytesAllocated = 0;
   vm.nextGC = 1024 * 1024;
@@ -298,10 +399,58 @@ void initVM() {
 
   vm.lastResult = NIL_VAL;
   vm.lastError = NIL_VAL;
-  vm.errorJmp = NULL;
+  vm.shouldYield = false;
+  vm.haltRequested = false;
+  // Initialize stack/frame pointers to NULL before any allocations
+  // (GC markRoots() checks for NULL before iterating)
+  vm.stack = NULL;
+  vm.stackTop = NULL;
+  vm.stackCapacity = 0;
+  vm.frames = NULL;
+  vm.frameCount = 0;
+  vm.frameCapacity = 0;
+  vm.openUpvalues = NULL;
+  vm.nonYieldableDepth = 0;
 
   initTable(&vm.globals);
   initTable(&vm.strings);
+
+  // Bootstrap stack for rooting during VM init
+  int bootstrapCapacity = 1;
+  Value* bootstrapStack = ALLOCATE(Value, bootstrapCapacity);
+  vm.stack = bootstrapStack;
+  vm.stackTop = vm.stack;
+  vm.stackCapacity = bootstrapCapacity;
+
+  // Phase 2: Create main fiber (can trigger GC, safe after tables and stack initialized)
+  // Use same capacity as old direct mode to maintain behavior
+  ObjFiber* mainFiber = newFiber();
+
+  // Root immediately to prevent GC collection during subsequent allocations
+  vm.mainFiber = mainFiber;
+
+  mainFiber->state = FIBER_RUNNING;
+  mainFiber->caller = NULL;  // Root fiber
+
+  // Phase 3: Switch to main fiber
+  vm.currentFiber = mainFiber;
+  vm.stack = mainFiber->stack;
+  vm.stackTop = mainFiber->stackTop;
+  vm.stackCapacity = mainFiber->stackCapacity;
+  vm.frames = (CallFrame*)mainFiber->frames;
+  vm.frameCount = 0;
+  vm.frameCapacity = mainFiber->frameCapacity;
+  vm.openUpvalues = NULL;
+  vm.nonYieldableDepth = 0;
+
+  if (vm.stack == bootstrapStack) {
+    vm.stack = NULL;
+    vm.stackTop = NULL;
+    vm.stackCapacity = 0;
+  }
+
+  // Drop bootstrap stack now that main fiber is active
+  FREE_ARRAY(Value, bootstrapStack, bootstrapCapacity);
 
 #ifdef PROFILE_OPCODES
   for (int i = 0; i < 256; i++) {
@@ -368,7 +517,7 @@ void freeVM() {
 static bool call(ObjClosure* closure, int argCount) {
   int arity = closure->function->arity;
 
-  if (vm.frameCount == FRAMES_MAX) {
+  if (vm.frameCount >= vm.frameCapacity) {
     runtimeError("Stack overflow.");
     return false;
   }
@@ -416,6 +565,31 @@ static bool callValue(Value callee, int argCount) {
           // Result is now at stackBase (callee slot)
           // Set stackTop to callee+1 (pop callee+args, leave 1 result)
           vm.stackTop = stackBase + 1;
+
+          // Check if native function requested a yield (Fiber.yield)
+          if (vm.shouldYield) {
+            vm.shouldYield = false;
+            vm.haltRequested = true;
+
+            // The yielded value is already on the stack (result of native call)
+            Value yieldedValue = *stackBase;
+            vm.lastResult = yieldedValue;
+
+            // Pop the result from stack
+            vm.stackTop = stackBase;
+
+            // Save current state to fiber
+            syncFromVM();
+
+            // Transition fiber to SUSPENDED state
+            if (vm.currentFiber) {
+              vm.currentFiber->state = FIBER_SUSPENDED;
+            }
+
+            // This will cause the OP_CALL to complete, then runUntil returns
+            // The caller (fiberResume) will see fiber state = SUSPENDED
+          }
+
           return true;
         } else {
           // Error message is in callee slot (stackBase)
@@ -432,7 +606,7 @@ static bool callValue(Value callee, int argCount) {
 }
 
 static inline bool insertCalleeBelowArgs(Value callee, int argCount) {
-  if (vm.stackTop >= vm.stack + STACK_MAX) {
+  if ((vm.stackTop - vm.stack) >= vm.stackCapacity) {
     runtimeError("Stack overflow.");
     return false;
   }
@@ -499,9 +673,353 @@ static Value pcallResult(bool ok, Value value, Value error) {
   return OBJ_VAL(out);
 }
 
+// Fiber.resume result builder - tagged union for yield/return/error
+// Returns: {tag: "yield"|"return"|"error", value: ..., error: ...}
+// Note: 'value' will become 'values' array when multi-value yield/resume is added
+static Value fiberResult(const char* tag, Value value, Value error) {
+  ObjHashmap* out = newHashmap();
+  push(OBJ_VAL(out));
+
+  ObjString* tagKey = COPY_CSTRING("tag");
+  push(OBJ_VAL(tagKey));
+  ObjString* tagVal = COPY_CSTRING(tag);
+  push(OBJ_VAL(tagVal));
+  tableSet(&out->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  if (!IS_NIL(value)) {
+    pcallSetField(out, "value", value);
+  }
+
+  if (!IS_NIL(error)) {
+    pcallSetField(out, "error", error);
+  }
+
+  pop();
+  return OBJ_VAL(out);
+}
+
+// Get and clear fiber->caller, aborting if NULL (invariant violation)
+static ObjFiber* requireCallerOrAbort(ObjFiber* fiber, const char* message) {
+  ObjFiber* caller = fiber->caller;
+  fiber->caller = NULL;
+  if (caller == NULL) {
+    // Fatal invariant violation - no caller to return control to
+    fputs(message, stderr);
+    fputs("\n", stderr);
+    exit(70);
+  }
+  return caller;
+}
+
+// Fiber.create(fn) - creates a new fiber from a function
+static bool fiberCreateNative(int argCount, Value* args) {
+  if (argCount != 1) {
+    args[-1] = CSTRING_VAL("Error: Fiber.create takes exactly 1 argument (function).");
+    return false;
+  }
+
+  Value fn = args[0];
+  if (!IS_CLOSURE(fn)) {
+    args[-1] = CSTRING_VAL("Error: Fiber.create argument must be a function.");
+    return false;
+  }
+
+  // Create new fiber
+  ObjFiber* fiber = newFiber();
+  fiber->state = FIBER_NEW;
+
+  // Store the function to be called when fiber is first resumed
+  // We'll set up the call frame in fiberResumeNative
+  fiber->stack[0] = fn;
+  fiber->stackTop = fiber->stack + 1;
+
+  args[-1] = OBJ_VAL(fiber);
+  return true;
+}
+
+// Fiber.resume(fiber, ...args) - resumes a suspended or new fiber
+static bool fiberResumeNative(int argCount, Value* args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Fiber.resume takes at least 1 argument (fiber).");
+    return false;
+  }
+
+  Value fiberVal = args[0];
+  if (!IS_FIBER(fiberVal)) {
+    args[-1] = CSTRING_VAL("Error: Fiber.resume first argument must be a fiber.");
+    return false;
+  }
+
+  ObjFiber* fiber = AS_FIBER(fiberVal);
+
+  if (fiber == vm.currentFiber) {
+    args[-1] = CSTRING_VAL("Error: Cannot resume a running fiber.");
+    return false;
+  }
+
+  // Check fiber state - API misuse should throw, not return error result
+  if (fiber->state == FIBER_RUNNING) {
+    args[-1] = CSTRING_VAL("Error: Cannot resume a running fiber.");
+    return false;
+  }
+
+  if (fiber->state == FIBER_DONE) {
+    args[-1] = CSTRING_VAL("Error: Cannot resume a completed fiber.");
+    return false;
+  }
+
+  if (fiber->state == FIBER_ERROR) {
+    args[-1] = CSTRING_VAL("Error: Cannot resume a fiber that errored.");
+    return false;
+  }
+
+  // Set caller link for nested fibers (fiber-to-fiber switching)
+  ObjFiber* callerFiber = vm.currentFiber;
+  if (callerFiber != NULL) {
+    callerFiber->state = FIBER_SUSPENDED;
+  }
+  fiber->caller = callerFiber;
+
+  // Allocate scoped handler on C stack before switching
+  ScopedErrorHandler scoped;
+
+  // Switch to the resumed fiber FIRST
+  switchToFiber(fiber);
+
+  // NOW push handler on the RESUMED fiber's stack
+  // (minimal window - only pushErrorHandler can error here, which is a fatal assertion)
+  pushErrorHandler(&scoped, fiber);
+  vm.lastError = NIL_VAL;
+
+  int jumped = setjmp(scoped.handler.buf);
+  if (jumped != 0) {
+    // Error occurred in resumed fiber
+    Value err = vm.lastError;
+
+    // Mark fiber as errored and close its upvalues
+    if (vm.currentFiber) {
+      vm.currentFiber->state = FIBER_ERROR;
+      closeUpvalues(vm.stack);
+    }
+
+    // Pop handler from resumed fiber BEFORE switching back
+    popErrorHandler(&scoped);
+
+    // Switch back to caller
+    ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
+                                            "Fatal: Fiber error with no caller.");
+    switchToFiber(resumeCaller);
+    resumeCaller->state = FIBER_RUNNING;
+
+    args[-1] = fiberResult("error", NIL_VAL, err);
+    return true;
+  }
+
+  // Handle NEW fiber: set up the initial call frame
+  if (fiber->state == FIBER_NEW) {
+    // Stack should have [closure] at position 0
+    Value fn = vm.stack[0];
+    if (!IS_CLOSURE(fn)) {
+      // Invariant violation: Fiber.create should have validated this
+      popErrorHandler(&scoped);
+      ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
+                                              "Fatal: Fiber invariant violation.");
+      switchToFiber(resumeCaller);
+      resumeCaller->state = FIBER_RUNNING;
+      args[-1] = CSTRING_VAL("Error: Fiber function is not a closure.");
+      return false;
+    }
+
+    ObjClosure* closure = AS_CLOSURE(fn);
+
+    // Push any resume arguments after the closure
+    for (int i = 1; i < argCount; i++) {
+      push(args[i]);
+    }
+
+    // Set up the call frame
+    if (!call(closure, argCount - 1)) {
+      // call() failed (e.g., stack overflow) - treat as fiber execution error
+      fiber->state = FIBER_ERROR;
+      closeUpvalues(vm.stack);
+
+      popErrorHandler(&scoped);
+      ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
+                                              "Fatal: Fiber call failure.");
+      switchToFiber(resumeCaller);
+      resumeCaller->state = FIBER_RUNNING;
+
+      // Return error result (use lastError if set, or synthesize message)
+      Value err = IS_NIL(vm.lastError) ? CSTRING_VAL("Failed to call fiber function.") : vm.lastError;
+      args[-1] = fiberResult("error", NIL_VAL, err);
+      return true;
+    }
+  } else if (fiber->state == FIBER_SUSPENDED) {
+    // MVP: Only support single-value resume for suspended fibers
+    // (multi-value yield/resume not implemented yet)
+    if (argCount > 2) {
+      // API misuse - restore caller context and throw
+      popErrorHandler(&scoped);
+      ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
+                                              "Fatal: Fiber API misuse.");
+      switchToFiber(resumeCaller);
+      resumeCaller->state = FIBER_RUNNING;
+      args[-1] = CSTRING_VAL("Error: Fiber.resume currently only supports 1 resume value for suspended fibers.");
+      return false;
+    }
+
+    // Push resume value for suspended fiber (becomes return value of Fiber.yield())
+    // If no value provided, push nil
+    if (argCount >= 2) {
+      push(args[1]);
+    } else {
+      push(NIL_VAL);
+    }
+  }
+
+  fiber->state = FIBER_RUNNING;
+
+  // Ensure the halt flag is clear before executing bytecode.
+  vm.haltRequested = false;
+
+  // Run the fiber until it yields, returns, or errors
+  InterpretResult result = runUntil(0);
+
+  // Check result
+  if (result != INTERPRET_OK) {
+    // Shouldn't reach here (setjmp should catch), but handle gracefully
+    Value err = vm.lastError;
+
+    // Mark fiber as errored and close its upvalues
+    if (vm.currentFiber) {
+      vm.currentFiber->state = FIBER_ERROR;
+      closeUpvalues(vm.stack);
+    }
+
+    popErrorHandler(&scoped);
+    ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
+                                            "Fatal: Fiber execution error.");
+    switchToFiber(resumeCaller);
+    resumeCaller->state = FIBER_RUNNING;
+
+    args[-1] = fiberResult("error", NIL_VAL, err);
+    return true;
+  }
+
+  // Success path - fiber yielded or completed
+  Value returnValue = vm.lastResult;
+  FiberState finalState = fiber->state;
+
+  // Pop handler BEFORE switching back
+  popErrorHandler(&scoped);
+
+  // Switch back to caller fiber
+  ObjFiber* resumeCaller = requireCallerOrAbort(fiber,
+                                          "Fatal: Fiber completion with no caller.");
+  switchToFiber(resumeCaller);
+  resumeCaller->state = FIBER_RUNNING;
+
+  // Return tagged result based on fiber state
+  if (finalState == FIBER_SUSPENDED) {
+    // Yielded - return {tag: "yield", value: ...}
+    args[-1] = fiberResult("yield", returnValue, NIL_VAL);
+  } else if (finalState == FIBER_DONE) {
+    // Completed - return {tag: "return", value: ...}
+    args[-1] = fiberResult("return", returnValue, NIL_VAL);
+  } else {
+    // Unexpected state - API invariant violation, should throw
+    args[-1] = CSTRING_VAL("Error: Fiber in unexpected state after execution.");
+    return false;
+  }
+
+  return true;
+}
+
+// Fiber.yield(value) - yields from current fiber
+static bool fiberYieldNative(int argCount, Value* args) {
+  // Check that we're in a fiber
+  if (!vm.currentFiber) {
+    args[-1] = CSTRING_VAL("Error: Fiber.yield can only be called inside a fiber.");
+    return false;
+  }
+  if (vm.currentFiber == vm.mainFiber) {
+    args[-1] = CSTRING_VAL("Error: Fiber.yield cannot be used from the main fiber.");
+    return false;
+  }
+
+  // Check non-yieldable depth (e.g., inside pcall or other non-yieldable contexts)
+  if (vm.nonYieldableDepth > 0) {
+    args[-1] = CSTRING_VAL("Error: Cannot yield from non-yieldable context.");
+    return false;
+  }
+
+  // Get yielded value (default to nil if no args)
+  Value yieldedValue = (argCount > 0) ? args[0] : NIL_VAL;
+
+  // Set yield flag for runUntil() to handle after this native returns
+  vm.shouldYield = true;
+
+  // Store the yielded value
+  args[-1] = yieldedValue;
+  return true;
+}
+
+// Fiber.status(fiber) - returns fiber state as string
+static bool fiberStatusNative(int argCount, Value* args) {
+  if (argCount != 1) {
+    args[-1] = CSTRING_VAL("Error: Fiber.status takes exactly 1 argument (fiber).");
+    return false;
+  }
+
+  Value fiberVal = args[0];
+  if (!IS_FIBER(fiberVal)) {
+    args[-1] = CSTRING_VAL("Error: Fiber.status argument must be a fiber.");
+    return false;
+  }
+
+  ObjFiber* fiber = AS_FIBER(fiberVal);
+
+  const char* statusStr;
+  switch (fiber->state) {
+    case FIBER_NEW:       statusStr = "new"; break;
+    case FIBER_RUNNING:   statusStr = "running"; break;
+    case FIBER_SUSPENDED: statusStr = "suspended"; break;
+    case FIBER_DONE:      statusStr = "done"; break;
+    case FIBER_ERROR:     statusStr = "error"; break;
+    default:              statusStr = "unknown"; break;
+  }
+
+  args[-1] = CSTRING_VAL(statusStr);
+  return true;
+}
+
+// Fiber.current() - returns the currently running fiber
+static bool fiberCurrentNative(int argCount, Value* args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Fiber.current takes 0 arguments.");
+    return false;
+  }
+
+  if (vm.currentFiber == NULL) {
+    args[-1] = CSTRING_VAL("Error: No current fiber.");
+    return false;
+  }
+
+  args[-1] = OBJ_VAL(vm.currentFiber);
+  return true;
+}
+
 static bool pcallNative(int argCount, Value* args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Lx.pcall takes at least 1 arg (fn).");
+    return false;
+  }
+
+  // Guard: pcall requires a valid fiber context
+  if (vm.currentFiber == NULL) {
+    args[-1] = CSTRING_VAL("Error: Lx.pcall cannot be used before VM initialization.");
     return false;
   }
 
@@ -511,21 +1029,29 @@ static bool pcallNative(int argCount, Value* args) {
   int baseFrameCount = vm.frameCount;
   Value* baseStackTop = vm.stackTop;
 
-  jmp_buf jb;
-  jmp_buf* prev = vm.errorJmp;
-  vm.errorJmp = &jb;
+  // Push handler on current fiber (we don't switch fibers in pcall)
+  ScopedErrorHandler scoped;
+  pushErrorHandler(&scoped, vm.currentFiber);
   vm.lastError = NIL_VAL;
 
-  int jumped = setjmp(jb);
+  // Track whether we incremented nonYieldableDepth (to avoid underflow on longjmp)
+  bool depthIncreased = false;
+  bool result = false;
+
+  int jumped = setjmp(scoped.handler.buf);
   if (jumped != 0) {
     Value err = vm.lastError;
     closeUpvalues(baseStackTop);
     vm.stackTop = baseStackTop;
     vm.frameCount = baseFrameCount;
-    vm.errorJmp = prev;
     args[-1] = pcallResult(false, NIL_VAL, err);
-    return true;
+    result = true;
+    goto cleanup;
   }
+
+  // Disallow yield inside pcall - pcall is synchronous and doesn't support yield
+  vm.nonYieldableDepth++;
+  depthIncreased = true;
 
   // Arrange a normal VM call: [ ... fn arg0..argN ]
   push(fn);
@@ -539,9 +1065,9 @@ static bool pcallNative(int argCount, Value* args) {
     closeUpvalues(baseStackTop);
     vm.stackTop = baseStackTop;
     vm.frameCount = baseFrameCount;
-    vm.errorJmp = prev;
     args[-1] = pcallResult(false, NIL_VAL, err);
-    return true;
+    result = true;
+    goto cleanup;
   }
 
   InterpretResult r = runUntil(baseFrameCount);
@@ -551,15 +1077,22 @@ static bool pcallNative(int argCount, Value* args) {
     closeUpvalues(baseStackTop);
     vm.stackTop = baseStackTop;
     vm.frameCount = baseFrameCount;
-    vm.errorJmp = prev;
     args[-1] = pcallResult(false, NIL_VAL, err);
-    return true;
+    result = true;
+    goto cleanup;
   }
 
-  Value result = pop();
-  vm.errorJmp = prev;
-  args[-1] = pcallResult(true, result, NIL_VAL);
-  return true;
+  Value retval = pop();
+  args[-1] = pcallResult(true, retval, NIL_VAL);
+  result = true;
+
+cleanup:
+  // Consistent cleanup: all exit paths go through here
+  if (depthIncreased) {
+    vm.nonYieldableDepth--;
+  }
+  popErrorHandler(&scoped);
+  return result;
 }
 
 inline static bool isFalsey(Value value) {
@@ -750,6 +1283,10 @@ static InterpretResult runUntil(int stopFrameCount) {
   } while (false)
 
   for (;;) {
+    if (UNLIKELY(vm.haltRequested)) {
+      vm.haltRequested = false;
+      return INTERPRET_OK;
+    }
     op = READ_BYTE();
 
 #ifdef PROFILE_OPCODES
@@ -1299,6 +1836,13 @@ static InterpretResult runUntil(int stopFrameCount) {
         if (!callValue(peek(argCount), argCount)) {
           return INTERPRET_RUNTIME_ERROR;
         }
+
+        // Check if a yield occurred during the call (from Fiber.yield native)
+        if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
+          // Fiber yielded, exit runUntil
+          return INTERPRET_OK;
+        }
+
         frame = &vm.frames[vm.frameCount - 1];
         closure = frame->closure;
         slots = frame->slots;
@@ -1324,6 +1868,11 @@ static InterpretResult runUntil(int stopFrameCount) {
           }
         }
 
+        // Check if a yield occurred during the call
+        if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
+          return INTERPRET_OK;
+        }
+
         frame = &vm.frames[vm.frameCount - 1];
         closure = frame->closure;
         slots = frame->slots;
@@ -1340,6 +1889,11 @@ static InterpretResult runUntil(int stopFrameCount) {
 
         if (!call(callee, argCount)) {
           return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Check if a yield occurred during the call
+        if (vm.currentFiber && vm.currentFiber->state == FIBER_SUSPENDED) {
+          return INTERPRET_OK;
         }
 
         frame = &vm.frames[vm.frameCount - 1];
@@ -2003,6 +2557,46 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_YIELD: {
+        uint8_t yieldCount = READ_BYTE();
+
+        // Validate: can only yield inside a fiber
+        if (!vm.currentFiber) {
+          runtimeError("Cannot yield outside of a fiber.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        if (vm.currentFiber == vm.mainFiber) {
+          runtimeError("Cannot yield from the main fiber.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Validate: can't yield from non-yieldable context (native calls)
+        if (vm.nonYieldableDepth > 0) {
+          runtimeError("Cannot yield from non-yieldable context.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // For MVP, only support yielding 1 value
+        if (yieldCount != 1) {
+          runtimeError("Fiber yield currently only supports 1 value.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Pop the yielded value and store it for the resumer
+        Value yieldedValue = pop();
+        vm.lastResult = yieldedValue;
+
+        // Save current state to fiber
+        syncFromVM();
+
+        // Transition fiber to SUSPENDED state
+        vm.currentFiber->state = FIBER_SUSPENDED;
+        vm.haltRequested = true;
+
+        // Return to caller (fiberResume will handle switching back)
+        return INTERPRET_OK;
+      }
+
       case OP_RETURN: {
         Value result = pop();
         closeUpvalues(frame->slots);
@@ -2012,6 +2606,12 @@ static InterpretResult runUntil(int stopFrameCount) {
           vm.lastResult = result;
           vm.stackTop = vm.stack;
           vm.openUpvalues = NULL;
+
+          // If returning from fiber's top level, mark fiber as done
+          if (vm.currentFiber && vm.currentFiber != vm.mainFiber) {
+            vm.currentFiber->state = FIBER_DONE;
+          }
+
           return INTERPRET_OK;
         }
 

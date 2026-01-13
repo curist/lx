@@ -20,6 +20,7 @@ This design ships as a library API first (no new syntax/keywords):
 - `Fiber.resume(fiber, ...args)` -> yielded value(s) or final return
 - `Fiber.yield(value)` -> yield from within a fiber
 - `Fiber.status(fiber)` -> `"new" | "running" | "suspended" | "done" | "error"`
+- `Fiber.current()` -> currently running fiber (main fiber included)
 
 Syntax sugar (like `yield` as a keyword) can be added later.
 
@@ -74,11 +75,11 @@ The VM keeps fast "register" pointers for stack/frames/upvalues, and
 `switchToFiber` is the only place that swaps those registers.
 
 ```
-switchToFiber(vm, fiber)  // loads fiber fields into VM registers
+switchToFiber(vm, fiber)  // syncs outgoing fiber and loads new fiber
 syncFromVM(vm)            // writes VM registers back to fiber
 ```
 
-The VM must call `syncFromVM` at yield/return/error boundaries.
+The VM must sync fiber state at yield/return/error boundaries.
 
 ## Yield/Resume Semantics
 
@@ -95,7 +96,7 @@ Rules:
 - `fiberResume(f, ...args)` allowed in `NEW` or `SUSPENDED`.
 - `NEW -> RUNNING`, `SUSPENDED -> RUNNING`.
 - On `DONE` or `ERROR`, `fiberResume` returns an error.
-- Yield/resume support single or multiple values (defined explicitly).
+- Yield/resume currently supports a single value only.
 
 ## Yield Safety
 
@@ -169,6 +170,7 @@ This keeps IO completion and scheduling independent of the VM core.
 - VM registers always reflect `currentFiber`.
 - A fiber may not be resumed while `RUNNING`.
 - `yield` is illegal when `nonYieldableDepth > 0`.
+- `yield` is illegal from the main fiber.
 
 ## OP_YIELD Stack Effect (Conceptual)
 

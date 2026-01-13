@@ -39,6 +39,7 @@ void* reallocate(void* pointer, size_t oldSize, size_t newSize) {
   return result;
 }
 
+
 void markObject(Obj* object) {
   if (object == NULL) return;
   if (object->isMarked) return;
@@ -117,6 +118,37 @@ static void blackenObject(Obj* object) {
       markArray(&((ObjArray*)object)->array);
       break;
     }
+    case OBJ_FIBER: {
+      ObjFiber* fiber = (ObjFiber*)object;
+
+      // Mark stack values (NULL guard to avoid undefined pointer comparison)
+      if (fiber->stack != NULL && fiber->stackTop != NULL) {
+        for (Value* slot = fiber->stack; slot < fiber->stackTop; slot++) {
+          markValue(*slot);
+        }
+      }
+
+      // Mark call frames (closures)
+      if (fiber->frames != NULL) {
+        CallFrame* frames = (CallFrame*)fiber->frames;
+        for (int i = 0; i < fiber->frameCount; i++) {
+          markObject((Obj*)frames[i].closure);
+        }
+      }
+
+      // Mark open upvalues
+      for (ObjUpvalue* upvalue = fiber->openUpvalues; upvalue != NULL; upvalue = upvalue->next) {
+        markObject((Obj*)upvalue);
+      }
+
+      // Mark error state
+      markValue(fiber->lastError);
+
+      // Mark caller fiber
+      markObject((Obj*)fiber->caller);
+
+      break;
+    }
   }
 }
 
@@ -170,6 +202,13 @@ static void freeObject(Obj* object) {
       FREE(ObjArray, object);
       break;
     }
+    case OBJ_FIBER: {
+      ObjFiber* fiber = (ObjFiber*)object;
+      FREE_ARRAY(Value, fiber->stack, fiber->stackCapacity);
+      FREE_ARRAY(CallFrame, fiber->frames, fiber->frameCapacity);
+      FREE(ObjFiber, object);
+      break;
+    }
   }
 }
 
@@ -185,12 +224,28 @@ void freeObjects() {
 }
 
 static void markRoots() {
-  for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
-    markValue(*slot);
+  // Mark current fiber (keeps fiber object + its stack/frames alive)
+  if (vm.currentFiber != NULL) {
+    markObject((Obj*)vm.currentFiber);
   }
 
-  for (int i = 0; i < vm.frameCount; i++) {
-    markObject((Obj*)vm.frames[i].closure);
+  // Mark main fiber (root of caller chain)
+  if (vm.mainFiber != NULL) {
+    markObject((Obj*)vm.mainFiber);
+  }
+
+  // Mark stack values (only if stack is initialized)
+  if (vm.stack != NULL && vm.stackTop != NULL) {
+    for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
+      markValue(*slot);
+    }
+  }
+
+  // Mark call frames (only if frames are initialized)
+  if (vm.frames != NULL) {
+    for (int i = 0; i < vm.frameCount; i++) {
+      markObject((Obj*)vm.frames[i].closure);
+    }
   }
 
   for (ObjUpvalue* upvalue = vm.openUpvalues; upvalue != NULL; upvalue = upvalue->next) {

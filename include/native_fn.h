@@ -34,6 +34,13 @@ void defineBuiltinNatives();
 static bool pcallNative(int argCount, Value *args);
 static void runtimeError(const char* format, ...);
 
+// Fiber natives (implemented in `src/vm.c`)
+static bool fiberCreateNative(int argCount, Value *args);
+static bool fiberResumeNative(int argCount, Value *args);
+static bool fiberYieldNative(int argCount, Value *args);
+static bool fiberStatusNative(int argCount, Value *args);
+static bool fiberCurrentNative(int argCount, Value *args);
+
 static bool timeNative(int argCount, Value *args) {
   struct timeval tv;
   gettimeofday(&tv, NULL);
@@ -445,6 +452,8 @@ static bool typeNative(int argCount, Value *args) {
     args[-1] = CSTRING_VAL("map");
   } else if (IS_ARRAY(arg)) {
     args[-1] = CSTRING_VAL("array");
+  } else if (IS_FIBER(arg)) {
+    args[-1] = CSTRING_VAL("fiber");
   } else {
     args[-1] = CSTRING_VAL("Error: unknown type.");
     return false;
@@ -2187,6 +2196,21 @@ static void defineNative(const char *name, NativeFn function) {
   defineTableFunction(&vm.globals, name, function);
 }
 
+static void defineFiberNatives() {
+  push(CSTRING_VAL("Fiber"));
+  push(OBJ_VAL(newHashmap()));
+  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
+
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "create", fiberCreateNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "resume", fiberResumeNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "yield", fiberYieldNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "status", fiberStatusNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "current", fiberCurrentNative);
+
+  pop();
+  pop();
+}
+
 static void defineLxNatives() {
   push(CSTRING_VAL("Lx"));
   push(OBJ_VAL(newHashmap()));
@@ -2377,6 +2401,7 @@ static void defineMathNatives() {
 }
 
 void defineBuiltinNatives() {
+  defineFiberNatives();
   defineLxNatives();
   defineDateNatives();
   defineMathNatives();

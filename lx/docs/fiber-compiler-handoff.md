@@ -175,15 +175,34 @@ println(result)
 4. **Pass-level granularity** - Progress events at pass boundaries, not per-node (yet)
 5. **Driver delegation** - `startModule` delegates to driver's `buildModule` for import handling
 
+## LSP Integration
+
+The LSP (`lx/services/lsp.lx`) now uses `CompilerFiber.startModule` for compilation:
+
+**Changes:**
+- `flushCompileNow` uses fiber-based compilation with cancellation support
+- Active compile is tracked in `state.activeCompile`
+- Previous compile is cancelled when a new compile starts
+- DEPS events update the dependency graph via `updateDepsFromEvent`
+
+**Benefits:**
+- Cancellation: If user edits quickly, in-progress compiles are cancelled
+- Cleaner dep tracking: DEPS events provide explicit dependency information
+
+**Limitations (until Stage 2):**
+- Compilation still blocks (polls to completion synchronously)
+- Diagnostics still come from driver cache, not streamed events
+
 ## Future Stages (from fiber-patterns.md)
 
-- **Stage 2:** Node-based budgets and cancellation
+- **Stage 2:** Node-based budgets and cancellation (streaming diagnostics)
 - **Stage 3:** Fiber-based module resolution handshake (`needModule` events)
 - **Stage 4:** Shared traversal utilities
 
 ## Related Files
 
 - `lx/docs/fiber-patterns.md` - Original design document
-- `lx/src/driver.lx` - Current non-fiber driver (reference for pass ordering)
+- `lx/src/driver.lx` - Driver used by `startModule` for compilation
 - `lx/src/passes/pipeline.lx` - Pass execution utilities
+- `lx/services/lsp.lx` - LSP server using fiber-based compilation
 - `lx/examples/fiber-events-demo.lx` - Demo of the pattern with mock data

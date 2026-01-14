@@ -2,6 +2,8 @@ let query = import "services/query.lx"
 let builtinsDocs = import "services/builtins_docs.lx"
 let Driver = import "src/driver.lx"
 let ModuleResolution = import "src/module_resolution.lx"
+let CompilerFiber = import "src/compiler-fiber.lx"
+let Events = import "src/events.lx"
 
 fn stringLess(a, b) {
   if !a and b { return true }
@@ -1027,6 +1029,7 @@ fn serve() {
     pendingCompile: .{},
     debounceMs: 100,
     staticModulePaths: .{},
+    activeCompile: nil,  // .{ spec, fiber, cancel } - current compilation
   }
 
   // If supported, disable stdio buffering so `Lx.stdin.poll()` and the
@@ -1049,9 +1052,55 @@ fn serve() {
     if !state or !spec { return }
     if state.pendingCompile { state.pendingCompile[spec] = nil }
     if state.openDocs and state.openDocs[spec] == nil { return }
-    if state.driver { state.driver.compileModule(spec) }
-    updateDepGraphFromDriver(state)
+    if !state.driver { return }
+
+    // Cancel any active compile
+    if state.activeCompile and state.activeCompile.cancel {
+      state.activeCompile.cancel()
+      state.activeCompile = nil
+    }
+
+    // Start fiber-based compilation
+    let handle = CompilerFiber.startModule(state.driver, spec, .{})
+    state.activeCompile = .{ spec: spec, fiber: handle.fiber, cancel: handle.cancel }
+
+    // Poll to completion
+    let result = CompilerFiber.poll(handle.fiber, .{ maxEvents: 1000 })
+
+    // Process DEPS events to update dependency graph
+    for evt in result.events {
+      if evt.kind == Events.EventKind.DEPS {
+        updateDepsFromEvent(state, evt.file, evt.deps)
+      }
+    }
+
+    state.activeCompile = nil
     publishDiagnosticsFromCache(state, spec)
+  }
+
+  fn updateDepsFromEvent(state, path, deps) {
+    if !state or !path { return }
+
+    // Remove old reverse deps
+    let old = state.deps and state.deps[path] or nil
+    if old {
+      for dep in old {
+        if state.rdeps and state.rdeps[dep] {
+          state.rdeps[dep][path] = nil
+        }
+      }
+    }
+
+    // Set new deps
+    if !state.deps { state.deps = .{} }
+    state.deps[path] = deps
+
+    // Add reverse deps
+    if !state.rdeps { state.rdeps = .{} }
+    for dep in deps {
+      if !state.rdeps[dep] { state.rdeps[dep] = .{} }
+      state.rdeps[dep][path] = true
+    }
   }
 
   fn flushDueCompiles(state) {

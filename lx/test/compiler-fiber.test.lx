@@ -11,22 +11,24 @@ let test = suite.defineTest
 let Compiler = import "src/compiler-fiber.lx"
 let Events = import "src/events.lx"
 
-// --- RED: Test 1 - Compiler.start returns a fiber ---
+// --- Test 1 - Compiler.start returns handle with fiber and cancel ---
 
-test("Compiler.start returns a fiber", fn(assert) {
+test("Compiler.start returns handle with fiber and cancel", fn(assert) {
   let source = "42"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  assert.equal(type(fiber), "fiber", "start should return a fiber")
+  assert.equal(type(handle), "map", "start should return a map")
+  assert.equal(type(handle.fiber), "fiber", "handle should have a fiber")
+  assert.equal(type(handle.cancel), "fn", "handle should have a cancel function")
 })
 
-// --- RED: Test 2 - Compiler.poll returns expected shape ---
+// --- Test 2 - Compiler.poll returns expected shape ---
 
 test("Compiler.poll returns object with events array", fn(assert) {
   let source = "42"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 10 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 10 })
 
   assert.equal(type(result), "map", "poll should return a map")
   assert.equal(type(result.events), "array", "result should have events array")
@@ -36,9 +38,9 @@ test("Compiler.poll returns object with events array", fn(assert) {
 
 test("Compiler.poll sets done flag when compilation completes", fn(assert) {
   let source = "42"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   assert.truthy(result.done, "done should be true when compilation completes")
 })
@@ -47,21 +49,21 @@ test("Compiler.poll sets done flag when compilation completes", fn(assert) {
 
 test("Compiler.poll returns DONE event as result", fn(assert) {
   let source = "42"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   assert.truthy(result.result, "result should exist")
   assert.equal(result.result.kind, Events.EventKind.DONE, "result should be DONE event")
 })
 
-// --- RED: Test 5 - Compilation yields progress events ---
+// --- Test 5 - Compilation yields progress events ---
 
 test("Compiler yields PROGRESS event for parse phase", fn(assert) {
   let source = "let x = 42"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   // Find a progress event for the parse phase
   let parseProgress = nil
@@ -76,13 +78,13 @@ test("Compiler yields PROGRESS event for parse phase", fn(assert) {
   assert.equal(parseProgress.pass, "parse", "progress event should be for parse pass")
 })
 
-// --- RED: Test 6 - Compilation yields DIAG events for parse errors ---
+// --- Test 6 - Compilation yields DIAG events for parse errors ---
 
 test("Compiler yields DIAG events for parse errors", fn(assert) {
   let source = "let x ="  // Missing value - syntax error
-  let fiber = Compiler.start(source, .{ filename: "bad.lx" })
+  let handle = Compiler.start(source, .{ filename: "bad.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   // Find a diagnostic event for the parse phase
   let diagEvent = nil
@@ -103,26 +105,26 @@ test("Compiler yields DIAG events for parse errors", fn(assert) {
 
 test("Compiler.poll respects maxEvents budget", fn(assert) {
   let source = "let x = 42"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
   // Poll with budget of 1 - should only get 1 event
-  let result = Compiler.poll(fiber, .{ maxEvents: 1 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 1 })
 
   assert.equal(len(result.events), 1, "should only return 1 event")
   assert.truthy(!result.done, "should not be done yet")
 
   // Poll again to get remaining events
-  let result2 = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result2 = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
   assert.truthy(result2.done, "should be done after second poll")
 })
 
-// --- RED: Test 8 - Compilation yields progress for multiple passes ---
+// --- Test 8 - Compilation yields progress for multiple passes ---
 
 test("Compiler yields PROGRESS events for lower, anf, resolve passes", fn(assert) {
   let source = "let x = 42"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   // Collect all progress events by pass
   let passesSeen = .{}
@@ -138,13 +140,13 @@ test("Compiler yields PROGRESS events for lower, anf, resolve passes", fn(assert
   assert.truthy(passesSeen["resolve"], "should have resolve progress")
 })
 
-// --- RED: Test 9 - Compilation yields DIAG events for resolve errors ---
+// --- Test 9 - Compilation yields DIAG events for resolve errors ---
 
 test("Compiler yields DIAG events for resolve errors", fn(assert) {
   let source = "let x = x"  // Can't read local variable in its own initializer
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   // Find a diagnostic event for the resolve phase
   let diagEvent = nil
@@ -160,13 +162,13 @@ test("Compiler yields DIAG events for resolve errors", fn(assert) {
   assert.equal(diagEvent.severity, Events.Severity.ERROR, "diag should be ERROR severity")
 })
 
-// --- RED: Test 10 - Compilation yields progress for optimization passes ---
+// --- Test 10 - Compilation yields progress for optimization passes ---
 
 test("Compiler yields PROGRESS events for anf-inline and lower-intrinsics", fn(assert) {
   let source = "let x = 42"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   // Collect all progress events by pass
   let passesSeen = .{}
@@ -180,13 +182,13 @@ test("Compiler yields PROGRESS events for anf-inline and lower-intrinsics", fn(a
   assert.truthy(passesSeen["lower-intrinsics"], "should have lower-intrinsics progress")
 })
 
-// --- RED: Test 11 - Compilation yields progress for codegen ---
+// --- Test 11 - Compilation yields progress for codegen ---
 
 test("Compiler yields PROGRESS events for codegen", fn(assert) {
   let source = "let x = 42"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   // Collect all progress events by pass
   let passesSeen = .{}
@@ -203,23 +205,23 @@ test("Compiler yields PROGRESS events for codegen", fn(assert) {
 
 test("Full compilation produces bytecode function", fn(assert) {
   let source = "let x = 42\nx"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   assert.truthy(result.done, "compilation should complete")
   assert.truthy(result.result.result.success, "compilation should succeed")
   assert.truthy(result.result.result.function, "result should include bytecode function")
 })
 
-// --- RED: Test 13 - DIAG events have proper line info for parse errors ---
+// --- Test 13 - DIAG events have proper line info for parse errors ---
 
 test("DIAG events have proper line info for parse errors", fn(assert) {
   // Error on line 2
   let source = "let x = 1\nlet y ="
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   // Find a diagnostic event for parse
   let diagEvent = nil
@@ -234,14 +236,14 @@ test("DIAG events have proper line info for parse errors", fn(assert) {
   assert.equal(diagEvent.range.start.line, 2, "error should be on line 2")
 })
 
-// --- RED: Test 14 - DIAG events have proper line info for resolve errors ---
+// --- Test 14 - DIAG events have proper line info for resolve errors ---
 
 test("DIAG events have proper line info for resolve errors", fn(assert) {
   // Error on line 2 - reading x in its own initializer
   let source = "let a = 1\nlet x = x"
-  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
   // Find a diagnostic event for resolve
   let diagEvent = nil
@@ -254,6 +256,94 @@ test("DIAG events have proper line info for resolve errors", fn(assert) {
 
   assert.truthy(diagEvent, "should have a DIAG event")
   assert.equal(diagEvent.range.start.line, 2, "error should be on line 2")
+})
+
+// =============================================================================
+// Cancellation Tests
+// =============================================================================
+
+// --- Test 15 - Cancellation stops compilation early ---
+
+test("Cancellation stops compilation and returns ERROR event", fn(assert) {
+  let source = "let x = 42"
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
+
+  // Poll once to start compilation (gets first event)
+  let result1 = Compiler.poll(handle.fiber, .{ maxEvents: 1 })
+  assert.truthy(!result1.done, "should not be done after first poll")
+
+  // Cancel the compilation
+  handle.cancel()
+
+  // Poll again - should complete with cancellation
+  let result2 = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
+
+  assert.truthy(result2.done, "should be done after cancel")
+  assert.truthy(result2.result, "should have a result")
+  assert.equal(result2.result.kind, Events.EventKind.ERROR, "result should be ERROR event")
+  assert.truthy(result2.result.error, "ERROR event should have error message")
+})
+
+// --- Test 16 - Cancellation error message says "Cancelled" ---
+
+test("Cancellation error message says Cancelled", fn(assert) {
+  let source = "let x = 42"
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
+
+  // Poll once then cancel
+  Compiler.poll(handle.fiber, .{ maxEvents: 1 })
+  handle.cancel()
+
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
+
+  assert.equal(result.result.error, "Cancelled", "error message should be 'Cancelled'")
+})
+
+// --- Test 17 - Cancellation before any polling ---
+
+test("Cancellation before polling returns ERROR on first poll", fn(assert) {
+  let source = "let x = 42"
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
+
+  // Cancel before polling
+  handle.cancel()
+
+  // First poll should see cancellation
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
+
+  assert.truthy(result.done, "should be done")
+  assert.equal(result.result.kind, Events.EventKind.ERROR, "should be ERROR event")
+  assert.equal(result.result.error, "Cancelled", "error should be Cancelled")
+})
+
+// --- Test 18 - Cancellation mid-pipeline stops at next yield point ---
+
+test("Cancellation mid-pipeline stops at next yield point", fn(assert) {
+  let source = "let x = 42\nx"
+  let handle = Compiler.start(source, .{ filename: "test.lx" })
+
+  // Poll for several events to get past parse phase
+  let result1 = Compiler.poll(handle.fiber, .{ maxEvents: 5 })
+  assert.truthy(!result1.done, "should not be done after 5 events")
+
+  // Verify we've seen some progress
+  let parseStartSeen = false
+  for evt in result1.events {
+    if evt.kind == Events.EventKind.PROGRESS and evt.pass == "parse" and evt.phase == "start" {
+      parseStartSeen = true
+    }
+  }
+  assert.truthy(parseStartSeen, "should have seen parse start")
+
+  // Cancel mid-compilation
+  handle.cancel()
+
+  // Poll to completion - should get ERROR
+  let result2 = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
+
+  assert.truthy(result2.done, "should be done after cancel")
+  assert.equal(result2.result.kind, Events.EventKind.ERROR, "should be ERROR event")
+  assert.equal(result2.result.error, "Cancelled", "error should be Cancelled")
 })
 
 suite.run()

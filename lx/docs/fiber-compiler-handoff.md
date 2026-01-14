@@ -19,12 +19,17 @@ let Compiler = import "src/compiler-fiber.lx"
 // Start a compilation fiber
 // - source: source code string
 // - opts: .{ filename: "foo.lx" }
-let fiber = Compiler.start(source, opts)
+// Returns: .{ fiber, cancel } where cancel() requests cancellation
+let handle = Compiler.start(source, opts)
 
 // Poll for events with budget
 // - budget: .{ maxEvents: N }
 // Returns: .{ events: [...], done?: bool, result?: Event, error?: string }
-let result = Compiler.poll(fiber, .{ maxEvents: 10 })
+let result = Compiler.poll(handle.fiber, .{ maxEvents: 10 })
+
+// Cancel at any time (optional)
+handle.cancel()
+// Next poll returns ERROR event with message "Cancelled"
 ```
 
 ### Current Pipeline
@@ -86,33 +91,26 @@ Compiler.startWithDriver(driver, path, opts) -> fiber
 - Import caching should be preserved across compilations
 - Circular import detection
 
-### 4. Add Cancellation Support
+### 4. ~~Add Cancellation Support~~ ✅ DONE
 
-**Task:** Add a way to cancel a running compilation.
+`Compiler.start(source, opts)` now returns `{ fiber, cancel }` with built-in cancellation support:
 
-Option A: Check a flag at yield points
 ```lx
-fn start(source, opts) {
-  let cancelled = .{ value: false }
+let handle = Compiler.start(source, .{ filename: "test.lx" })
 
-  let fiber = Fiber.create(fn() {
-    // At each yield point:
-    if cancelled.value {
-      return Events.error("Cancelled")
-    }
-    Fiber.yield(Events.progress(...))
-    // ...
-  })
+// Poll for events
+let result = Compiler.poll(handle.fiber, .{ maxEvents: 10 })
 
-  .{ fiber, cancel: fn() { cancelled.value = true } }
-}
+// Cancel at any time (optional)
+handle.cancel()
+
+// Next poll returns ERROR event with message "Cancelled"
+let result2 = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
+// result2.result.kind == EventKind.ERROR
+// result2.result.error == "Cancelled"
 ```
 
-Option B: Pass cancellation token via resume
-```lx
-// Driver passes cancel signal when resuming
-Fiber.resume(fiber, .{ cancel: true })
-```
+Implementation uses a shared `cancelled` flag checked at every yield point. If you don't need cancellation, simply ignore `handle.cancel`.
 
 ### 5. Add DEPS Events for Import Tracking
 
@@ -141,8 +139,8 @@ Debug with `lx eval`:
 ```bash
 LX_ROOT=lx ./out/lx eval '
 let Compiler = import "src/compiler-fiber.lx"
-let fiber = Compiler.start("let x = 42", .{ filename: "test.lx" })
-let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+let handle = Compiler.start("let x = 42", .{ filename: "test.lx" })
+let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 println(result)
 '
 ```

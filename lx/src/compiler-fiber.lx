@@ -65,16 +65,18 @@ fn parseErrorLocation(errorMsg) {
   }
 }
 
-// Start a compilation fiber.
-// - source: source code string to compile
-// - opts: compilation options (.{ filename, ... })
-// Returns: a fiber that can be polled for events
-fn start(source, opts) {
-  let filename = opts.filename or "unknown"
-
+// Internal: Create the compilation fiber with optional cancellation support
+// - cancelled: nil (no cancellation) or .{ value: bool } for cancellation state
+fn createCompilerFiber(source, filename, cancelled) {
   Fiber.create(fn() {
+    // Helper to check cancellation - returns true if cancelled
+    fn checkCancel() {
+      cancelled and cancelled.value
+    }
+
     // Parse phase
     Fiber.yield(Events.progress("parse", "start", 0, 1))
+    if checkCancel() { return Events.error("Cancelled") }
 
     let parseResult = parse(source, filename)
 
@@ -87,9 +89,11 @@ fn start(source, opts) {
         .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
       }
       Fiber.yield(Events.diag("parse", filename, range, Events.Severity.ERROR, errorMsg, nil))
+      if checkCancel() { return Events.error("Cancelled") }
     }
 
     Fiber.yield(Events.progress("parse", "done", 1, 1))
+    if checkCancel() { return Events.error("Cancelled") }
 
     // Stop if parse failed
     if !parseResult.success {
@@ -98,8 +102,10 @@ fn start(source, opts) {
 
     // Lower phase
     Fiber.yield(Events.progress("lower", "start", 0, 1))
+    if checkCancel() { return Events.error("Cancelled") }
     let lowerResult = lower(parseResult.ast, .{ nextNodeId: parseResult.nextNodeId })
     Fiber.yield(Events.progress("lower", "done", 1, 1))
+    if checkCancel() { return Events.error("Cancelled") }
 
     if !lowerResult.success {
       return Events.done(.{ success: false, errors: lowerResult.errors })
@@ -107,8 +113,10 @@ fn start(source, opts) {
 
     // ANF phase
     Fiber.yield(Events.progress("anf", "start", 0, 1))
+    if checkCancel() { return Events.error("Cancelled") }
     let anfResult = anf(lowerResult.ast, .{ nextNodeId: lowerResult.nextNodeId })
     Fiber.yield(Events.progress("anf", "done", 1, 1))
+    if checkCancel() { return Events.error("Cancelled") }
 
     if !anfResult.success {
       return Events.done(.{ success: false, errors: anfResult.errors })
@@ -116,11 +124,11 @@ fn start(source, opts) {
 
     // Resolve phase
     Fiber.yield(Events.progress("resolve", "start", 0, 1))
+    if checkCancel() { return Events.error("Cancelled") }
     let resolveResult = resolve(anfResult.ast, .{})
 
     // Yield diagnostics for resolve errors
     for err in resolveResult.errors {
-      // Look up node by id to get source location
       let node = resolveResult.nodes and resolveResult.nodes[err.nodeId]
       let range = if node and node.line {
         .{
@@ -138,34 +146,40 @@ fn start(source, opts) {
         Events.Severity.ERROR
       }
       Fiber.yield(Events.diag("resolve", filename, range, severity, err.message, nil))
+      if checkCancel() { return Events.error("Cancelled") }
     }
 
     Fiber.yield(Events.progress("resolve", "done", 1, 1))
+    if checkCancel() { return Events.error("Cancelled") }
 
     // Stop if resolve failed
     if !resolveResult.success {
       return Events.done(.{ success: false, errors: resolveResult.errors })
     }
 
-    // ANF-inline phase (mutates AST in-place)
+    // ANF-inline phase
     Fiber.yield(Events.progress("anf-inline", "start", 0, 1))
+    if checkCancel() { return Events.error("Cancelled") }
     anfInline(anfResult.ast, resolveResult)
     Fiber.yield(Events.progress("anf-inline", "done", 1, 1))
+    if checkCancel() { return Events.error("Cancelled") }
 
-    // Lower-intrinsics phase (mutates AST in-place)
+    // Lower-intrinsics phase
     Fiber.yield(Events.progress("lower-intrinsics", "start", 0, 1))
+    if checkCancel() { return Events.error("Cancelled") }
     lowerIntrinsics(anfResult.ast, resolveResult, nil)
     Fiber.yield(Events.progress("lower-intrinsics", "done", 1, 1))
+    if checkCancel() { return Events.error("Cancelled") }
 
     // Codegen phase
     Fiber.yield(Events.progress("codegen", "start", 0, 1))
+    if checkCancel() { return Events.error("Cancelled") }
     let codegenResult = codegen(anfResult.ast, resolveResult, .{
       enumInfo: parseResult.enumInfo
     })
 
     // Yield diagnostics for codegen errors
     for err in codegenResult.errors {
-      // Look up node by id to get source location
       let node = resolveResult.nodes and resolveResult.nodes[err.nodeId]
       let range = if node and node.line {
         .{
@@ -176,9 +190,11 @@ fn start(source, opts) {
         .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
       }
       Fiber.yield(Events.diag("codegen", filename, range, Events.Severity.ERROR, err.message, nil))
+      if checkCancel() { return Events.error("Cancelled") }
     }
 
     Fiber.yield(Events.progress("codegen", "done", 1, 1))
+    if checkCancel() { return Events.error("Cancelled") }
 
     // Return done event with all results
     Events.done(.{
@@ -192,6 +208,23 @@ fn start(source, opts) {
       codegenResult
     })
   })
+}
+
+// Start a compilation fiber.
+// - source: source code string to compile
+// - opts: compilation options (.{ filename, ... })
+// Returns: .{ fiber, cancel } where cancel() requests cancellation
+fn start(source, opts) {
+  let filename = opts.filename or "unknown"
+  let cancelled = .{ value: false }
+
+  let fiber = createCompilerFiber(source, filename, cancelled)
+
+  let cancel = fn() {
+    cancelled.value = true
+  }
+
+  .{ fiber, cancel }
 }
 
 // Poll a compilation fiber for events.

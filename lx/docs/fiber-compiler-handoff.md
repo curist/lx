@@ -2,6 +2,8 @@
 
 This document captures the current state and next steps for the fiber-based compiler API (Stage 1 of `fiber-patterns.md`).
 
+**Status: Stage 1 Complete** ✅
+
 ## What's Been Built
 
 ### Files Created
@@ -55,7 +57,7 @@ EventKind.DONE      // .{ kind, result }
 EventKind.ERROR     // .{ kind, error }
 ```
 
-## Next Steps to Complete Stage 1
+## Stage 1 Completion Summary
 
 ### 1. ~~Add Remaining Passes~~ ✅ DONE
 
@@ -72,24 +74,30 @@ DIAG events now include proper source locations:
 - **Resolve errors**: Looked up from `resolveResult.nodes[nodeId]` using `line`, `col`, `endLine`, `endCol`
 - **Codegen errors**: Same approach using `resolveResult.nodes[nodeId]`
 
-### 3. Wire to Driver for Module-Level Compilation
+### 3. ~~Wire to Driver for Module-Level Compilation~~ ✅ DONE
 
-The current API compiles a single source string. For real usage, it needs to integrate with the driver's module resolution and caching.
-
-**Task:** Create a module-aware variant or extend the API:
+`Compiler.startModule(driver, path, opts)` now handles full module compilation with imports:
 
 ```lx
-// Option A: Add a path-based start function
-Compiler.startModule(path, opts) -> fiber
+let Driver = import "src/driver.lx"
+let Compiler = import "src/compiler-fiber.lx"
 
-// Option B: Accept a driver instance
-Compiler.startWithDriver(driver, path, opts) -> fiber
+let driver = Driver.make(.{
+  loadSource: fn(path) { ... }
+})
+
+let handle = Compiler.startModule(driver, "main.lx", .{})
+let result = Compiler.poll(handle.fiber, .{ maxEvents: 200 })
+// result.result.result.function contains bytecode
+// result.result.result.compiledModules lists all compiled modules
 ```
 
-**Considerations:**
-- Module resolution needs access to the filesystem
-- Import caching should be preserved across compilations
-- Circular import detection
+**Features:**
+- Uses driver's `buildModule` for full compilation with import resolution
+- Handles import caching (via driver's cache)
+- Handles circular import detection (via driver)
+- Returns ERROR event for missing entry file
+- Returns DONE with success: false for compilation failures
 
 ### 4. ~~Add Cancellation Support~~ ✅ DONE
 
@@ -112,16 +120,23 @@ let result2 = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
 
 Implementation uses a shared `cancelled` flag checked at every yield point. If you don't need cancellation, simply ignore `handle.cancel`.
 
-### 5. Add DEPS Events for Import Tracking
+### 5. ~~Add DEPS Events for Import Tracking~~ ✅ DONE
 
-**Task:** Yield `DEPS` events when imports are resolved.
+`startModule` now yields `DEPS` events for all compiled modules:
 
-This is useful for:
-- LSP to track file dependencies
-- Incremental recompilation
-- Build system integration
+```lx
+// After polling, look for DEPS events in result.events
+for evt in result.events {
+  if evt.kind == Events.EventKind.DEPS {
+    println(evt.file, "depends on", evt.deps)
+  }
+}
+```
 
-Currently not implemented because the single-source API doesn't do imports.
+**Behavior:**
+- Emits a DEPS event for each compiled module (entry + all imports)
+- Dependencies are extracted from resolve pass's `importInfoByNodeId`
+- Useful for LSP dependency tracking and incremental recompilation
 
 ## Testing Notes
 
@@ -145,12 +160,20 @@ println(result)
 '
 ```
 
+**Test coverage:**
+- Tests 1-18: Single-source compilation (`Compiler.start`)
+- Tests 19-24: Driver integration (`Compiler.startModule`)
+  - Basic API shape and bytecode generation
+  - Import handling and DEPS events
+  - Error handling for missing files
+
 ## Architecture Decisions
 
 1. **Single fiber per compilation** - Keeps state management simple
 2. **Budget-based polling** - Allows driver to control responsiveness
 3. **Events as return values** - The final `Events.done(result)` is returned, not yielded
 4. **Pass-level granularity** - Progress events at pass boundaries, not per-node (yet)
+5. **Driver delegation** - `startModule` delegates to driver's `buildModule` for import handling
 
 ## Future Stages (from fiber-patterns.md)
 

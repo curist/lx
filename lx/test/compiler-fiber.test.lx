@@ -10,6 +10,7 @@ let test = suite.defineTest
 // We'll import this once we create it
 let Compiler = import "src/compiler-fiber.lx"
 let Events = import "src/events.lx"
+let Driver = import "src/driver.lx"
 
 // --- Test 1 - Compiler.start returns handle with fiber and cancel ---
 
@@ -344,6 +345,139 @@ test("Cancellation mid-pipeline stops at next yield point", fn(assert) {
   assert.truthy(result2.done, "should be done after cancel")
   assert.equal(result2.result.kind, Events.EventKind.ERROR, "should be ERROR event")
   assert.equal(result2.result.error, "Cancelled", "error should be Cancelled")
+})
+
+// =============================================================================
+// Driver Integration Tests
+// =============================================================================
+
+// --- Test 19 - Compiler.startModule returns handle with fiber and cancel ---
+
+test("Compiler.startModule returns handle with fiber and cancel", fn(assert) {
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "test.lx" { "42" }
+    }
+  })
+
+  let handle = Compiler.startModule(driver, "test.lx", .{})
+
+  assert.equal(type(handle), "map", "startModule should return a map")
+  assert.equal(type(handle.fiber), "fiber", "handle should have a fiber")
+  assert.equal(type(handle.cancel), "fn", "handle should have a cancel function")
+})
+
+// --- Test 20 - startModule compiles to bytecode function ---
+
+test("startModule compiles to bytecode function", fn(assert) {
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "test.lx" { "let x = 42\nx" }
+    }
+  })
+
+  let handle = Compiler.startModule(driver, "test.lx", .{})
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
+
+  assert.truthy(result.done, "compilation should complete")
+  assert.truthy(result.result, "should have result")
+  assert.equal(result.result.kind, Events.EventKind.DONE, "should be DONE event")
+  assert.truthy(result.result.result.success, "compilation should succeed")
+  assert.truthy(result.result.result.function, "should have bytecode function")
+})
+
+// --- Test 21 - startModule handles imports ---
+
+test("startModule handles imports", fn(assert) {
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "main.lx" {
+        "let lib = import \"lib.lx\"\nlib.value"
+      } else if path == "lib.lx" {
+        ".{ value: 42 }"
+      }
+    }
+  })
+
+  let handle = Compiler.startModule(driver, "main.lx", .{})
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 200 })
+
+  assert.truthy(result.done, "compilation should complete")
+  assert.truthy(result.result.result.success, "compilation should succeed with imports")
+  assert.truthy(result.result.result.function, "should have bytecode function")
+})
+
+// --- Test 22 - startModule yields DEPS events for imports ---
+
+test("startModule yields DEPS events for imports", fn(assert) {
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "main.lx" {
+        "let lib = import \"lib.lx\"\nlib.value"
+      } else if path == "lib.lx" {
+        ".{ value: 42 }"
+      }
+    }
+  })
+
+  let handle = Compiler.startModule(driver, "main.lx", .{})
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 200 })
+
+  // Find DEPS events
+  let depsEvents = collect evt in result.events {
+    if evt.kind == Events.EventKind.DEPS { evt } else { continue }
+  }
+
+  assert.truthy(len(depsEvents) > 0, "should have at least one DEPS event")
+
+  // Find DEPS event for main.lx
+  let mainDeps = nil
+  for evt in depsEvents {
+    if evt.file == "main.lx" {
+      mainDeps = evt
+      break
+    }
+  }
+
+  assert.truthy(mainDeps, "should have DEPS event for main.lx")
+  assert.truthy(len(mainDeps.deps) > 0, "main.lx should have dependencies")
+})
+
+// --- Test 23 - startModule handles missing source error ---
+
+test("startModule handles missing source error", fn(assert) {
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      // Return nil for missing files
+      nil
+    }
+  })
+
+  let handle = Compiler.startModule(driver, "missing.lx", .{})
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 100 })
+
+  assert.truthy(result.done, "should complete")
+  assert.equal(result.result.kind, Events.EventKind.ERROR, "should be ERROR event")
+})
+
+// --- Test 24 - startModule handles import failure ---
+
+test("startModule handles import failure", fn(assert) {
+  let driver = Driver.make(.{
+    loadSource: fn(path) {
+      if path == "main.lx" {
+        "let lib = import \"missing.lx\"\nlib.value"
+      }
+      // missing.lx returns nil
+    }
+  })
+
+  let handle = Compiler.startModule(driver, "main.lx", .{})
+  let result = Compiler.poll(handle.fiber, .{ maxEvents: 200 })
+
+  assert.truthy(result.done, "should complete")
+  // Should fail because import is missing
+  assert.truthy(!result.result.result.success, "compilation should fail for missing import")
 })
 
 suite.run()

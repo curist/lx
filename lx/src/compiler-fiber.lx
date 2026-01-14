@@ -4,6 +4,7 @@
 // for streaming diagnostics and progress.
 
 let Events = import "src/events.lx"
+let Driver = import "src/driver.lx"
 let parse = import "src/passes/parse/parser.lx"
 let lower = import "src/passes/transform/lower.lx"
 let anf = import "src/passes/transform/anf.lx"
@@ -15,18 +16,18 @@ let codegen = import "src/passes/emit/codegen.lx"
 // Parse error message format: [file:line:col] context: message
 // Returns: .{ line, col } or nil if parsing fails
 fn parseErrorLocation(errorMsg) {
-  // Find the bracket and colon positions
-  // Format: [file:line:col] ...
   let openBracket = nil
   let closeBracket = nil
-  let colons = []
+  let prevColon = nil
+  let lastColon = nil
 
   for let i = 0; i < len(errorMsg); i = i + 1 {
     let ch = errorMsg[i]
     if ch == "[" and !openBracket {
       openBracket = i
-    } else if ch == ":" and openBracket and !closeBracket {
-      push(colons, i)
+    } else if ch == ":" and openBracket != nil and closeBracket == nil {
+      prevColon = lastColon
+      lastColon = i
     } else if ch == "]" and !closeBracket {
       closeBracket = i
       break
@@ -34,24 +35,13 @@ fn parseErrorLocation(errorMsg) {
   }
 
   // Need at least 2 colons (file:line:col)
-  if !openBracket or !closeBracket or len(colons) < 2 {
+  if !openBracket or !closeBracket {
     return nil
   }
 
-  // Line is between second-to-last and last colon
-  // Col is between last colon and ]
-  let lineColonIdx = colons[len(colons) - 2]
-  let colColonIdx = colons[len(colons) - 1]
-
-  // Extract line number
-  let line = collect let i = lineColonIdx + 1; i < colColonIdx; i = i + 1 {
-    errorMsg[i]
-  }->join("")->tonumber()
-
-  // Extract column number
-  let col = collect let i = colColonIdx + 1; i < closeBracket; i = i + 1 {
-    errorMsg[i]
-  }->join("")->tonumber()
+  // Extract line & column numbers
+  let line = errorMsg->substr(prevColon + 1, lastColon)->tonumber()
+  let col = errorMsg->substr(lastColon + 1, closeBracket)->tonumber()
 
   .{ line, col }
 }
@@ -241,4 +231,91 @@ fn poll(fiber, budget) {
   .{ events, done: false }
 }
 
-.{ start, poll }
+// Start a module compilation fiber using a driver.
+// - driver: a driver instance (from Driver.make())
+// - path: module path to compile
+// - opts: compilation options
+// Returns: .{ fiber, cancel }
+fn startModule(driver, path, opts) {
+  let cancelled = .{ value: false }
+
+  let fiber = Fiber.create(fn() {
+    // Helper to check cancellation
+    fn checkCancel() {
+      cancelled and cancelled.value
+    }
+
+    // Check if entry source exists before compiling
+    let source = driver.loadSource(path)
+    if !source {
+      return Events.error("Failed to load source: " + path)
+    }
+
+    // Use driver's buildModule to handle imports and full compilation
+    Fiber.yield(Events.progress("compile", "start", 0, 1))
+    if checkCancel() { return Events.error("Cancelled") }
+
+    let func = driver.buildModule(path, Driver.ARTIFACT.BYTECODE_FUNCTION)
+
+    Fiber.yield(Events.progress("compile", "done", 1, 1))
+    if checkCancel() { return Events.error("Cancelled") }
+
+    // Check for compilation failure
+    let cached = driver.cache[path]
+    if !cached or cached.status != "done" {
+      // Emit diagnostics from failed passes
+      if cached and cached.passes {
+        let passes = cached.passes
+        for passName in keys(passes) {
+          let passResult = passes[passName]
+          if passResult and passResult.errors {
+            for err in passResult.errors {
+              let msg = if type(err) == "string" { err } else { err.message or str(err) }
+              Fiber.yield(Events.diag(passName, path, .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }, Events.Severity.ERROR, msg, nil))
+            }
+          }
+        }
+      }
+      return Events.done(.{ success: false, path: path })
+    }
+
+    // Emit DEPS events for all compiled modules
+    for modulePath in driver.compiledModules {
+      if checkCancel() { return Events.error("Cancelled") }
+
+      let moduleResult = driver.cache[modulePath]
+      if !moduleResult or moduleResult.status != "done" { continue }
+
+      let resolveResult = moduleResult.passes and moduleResult.passes.resolve
+      if !resolveResult { continue }
+
+      // Extract dependencies from importInfoByNodeId
+      let deps = []
+      let importInfoByNodeId = resolveResult.importInfoByNodeId or .{}
+      for nodeId in keys(importInfoByNodeId) {
+        let info = importInfoByNodeId[nodeId]
+        if info and info.importResult and info.importResult.path {
+          push(deps, info.importResult.path)
+        }
+      }
+
+      Fiber.yield(Events.deps(modulePath, deps))
+    }
+
+    // Success - return result with bytecode function
+    Events.done(.{
+      success: true,
+      path: path,
+      function: func,
+      compiledModules: driver.compiledModules,
+    })
+  })
+
+  let cancel = fn() {
+    cancelled.value = true
+  }
+
+  .{ fiber, cancel }
+}
+
+.{ start, poll, startModule }

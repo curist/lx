@@ -1,0 +1,110 @@
+// Fiber-based compiler API
+//
+// Provides a fiber-driven compilation interface that yields events
+// for streaming diagnostics and progress.
+
+let Events = import "src/events.lx"
+let parse = import "src/passes/parse/parser.lx"
+let lower = import "src/passes/transform/lower.lx"
+let anf = import "src/passes/transform/anf.lx"
+let resolve = import "src/passes/analysis/resolve.lx"
+
+// Start a compilation fiber.
+// - source: source code string to compile
+// - opts: compilation options (.{ filename, ... })
+// Returns: a fiber that can be polled for events
+fn start(source, opts) {
+  let filename = opts.filename or "unknown"
+
+  Fiber.create(fn() {
+    // Parse phase
+    Fiber.yield(Events.progress("parse", "start", 0, 1))
+
+    let parseResult = parse(source, filename)
+
+    // Yield diagnostics for parse errors
+    for errorMsg in parseResult.errors {
+      let range = .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      Fiber.yield(Events.diag("parse", filename, range, Events.Severity.ERROR, errorMsg, nil))
+    }
+
+    Fiber.yield(Events.progress("parse", "done", 1, 1))
+
+    // Stop if parse failed
+    if !parseResult.success {
+      return Events.done(.{ success: false, errors: parseResult.errors })
+    }
+
+    // Lower phase
+    Fiber.yield(Events.progress("lower", "start", 0, 1))
+    let lowerResult = lower(parseResult.ast, .{ nextNodeId: parseResult.nextNodeId })
+    Fiber.yield(Events.progress("lower", "done", 1, 1))
+
+    if !lowerResult.success {
+      return Events.done(.{ success: false, errors: lowerResult.errors })
+    }
+
+    // ANF phase
+    Fiber.yield(Events.progress("anf", "start", 0, 1))
+    let anfResult = anf(lowerResult.ast, .{ nextNodeId: lowerResult.nextNodeId })
+    Fiber.yield(Events.progress("anf", "done", 1, 1))
+
+    if !anfResult.success {
+      return Events.done(.{ success: false, errors: anfResult.errors })
+    }
+
+    // Resolve phase
+    Fiber.yield(Events.progress("resolve", "start", 0, 1))
+    let resolveResult = resolve(anfResult.ast, .{})
+
+    // Yield diagnostics for resolve errors
+    for err in resolveResult.errors {
+      let range = .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      let severity = if err.severity == "error" {
+        Events.Severity.ERROR
+      } else if err.severity == "warning" {
+        Events.Severity.WARNING
+      } else {
+        Events.Severity.ERROR
+      }
+      Fiber.yield(Events.diag("resolve", filename, range, severity, err.message, nil))
+    }
+
+    Fiber.yield(Events.progress("resolve", "done", 1, 1))
+
+    // Return done event with all results
+    Events.done(.{
+      success: resolveResult.success,
+      ast: anfResult.ast,
+      parseResult,
+      lowerResult,
+      anfResult,
+      resolveResult
+    })
+  })
+}
+
+// Poll a compilation fiber for events.
+// - fiber: the compilation fiber from start()
+// - budget: .{ maxEvents } - how many events to collect before returning
+// Returns: .{ events, done?, result?, error? }
+fn poll(fiber, budget) {
+  let events = []
+  let maxEvents = budget.maxEvents
+
+  for len(events) < maxEvents {
+    let resumeResult = Fiber.resume(fiber)
+
+    if resumeResult.tag == "yield" {
+      push(events, resumeResult.value)
+    } else if resumeResult.tag == "return" {
+      return .{ events, done: true, result: resumeResult.value }
+    } else if resumeResult.tag == "error" {
+      return .{ events, done: true, error: resumeResult.error }
+    }
+  }
+
+  .{ events, done: false }
+}
+
+.{ start, poll }

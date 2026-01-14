@@ -45,6 +45,22 @@ Commands:
   help     Print this helpful page
 ```
 
+### Using `lx eval` with imports
+
+When using `lx eval` to run quick snippets that import compiler modules, use `LX_ROOT` to set the module resolution root:
+
+```bash
+# From repo root, run eval with access to lx/src modules
+LX_ROOT=lx ./out/lx eval '
+let parse = import "src/passes/parse/parser.lx"
+let src = "let x = 42"
+let result = parse(src, "test.lx")
+println("success:", result.success)
+'
+```
+
+Without `LX_ROOT`, imports like `"src/passes/parse/parser.lx"` will fail because the eval context doesn't have a `.lxroot` marker to establish the project root.
+
 ## Type System
 
 ### The `type()` Function

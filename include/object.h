@@ -138,6 +138,8 @@ typedef struct ObjFiber {
 
   struct ObjFiber* caller;
   bool cancelled;
+  bool ownsStack;
+  bool ownsFrames;
 } ObjFiber;
 
 ObjClosure* newClosure(ObjFunction* function);
@@ -150,6 +152,12 @@ ObjHashmap* newHashmap();
 ObjEnum* newEnum();
 ObjArray* newArray();
 ObjFiber* newFiber();
+ObjFiber* newFiberWithStack(Value* stack,
+                            int stackCapacity,
+                            struct CallFrame* frames,
+                            int frameCapacity,
+                            bool ownsStack,
+                            bool ownsFrames);
 void printObject(FILE* fd, Value value);
 void writeObject(Writer* writer, Value value);
 

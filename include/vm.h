@@ -16,7 +16,7 @@ typedef struct ErrorHandler {
   struct ErrorHandler* prev;      // previous handler in stack (NULL at bottom)
 } ErrorHandler;
 
-typedef struct {
+typedef struct CallFrame {
   ObjClosure* closure;
   uint8_t* ip;
   Value* slots;
@@ -26,6 +26,10 @@ typedef struct {
   // Fiber context
   ObjFiber* currentFiber;
   ObjFiber* mainFiber;  // Main execution fiber (root of caller chain)
+
+  // Main fiber direct-mode storage (avoids heap allocation)
+  Value mainStack[STACK_MAX];
+  CallFrame mainFrames[FRAMES_MAX];
 
   // Execution registers (pointers to either fiber or direct-mode storage)
   Value* stack;
@@ -43,7 +47,6 @@ typedef struct {
 
   // Yield support (for native Fiber.yield())
   bool shouldYield;
-  bool haltRequested;
 
   // VM-global result (not per-fiber)
   Value lastResult;

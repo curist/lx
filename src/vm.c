@@ -275,7 +275,6 @@ static void runtimeError(const char* format, ...) {
     vm.stackTop = vm.mainFiber->stack;
     vm.frameCount = 0;
     vm.nonYieldableDepth = 0;
-    vm.haltRequested = false;
   }
 }
 
@@ -400,7 +399,6 @@ void initVM() {
   vm.lastResult = NIL_VAL;
   vm.lastError = NIL_VAL;
   vm.shouldYield = false;
-  vm.haltRequested = false;
   // Initialize stack/frame pointers to NULL before any allocations
   // (GC markRoots() checks for NULL before iterating)
   vm.stack = NULL;
@@ -415,16 +413,21 @@ void initVM() {
   initTable(&vm.globals);
   initTable(&vm.strings);
 
-  // Bootstrap stack for rooting during VM init
-  int bootstrapCapacity = 1;
-  Value* bootstrapStack = ALLOCATE(Value, bootstrapCapacity);
-  vm.stack = bootstrapStack;
+  // Bootstrap stack for rooting during VM init using main fiber storage
+  vm.stack = vm.mainStack;
   vm.stackTop = vm.stack;
-  vm.stackCapacity = bootstrapCapacity;
+  vm.stackCapacity = STACK_MAX;
+  vm.frames = vm.mainFrames;
+  vm.frameCapacity = FRAMES_MAX;
 
   // Phase 2: Create main fiber (can trigger GC, safe after tables and stack initialized)
-  // Use same capacity as old direct mode to maintain behavior
-  ObjFiber* mainFiber = newFiber();
+  // Use direct-mode storage to avoid heap allocation on the main fiber.
+  ObjFiber* mainFiber = newFiberWithStack(vm.mainStack,
+                                          STACK_MAX,
+                                          vm.mainFrames,
+                                          FRAMES_MAX,
+                                          false,
+                                          false);
 
   // Root immediately to prevent GC collection during subsequent allocations
   vm.mainFiber = mainFiber;
@@ -442,15 +445,6 @@ void initVM() {
   vm.frameCapacity = mainFiber->frameCapacity;
   vm.openUpvalues = NULL;
   vm.nonYieldableDepth = 0;
-
-  if (vm.stack == bootstrapStack) {
-    vm.stack = NULL;
-    vm.stackTop = NULL;
-    vm.stackCapacity = 0;
-  }
-
-  // Drop bootstrap stack now that main fiber is active
-  FREE_ARRAY(Value, bootstrapStack, bootstrapCapacity);
 
 #ifdef PROFILE_OPCODES
   for (int i = 0; i < 256; i++) {
@@ -540,11 +534,17 @@ static bool call(ObjClosure* closure, int argCount) {
   return true;
 }
 
-static bool callValue(Value callee, int argCount) {
+typedef enum {
+  CALL_OK,
+  CALL_ERROR,
+  CALL_YIELD
+} CallResult;
+
+static CallResult callValue(Value callee, int argCount) {
   if (IS_OBJ(callee)) {
     switch (OBJ_TYPE(callee)) {
       case OBJ_CLOSURE:
-        return call(AS_CLOSURE(callee), argCount);
+        return call(AS_CLOSURE(callee), argCount) ? CALL_OK : CALL_ERROR;
       case OBJ_NATIVE: {
         NativeFn native = AS_NATIVE(callee)->function;
         // Stack layout: [... callee arg0 arg1 ... argN]
@@ -558,7 +558,7 @@ static bool callValue(Value callee, int argCount) {
 #ifdef DEBUG_TRACE_EXECUTION
         if (vm.stackTop != stackTopBefore) {
           runtimeError("Native function must not mutate vm.stackTop (push/pop forbidden)");
-          return false;
+          return CALL_ERROR;
         }
 #endif
         if (success) {
@@ -569,7 +569,6 @@ static bool callValue(Value callee, int argCount) {
           // Check if native function requested a yield (Fiber.yield)
           if (vm.shouldYield) {
             vm.shouldYield = false;
-            vm.haltRequested = true;
 
             // The yielded value is already on the stack (result of native call)
             Value yieldedValue = *stackBase;
@@ -586,15 +585,15 @@ static bool callValue(Value callee, int argCount) {
               vm.currentFiber->state = FIBER_SUSPENDED;
             }
 
-            // This will cause the OP_CALL to complete, then runUntil returns
-            // The caller (fiberResume) will see fiber state = SUSPENDED
+            // The caller (fiberResume) will observe the suspended state.
+            return CALL_YIELD;
           }
 
-          return true;
+          return CALL_OK;
         } else {
           // Error message is in callee slot (stackBase)
           runtimeError(AS_STRING(*stackBase)->chars);
-          return false;
+          return CALL_ERROR;
         }
       }
       default:
@@ -602,7 +601,7 @@ static bool callValue(Value callee, int argCount) {
     }
   }
   runtimeError("Can only call functions.");
-  return false;
+  return CALL_ERROR;
 }
 
 static inline bool insertCalleeBelowArgs(Value callee, int argCount) {
@@ -881,9 +880,6 @@ static bool fiberResumeNative(int argCount, Value* args) {
 
   fiber->state = FIBER_RUNNING;
 
-  // Ensure the halt flag is clear before executing bytecode.
-  vm.haltRequested = false;
-
   // Run the fiber until it yields, returns, or errors
   InterpretResult result = runUntil(0);
 
@@ -1059,7 +1055,8 @@ static bool pcallNative(int argCount, Value* args) {
     push(args[i]);
   }
 
-  if (!callValue(peek(fnArgCount), fnArgCount)) {
+  CallResult callResult = callValue(peek(fnArgCount), fnArgCount);
+  if (callResult == CALL_ERROR) {
     // Should longjmp via runtimeError(), but keep a fallback.
     Value err = vm.lastError;
     closeUpvalues(baseStackTop);
@@ -1068,6 +1065,10 @@ static bool pcallNative(int argCount, Value* args) {
     args[-1] = pcallResult(false, NIL_VAL, err);
     result = true;
     goto cleanup;
+  }
+  if (callResult == CALL_YIELD) {
+    runtimeError("Cannot yield from non-yieldable context.");
+    return false;
   }
 
   InterpretResult r = runUntil(baseFrameCount);
@@ -1283,10 +1284,6 @@ static InterpretResult runUntil(int stopFrameCount) {
   } while (false)
 
   for (;;) {
-    if (UNLIKELY(vm.haltRequested)) {
-      vm.haltRequested = false;
-      return INTERPRET_OK;
-    }
     op = READ_BYTE();
 
 #ifdef PROFILE_OPCODES
@@ -1833,8 +1830,19 @@ static InterpretResult runUntil(int stopFrameCount) {
 
       case OP_CALL: {
         int argCount = (int)READ_BYTE();
-        if (!callValue(peek(argCount), argCount)) {
-          return INTERPRET_RUNTIME_ERROR;
+        Value callee = peek(argCount);
+        if (IS_OBJ(callee) && OBJ_TYPE(callee) == OBJ_CLOSURE) {
+          if (!call(AS_CLOSURE(callee), argCount)) {
+            return INTERPRET_RUNTIME_ERROR;
+          }
+        } else {
+          CallResult callResult = callValue(callee, argCount);
+          if (callResult == CALL_ERROR) {
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          if (callResult == CALL_YIELD) {
+            return INTERPRET_OK;
+          }
         }
 
         frame = &vm.frames[vm.frameCount - 1];
@@ -1857,8 +1865,12 @@ static InterpretResult runUntil(int stopFrameCount) {
             return INTERPRET_RUNTIME_ERROR;
           }
         } else {
-          if (!callValue(callee, argCount)) {
+          CallResult callResult = callValue(callee, argCount);
+          if (callResult == CALL_ERROR) {
             return INTERPRET_RUNTIME_ERROR;
+          }
+          if (callResult == CALL_YIELD) {
+            return INTERPRET_OK;
           }
         }
 
@@ -2575,7 +2587,6 @@ static InterpretResult runUntil(int stopFrameCount) {
 
         // Transition fiber to SUSPENDED state
         vm.currentFiber->state = FIBER_SUSPENDED;
-        vm.haltRequested = true;
 
         // Return to caller (fiberResume will handle switching back)
         return INTERPRET_OK;

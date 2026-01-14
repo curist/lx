@@ -204,8 +204,12 @@ static void freeObject(Obj* object) {
     }
     case OBJ_FIBER: {
       ObjFiber* fiber = (ObjFiber*)object;
-      FREE_ARRAY(Value, fiber->stack, fiber->stackCapacity);
-      FREE_ARRAY(CallFrame, fiber->frames, fiber->frameCapacity);
+      if (fiber->ownsStack && fiber->stack != NULL) {
+        FREE_ARRAY(Value, fiber->stack, fiber->stackCapacity);
+      }
+      if (fiber->ownsFrames && fiber->frames != NULL) {
+        FREE_ARRAY(CallFrame, fiber->frames, fiber->frameCapacity);
+      }
       FREE(ObjFiber, object);
       break;
     }

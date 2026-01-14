@@ -223,7 +223,7 @@ ObjArray* newArray() {
 #define INITIAL_FIBER_STACK_CAPACITY STACK_MAX
 #define INITIAL_FIBER_FRAME_CAPACITY FRAMES_MAX
 
-ObjFiber* newFiber() {
+static ObjFiber* newFiberCommon() {
   ObjFiber* fiber = ALLOCATE_OBJ(ObjFiber, OBJ_FIBER);
 
   // Initialize all fields to safe defaults (GC-safe)
@@ -240,6 +240,14 @@ ObjFiber* newFiber() {
   fiber->errorHandler = NULL;
   fiber->caller = NULL;
   fiber->cancelled = false;
+  fiber->ownsStack = true;
+  fiber->ownsFrames = true;
+
+  return fiber;
+}
+
+ObjFiber* newFiber() {
+  ObjFiber* fiber = newFiberCommon();
 
   if (vm.stack != NULL && vm.stackTop != NULL) {
     push(OBJ_VAL(fiber));
@@ -257,6 +265,25 @@ ObjFiber* newFiber() {
   if (vm.stack != NULL && vm.stackTop != NULL) {
     pop();
   }
+
+  return fiber;
+}
+
+ObjFiber* newFiberWithStack(Value* stack,
+                            int stackCapacity,
+                            struct CallFrame* frames,
+                            int frameCapacity,
+                            bool ownsStack,
+                            bool ownsFrames) {
+  ObjFiber* fiber = newFiberCommon();
+
+  fiber->stack = stack;
+  fiber->stackTop = stack;
+  fiber->stackCapacity = stackCapacity;
+  fiber->frames = frames;
+  fiber->frameCapacity = frameCapacity;
+  fiber->ownsStack = ownsStack;
+  fiber->ownsFrames = ownsFrames;
 
   return fiber;
 }

@@ -97,7 +97,7 @@ fn bytesToString(bytes) {
 fn slurpUserPath(path, entryPath) {
   // Prefer reading literal filesystem paths when they exist relative to CWD
   // (e.g. `out/foo.lxobj`), otherwise fall back to module resolution (`cmd/...`).
-  if Lx and Lx.fs and Lx.fs.exists and Lx.fs.exists(path) {
+  if Lx.fs.exists(path) {
     return Lx.fs.readFile(path)
   }
   let resolver = ModuleResolution.forEntry(entryPath or path)

@@ -435,7 +435,7 @@ fn collectBinaryIdentDecls(node, resolvedNames, out) {
 fn inlineGroupedTempsInBlock(block, state, resolvedNames, removedByBlockId) {
   let exprs = block.expressions or []
   let i = 0
-  let debug = Lx.env and Lx.env["LX_DEBUG_ANF_INLINE"]
+  let debug = Lx.env["LX_DEBUG_ANF_INLINE"]
 
   for i < len(exprs) {
     let fileLabel = block.filename or "<no-file>"

@@ -9,7 +9,7 @@ fn run(ctx) {
   let path = ctx.argv[2]
   let data = common.slurpUserPath(path, path)
 
-  if Lx and Lx.isLxObj and Lx.isLxObj(data) {
+  if Lx.isLxObj(data) {
     let program = Lx.loadObj(data, false)
     return program()
   }

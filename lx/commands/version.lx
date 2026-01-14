@@ -1,5 +1,5 @@
 fn run(ctx) {
-  println("lx version " + (Lx and Lx.version or "?"))
+  println("lx version " + Lx.version)
 }
 
 .{

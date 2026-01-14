@@ -37,21 +37,18 @@ fn _computeRoots(baseDir) {
     dir = parent
   }
 
-  if !found and Lx.env and Lx.env["LX_ROOT"] {
+  if !found and Lx.env["LX_ROOT"] {
     let envRoot = Lx.env["LX_ROOT"]
     if envRoot and envRoot != "" {
       if !_isAbs(envRoot) {
         envRoot = Lx.path.join(baseDir, envRoot)
       }
 
-      // Only accept if it looks like an existing directory (when stat is available).
-      if Lx.fs.stat {
-        let st = Lx.fs.stat(envRoot)
-        if st and st.type == "dir" {
+      // Only accept if it is an existing directory.
+      if let st = Lx.fs.stat(envRoot) {
+        if st.type == "dir" {
           found = envRoot
         }
-      } else if Lx.fs.exists(envRoot) {
-        found = envRoot
       }
     }
   }

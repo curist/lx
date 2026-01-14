@@ -10,7 +10,7 @@ fn run(ctx) {
     } else {
       src = arg
     }
-  } else if Lx and Lx.stdin and Lx.stdin.readAll {
+  } else {
     src = Lx.stdin.readAll()
   }
 

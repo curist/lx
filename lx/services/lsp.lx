@@ -614,7 +614,7 @@ fn sendJson(obj) {
   let header = "Content-Length: " + str(len(body)) + "\r\n\r\n"
   print(header)
   print(body)
-  if Lx and Lx.stdout and Lx.stdout.flush { Lx.stdout.flush() }
+  Lx.stdout.flush()
 }
 
 fn sendNotification(method, params) {
@@ -1032,11 +1032,9 @@ fn serve() {
     activeCompile: nil,  // .{ spec, fiber, cancel } - current compilation
   }
 
-  // If supported, disable stdio buffering so `Lx.stdin.poll()` and the
+  // disable stdio buffering so `Lx.stdin.poll()` and the
   // line-based stdin readers stay consistent (no read-ahead buffering).
-  if Lx and Lx.stdin and Lx.stdin.unbuffered {
-    Lx.stdin.unbuffered()
-  }
+  Lx.stdin.unbuffered()
 
   fn nowMs() {
     Date.now()
@@ -1247,15 +1245,12 @@ fn serve() {
     // Run any scheduled work before waiting for the next message.
     flushDueCompiles(state)
 
-    // If the runtime supports polling, wait with a timeout so we can debounce
-    // didChange compilation without threads.
-    if Lx and Lx.stdin and Lx.stdin.poll {
-      let timeout = nextCompileTimeoutMs(state)
-      let ready = Lx.stdin.poll(timeout == nil and -1 or timeout)
-      if !ready {
-        warmupTick()
-        continue
-      }
+    // wait with a timeout so we can debounce didChange compilation without threads.
+    let timeout = nextCompileTimeoutMs(state)
+    let ready = Lx.stdin.poll(timeout == nil and -1 or timeout)
+    if !ready {
+      warmupTick()
+      continue
     }
 
     let body = readMessage()
@@ -1307,7 +1302,7 @@ fn serve() {
           },
           textDocumentSync: .{ openClose: true, change: 1, save: .{ includeText: true } },
         },
-        serverInfo: .{ name: "lx", version: (Lx and Lx.version) or "dev" },
+        serverInfo: .{ name: "lx", version: Lx.version },
       })
       continue
     }

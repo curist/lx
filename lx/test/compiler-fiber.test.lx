@@ -160,4 +160,56 @@ test("Compiler yields DIAG events for resolve errors", fn(assert) {
   assert.equal(diagEvent.severity, Events.Severity.ERROR, "diag should be ERROR severity")
 })
 
+// --- RED: Test 10 - Compilation yields progress for optimization passes ---
+
+test("Compiler yields PROGRESS events for anf-inline and lower-intrinsics", fn(assert) {
+  let source = "let x = 42"
+  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+
+  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+
+  // Collect all progress events by pass
+  let passesSeen = .{}
+  for evt in result.events {
+    if evt.kind == Events.EventKind.PROGRESS {
+      passesSeen[evt.pass] = true
+    }
+  }
+
+  assert.truthy(passesSeen["anf-inline"], "should have anf-inline progress")
+  assert.truthy(passesSeen["lower-intrinsics"], "should have lower-intrinsics progress")
+})
+
+// --- RED: Test 11 - Compilation yields progress for codegen ---
+
+test("Compiler yields PROGRESS events for codegen", fn(assert) {
+  let source = "let x = 42"
+  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+
+  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+
+  // Collect all progress events by pass
+  let passesSeen = .{}
+  for evt in result.events {
+    if evt.kind == Events.EventKind.PROGRESS {
+      passesSeen[evt.pass] = true
+    }
+  }
+
+  assert.truthy(passesSeen["codegen"], "should have codegen progress")
+})
+
+// --- Test 12 - Full compilation produces bytecode function ---
+
+test("Full compilation produces bytecode function", fn(assert) {
+  let source = "let x = 42\nx"
+  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+
+  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+
+  assert.truthy(result.done, "compilation should complete")
+  assert.truthy(result.result.result.success, "compilation should succeed")
+  assert.truthy(result.result.result.function, "result should include bytecode function")
+})
+
 suite.run()

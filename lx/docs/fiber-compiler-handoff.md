@@ -30,13 +30,15 @@ let result = Compiler.poll(fiber, .{ maxEvents: 10 })
 ### Current Pipeline
 
 ```
-parse → lower → anf → resolve
+parse → lower → anf → resolve → anf-inline → lower-intrinsics → codegen
 ```
 
 Each pass yields:
 - `PROGRESS` event at start (`phase: "start"`)
 - `DIAG` events for any errors
 - `PROGRESS` event at end (`phase: "done"`)
+
+The full pipeline produces a bytecode function that can be executed.
 
 ### Event Types (from `events.lx`)
 
@@ -50,23 +52,12 @@ EventKind.ERROR     // .{ kind, error }
 
 ## Next Steps to Complete Stage 1
 
-### 1. Add Remaining Passes
+### 1. ~~Add Remaining Passes~~ ✅ DONE
 
-The full compilation pipeline (from `driver.lx`) is:
+All passes are now implemented:
 ```
 parse → lower → anf → resolve → anf-inline → lower-intrinsics → codegen
 ```
-
-**Task:** Add anf-inline, lower-intrinsics, and optionally codegen to `compiler-fiber.lx`.
-
-```lx
-// Imports to add:
-let anfInline = import "src/passes/transform/anf-inline.lx"
-let lowerIntrinsics = import "src/passes/transform/lower-intrinsics.lx"
-let codegen = import "src/passes/emit/codegen.lx"
-```
-
-**Note:** anf-inline and lower-intrinsics mutate the AST in-place (unlike other passes). Check their signatures in `driver.lx` for how they're called.
 
 ### 2. Extract Proper Range Info for DIAG Events
 

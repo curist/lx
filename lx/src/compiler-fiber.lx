@@ -8,6 +8,9 @@ let parse = import "src/passes/parse/parser.lx"
 let lower = import "src/passes/transform/lower.lx"
 let anf = import "src/passes/transform/anf.lx"
 let resolve = import "src/passes/analysis/resolve.lx"
+let anfInline = import "src/passes/transform/anf-inline.lx"
+let lowerIntrinsics = import "src/passes/transform/lower-intrinsics.lx"
+let codegen = import "src/passes/emit/codegen.lx"
 
 // Start a compilation fiber.
 // - source: source code string to compile
@@ -72,14 +75,45 @@ fn start(source, opts) {
 
     Fiber.yield(Events.progress("resolve", "done", 1, 1))
 
+    // Stop if resolve failed
+    if !resolveResult.success {
+      return Events.done(.{ success: false, errors: resolveResult.errors })
+    }
+
+    // ANF-inline phase (mutates AST in-place)
+    Fiber.yield(Events.progress("anf-inline", "start", 0, 1))
+    anfInline(anfResult.ast, resolveResult)
+    Fiber.yield(Events.progress("anf-inline", "done", 1, 1))
+
+    // Lower-intrinsics phase (mutates AST in-place)
+    Fiber.yield(Events.progress("lower-intrinsics", "start", 0, 1))
+    lowerIntrinsics(anfResult.ast, resolveResult, nil)
+    Fiber.yield(Events.progress("lower-intrinsics", "done", 1, 1))
+
+    // Codegen phase
+    Fiber.yield(Events.progress("codegen", "start", 0, 1))
+    let codegenResult = codegen(anfResult.ast, resolveResult, .{
+      enumInfo: parseResult.enumInfo
+    })
+
+    // Yield diagnostics for codegen errors
+    for err in codegenResult.errors {
+      let range = .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      Fiber.yield(Events.diag("codegen", filename, range, Events.Severity.ERROR, err.message, nil))
+    }
+
+    Fiber.yield(Events.progress("codegen", "done", 1, 1))
+
     // Return done event with all results
     Events.done(.{
-      success: resolveResult.success,
+      success: codegenResult.success,
       ast: anfResult.ast,
+      function: codegenResult.function,
       parseResult,
       lowerResult,
       anfResult,
-      resolveResult
+      resolveResult,
+      codegenResult
     })
   })
 }

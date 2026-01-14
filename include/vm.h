@@ -1,6 +1,7 @@
 #ifndef clox_vm_h
 #define clox_vm_h
 
+#include <stdio.h>
 #include <setjmp.h>
 
 #include "object.h"
@@ -66,6 +67,12 @@ typedef struct {
 
 #ifdef PROFILE_OPCODES
   uint64_t opCounts[256];
+#endif
+
+#ifdef PROFILE_STACKS
+  FILE* stackSampleFile;
+  uint32_t stackSampleRate;
+  uint32_t stackSampleCountdown;
 #endif
 } VM;
 

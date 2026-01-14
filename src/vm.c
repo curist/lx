@@ -1,6 +1,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -19,6 +20,10 @@ VM vm;
 
 // Forward declarations
 inline static void closeUpvalues(Value* last);
+
+#ifdef PROFILE_STACKS
+static void writeStackSample(void);
+#endif
 
 // ============================================================================
 // Per-Fiber Error Handling
@@ -173,6 +178,88 @@ static Value buildRuntimeErrorValue(const char* message) {
   pop(); // err
   return out;
 }
+
+#ifdef PROFILE_STACKS
+static uint32_t getStackSampleRate(void) {
+  const char* rateStr = getenv("LX_STACK_SAMPLE_RATE");
+  if (rateStr == NULL || rateStr[0] == '\0') {
+    return 10000;
+  }
+
+  char* end = NULL;
+  long rate = strtol(rateStr, &end, 10);
+  if (end == rateStr || rate <= 0) {
+    return 10000;
+  }
+  if (rate > UINT32_MAX) {
+    return UINT32_MAX;
+  }
+  return (uint32_t)rate;
+}
+
+static void initStackSampling(void) {
+  const char* outPath = getenv("LX_STACK_SAMPLE");
+  vm.stackSampleFile = NULL;
+  vm.stackSampleRate = 0;
+  vm.stackSampleCountdown = 0;
+
+  if (outPath == NULL || outPath[0] == '\0') {
+    return;
+  }
+
+  if (strcmp(outPath, "-") == 0) {
+    vm.stackSampleFile = stderr;
+  } else {
+    vm.stackSampleFile = fopen(outPath, "w");
+    if (vm.stackSampleFile == NULL) {
+      fprintf(stderr, "warning: failed to open LX_STACK_SAMPLE output: %s\n", outPath);
+      return;
+    }
+  }
+
+  vm.stackSampleRate = getStackSampleRate();
+  vm.stackSampleCountdown = vm.stackSampleRate;
+}
+
+static void writeStackSample(void) {
+  if (vm.stackSampleFile == NULL || vm.frameCount <= 0) {
+    return;
+  }
+
+  for (int i = 0; i < vm.frameCount; i++) {
+    CallFrame* frame = &vm.frames[i];
+    ObjFunction* function = frame->closure->function;
+    const char* name = function->name != NULL ? function->name->chars : "script";
+    const char* filename = function->filename != NULL ? function->filename->chars : NULL;
+
+    size_t instruction = 0;
+    if (frame->ip > function->chunk.code) {
+      instruction = (size_t)(frame->ip - function->chunk.code - 1);
+    }
+    int line = 0;
+    if (function->chunk.lines != NULL && function->chunk.count > 0) {
+      if (instruction >= (size_t)function->chunk.count) {
+        instruction = (size_t)function->chunk.count - 1;
+      }
+      line = (int)function->chunk.lines[instruction];
+    }
+
+    if (filename != NULL && line > 0) {
+      fprintf(vm.stackSampleFile, "%s@%s:%d", name, filename, line);
+    } else if (filename != NULL) {
+      fprintf(vm.stackSampleFile, "%s@%s", name, filename);
+    } else {
+      fputs(name, vm.stackSampleFile);
+    }
+
+    if (i + 1 < vm.frameCount) {
+      fputc(';', vm.stackSampleFile);
+    }
+  }
+
+  fputs(" 1\n", vm.stackSampleFile);
+}
+#endif
 
 static void runtimeError(const char* format, ...) {
   va_list args;
@@ -451,6 +538,9 @@ void initVM() {
     vm.opCounts[i] = 0;
   }
 #endif
+#ifdef PROFILE_STACKS
+  initStackSampling();
+#endif
 
   defineBuiltinNatives();
 
@@ -501,6 +591,13 @@ void freeVM() {
   }
   fprintf(stderr, "Total ops: %llu\n", total);
   fprintf(stderr, "======================\n\n");
+#endif
+
+#ifdef PROFILE_STACKS
+  if (vm.stackSampleFile != NULL && vm.stackSampleFile != stderr) {
+    fclose(vm.stackSampleFile);
+  }
+  vm.stackSampleFile = NULL;
 #endif
 
   freeTable(&vm.globals);
@@ -1288,6 +1385,17 @@ static InterpretResult runUntil(int stopFrameCount) {
 
 #ifdef PROFILE_OPCODES
     vm.opCounts[op]++;
+#endif
+#ifdef PROFILE_STACKS
+    if (vm.stackSampleFile != NULL) {
+      if (vm.stackSampleCountdown > 0) {
+        vm.stackSampleCountdown--;
+      }
+      if (vm.stackSampleCountdown == 0) {
+        writeStackSample();
+        vm.stackSampleCountdown = vm.stackSampleRate;
+      }
+    }
 #endif
 
 #ifdef DEBUG_TRACE_EXECUTION

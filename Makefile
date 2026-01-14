@@ -11,6 +11,8 @@ CFLAGS += -Iinclude
 CFLAGS += -lm -lz
 ifeq ($(MODE),debug)
 	CFLAGS += -DDEBUG -O0
+else ifeq ($(MODE),profile)
+	CFLAGS += -O3 -g -DPROFILE_STACKS
 else
 	CFLAGS += -O3
 endif

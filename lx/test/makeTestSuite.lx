@@ -8,7 +8,7 @@ fn makeTestSuite() {
     let testPassed = true
     let testAssertions = 0
     let assert = .{
-      equal: fn(actual, expect) {
+      equal: fn(actual, expect, message = nil) {
         totalAssertions = totalAssertions + 1
         testAssertions = testAssertions + 1
         if expect == actual {
@@ -17,12 +17,14 @@ fn makeTestSuite() {
         }
         println(
           "assertion fail (" + str(testAssertions) + "):", testName, "\n",
-          "\texpect:", expect, "\n",
-          "\tactual:", actual, "\n",
+          message or join([
+            "\texpect:", expect, "\n",
+            "\tactual:", actual,
+          ], " "), "\n"
         )
         testPassed = false
       },
-      truthy: fn(actual) {
+      truthy: fn(actual, message = nil) {
         totalAssertions = totalAssertions + 1
         testAssertions = testAssertions + 1
         if actual {
@@ -31,11 +33,11 @@ fn makeTestSuite() {
         }
         println(
           "assertion fail (" + str(testAssertions) + "):", testName, "\n",
-          "\texpect to be truthy:", actual, "\n",
+          message or join([ "\texpect to be truthy:", actual], " "), "\n"
         )
         testPassed = false
       },
-      throws: fn(func, expectedMessage) {
+      throws: fn(func, expectedMessage = nil) {
         totalAssertions = totalAssertions + 1
         testAssertions = testAssertions + 1
         let result = Lx.pcall(func)

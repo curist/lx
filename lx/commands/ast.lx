@@ -36,7 +36,7 @@ let anfInline = import "src/passes/transform/anf-inline.lx"
 let lowerIntrinsics = import "src/passes/transform/lower-intrinsics.lx"
 let resolve = import "src/passes/analysis/resolve.lx"
 let dce = import "src/passes/analysis/dce.lx"
-let pipeline = import "src/passes/pipeline.lx"
+let pipeline = import "src/driver/pipeline.lx"
 let types = import "src/types.lx"
 let ModuleResolution = import "src/module_resolution.lx"
 

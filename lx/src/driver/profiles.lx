@@ -1,0 +1,59 @@
+// Profiles - Compilation profile definitions
+//
+// Profiles define curated pass combinations for specific use cases.
+// Each profile specifies which passes are enabled by default.
+
+// Returns pass configuration for the given profile name.
+// Returns nil for unknown profiles.
+fn getProfile(name) {
+  if name == "default" {
+    // Current compiler semantics: all passes enabled
+    // parse → lower → anf → resolve → anf-inline → lower-intrinsics
+    return .{
+      withLower: true,
+      withAnf: true,
+      withAnfInline: true,
+      withLowerIntrinsics: true,
+      withTypecheck: false,
+    }
+  }
+
+  if name == "typecheck" {
+    // Same as default: parse → lower → anf → resolve → anf-inline → lower-intrinsics → typecheck (non-fatal)
+    return .{
+      withLower: true,
+      withAnf: true,
+      withAnfInline: true,
+      withLowerIntrinsics: true,
+      withTypecheck: true,
+    }
+  }
+
+  if name == "query" {
+    // Fast, tooling-oriented pipeline for IDE queries that don't require type inference:
+    // parse → lower → resolve
+    // (Query service prefers non-ANF AST so imports/structure stay intact.)
+    return .{
+      withLower: true,
+      withAnf: false,
+      withAnfInline: false,
+      withLowerIntrinsics: false,
+      withTypecheck: false,
+    }
+  }
+
+  // Unknown profile - return nil to signal error
+  nil
+}
+
+// Get the default artifact target for a profile
+fn getDefaultTarget(profileName, ARTIFACT) {
+  if profileName == "query" { return ARTIFACT.ANALYSIS_RESOLVE }
+  if profileName == "typecheck" { return ARTIFACT.ANALYSIS_TYPECHECK }
+  ARTIFACT.AST_FINAL
+}
+
+.{
+  getProfile,
+  getDefaultTarget,
+}

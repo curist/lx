@@ -1,0 +1,62 @@
+// Stamps - Cache invalidation for compilation artifacts
+//
+// Stamps are fingerprints that track configuration and content changes.
+// Artifacts are valid only if their stamp matches the current configuration.
+
+// Compute a stamp (fingerprint) for AST configuration.
+// Artifacts are valid only if their astStamp matches the current configuration.
+//
+// Stamp includes:
+// - AST transform configuration (withLower, withAnf, withAnfInline, withLowerIntrinsics)
+// - Source content hash (to invalidate on file edits)
+fn computeAstStamp(opts, sourceHash) {
+  let parts = []
+  push(parts, opts.withLower and "L" or "_")
+  push(parts, opts.withAnf and "A" or "_")
+  push(parts, opts.withAnfInline and "I" or "_")
+  push(parts, opts.withLowerIntrinsics and "i" or "_")
+  push(parts, opts.withTypecheck and "T" or "_")
+  push(parts, opts.withDce and "D" or "_")
+
+  // Include source hash to invalidate when file changes
+  if sourceHash {
+    push(parts, "|src:")
+    push(parts, sourceHash)
+  }
+
+  join(parts, "")
+}
+
+// Compute a stamp for program-level state.
+// Whole-program artifacts are valid only if the module graph hasn't changed.
+//
+// Stamp includes:
+// - Set of compiled modules (their paths)
+//
+// NOTE: We concatenate in discovery order. This means the stamp changes if
+// import discovery order changes, even if the module set is identical.
+// A more robust implementation would sort paths or use a set hash.
+fn computeProgramStamp(modulePaths) {
+  if !modulePaths or len(modulePaths) == 0 { return "" }
+
+  let stamp = ""
+  for path in modulePaths {
+    stamp = stamp + path + ";"
+  }
+  stamp
+}
+
+// Compute CRC32 hash for cache invalidation.
+// Uses zlib's CRC32 implementation for fast, reliable content fingerprinting.
+fn simpleStringHash(source) {
+  if !source { return "0" }
+
+  let crc = Lx.zlib.crc32(source)
+  str(crc)
+}
+
+.{
+  computeAstStamp,
+  computeProgramStamp,
+  simpleStringHash,
+}

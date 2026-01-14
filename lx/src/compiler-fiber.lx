@@ -44,25 +44,16 @@ fn parseErrorLocation(errorMsg) {
   let colColonIdx = colons[len(colons) - 1]
 
   // Extract line number
-  let lineStr = ""
-  for let i = lineColonIdx + 1; i < colColonIdx; i = i + 1 {
-    lineStr = lineStr + errorMsg[i]
-  }
+  let line = collect let i = lineColonIdx + 1; i < colColonIdx; i = i + 1 {
+    errorMsg[i]
+  }->join("")->tonumber()
 
   // Extract column number
-  let colStr = ""
-  for let i = colColonIdx + 1; i < closeBracket; i = i + 1 {
-    colStr = colStr + errorMsg[i]
-  }
+  let col = collect let i = colColonIdx + 1; i < closeBracket; i = i + 1 {
+    errorMsg[i]
+  }->join("")->tonumber()
 
-  let line = tonumber(lineStr)
-  let col = tonumber(colStr)
-
-  if line and col {
-    .{ line, col }
-  } else {
-    nil
-  }
+  .{ line, col }
 }
 
 // Internal: Create the compilation fiber with optional cancellation support

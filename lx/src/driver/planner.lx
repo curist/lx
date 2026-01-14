@@ -1,0 +1,121 @@
+// Planner - Pass planning and artifact graph traversal
+//
+// Derives the minimal set of passes needed to produce a target artifact.
+
+let passesModule = import "src/driver/passes.lx"
+let .{ PASS_ORDER, PASS_DEFS, passEnabled } = passesModule
+let artifactsModule = import "src/driver/artifacts.lx"
+let .{ artifactRequires, artifactProduces } = artifactsModule
+
+// Build the artifact dependency graph starting from a target artifact
+fn planArtifactGraph(artifactId, needs) {
+  fn walk(id, visited, graph) {
+    if visited[id] { return }
+    visited[id] = true
+    let reqs = artifactRequires(id, needs)
+    graph[id] = reqs
+    for req in reqs { walk(req, visited, graph) }
+  }
+
+  let graph = .{}
+  let visited = .{}
+  walk(artifactId, visited, graph)
+  graph
+}
+
+// Build a map of capabilities to the passes that provide them
+fn capabilityProviders() {
+  let providers = .{}
+  for passName in PASS_ORDER {
+    let pass = PASS_DEFS[passName]
+    let caps = pass and pass.provides or []
+    for cap in caps {
+      if !providers[cap] { providers[cap] = [] }
+      push(providers[cap], passName)
+    }
+  }
+  providers
+}
+
+// Derive the ordered list of passes needed to produce the artifacts in the graph
+fn derivePassPlan(graph, needs) {
+  let required = .{}
+  let artifactIds = keys(graph)
+  for artifactId in artifactIds {
+    let produced = artifactProduces(artifactId, needs)
+    for passName in produced {
+      if passEnabled(passName, needs) { required[passName] = true }
+    }
+  }
+
+  let providers = capabilityProviders()
+
+  let changed = true
+  for changed {
+    changed = false
+    let provided = .{}
+    for passName in PASS_ORDER {
+      if required[passName] and passEnabled(passName, needs) {
+        let pass = PASS_DEFS[passName]
+        let caps = pass and pass.provides or []
+        for cap in caps { provided[cap] = true }
+      }
+
+      if required[passName] and passEnabled(passName, needs) {
+        let pass = PASS_DEFS[passName]
+        let reqs = pass and pass.requires or []
+        for cap in reqs {
+          if !provided[cap] {
+            let candidates = providers[cap] or []
+            let provider = nil
+            for candidate in candidates {
+              if passEnabled(candidate, needs) {
+                provider = candidate
+                break
+              }
+            }
+            if provider and !required[provider] {
+              required[provider] = true
+              changed = true
+            }
+          }
+        }
+      }
+    }
+  }
+
+  collect passName in PASS_ORDER {
+    if required[passName] and passEnabled(passName, needs) { passName } else { continue }
+  }
+}
+
+// Trim a pass plan to stop after a specific pass
+fn trimPassPlan(passPlan, stopAfter) {
+  if !stopAfter { return passPlan }
+  let out = []
+  for passName in passPlan {
+    push(out, passName)
+    if passName == stopAfter { break }
+  }
+  out
+}
+
+// Check if a compilation result has all required passes completed successfully
+fn hasRequiredPasses(result, passNames) {
+  if !result or !result.passes { return false }
+  for passName in passNames {
+    let passResult = result.passes[passName]
+    if !passResult or passResult.success != true {
+      return false
+    }
+  }
+  true
+}
+
+.{
+  planArtifactGraph,
+  capabilityProviders,
+  derivePassPlan,
+  trimPassPlan,
+  hasRequiredPasses,
+}

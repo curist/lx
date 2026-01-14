@@ -1,0 +1,78 @@
+// Tests for driver/profiles.lx - Compilation profiles
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let profiles = import "src/driver/profiles.lx"
+
+// Mock ARTIFACT for testing getDefaultTarget
+let ARTIFACT = .{
+  AST_FINAL: "ast.final",
+  ANALYSIS_RESOLVE: "analysis.resolve",
+  ANALYSIS_TYPECHECK: "analysis.typecheck",
+}
+
+// =============================================================================
+// getProfile
+// =============================================================================
+
+test("getProfile returns nil for unknown profile", fn(assert) {
+  let result = profiles.getProfile("unknown")
+  assert.truthy(!result, "should return nil for unknown profile")
+})
+
+test("getProfile default has all transforms enabled", fn(assert) {
+  let p = profiles.getProfile("default")
+  assert.truthy(p, "should return a profile")
+  assert.truthy(p.withLower, "should enable lower")
+  assert.truthy(p.withAnf, "should enable anf")
+  assert.truthy(p.withAnfInline, "should enable anf-inline")
+  assert.truthy(p.withLowerIntrinsics, "should enable lower-intrinsics")
+  assert.truthy(!p.withTypecheck, "should not enable typecheck")
+})
+
+test("getProfile typecheck enables typecheck", fn(assert) {
+  let p = profiles.getProfile("typecheck")
+  assert.truthy(p, "should return a profile")
+  assert.truthy(p.withLower, "should enable lower")
+  assert.truthy(p.withAnf, "should enable anf")
+  assert.truthy(p.withAnfInline, "should enable anf-inline")
+  assert.truthy(p.withLowerIntrinsics, "should enable lower-intrinsics")
+  assert.truthy(p.withTypecheck, "should enable typecheck")
+})
+
+test("getProfile query disables optimization passes", fn(assert) {
+  let p = profiles.getProfile("query")
+  assert.truthy(p, "should return a profile")
+  assert.truthy(p.withLower, "should enable lower")
+  assert.truthy(!p.withAnf, "should disable anf")
+  assert.truthy(!p.withAnfInline, "should disable anf-inline")
+  assert.truthy(!p.withLowerIntrinsics, "should disable lower-intrinsics")
+  assert.truthy(!p.withTypecheck, "should disable typecheck")
+})
+
+// =============================================================================
+// getDefaultTarget
+// =============================================================================
+
+test("getDefaultTarget returns AST_FINAL for default profile", fn(assert) {
+  let target = profiles.getDefaultTarget("default", ARTIFACT)
+  assert.equal(target, ARTIFACT.AST_FINAL, "should target AST_FINAL")
+})
+
+test("getDefaultTarget returns ANALYSIS_RESOLVE for query profile", fn(assert) {
+  let target = profiles.getDefaultTarget("query", ARTIFACT)
+  assert.equal(target, ARTIFACT.ANALYSIS_RESOLVE, "should target ANALYSIS_RESOLVE")
+})
+
+test("getDefaultTarget returns ANALYSIS_TYPECHECK for typecheck profile", fn(assert) {
+  let target = profiles.getDefaultTarget("typecheck", ARTIFACT)
+  assert.equal(target, ARTIFACT.ANALYSIS_TYPECHECK, "should target ANALYSIS_TYPECHECK")
+})
+
+test("getDefaultTarget returns AST_FINAL for unknown profile", fn(assert) {
+  let target = profiles.getDefaultTarget("unknown", ARTIFACT)
+  assert.equal(target, ARTIFACT.AST_FINAL, "should default to AST_FINAL")
+})
+
+suite.run()

@@ -1,0 +1,60 @@
+// Helpers - AST utilities for the compilation driver
+//
+// Provides functions to extract the authoritative AST and related data
+// from pass results, handling the complexity of multi-pass transformations.
+
+// Remap enum info through origin tracking when node IDs change
+// prevEnumInfo: .{ oldNodeId: enumInfo }
+// resultOrigin: .{ newNodeId: oldNodeId }
+// Returns: .{ newNodeId: enumInfo }
+fn remapEnumInfo(prevEnumInfo, resultOrigin) {
+  if !prevEnumInfo or !resultOrigin { return .{} }
+
+  let remapped = .{}
+  for newId in keys(resultOrigin) {
+    let oldId = resultOrigin[newId]
+    if type(oldId) == "number" or type(oldId) == "string" {
+      let info = prevEnumInfo[oldId]
+      if info { remapped[newId] = info }
+    }
+  }
+  remapped
+}
+
+// Get the authoritative AST after all transforms.
+// This is the single source of truth for "what AST should be used?"
+//
+// Selection priority:
+// 1. lower-intrinsics (if enabled - post-resolve intrinsic lowering)
+// 2. anf-inline (if enabled - post-resolve ANF optimization)
+// 3. anf (if enabled - ANF transform)
+// 4. lower (if enabled - desugaring)
+// 5. parse (fallback - original AST)
+fn getFinalAst(passes) {
+  if !passes { return nil }
+
+  let ast = (passes["lower-intrinsics"] and passes["lower-intrinsics"].ast) or
+            (passes["anf-inline"] and passes["anf-inline"].ast) or
+            (passes.anf and passes.anf.ast) or
+            (passes.lower and passes.lower.ast) or
+            (passes.parse and passes.parse.ast)
+  ast
+}
+
+// Get the enum info corresponding to the final AST.
+// Enum info is remapped through AST transforms via origin tracking.
+fn getFinalEnumInfo(passes) {
+  if !passes { return .{} }
+
+  let enumInfo = (passes.anf and passes.anf.enumInfo) or
+                 (passes.lower and passes.lower.enumInfo) or
+                 (passes.parse and passes.parse.enumInfo) or
+                 .{}
+  enumInfo
+}
+
+.{
+  remapEnumInfo,
+  getFinalAst,
+  getFinalEnumInfo,
+}

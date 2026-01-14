@@ -1,0 +1,176 @@
+// Tests for driver/helpers.lx - AST utilities
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let helpers = import "src/driver/helpers.lx"
+
+// =============================================================================
+// remapEnumInfo
+// =============================================================================
+
+test("remapEnumInfo with nil inputs returns empty map", fn(assert) {
+  assert.equal(type(helpers.remapEnumInfo(nil, nil)), "map", "should return map")
+  assert.equal(len(keys(helpers.remapEnumInfo(nil, nil))), 0, "should be empty")
+})
+
+test("remapEnumInfo with nil prevEnumInfo returns empty map", fn(assert) {
+  let origin = .{ [10]: 5 }
+  let result = helpers.remapEnumInfo(nil, origin)
+  assert.equal(len(keys(result)), 0, "should be empty")
+})
+
+test("remapEnumInfo with nil resultOrigin returns empty map", fn(assert) {
+  let enumInfo = .{ [5]: .{ name: "Color" } }
+  let result = helpers.remapEnumInfo(enumInfo, nil)
+  assert.equal(len(keys(result)), 0, "should be empty")
+})
+
+test("remapEnumInfo remaps node IDs through origin", fn(assert) {
+  let enumInfo = .{ [5]: .{ name: "Color" }, [7]: .{ name: "Size" } }
+  let origin = .{ [10]: 5, [12]: 7 }
+
+  let result = helpers.remapEnumInfo(enumInfo, origin)
+
+  assert.truthy(result[10], "should have remapped node 10")
+  assert.equal(result[10].name, "Color", "node 10 should have Color info")
+  assert.truthy(result[12], "should have remapped node 12")
+  assert.equal(result[12].name, "Size", "node 12 should have Size info")
+})
+
+test("remapEnumInfo ignores origin entries without matching enumInfo", fn(assert) {
+  let enumInfo = .{ [5]: .{ name: "Color" } }
+  let origin = .{ [10]: 5, [12]: 999 }  // 999 doesn't exist in enumInfo
+
+  let result = helpers.remapEnumInfo(enumInfo, origin)
+
+  assert.truthy(result[10], "should have remapped node 10")
+  assert.truthy(!result[12], "node 12 should not exist (no source)")
+})
+
+// =============================================================================
+// getFinalAst
+// =============================================================================
+
+test("getFinalAst returns nil for nil passes", fn(assert) {
+  let result = helpers.getFinalAst(nil)
+  assert.truthy(!result, "should return nil")
+})
+
+test("getFinalAst returns nil for empty passes", fn(assert) {
+  let result = helpers.getFinalAst(.{})
+  assert.truthy(!result, "should return nil")
+})
+
+test("getFinalAst returns parse ast when only parse exists", fn(assert) {
+  let parseAst = .{ type: "Block", id: 1 }
+  let passes = .{ parse: .{ ast: parseAst } }
+
+  let result = helpers.getFinalAst(passes)
+
+  assert.equal(result, parseAst, "should return parse ast")
+})
+
+test("getFinalAst prefers lower over parse", fn(assert) {
+  let parseAst = .{ type: "Block", id: 1 }
+  let lowerAst = .{ type: "Block", id: 2 }
+  let passes = .{
+    parse: .{ ast: parseAst },
+    lower: .{ ast: lowerAst },
+  }
+
+  let result = helpers.getFinalAst(passes)
+
+  assert.equal(result, lowerAst, "should return lower ast")
+})
+
+test("getFinalAst prefers anf over lower", fn(assert) {
+  let lowerAst = .{ type: "Block", id: 2 }
+  let anfAst = .{ type: "Block", id: 3 }
+  let passes = .{
+    lower: .{ ast: lowerAst },
+    anf: .{ ast: anfAst },
+  }
+
+  let result = helpers.getFinalAst(passes)
+
+  assert.equal(result, anfAst, "should return anf ast")
+})
+
+test("getFinalAst prefers anf-inline over anf", fn(assert) {
+  let anfAst = .{ type: "Block", id: 3 }
+  let anfInlineAst = .{ type: "Block", id: 4 }
+  let passes = .{
+    anf: .{ ast: anfAst },
+    ["anf-inline"]: .{ ast: anfInlineAst },
+  }
+
+  let result = helpers.getFinalAst(passes)
+
+  assert.equal(result, anfInlineAst, "should return anf-inline ast")
+})
+
+test("getFinalAst prefers lower-intrinsics over anf-inline", fn(assert) {
+  let anfInlineAst = .{ type: "Block", id: 4 }
+  let lowerIntrinsicsAst = .{ type: "Block", id: 5 }
+  let passes = .{
+    ["anf-inline"]: .{ ast: anfInlineAst },
+    ["lower-intrinsics"]: .{ ast: lowerIntrinsicsAst },
+  }
+
+  let result = helpers.getFinalAst(passes)
+
+  assert.equal(result, lowerIntrinsicsAst, "should return lower-intrinsics ast")
+})
+
+// =============================================================================
+// getFinalEnumInfo
+// =============================================================================
+
+test("getFinalEnumInfo returns empty map for nil passes", fn(assert) {
+  let result = helpers.getFinalEnumInfo(nil)
+  assert.equal(type(result), "map", "should return map")
+  assert.equal(len(keys(result)), 0, "should be empty")
+})
+
+test("getFinalEnumInfo returns empty map for empty passes", fn(assert) {
+  let result = helpers.getFinalEnumInfo(.{})
+  assert.equal(len(keys(result)), 0, "should be empty")
+})
+
+test("getFinalEnumInfo returns parse enumInfo when only parse exists", fn(assert) {
+  let enumInfo = .{ [5]: .{ name: "Color" } }
+  let passes = .{ parse: .{ enumInfo: enumInfo } }
+
+  let result = helpers.getFinalEnumInfo(passes)
+
+  assert.equal(result, enumInfo, "should return parse enumInfo")
+})
+
+test("getFinalEnumInfo prefers lower over parse", fn(assert) {
+  let parseEnumInfo = .{ [5]: .{ name: "Color" } }
+  let lowerEnumInfo = .{ [10]: .{ name: "Color" } }
+  let passes = .{
+    parse: .{ enumInfo: parseEnumInfo },
+    lower: .{ enumInfo: lowerEnumInfo },
+  }
+
+  let result = helpers.getFinalEnumInfo(passes)
+
+  assert.equal(result, lowerEnumInfo, "should return lower enumInfo")
+})
+
+test("getFinalEnumInfo prefers anf over lower", fn(assert) {
+  let lowerEnumInfo = .{ [10]: .{ name: "Color" } }
+  let anfEnumInfo = .{ [20]: .{ name: "Color" } }
+  let passes = .{
+    lower: .{ enumInfo: lowerEnumInfo },
+    anf: .{ enumInfo: anfEnumInfo },
+  }
+
+  let result = helpers.getFinalEnumInfo(passes)
+
+  assert.equal(result, anfEnumInfo, "should return anf enumInfo")
+})
+
+suite.run()

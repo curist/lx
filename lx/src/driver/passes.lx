@@ -1,0 +1,142 @@
+// Passes - Pass definitions and ordering for the compilation pipeline
+//
+// Defines the metadata and run functions for each compiler pass.
+
+let parse = import "src/passes/parse/parser.lx"
+let lower = import "src/passes/transform/lower.lx"
+let anf = import "src/passes/transform/anf.lx"
+let anfInline = import "src/passes/transform/anf-inline.lx"
+let lowerIntrinsics = import "src/passes/transform/lower-intrinsics.lx"
+let resolve = import "src/passes/analysis/resolve.lx"
+let dce = import "src/passes/analysis/dce.lx"
+
+let helpers = import "src/driver/helpers.lx"
+
+// Canonical pass execution order
+let PASS_ORDER = ["parse", "lower", "anf", "resolve", "dce", "anf-inline", "lower-intrinsics"]
+
+// Check if a pass is enabled given the current needs configuration
+fn passEnabled(passName, needs) {
+  if passName == "parse" { return true }
+  if passName == "lower" { return needs.withLower == true }
+  if passName == "anf" { return needs.withAnf == true }
+  if passName == "resolve" { return true }
+  if passName == "dce" { return needs.withDce == true }
+  if passName == "anf-inline" { return needs.withAnfInline == true }
+  if passName == "lower-intrinsics" { return needs.withLowerIntrinsics == true }
+  false
+}
+
+// Pass definitions with metadata and run functions
+let PASS_DEFS = .{
+  parse: .{
+    name: "parse",
+    mutatesAst: false,
+    provides: ["ast", "parseTree"],
+    run: fn(ctx, state) {
+      parse(state.source, state.path)
+    },
+  },
+  lower: .{
+    name: "lower",
+    mutatesAst: false,
+    requires: ["ast"],
+    provides: ["loweredAst"],
+    run: fn(ctx, state) {
+      let result = lower(state.ast, .{ startNodeId: state.nextNodeId })
+
+      // Remap parse enum info (if present) onto lowered node IDs via origin.
+      let parseResult = state.passes and state.passes.parse
+      if parseResult and parseResult.enumInfo and result and result.origin {
+        let remapped = helpers.remapEnumInfo(parseResult.enumInfo, result.origin)
+        return .{
+          success: result.success,
+          ast: result.ast,
+          origin: result.origin,
+          errors: result.errors,
+          nextNodeId: result.nextNodeId,
+          enumInfo: remapped,
+        }
+      }
+
+      result
+    },
+  },
+  anf: .{
+    name: "anf",
+    mutatesAst: false,
+    requires: ["loweredAst"],
+    provides: ["anfAst", "loweredAst"],
+    run: fn(ctx, state) {
+      let result = anf(state.ast, .{ startNodeId: state.nextNodeId })
+
+      // Remap enum info through ANF transform (node IDs change again).
+      let prev = state.passes and state.passes.lower
+      if prev and prev.enumInfo and result and result.origin {
+        let remapped = helpers.remapEnumInfo(prev.enumInfo, result.origin)
+        return .{
+          success: result.success,
+          ast: result.ast,
+          origin: result.origin,
+          errors: result.errors,
+          nextNodeId: result.nextNodeId,
+          enumInfo: remapped,
+        }
+      }
+
+      result
+    },
+  },
+  resolve: .{
+    name: "resolve",
+    mutatesAst: false,
+    requires: ["ast"],
+    provides: ["resolution", "scopeInfo"],
+    run: fn(ctx, state) {
+      let opts = .{
+        importCache: ctx.importCache,
+        compileModule: ctx.compileModule,
+      }
+      resolve(state.ast, opts)
+    },
+  },
+  dce: .{
+    name: "dce",
+    mutatesAst: false,
+    requires: ["resolution"],
+    provides: ["dce"],
+    enabled: fn(ctx, state) {
+      ctx.opts.withDce != false
+    },
+    run: fn(ctx, state) {
+      let resolveResult = state.passes.resolve
+      dce(state.ast, resolveResult)
+    },
+  },
+  ["anf-inline"]: .{
+    name: "anf-inline",
+    mutatesAst: true,
+    requires: ["anfAst", "resolution"],
+    provides: ["optimizedAst"],
+    run: fn(ctx, state) {
+      let resolveResult = state.passes.resolve
+      anfInline(state.ast, resolveResult)
+    },
+  },
+  ["lower-intrinsics"]: .{
+    name: "lower-intrinsics",
+    mutatesAst: true,
+    requires: ["anfAst", "resolution"],
+    provides: ["intrinsicsLoweredAst"],
+    run: fn(ctx, state) {
+      let resolveResult = state.passes.resolve
+      lowerIntrinsics(state.ast, resolveResult, nil)
+    },
+  },
+}
+
+.{
+  PASS_ORDER,
+  PASS_DEFS,
+  passEnabled,
+}

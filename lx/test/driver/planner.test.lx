@@ -1,0 +1,186 @@
+// Tests for driver/planner.lx - Pass planning and artifact graph traversal
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let planner = import "src/driver/planner.lx"
+let artifacts = import "src/driver/artifacts.lx"
+let .{ ARTIFACT } = artifacts
+
+// =============================================================================
+// planArtifactGraph
+// =============================================================================
+
+test("planArtifactGraph builds graph for source artifact", fn(assert) {
+  let graph = planner.planArtifactGraph("source", .{})
+  assert.truthy(graph["source"], "should have source in graph")
+  assert.equal(len(graph["source"]), 0, "source should have no requires")
+})
+
+test("planArtifactGraph builds graph for ast.pre_resolve", fn(assert) {
+  let graph = planner.planArtifactGraph("ast.pre_resolve", .{})
+  assert.truthy(graph["ast.pre_resolve"], "should have ast.pre_resolve in graph")
+  assert.truthy(graph["source"], "should have source in graph")
+  assert.equal(graph["ast.pre_resolve"][0], "source", "ast.pre_resolve should require source")
+})
+
+test("planArtifactGraph builds graph for ANALYSIS_RESOLVE", fn(assert) {
+  let graph = planner.planArtifactGraph(ARTIFACT.ANALYSIS_RESOLVE, .{})
+  assert.truthy(graph[ARTIFACT.ANALYSIS_RESOLVE], "should have ANALYSIS_RESOLVE in graph")
+  assert.truthy(graph["ast.pre_resolve"], "should have ast.pre_resolve in graph")
+  assert.truthy(graph["source"], "should have source in graph")
+})
+
+test("planArtifactGraph includes DCE dependencies when withDce", fn(assert) {
+  let graph = planner.planArtifactGraph(ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM, .{ withDce: true })
+  assert.truthy(graph[ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM], "should have ANALYSIS_DCE_WHOLE_PROGRAM")
+  assert.truthy(graph[ARTIFACT.PROGRAM_MODULE_GRAPH], "should have PROGRAM_MODULE_GRAPH")
+  assert.truthy(graph[ARTIFACT.ANALYSIS_DCE_LOCAL], "should have ANALYSIS_DCE_LOCAL with withDce")
+})
+
+// =============================================================================
+// capabilityProviders
+// =============================================================================
+
+test("capabilityProviders maps capabilities to passes", fn(assert) {
+  let providers = planner.capabilityProviders()
+
+  assert.truthy(providers["ast"], "should have ast capability")
+  assert.equal(providers["ast"][0], "parse", "parse provides ast")
+
+  assert.truthy(providers["loweredAst"], "should have loweredAst capability")
+  assert.equal(providers["loweredAst"][0], "lower", "lower provides loweredAst")
+
+  assert.truthy(providers["resolution"], "should have resolution capability")
+  assert.equal(providers["resolution"][0], "resolve", "resolve provides resolution")
+})
+
+// =============================================================================
+// derivePassPlan
+// =============================================================================
+
+test("derivePassPlan returns parse for ast.pre_resolve", fn(assert) {
+  let graph = planner.planArtifactGraph("ast.pre_resolve", .{})
+  let plan = planner.derivePassPlan(graph, .{})
+  assert.truthy(len(plan) >= 1, "should have at least parse")
+  assert.equal(plan[0], "parse", "first pass should be parse")
+})
+
+test("derivePassPlan returns parse and resolve for ANALYSIS_RESOLVE", fn(assert) {
+  let graph = planner.planArtifactGraph(ARTIFACT.ANALYSIS_RESOLVE, .{})
+  let plan = planner.derivePassPlan(graph, .{})
+  assert.truthy(len(plan) >= 2, "should have at least parse and resolve")
+  assert.equal(plan[0], "parse", "first should be parse")
+  assert.equal(plan[len(plan) - 1], "resolve", "last should be resolve")
+})
+
+test("derivePassPlan includes lower and anf when enabled", fn(assert) {
+  let needs = .{ withLower: true, withAnf: true }
+  let graph = planner.planArtifactGraph("ast.pre_resolve", needs)
+  let plan = planner.derivePassPlan(graph, needs)
+
+  let hasLower = false
+  let hasAnf = false
+  for passName in plan {
+    if passName == "lower" { hasLower = true }
+    if passName == "anf" { hasAnf = true }
+  }
+  assert.truthy(hasLower, "should include lower")
+  assert.truthy(hasAnf, "should include anf")
+})
+
+test("derivePassPlan excludes lower when not enabled", fn(assert) {
+  let needs = .{ withLower: false }
+  let graph = planner.planArtifactGraph("ast.pre_resolve", needs)
+  let plan = planner.derivePassPlan(graph, needs)
+
+  let hasLower = false
+  for passName in plan {
+    if passName == "lower" { hasLower = true }
+  }
+  assert.truthy(!hasLower, "should not include lower")
+})
+
+test("derivePassPlan includes anf-inline for AST_FINAL when enabled", fn(assert) {
+  let needs = .{ withLower: true, withAnf: true, withAnfInline: true }
+  let graph = planner.planArtifactGraph(ARTIFACT.AST_FINAL, needs)
+  let plan = planner.derivePassPlan(graph, needs)
+
+  let hasAnfInline = false
+  for passName in plan {
+    if passName == "anf-inline" { hasAnfInline = true }
+  }
+  assert.truthy(hasAnfInline, "should include anf-inline")
+})
+
+// =============================================================================
+// trimPassPlan
+// =============================================================================
+
+test("trimPassPlan returns full plan when stopAfter is nil", fn(assert) {
+  let plan = ["parse", "lower", "anf", "resolve"]
+  let trimmed = planner.trimPassPlan(plan, nil)
+  assert.equal(len(trimmed), 4, "should return full plan")
+})
+
+test("trimPassPlan returns full plan when stopAfter is false", fn(assert) {
+  let plan = ["parse", "lower", "anf", "resolve"]
+  let trimmed = planner.trimPassPlan(plan, false)
+  assert.equal(len(trimmed), 4, "should return full plan")
+})
+
+test("trimPassPlan stops after specified pass", fn(assert) {
+  let plan = ["parse", "lower", "anf", "resolve"]
+  let trimmed = planner.trimPassPlan(plan, "lower")
+  assert.equal(len(trimmed), 2, "should stop after lower")
+  assert.equal(trimmed[0], "parse", "first should be parse")
+  assert.equal(trimmed[1], "lower", "second should be lower")
+})
+
+test("trimPassPlan stops at first pass when specified", fn(assert) {
+  let plan = ["parse", "lower", "anf", "resolve"]
+  let trimmed = planner.trimPassPlan(plan, "parse")
+  assert.equal(len(trimmed), 1, "should only have parse")
+  assert.equal(trimmed[0], "parse", "should be parse")
+})
+
+// =============================================================================
+// hasRequiredPasses
+// =============================================================================
+
+test("hasRequiredPasses returns false for nil result", fn(assert) {
+  let result = planner.hasRequiredPasses(nil, ["parse"])
+  assert.truthy(!result, "should return false for nil")
+})
+
+test("hasRequiredPasses returns false for result without passes", fn(assert) {
+  let result = planner.hasRequiredPasses(.{}, ["parse"])
+  assert.truthy(!result, "should return false for empty result")
+})
+
+test("hasRequiredPasses returns false for missing pass", fn(assert) {
+  let result = planner.hasRequiredPasses(.{ passes: .{ parse: .{ success: true } } }, ["parse", "lower"])
+  assert.truthy(!result, "should return false for missing pass")
+})
+
+test("hasRequiredPasses returns false for failed pass", fn(assert) {
+  let result = planner.hasRequiredPasses(.{ passes: .{ parse: .{ success: false } } }, ["parse"])
+  assert.truthy(!result, "should return false for failed pass")
+})
+
+test("hasRequiredPasses returns true when all passes succeed", fn(assert) {
+  let result = planner.hasRequiredPasses(.{
+    passes: .{
+      parse: .{ success: true },
+      lower: .{ success: true },
+    },
+  }, ["parse", "lower"])
+  assert.truthy(result, "should return true when all passes succeed")
+})
+
+test("hasRequiredPasses returns true for empty pass list", fn(assert) {
+  let result = planner.hasRequiredPasses(.{ passes: .{} }, [])
+  assert.truthy(result, "should return true for empty pass list")
+})
+
+suite.run()

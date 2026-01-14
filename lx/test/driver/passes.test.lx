@@ -1,0 +1,116 @@
+// Tests for driver/passes.lx - Pass definitions and ordering
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let passes = import "src/driver/passes.lx"
+
+// =============================================================================
+// PASS_ORDER
+// =============================================================================
+
+test("PASS_ORDER contains all expected passes", fn(assert) {
+  let order = passes.PASS_ORDER
+  assert.equal(len(order), 7, "should have 7 passes")
+  assert.equal(order[0], "parse", "first pass should be parse")
+  assert.equal(order[1], "lower", "second pass should be lower")
+  assert.equal(order[2], "anf", "third pass should be anf")
+  assert.equal(order[3], "resolve", "fourth pass should be resolve")
+  assert.equal(order[4], "dce", "fifth pass should be dce")
+  assert.equal(order[5], "anf-inline", "sixth pass should be anf-inline")
+  assert.equal(order[6], "lower-intrinsics", "seventh pass should be lower-intrinsics")
+})
+
+// =============================================================================
+// PASS_DEFS
+// =============================================================================
+
+test("PASS_DEFS has definitions for all passes", fn(assert) {
+  let defs = passes.PASS_DEFS
+  assert.truthy(defs.parse, "should have parse def")
+  assert.truthy(defs.lower, "should have lower def")
+  assert.truthy(defs.anf, "should have anf def")
+  assert.truthy(defs.resolve, "should have resolve def")
+  assert.truthy(defs.dce, "should have dce def")
+  assert.truthy(defs["anf-inline"], "should have anf-inline def")
+  assert.truthy(defs["lower-intrinsics"], "should have lower-intrinsics def")
+})
+
+test("PASS_DEFS parse has correct metadata", fn(assert) {
+  let def = passes.PASS_DEFS.parse
+  assert.equal(def.name, "parse", "name should be parse")
+  assert.equal(def.mutatesAst, false, "should not mutate ast")
+  assert.truthy(def.provides, "should have provides")
+  assert.truthy(type(def.run) == "fn", "should have run function")
+})
+
+test("PASS_DEFS lower has correct metadata", fn(assert) {
+  let def = passes.PASS_DEFS.lower
+  assert.equal(def.name, "lower", "name should be lower")
+  assert.equal(def.mutatesAst, false, "should not mutate ast")
+  assert.truthy(def.requires, "should have requires")
+  assert.truthy(def.provides, "should have provides")
+  assert.truthy(type(def.run) == "fn", "should have run function")
+})
+
+test("PASS_DEFS anf-inline mutates AST", fn(assert) {
+  let def = passes.PASS_DEFS["anf-inline"]
+  assert.equal(def.name, "anf-inline", "name should be anf-inline")
+  assert.equal(def.mutatesAst, true, "should mutate ast")
+})
+
+test("PASS_DEFS lower-intrinsics mutates AST", fn(assert) {
+  let def = passes.PASS_DEFS["lower-intrinsics"]
+  assert.equal(def.name, "lower-intrinsics", "name should be lower-intrinsics")
+  assert.equal(def.mutatesAst, true, "should mutate ast")
+})
+
+// =============================================================================
+// passEnabled
+// =============================================================================
+
+test("passEnabled always returns true for parse", fn(assert) {
+  assert.truthy(passes.passEnabled("parse", .{}), "parse should be enabled with empty needs")
+  assert.truthy(passes.passEnabled("parse", .{ withLower: false }), "parse should be enabled regardless of other flags")
+})
+
+test("passEnabled always returns true for resolve", fn(assert) {
+  assert.truthy(passes.passEnabled("resolve", .{}), "resolve should be enabled with empty needs")
+  assert.truthy(passes.passEnabled("resolve", .{ withLower: false }), "resolve should be enabled regardless of other flags")
+})
+
+test("passEnabled returns based on withLower for lower", fn(assert) {
+  assert.truthy(!passes.passEnabled("lower", .{}), "lower should be disabled with empty needs")
+  assert.truthy(!passes.passEnabled("lower", .{ withLower: false }), "lower should be disabled when withLower is false")
+  assert.truthy(passes.passEnabled("lower", .{ withLower: true }), "lower should be enabled when withLower is true")
+})
+
+test("passEnabled returns based on withAnf for anf", fn(assert) {
+  assert.truthy(!passes.passEnabled("anf", .{}), "anf should be disabled with empty needs")
+  assert.truthy(!passes.passEnabled("anf", .{ withAnf: false }), "anf should be disabled when withAnf is false")
+  assert.truthy(passes.passEnabled("anf", .{ withAnf: true }), "anf should be enabled when withAnf is true")
+})
+
+test("passEnabled returns based on withDce for dce", fn(assert) {
+  assert.truthy(!passes.passEnabled("dce", .{}), "dce should be disabled with empty needs")
+  assert.truthy(!passes.passEnabled("dce", .{ withDce: false }), "dce should be disabled when withDce is false")
+  assert.truthy(passes.passEnabled("dce", .{ withDce: true }), "dce should be enabled when withDce is true")
+})
+
+test("passEnabled returns based on withAnfInline for anf-inline", fn(assert) {
+  assert.truthy(!passes.passEnabled("anf-inline", .{}), "anf-inline should be disabled with empty needs")
+  assert.truthy(!passes.passEnabled("anf-inline", .{ withAnfInline: false }), "anf-inline should be disabled when withAnfInline is false")
+  assert.truthy(passes.passEnabled("anf-inline", .{ withAnfInline: true }), "anf-inline should be enabled when withAnfInline is true")
+})
+
+test("passEnabled returns based on withLowerIntrinsics for lower-intrinsics", fn(assert) {
+  assert.truthy(!passes.passEnabled("lower-intrinsics", .{}), "lower-intrinsics should be disabled with empty needs")
+  assert.truthy(!passes.passEnabled("lower-intrinsics", .{ withLowerIntrinsics: false }), "lower-intrinsics should be disabled when withLowerIntrinsics is false")
+  assert.truthy(passes.passEnabled("lower-intrinsics", .{ withLowerIntrinsics: true }), "lower-intrinsics should be enabled when withLowerIntrinsics is true")
+})
+
+test("passEnabled returns false for unknown pass", fn(assert) {
+  assert.truthy(!passes.passEnabled("unknown", .{ withLower: true, withAnf: true }), "unknown pass should return false")
+})
+
+suite.run()

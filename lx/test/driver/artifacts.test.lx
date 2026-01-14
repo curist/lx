@@ -1,0 +1,160 @@
+// Tests for driver/artifacts.lx - Artifact definitions and specifications
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let artifacts = import "src/driver/artifacts.lx"
+let .{ ARTIFACT, ARTIFACT_SPEC, artifactRequires, artifactProduces, validateArtifactSpec } = artifacts
+
+// =============================================================================
+// ARTIFACT constants
+// =============================================================================
+
+test("ARTIFACT has all expected keys", fn(assert) {
+  assert.equal(ARTIFACT.AST_FINAL, "ast.final", "AST_FINAL should be correct")
+  assert.equal(ARTIFACT.ANALYSIS_RESOLVE, "analysis.resolve", "ANALYSIS_RESOLVE should be correct")
+  assert.equal(ARTIFACT.ANALYSIS_DCE_LOCAL, "analysis.dce.local", "ANALYSIS_DCE_LOCAL should be correct")
+  assert.equal(ARTIFACT.ANALYSIS_FASTCHECK, "analysis.fastcheck", "ANALYSIS_FASTCHECK should be correct")
+  assert.equal(ARTIFACT.ANALYSIS_TYPECHECK, "analysis.typecheck", "ANALYSIS_TYPECHECK should be correct")
+  assert.equal(ARTIFACT.ANALYSIS_DCE_FINAL, "analysis.dce.final", "ANALYSIS_DCE_FINAL should be correct")
+  assert.equal(ARTIFACT.BYTECODE_FUNCTION, "bytecode.function", "BYTECODE_FUNCTION should be correct")
+  assert.equal(ARTIFACT.BYTECODE_VERIFIED, "bytecode.verified", "BYTECODE_VERIFIED should be correct")
+  assert.equal(ARTIFACT.PROGRAM_MODULE_GRAPH, "program.module_graph", "PROGRAM_MODULE_GRAPH should be correct")
+  assert.equal(ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM, "analysis.dce.whole_program", "ANALYSIS_DCE_WHOLE_PROGRAM should be correct")
+})
+
+// =============================================================================
+// ARTIFACT_SPEC
+// =============================================================================
+
+test("ARTIFACT_SPEC has source artifact", fn(assert) {
+  let spec = ARTIFACT_SPEC["source"]
+  assert.truthy(spec, "should have source spec")
+  assert.equal(len(spec.requires), 0, "source requires nothing")
+  assert.equal(len(spec.produces), 0, "source produces nothing")
+})
+
+test("ARTIFACT_SPEC has ast.pre_resolve artifact", fn(assert) {
+  let spec = ARTIFACT_SPEC["ast.pre_resolve"]
+  assert.truthy(spec, "should have ast.pre_resolve spec")
+  assert.equal(spec.requires[0], "source", "should require source")
+})
+
+test("ARTIFACT_SPEC has AST_FINAL artifact", fn(assert) {
+  let spec = ARTIFACT_SPEC[ARTIFACT.AST_FINAL]
+  assert.truthy(spec, "should have AST_FINAL spec")
+  assert.equal(spec.requires[0], "ast.pre_resolve", "should require ast.pre_resolve")
+  assert.equal(spec.requires[1], ARTIFACT.ANALYSIS_RESOLVE, "should require ANALYSIS_RESOLVE")
+})
+
+// =============================================================================
+// artifactRequires
+// =============================================================================
+
+test("artifactRequires returns empty array for unknown artifact", fn(assert) {
+  let result = artifactRequires("unknown", .{})
+  assert.equal(type(result), "array", "should return array")
+  assert.equal(len(result), 0, "should be empty")
+})
+
+test("artifactRequires returns static requires", fn(assert) {
+  let result = artifactRequires("source", .{})
+  assert.equal(len(result), 0, "source requires nothing")
+})
+
+test("artifactRequires returns ast.pre_resolve requires", fn(assert) {
+  let result = artifactRequires("ast.pre_resolve", .{})
+  assert.equal(len(result), 1, "should have 1 require")
+  assert.equal(result[0], "source", "should require source")
+})
+
+test("artifactRequires evaluates dynamic requires for ANALYSIS_DCE_WHOLE_PROGRAM", fn(assert) {
+  let withDce = artifactRequires(ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM, .{ withDce: true })
+  assert.equal(len(withDce), 2, "should have 2 requires with DCE")
+  assert.truthy(withDce[0] == ARTIFACT.PROGRAM_MODULE_GRAPH or withDce[1] == ARTIFACT.PROGRAM_MODULE_GRAPH, "should include PROGRAM_MODULE_GRAPH")
+  assert.truthy(withDce[0] == ARTIFACT.ANALYSIS_DCE_LOCAL or withDce[1] == ARTIFACT.ANALYSIS_DCE_LOCAL, "should include ANALYSIS_DCE_LOCAL")
+
+  let withoutDce = artifactRequires(ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM, .{ withDce: false })
+  assert.equal(len(withoutDce), 1, "should have 1 require without DCE")
+  assert.equal(withoutDce[0], ARTIFACT.PROGRAM_MODULE_GRAPH, "should require only PROGRAM_MODULE_GRAPH")
+})
+
+// =============================================================================
+// artifactProduces
+// =============================================================================
+
+test("artifactProduces returns empty array for unknown artifact", fn(assert) {
+  let result = artifactProduces("unknown", .{})
+  assert.equal(type(result), "array", "should return array")
+  assert.equal(len(result), 0, "should be empty")
+})
+
+test("artifactProduces returns static produces", fn(assert) {
+  let result = artifactProduces(ARTIFACT.ANALYSIS_RESOLVE, .{})
+  assert.equal(len(result), 1, "should produce 1 pass")
+  assert.equal(result[0], "resolve", "should produce resolve")
+})
+
+test("artifactProduces evaluates dynamic produces for ast.pre_resolve", fn(assert) {
+  let basic = artifactProduces("ast.pre_resolve", .{})
+  assert.equal(len(basic), 1, "should produce 1 pass with no flags")
+  assert.equal(basic[0], "parse", "should produce parse")
+
+  let withLower = artifactProduces("ast.pre_resolve", .{ withLower: true })
+  assert.equal(len(withLower), 2, "should produce 2 passes with lower")
+  assert.equal(withLower[0], "parse", "first should be parse")
+  assert.equal(withLower[1], "lower", "second should be lower")
+
+  let withAll = artifactProduces("ast.pre_resolve", .{ withLower: true, withAnf: true })
+  assert.equal(len(withAll), 3, "should produce 3 passes with lower and anf")
+  assert.equal(withAll[0], "parse", "first should be parse")
+  assert.equal(withAll[1], "lower", "second should be lower")
+  assert.equal(withAll[2], "anf", "third should be anf")
+})
+
+test("artifactProduces evaluates dynamic produces for AST_FINAL", fn(assert) {
+  let none = artifactProduces(ARTIFACT.AST_FINAL, .{})
+  assert.equal(len(none), 0, "should produce 0 passes with no flags")
+
+  let withInline = artifactProduces(ARTIFACT.AST_FINAL, .{ withAnfInline: true })
+  assert.equal(len(withInline), 1, "should produce 1 pass")
+  assert.equal(withInline[0], "anf-inline", "should produce anf-inline")
+
+  let withBoth = artifactProduces(ARTIFACT.AST_FINAL, .{ withAnfInline: true, withLowerIntrinsics: true })
+  assert.equal(len(withBoth), 2, "should produce 2 passes")
+  assert.equal(withBoth[0], "anf-inline", "first should be anf-inline")
+  assert.equal(withBoth[1], "lower-intrinsics", "second should be lower-intrinsics")
+})
+
+test("artifactProduces evaluates dynamic produces for ANALYSIS_DCE_LOCAL", fn(assert) {
+  let withDce = artifactProduces(ARTIFACT.ANALYSIS_DCE_LOCAL, .{ withDce: true })
+  assert.equal(len(withDce), 1, "should produce 1 pass with DCE")
+  assert.equal(withDce[0], "dce", "should produce dce")
+
+  let withoutDce = artifactProduces(ARTIFACT.ANALYSIS_DCE_LOCAL, .{ withDce: false })
+  assert.equal(len(withoutDce), 0, "should produce 0 passes without DCE")
+})
+
+// =============================================================================
+// validateArtifactSpec
+// =============================================================================
+
+test("validateArtifactSpec returns true for valid spec", fn(assert) {
+  let needs = .{
+    withLower: true,
+    withAnf: true,
+    withAnfInline: true,
+    withLowerIntrinsics: true,
+    withDce: true,
+    withTypecheck: true,
+  }
+  let result = validateArtifactSpec(needs)
+  assert.truthy(result, "should validate successfully")
+})
+
+test("validateArtifactSpec returns true with minimal needs", fn(assert) {
+  let result = validateArtifactSpec(.{})
+  assert.truthy(result, "should validate with minimal needs")
+})
+
+suite.run()

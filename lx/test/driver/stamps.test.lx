@@ -1,0 +1,135 @@
+// Tests for driver/stamps.lx - Cache invalidation stamps
+
+let suite = (import "test/makeTestSuite.lx")()
+let test = suite.defineTest
+
+let stamps = import "src/driver/stamps.lx"
+
+// =============================================================================
+// computeAstStamp
+// =============================================================================
+
+test("computeAstStamp with all options enabled", fn(assert) {
+  let opts = .{
+    withLower: true,
+    withAnf: true,
+    withAnfInline: true,
+    withLowerIntrinsics: true,
+    withTypecheck: true,
+    withDce: true,
+  }
+  let stamp = stamps.computeAstStamp(opts, nil)
+  // L=Lower, A=Anf, I=AnfInline, i=LowerIntrinsics, T=Typecheck, D=Dce
+  assert.equal(stamp, "LAIiTD", "should have all flags set")
+})
+
+test("computeAstStamp with all options disabled", fn(assert) {
+  let opts = .{
+    withLower: false,
+    withAnf: false,
+    withAnfInline: false,
+    withLowerIntrinsics: false,
+    withTypecheck: false,
+    withDce: false,
+  }
+  let stamp = stamps.computeAstStamp(opts, nil)
+  assert.equal(stamp, "______", "should have all flags unset")
+})
+
+test("computeAstStamp with mixed options", fn(assert) {
+  let opts = .{
+    withLower: true,
+    withAnf: true,
+    withAnfInline: false,
+    withLowerIntrinsics: false,
+    withTypecheck: false,
+    withDce: true,
+  }
+  let stamp = stamps.computeAstStamp(opts, nil)
+  // L=Lower, A=Anf, _=AnfInline off, _=LowerIntrinsics off, _=Typecheck off, D=Dce
+  assert.equal(stamp, "LA___D", "should have L, A, D set")
+})
+
+test("computeAstStamp includes source hash", fn(assert) {
+  let opts = .{ withLower: true }
+  let stamp = stamps.computeAstStamp(opts, "abc123")
+  // L plus 5 underscores for the other 5 options
+  assert.equal(stamp, "L_____|src:abc123", "should include source hash")
+})
+
+test("computeAstStamp without source hash", fn(assert) {
+  let opts = .{ withLower: true }
+  let stamp1 = stamps.computeAstStamp(opts, nil)
+  let stamp2 = stamps.computeAstStamp(opts, nil)
+  assert.equal(stamp1, stamp2, "stamps without hash should be equal")
+})
+
+test("computeAstStamp different source hashes produce different stamps", fn(assert) {
+  let opts = .{ withLower: true }
+  let stamp1 = stamps.computeAstStamp(opts, "hash1")
+  let stamp2 = stamps.computeAstStamp(opts, "hash2")
+  assert.truthy(stamp1 != stamp2, "different hashes should produce different stamps")
+})
+
+// =============================================================================
+// computeProgramStamp
+// =============================================================================
+
+test("computeProgramStamp with empty array", fn(assert) {
+  let stamp = stamps.computeProgramStamp([])
+  assert.equal(stamp, "", "empty array should produce empty stamp")
+})
+
+test("computeProgramStamp with nil", fn(assert) {
+  let stamp = stamps.computeProgramStamp(nil)
+  assert.equal(stamp, "", "nil should produce empty stamp")
+})
+
+test("computeProgramStamp with single module", fn(assert) {
+  let stamp = stamps.computeProgramStamp(["src/main.lx"])
+  assert.equal(stamp, "src/main.lx;", "should include module path with semicolon")
+})
+
+test("computeProgramStamp with multiple modules", fn(assert) {
+  let stamp = stamps.computeProgramStamp(["src/main.lx", "src/utils.lx", "src/lib.lx"])
+  assert.equal(stamp, "src/main.lx;src/utils.lx;src/lib.lx;", "should concatenate all paths")
+})
+
+test("computeProgramStamp order matters", fn(assert) {
+  let stamp1 = stamps.computeProgramStamp(["a.lx", "b.lx"])
+  let stamp2 = stamps.computeProgramStamp(["b.lx", "a.lx"])
+  assert.truthy(stamp1 != stamp2, "different order should produce different stamps")
+})
+
+// =============================================================================
+// simpleStringHash
+// =============================================================================
+
+test("simpleStringHash returns string", fn(assert) {
+  let hash = stamps.simpleStringHash("hello world")
+  assert.equal(type(hash), "string", "should return a string")
+})
+
+test("simpleStringHash returns 0 for nil", fn(assert) {
+  let hash = stamps.simpleStringHash(nil)
+  assert.equal(hash, "0", "nil should hash to '0'")
+})
+
+test("simpleStringHash same input produces same hash", fn(assert) {
+  let hash1 = stamps.simpleStringHash("let x = 42")
+  let hash2 = stamps.simpleStringHash("let x = 42")
+  assert.equal(hash1, hash2, "same input should produce same hash")
+})
+
+test("simpleStringHash different input produces different hash", fn(assert) {
+  let hash1 = stamps.simpleStringHash("let x = 42")
+  let hash2 = stamps.simpleStringHash("let x = 43")
+  assert.truthy(hash1 != hash2, "different input should produce different hash")
+})
+
+test("simpleStringHash empty string", fn(assert) {
+  let hash = stamps.simpleStringHash("")
+  assert.equal(type(hash), "string", "empty string should produce a hash")
+})
+
+suite.run()

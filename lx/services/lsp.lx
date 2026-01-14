@@ -146,9 +146,6 @@ fn pathToUri(path) {
   startsWith(path, "file://") and path or ("file://" + uriEncodePath(path))
 }
 
-// DEPRECATED: These functions are now defined inside serve()
-// to have access to the resolver instance
-
 // ------------------------------------------------------------
 // Caching + invalidation
 // ------------------------------------------------------------

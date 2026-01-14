@@ -63,7 +63,7 @@ parse → lower → anf → resolve → anf-inline → lower-intrinsics → code
 
 DIAG events now include proper source locations:
 
-- **Parse errors**: Extracted from error message format `[file:Lline:Ccol] context: message`
+- **Parse errors**: Extracted from error message format `[file:line:col] context: message`
 - **Resolve errors**: Looked up from `resolveResult.nodes[nodeId]` using `line`, `col`, `endLine`, `endCol`
 - **Codegen errors**: Same approach using `resolveResult.nodes[nodeId]`
 

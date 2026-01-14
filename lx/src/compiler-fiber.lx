@@ -12,41 +12,46 @@ let anfInline = import "src/passes/transform/anf-inline.lx"
 let lowerIntrinsics = import "src/passes/transform/lower-intrinsics.lx"
 let codegen = import "src/passes/emit/codegen.lx"
 
-// Parse error message format: [file:Lline:Ccol] context: message
+// Parse error message format: [file:line:col] context: message
 // Returns: .{ line, col } or nil if parsing fails
 fn parseErrorLocation(errorMsg) {
-  // Find the L and C markers
-  let lIdx = nil
-  let cIdx = nil
+  // Find the bracket and colon positions
+  // Format: [file:line:col] ...
+  let openBracket = nil
   let closeBracket = nil
+  let colons = []
 
   for let i = 0; i < len(errorMsg); i = i + 1 {
     let ch = errorMsg[i]
-    if ch == "L" and !lIdx {
-      lIdx = i
-    } else if ch == "C" and lIdx and !cIdx {
-      cIdx = i
+    if ch == "[" and !openBracket {
+      openBracket = i
+    } else if ch == ":" and openBracket and !closeBracket {
+      push(colons, i)
     } else if ch == "]" and !closeBracket {
       closeBracket = i
       break
     }
   }
 
-  if !lIdx or !cIdx or !closeBracket {
+  // Need at least 2 colons (file:line:col)
+  if !openBracket or !closeBracket or len(colons) < 2 {
     return nil
   }
 
-  // Extract line number (between L and :C)
+  // Line is between second-to-last and last colon
+  // Col is between last colon and ]
+  let lineColonIdx = colons[len(colons) - 2]
+  let colColonIdx = colons[len(colons) - 1]
+
+  // Extract line number
   let lineStr = ""
-  for let i = lIdx + 1; i < cIdx; i = i + 1 {
-    if errorMsg[i] != ":" {
-      lineStr = lineStr + errorMsg[i]
-    }
+  for let i = lineColonIdx + 1; i < colColonIdx; i = i + 1 {
+    lineStr = lineStr + errorMsg[i]
   }
 
-  // Extract column number (between C and ])
+  // Extract column number
   let colStr = ""
-  for let i = cIdx + 1; i < closeBracket; i = i + 1 {
+  for let i = colColonIdx + 1; i < closeBracket; i = i + 1 {
     colStr = colStr + errorMsg[i]
   }
 

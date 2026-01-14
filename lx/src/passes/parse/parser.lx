@@ -494,7 +494,7 @@ fn parse(src, filename) {
     }
 
     let errorMsg = join([
-      "[", filename, ":L", token.line, ":C", tokenCol, "]",
+      "[", filename, ":", token.line, ":", tokenCol, "]",
       if token.type == TOKEN.EOF {
         " at end"
       } else if token.type == TOKEN.ERROR {

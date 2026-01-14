@@ -212,4 +212,48 @@ test("Full compilation produces bytecode function", fn(assert) {
   assert.truthy(result.result.result.function, "result should include bytecode function")
 })
 
+// --- RED: Test 13 - DIAG events have proper line info for parse errors ---
+
+test("DIAG events have proper line info for parse errors", fn(assert) {
+  // Error on line 2
+  let source = "let x = 1\nlet y ="
+  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+
+  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+
+  // Find a diagnostic event for parse
+  let diagEvent = nil
+  for evt in result.events {
+    if evt.kind == Events.EventKind.DIAG and evt.pass == "parse" {
+      diagEvent = evt
+      break
+    }
+  }
+
+  assert.truthy(diagEvent, "should have a DIAG event")
+  assert.equal(diagEvent.range.start.line, 2, "error should be on line 2")
+})
+
+// --- RED: Test 14 - DIAG events have proper line info for resolve errors ---
+
+test("DIAG events have proper line info for resolve errors", fn(assert) {
+  // Error on line 2 - reading x in its own initializer
+  let source = "let a = 1\nlet x = x"
+  let fiber = Compiler.start(source, .{ filename: "test.lx" })
+
+  let result = Compiler.poll(fiber, .{ maxEvents: 100 })
+
+  // Find a diagnostic event for resolve
+  let diagEvent = nil
+  for evt in result.events {
+    if evt.kind == Events.EventKind.DIAG and evt.pass == "resolve" {
+      diagEvent = evt
+      break
+    }
+  }
+
+  assert.truthy(diagEvent, "should have a DIAG event")
+  assert.equal(diagEvent.range.start.line, 2, "error should be on line 2")
+})
+
 suite.run()

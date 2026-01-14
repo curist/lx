@@ -59,18 +59,13 @@ All passes are now implemented:
 parse → lower → anf → resolve → anf-inline → lower-intrinsics → codegen
 ```
 
-### 2. Extract Proper Range Info for DIAG Events
+### 2. ~~Extract Proper Range Info for DIAG Events~~ ✅ DONE
 
-Currently, DIAG events use a placeholder range:
-```lx
-let range = .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
-```
+DIAG events now include proper source locations:
 
-**Task:** Parse actual line/column from error messages or use node source locations.
-
-- Parse errors have format: `[file:Lline:Ccol] context: message`
-- Resolve errors have `nodeId` - could look up node's source location from AST
-- Consider adding a helper function to extract range from AST nodes
+- **Parse errors**: Extracted from error message format `[file:Lline:Ccol] context: message`
+- **Resolve errors**: Looked up from `resolveResult.nodes[nodeId]` using `line`, `col`, `endLine`, `endCol`
+- **Codegen errors**: Same approach using `resolveResult.nodes[nodeId]`
 
 ### 3. Wire to Driver for Module-Level Compilation
 

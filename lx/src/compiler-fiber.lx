@@ -12,6 +12,54 @@ let anfInline = import "src/passes/transform/anf-inline.lx"
 let lowerIntrinsics = import "src/passes/transform/lower-intrinsics.lx"
 let codegen = import "src/passes/emit/codegen.lx"
 
+// Parse error message format: [file:Lline:Ccol] context: message
+// Returns: .{ line, col } or nil if parsing fails
+fn parseErrorLocation(errorMsg) {
+  // Find the L and C markers
+  let lIdx = nil
+  let cIdx = nil
+  let closeBracket = nil
+
+  for let i = 0; i < len(errorMsg); i = i + 1 {
+    let ch = errorMsg[i]
+    if ch == "L" and !lIdx {
+      lIdx = i
+    } else if ch == "C" and lIdx and !cIdx {
+      cIdx = i
+    } else if ch == "]" and !closeBracket {
+      closeBracket = i
+      break
+    }
+  }
+
+  if !lIdx or !cIdx or !closeBracket {
+    return nil
+  }
+
+  // Extract line number (between L and :C)
+  let lineStr = ""
+  for let i = lIdx + 1; i < cIdx; i = i + 1 {
+    if errorMsg[i] != ":" {
+      lineStr = lineStr + errorMsg[i]
+    }
+  }
+
+  // Extract column number (between C and ])
+  let colStr = ""
+  for let i = cIdx + 1; i < closeBracket; i = i + 1 {
+    colStr = colStr + errorMsg[i]
+  }
+
+  let line = tonumber(lineStr)
+  let col = tonumber(colStr)
+
+  if line and col {
+    .{ line, col }
+  } else {
+    nil
+  }
+}
+
 // Start a compilation fiber.
 // - source: source code string to compile
 // - opts: compilation options (.{ filename, ... })
@@ -27,7 +75,12 @@ fn start(source, opts) {
 
     // Yield diagnostics for parse errors
     for errorMsg in parseResult.errors {
-      let range = .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      let loc = parseErrorLocation(errorMsg)
+      let range = if loc {
+        .{ start: .{ line: loc.line, col: loc.col }, end: .{ line: loc.line, col: loc.col + 1 } }
+      } else {
+        .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      }
       Fiber.yield(Events.diag("parse", filename, range, Events.Severity.ERROR, errorMsg, nil))
     }
 
@@ -62,7 +115,16 @@ fn start(source, opts) {
 
     // Yield diagnostics for resolve errors
     for err in resolveResult.errors {
-      let range = .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      // Look up node by id to get source location
+      let node = resolveResult.nodes and resolveResult.nodes[err.nodeId]
+      let range = if node and node.line {
+        .{
+          start: .{ line: node.line, col: node.col },
+          end: .{ line: node.endLine or node.line, col: node.endCol or (node.col + 1) }
+        }
+      } else {
+        .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      }
       let severity = if err.severity == "error" {
         Events.Severity.ERROR
       } else if err.severity == "warning" {
@@ -98,7 +160,16 @@ fn start(source, opts) {
 
     // Yield diagnostics for codegen errors
     for err in codegenResult.errors {
-      let range = .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      // Look up node by id to get source location
+      let node = resolveResult.nodes and resolveResult.nodes[err.nodeId]
+      let range = if node and node.line {
+        .{
+          start: .{ line: node.line, col: node.col },
+          end: .{ line: node.endLine or node.line, col: node.endCol or (node.col + 1) }
+        }
+      } else {
+        .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      }
       Fiber.yield(Events.diag("codegen", filename, range, Events.Severity.ERROR, err.message, nil))
     }
 

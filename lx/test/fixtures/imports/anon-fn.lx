@@ -1,0 +1,4 @@
+// Module that exports an anonymous function directly
+fn(name) {
+  "Hello, " + name
+}

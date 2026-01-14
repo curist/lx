@@ -1,0 +1,6 @@
+// Simple module that exports a function directly
+fn greet(name) {
+  "Hello, " + name
+}
+
+greet

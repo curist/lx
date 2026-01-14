@@ -86,8 +86,6 @@ fn addError(checker, nodeId, message) {
 // ========================================================
 // Shows how to traverse and analyze different node types
 
-let synthExpr  // Forward declaration for mutual recursion
-
 // Pattern: ExprStmt wrapper - common in lowered AST
 fn checkExprStmt(checker, node) {
   let t = typeNil()
@@ -292,7 +290,7 @@ fn checkFor(checker, node) {
 }
 
 // Main expression synthesizer - dispatches by node type
-synthExpr = fn(checker, node) {
+fn synthExpr(checker, node) {
   if !node { return typeNil() }
 
   // ExprStmt is very common in lowered AST

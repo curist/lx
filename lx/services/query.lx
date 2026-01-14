@@ -1333,11 +1333,122 @@ fn queryGotoDefinition(ctx, filename, line, col) {
     return .{ success: false, kind: "goto", message: "Declaration node missing (compiler bug)" }
   }
 
+  // Check if this is an import binding - if so, jump to the imported file's export
+  let importTarget = resolveImportBindingTarget(ctx, targetNode, n.name)
+  if importTarget {
+    return .{
+      success: true,
+      kind: "goto",
+      target: importTarget,
+      candidates: candidatesForNodes(sel.ties),
+    }
+  }
+
   .{
     success: true,
     kind: "goto",
     target: rangeOf(targetNode),
     candidates: candidatesForNodes(sel.ties),
+  }
+}
+
+// Check if targetNode is an import binding and resolve to the imported file's export.
+// Returns target range or nil if not an import binding.
+fn resolveImportBindingTarget(ctx, targetNode, bindingName) {
+  if !ctx or !targetNode { return nil }
+
+  // Find the Let node that contains this target
+  let letNode = findLetByNameNode(ctx, targetNode)
+  if !letNode { return nil }
+
+  // For destructured lets, check letNode.source instead of letNode.init
+  let initNode = letNode.init or letNode.source
+  if !initNode { return nil }
+
+  // Track if we traced through a Dot (destructured import case)
+  let isDestructuredImport = false
+
+  // Handle destructured imports which are lowered to: let x = _tmp.x
+  // where _tmp is the import result. Trace through the Dot to find the Import.
+  if initNode.type == NODE.Dot and initNode.object {
+    if initNode.object.type == NODE.Identifier {
+      // Resolve the object identifier to find its definition
+      let objResolved = ctx.resolvedNames[nodeKeyFor(ctx, initNode.object)]
+      if objResolved and objResolved.declaredAtKey {
+        let objDecl = ctx.nodes[objResolved.declaredAtKey]
+        let objLetNode = objDecl and findLetByNameNode(ctx, objDecl)
+        if objLetNode and objLetNode.init and objLetNode.init.type == NODE.Import {
+          // Found the import - mark as destructured and use import node
+          initNode = objLetNode.init
+          isDestructuredImport = true
+        }
+      }
+    }
+  }
+
+  if initNode.type != NODE.Import or !initNode.path { return nil }
+
+  let modulePath = initNode.path.value
+  let moduleAst = ctx.moduleAsts and ctx.moduleAsts[modulePath]
+  if !moduleAst { return nil }
+
+  let moduleExport = lastExprFromAst(moduleAst)
+  if !moduleExport { return nil }
+
+  // Case 1: Simple import binding (let x = import "foo.lx")
+  // Jump to the exported value (last expression)
+  // Skip this case if we traced through a Dot (destructured import)
+  if !isDestructuredImport and letNode.name and letNode.name.id == targetNode.id {
+    // If the export is a function, jump to its name
+    if moduleExport.type == NODE.Function and moduleExport.name {
+      return rangeOfWithFilename(moduleExport.name, modulePath)
+    }
+    // If the export is an identifier, resolve it to its definition
+    if moduleExport.type == NODE.Identifier {
+      let exportResolved = ctx.resolvedNames[nodeKeyFromParts(modulePath, moduleExport.id)]
+      if exportResolved and exportResolved.declaredAtKey {
+        let exportDecl = ctx.nodes[exportResolved.declaredAtKey]
+        if exportDecl {
+          // If it's a function, jump to the function name
+          if exportDecl.type == NODE.Function and exportDecl.name {
+            return rangeOfWithFilename(exportDecl.name, modulePath)
+          }
+          return rangeOfWithFilename(exportDecl, modulePath)
+        }
+      }
+    }
+    // Otherwise jump to the export expression itself
+    return rangeOfWithFilename(moduleExport, modulePath)
+  }
+
+  // Case 2: Destructured import binding (let .{ foo } = import "bar.lx")
+  // Jump to the field definition in the exported hashmap
+  if bindingName and moduleExport.type == NODE.Hashmap and moduleExport.pairs {
+    for pair in moduleExport.pairs {
+      if !pair or !pair.key { continue }
+      let keyName = pair.key.name or pair.key.value or pair.key.lexeme
+      if keyName == bindingName {
+        // Found the field - jump to where its value is defined
+        let fieldTarget = gotoTargetForRecordField(ctx, pair)
+        if fieldTarget {
+          return rangeOfWithFilename(fieldTarget, modulePath)
+        }
+        return rangeOfWithFilename(pair.key, modulePath)
+      }
+    }
+  }
+
+  nil
+}
+
+fn rangeOfWithFilename(node, filename) {
+  if !node { return nil }
+  .{
+    filename: filename,
+    line: node.line or 1,
+    col: node.col or 0,
+    endLine: node.endLine or node.line or 1,
+    endCol: node.endCol or (node.col and node.col + 1) or 1,
   }
 }
 

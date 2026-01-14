@@ -1,0 +1,16 @@
+// Module with named exports
+fn add(a, b) {
+  a + b
+}
+
+fn multiply(a, b) {
+  a * b
+}
+
+let PI = 3.14159
+
+.{
+  add,
+  multiply,
+  PI,
+}

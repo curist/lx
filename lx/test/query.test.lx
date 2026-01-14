@@ -37,40 +37,20 @@ fn compileAndQuery(source, filename) {
     withAnf: false,
   })
 
-  let result = driver.compileModule(filename)
+  // Use compileWithDriver to get full context including moduleAsts
+  let result = query.compileWithDriver(driver, filename, .{
+    withTypecheck: true,
+    mergeScope: "reachable",
+  })
 
-  if result.status != "done" {
-    let phase = "unknown"
-    let errors = []
-    let passes = result.passes or .{}
-
-    if passes.parse and passes.parse.errors {
-      phase = "parse"
-      errors = passes.parse.errors
-    } else if passes.lower and passes.lower.errors {
-      phase = "lower"
-      errors = passes.lower.errors
-    } else if passes.resolve and !passes.resolve.success {
-      phase = "resolve"
-      errors = passes.resolve.errors
-    }
-
-    return .{ success: false, phase, errors, passes: result.passes }
+  if !result.success {
+    return result
   }
-
-  let initResult = query.queryInit(
-    result.passes.lower.ast,
-    result.passes.resolve,
-    result.passes.typecheck,
-  )
 
   .{
     success: true,
-    ctx: initResult.ctx,
-    parseResult: result.passes.parse,
-    lowerResult: result.passes.lower,
-    resolveResult: result.passes.resolve,
-    typecheckResult: result.passes.typecheck,
+    ctx: result.ctx,
+    compileResult: result.compileResult,
   }
 }
 
@@ -170,5 +150,60 @@ test("query - goto on non-identifier fails gracefully", fn(assert) {
 // - Multi-module queries
 // - Function type inference
 // - Collection type inference
+
+// ========================================
+// Import Goto Definition Tests
+// ========================================
+
+test("query - goto import binding jumps to exported value", fn(assert) {
+  // Source: let greet = import "test/fixtures/imports/simple-fn.lx"
+  //         greet("world")
+  // Goto on 'greet' in line 2 should jump to the function in simple-fn.lx
+  let source = "let greet = import \"test/fixtures/imports/simple-fn.lx\"\ngreet(\"world\")"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'greet' usage (line 2, col 0)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 2, 0)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.filename, "test/fixtures/imports/simple-fn.lx", "Should jump to imported file")
+  // The function 'greet' is defined at line 2 in simple-fn.lx
+  assert.equal(gotoResult.target.line, 2, "Should jump to function definition line")
+})
+
+test("query - goto import binding jumps to anonymous function export", fn(assert) {
+  // Source: let greet = import "test/fixtures/imports/anon-fn.lx"
+  //         greet("world")
+  // The module exports an anonymous function directly (no identifier reference)
+  let source = "let greet = import \"test/fixtures/imports/anon-fn.lx\"\ngreet(\"world\")"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'greet' usage (line 2, col 0)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 2, 0)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.filename, "test/fixtures/imports/anon-fn.lx", "Should jump to imported file")
+  // The anonymous function starts at line 2
+  assert.equal(gotoResult.target.line, 2, "Should jump to function definition line")
+})
+
+test("query - goto destructured import binding jumps to export field", fn(assert) {
+  // Source: let .{ add } = import "test/fixtures/imports/named-exports.lx"
+  //         add(1, 2)
+  // Goto on 'add' in line 2 should jump to where 'add' is defined in named-exports.lx
+  let source = "let .{ add } = import \"test/fixtures/imports/named-exports.lx\"\nadd(1, 2)"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'add' usage (line 2, col 0)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 2, 0)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.filename, "test/fixtures/imports/named-exports.lx", "Should jump to imported file")
+  // The function 'add' is defined at line 2 in named-exports.lx
+  assert.equal(gotoResult.target.line, 2, "Should jump to add function definition line")
+})
 
 suite.run()

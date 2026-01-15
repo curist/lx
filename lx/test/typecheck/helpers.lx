@@ -4,13 +4,24 @@ let parse = import "src/passes/parse/parser.lx"
 let lower = import "src/passes/transform/lower.lx"
 let resolve = import "src/passes/analysis/resolve.lx"
 let typecheck = import "src/passes/analysis/typecheck.lx"
+let typecheckHelper = import "src/passes/analysis/typecheck-helper.lx"
 let types = import "src/types.lx"
 
 let NODE = types.NODE
 
-// Dereference through type variable bindings
+// Dereference through type variable bounds (Simple-Sub approach)
 fn deref(result, t) {
-  if t and t.kind == "TypeVar" {
+  if !t { return t }
+
+  // Use coalesceTypeVar from helper for TypeVars with bounds
+  if t.kind == "TypeVar" {
+    // Create a minimal checker context for coalescing
+    let checker = .{ typeVarBindings: result.typeVarBindings or .{} }
+    let coalesced = typecheckHelper.coalesceTypeVar(checker, t)
+    if coalesced and coalesced.kind != "TypeVar" {
+      return coalesced
+    }
+    // Fall back to old bindings approach if available
     let bindings = result.typeVarBindings or .{}
     let bound = bindings[t.id]
     if bound { return deref(result, bound) }

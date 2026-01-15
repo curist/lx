@@ -1,41 +1,29 @@
-// Typechecker Skeleton - Infrastructure and Patterns
+// Simple-Sub Type Checker for lx
 //
-// This file demonstrates the essential patterns for building a type checker:
-// 1. How to integrate with other passes (resolve, etc.)
-// 2. How to traverse the AST
-// 3. How to gather and return results
-//
-// WHAT THIS FILE CONTAINS:
-// - Integration patterns: how to access resolveResult, enumInfo, program data
-// - Traversal patterns: how to dispatch on node types and recurse through AST
-// - Result gathering: how to store types per node and collect errors
-// - Basic type assignments for literals, binaries, functions, etc.
-//
-// WHAT WAS REMOVED:
-// - Constraint generation and solving (Eq, HasField, Call, Index)
-// - Type variable unification and binding
-// - Function type refinement across multiple passes
-// - Indexable shape variables and finalization
-// - Option type propagation
-// - Complex bidirectional type checking
-//
-// The reusable components have been extracted to typecheck-helper.lx:
-// - Type constructors (typeArray, typeFunction, etc.)
-// - Builtin type catalog (builtinTypeByName with hash table lookup)
-// - Type utilities (deref, typeEquals, occurs check)
-// - Worklist solver and SCC algorithms
-//
-// This skeleton just assigns simple types (mostly Any) to demonstrate the
-// traversal and integration patterns. A real type checker would build on
-// these patterns to implement proper type inference.
+// Implements Simple-Sub type inference with:
+// - Subtyping constraints via constrain(lhs, rhs) enforcing lhs <: rhs
+// - Type variables with mutable bounds (lowerBounds/upperBounds)
+// - Functions + Records + Nil/Option support
+// - Monomorphic let bindings
 
 let helper = import "src/passes/analysis/typecheck-helper.lx"
 let .{ NODE } = import "src/types.lx"
 
 // ========================================================
-// Type Constructors (from helper)
+// Utility Functions
 // ========================================================
-// These are available in typecheck-helper.lx and can be reused
+
+// Unwrap Grouping nodes to get the inner expression
+fn unwrapGroupings(node) {
+  for node and node.type == NODE.Grouping {
+    node = node.expression
+  }
+  node
+}
+
+// ========================================================
+// Type Constructors and Utilities (from helper)
+// ========================================================
 
 let typeAny = helper.typeAny
 let typeNil = helper.typeNil
@@ -44,11 +32,17 @@ let typeBool = helper.typeBool
 let typeString = helper.typeString
 let typeArray = helper.typeArray
 let typeFunction = helper.typeFunction
+let typeRecord = helper.typeRecord
+let typeOption = helper.typeOption
+let freshTypeVar = helper.freshTypeVar
+let deref = helper.deref
+let constrain = helper.constrain
+let prettyType = helper.prettyType
+let coalesceTypeVar = helper.coalesceTypeVar
 
 // ========================================================
 // Checker State
 // ========================================================
-// Shows how to structure the checker context with data from other passes
 
 fn makeChecker(resolveResult, opts = .{}) {
   .{
@@ -63,8 +57,14 @@ fn makeChecker(resolveResult, opts = .{}) {
     errors: [],                                  // Collected errors
     hadError: false,
 
-    // === Working state (example) ===
+    // === Type inference state ===
     nextTypeVarId: 1,                            // For generating fresh type vars
+    typeVarBindings: .{},                        // For backward compat with deref
+    constraintCache: .{},                        // Prevent infinite recursion in constrain
+
+    // === Environment ===
+    env: .{},                                    // declNodeId -> type (for locals/upvalues)
+    currentReturn: nil,                          // Current function's return type var
   }
 }
 
@@ -82,12 +82,23 @@ fn addError(checker, nodeId, message) {
 }
 
 // ========================================================
-// AST Traversal Pattern
+// Environment Helpers
 // ========================================================
-// Shows how to traverse and analyze different node types
 
-// Pattern: ExprStmt wrapper - common in lowered AST
-fn checkExprStmt(checker, node) {
+fn envLookup(checker, declNodeId) {
+  checker.env[declNodeId]
+}
+
+fn envBind(checker, declNodeId, t) {
+  checker.env[declNodeId] = t
+}
+
+// ========================================================
+// Type Synthesis Functions
+// ========================================================
+
+// ExprStmt wrapper - common in lowered AST
+fn synthExprStmt(checker, node) {
   let t = typeNil()
   if node.expr {
     t = synthExpr(checker, node.expr)
@@ -96,22 +107,20 @@ fn checkExprStmt(checker, node) {
   t
 }
 
-// Pattern: Literal nodes
-fn checkLiteral(checker, node) {
+// Literal nodes
+fn synthLiteral(checker, node) {
   let t =
     node.type == NODE.Number and typeNumber() or
     node.type == NODE.String and typeString() or
     node.type == NODE.Bool   and typeBool()   or
     typeNil()
 
-  // Store result per node ID
   checker.types[node.id] = t
   t
 }
 
-// Pattern: Identifier nodes - shows resolver integration
-fn checkIdentifier(checker, node) {
-  // Access resolver data via node ID
+// Identifier nodes - lookup in env or create fresh TypeVar
+fn synthIdentifier(checker, node) {
   let binding = checker.resolvedNames[node.id]
 
   if !binding {
@@ -121,7 +130,7 @@ fn checkIdentifier(checker, node) {
     return t
   }
 
-  // Example: Handle builtins differently
+  // Handle builtins
   if binding.kind == "builtin" {
     let bt = helper.builtinTypeByName(checker, binding.name)
     if !bt { bt = typeAny() }
@@ -129,34 +138,559 @@ fn checkIdentifier(checker, node) {
     return bt
   }
 
-  // For local/upvalue bindings, you'd track their types here
-  // This is where type inference would happen
-  let t = typeAny()
+  // Local or upvalue - look up in environment by declaredAt
+  let declId = binding.declaredAt
+  let t = envLookup(checker, declId)
+
+  if !t {
+    // Not yet bound - create fresh type var
+    t = freshTypeVar(checker)
+    envBind(checker, declId, t)
+  }
+
   checker.types[node.id] = t
   t
 }
 
-// Pattern: Binary operations - shows recursive traversal
-fn checkBinary(checker, node) {
-  let op = node.operator.lexeme
+// Let binding
+fn synthLet(checker, node) {
+  let declId = node.name and node.name.id
 
-  // Recurse into children
-  let leftType = synthExpr(checker, node.left)
-  let rightType = synthExpr(checker, node.right)
+  if node.init {
+    let initType = synthExpr(checker, node.init)
+    let initD = deref(checker, initType)
 
-  // Infer result type based on operator
-  let resultType =
-    (op == "+" or op == "-" or op == "*" or op == "/" or op == "%") and typeNumber() or
-    (op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>") and typeNumber() or
-    (op == "==" or op == "!=" or op == "<" or op == ">" or op == "<=" or op == ">=") and typeBool() or
-    typeAny()
+    // Special handling for nil init: create a TypeVar with Nil as lower bound
+    // This allows the variable to evolve to Option[T] when assigned non-nil later
+    if initD.kind == "Nil" {
+      let t = freshTypeVar(checker)
+      constrain(checker, initType, t)  // Nil <: TypeVar
+      if declId {
+        envBind(checker, declId, t)
+        checker.types[node.name.id] = t
+      }
+      checker.types[node.id] = t
+      return t
+    }
+
+    if declId {
+      envBind(checker, declId, initType)
+      checker.types[node.name.id] = initType
+    }
+    checker.types[node.id] = initType
+    return initType
+  } else {
+    // Uninitialized - fresh type var
+    let t = freshTypeVar(checker)
+    if declId {
+      envBind(checker, declId, t)
+      checker.types[node.name.id] = t
+    }
+    checker.types[node.id] = t
+    return t
+  }
+}
+
+// Function definition
+fn synthFunction(checker, node) {
+  let params = node.params or []
+
+  // Create fresh type vars for parameters and bind them
+  let paramTypes = []
+  for param in params {
+    let pt = freshTypeVar(checker)
+    envBind(checker, param.id, pt)
+    checker.types[param.id] = pt
+    push(paramTypes, pt)
+  }
+
+  // Fresh type var for return
+  let retType = freshTypeVar(checker)
+  let savedReturn = checker.currentReturn
+  checker.currentReturn = retType
+
+  // Create the function type before synthesizing body
+  // (allows recursive functions to look up their own type)
+  let fnType = typeFunction(paramTypes, retType)
+  checker.types[node.id] = fnType
+
+  // For named functions, bind the function to the environment
+  // The resolver's declaredAt points to node.id for named functions
+  if node.name and node.name.id {
+    envBind(checker, node.id, fnType)
+    envBind(checker, node.name.id, fnType)
+    checker.types[node.name.id] = fnType
+  }
+
+  // Synthesize body
+  let bodyType = typeNil()
+  if node.body {
+    bodyType = synthExpr(checker, node.body)
+    // Body type constrains return type
+    constrain(checker, bodyType, retType)
+  }
+
+  checker.currentReturn = savedReturn
+  fnType
+}
+
+// Function call
+fn synthCall(checker, node) {
+  let calleeType = synthExpr(checker, node.callee)
+  let args = node.args or []
+
+  // Synthesize argument types
+  let argTypes = []
+  for arg in args {
+    push(argTypes, synthExpr(checker, arg))
+  }
+
+  // Fresh result type
+  let resultType = freshTypeVar(checker)
+
+  // Build expected function type from args
+  let expectedFnType = typeFunction(argTypes, resultType)
+
+  // Constrain: calleeType <: (args) -> result
+  let calleeD = deref(checker, calleeType)
+
+  if calleeD.kind == "Function" {
+    // Check arity
+    let calleeParams = calleeD.params or []
+    let minArity = calleeD.minArity
+    if minArity == nil { minArity = len(calleeParams) }
+
+    if len(argTypes) < minArity {
+      addError(checker, node.id,
+        "Too few arguments: expected at least " + str(minArity) +
+        ", got " + str(len(argTypes)))
+    } else {
+      // Constrain argument types (contravariant)
+      let numParams = len(calleeParams)
+      for let i = 0; i < len(argTypes) and i < numParams; i = i + 1 {
+        if !constrain(checker, argTypes[i], calleeParams[i]) {
+          addError(checker, node.id, "Argument mismatch")
+        }
+      }
+      // Constrain return type (covariant)
+      constrain(checker, calleeD.return, resultType)
+    }
+  } else if calleeD.kind == "TypeVar" {
+    // Unknown callee - constrain it to be a function
+    if !constrain(checker, calleeType, expectedFnType) {
+      addError(checker, node.id, "Cannot call value")
+    }
+  } else if calleeD.kind != "Any" {
+    addError(checker, node.id,
+      "Cannot call value of type " + prettyType(checker, calleeType))
+  }
 
   checker.types[node.id] = resultType
   resultType
 }
 
-// Pattern: Block - shows iteration over expressions
-fn checkBlock(checker, node) {
+// Record/Hashmap literal
+fn synthHashmap(checker, node) {
+  let pairs = node.pairs or []
+
+  // Check if this hashmap is an enum definition (via enumInfo)
+  let enumInfo = checker.enumInfo[node.id]
+  if enumInfo and enumInfo.members {
+    // Create an Enum type with member values
+    let enumFields = .{}
+    for member in enumInfo.members {
+      enumFields[member.name] = member.value
+    }
+    let t = helper.typeEnum(enumFields)
+    // Store enum info for later use when accessing members
+    checker.enumDefs = checker.enumDefs or .{}
+    checker.enumDefs[node.id] = enumInfo
+    checker.types[node.id] = t
+    return t
+  }
+
+  let fields = .{}
+  let hasError = false
+  let enumKeyOrigins = []
+
+  for pair in pairs {
+    let keyNode = pair.key
+    let valueNode = pair.value
+
+    // Determine field key (preserve original type for numbers)
+    let fieldKey = nil
+    let isLiteralKey = false
+
+    // Unwrap groupings to find the actual key expression
+    let unwrappedKey = unwrapGroupings(keyNode)
+    if !unwrappedKey { unwrappedKey = keyNode }
+
+    if unwrappedKey.type == NODE.String {
+      fieldKey = unwrappedKey.value
+      isLiteralKey = true
+      synthExpr(checker, keyNode)
+    } else if unwrappedKey.type == NODE.Number {
+      fieldKey = unwrappedKey.value  // Keep as number
+      isLiteralKey = true
+      synthExpr(checker, keyNode)
+    } else if unwrappedKey.type == NODE.Dot {
+      // Could be enum member access - try to resolve it
+      synthExpr(checker, keyNode)
+      // Try to get enum member value from the type system
+      let objType = checker.types[unwrappedKey.object.id]
+      let objD = objType and deref(checker, objType)
+      if objD and objD.kind == "Enum" and objD.fields {
+        let memberName = unwrappedKey.property.value or unwrappedKey.property.name
+        let memberValue = objD.fields[memberName]
+        if memberValue != nil {
+          fieldKey = memberValue  // Use the enum member's numeric value
+          isLiteralKey = true
+          // Track enum key origin
+          push(enumKeyOrigins, .{
+            member: memberName,
+            enumName: unwrappedKey.object.name,
+          })
+        }
+      }
+      // If not an enum member access, reject it
+      if !isLiteralKey {
+        addError(checker, keyNode.id, "Record literal computed key must be a literal string, number, or enum member.")
+        addError(checker, keyNode.id, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value")
+        hasError = true
+      }
+    } else {
+      // Non-literal computed key (e.g., a variable)
+      synthExpr(checker, keyNode)
+      addError(checker, keyNode.id, "Record literal computed key must be a literal string, number, or enum member.")
+      addError(checker, keyNode.id, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value")
+      hasError = true
+    }
+
+    let valueType = synthExpr(checker, valueNode)
+    if fieldKey != nil {
+      fields[fieldKey] = valueType
+    }
+  }
+
+  // Store enum key origins if any
+  if len(enumKeyOrigins) > 0 {
+    checker.recordEnumKeyOrigins = checker.recordEnumKeyOrigins or .{}
+    checker.recordEnumKeyOrigins[node.id] = enumKeyOrigins
+  }
+
+  let t = typeRecord(fields)
+  checker.types[node.id] = t
+  t
+}
+
+// Field access (dot)
+fn synthDot(checker, node) {
+  let objType = synthExpr(checker, node.object)
+  let propNode = node.property
+  let fieldName = propNode.value or propNode.name or propNode
+
+  // Fresh result type
+  let resultType = freshTypeVar(checker)
+
+  let objD = deref(checker, objType)
+
+  // Handle Option types - field access on optional yields optional result
+  // Unwrap nested Options (Option[Option[T]].field → Option[fieldType])
+  if objD.kind == "Option" {
+    // Unwrap through nested Options
+    let innerType = objD.value
+    let innerD = deref(checker, innerType)
+    for innerD.kind == "Option" {
+      innerType = innerD.value
+      innerD = deref(checker, innerType)
+    }
+
+    // Create constraint on inner type
+    let innerResult = freshTypeVar(checker)
+    let requiredRecord = typeRecord(.{ [fieldName]: innerResult })
+
+    if innerD.kind == "Record" {
+      let fieldType = innerD.fields and innerD.fields[fieldName]
+      if !fieldType {
+        addError(checker, node.id, "Missing field: " + fieldName)
+        checker.types[node.id] = typeAny()
+        return typeAny()
+      }
+      let optResult = typeOption(fieldType)
+      checker.types[node.id] = optResult
+      return optResult
+    } else if innerD.kind == "TypeVar" {
+      // Defer resolution - constrain inner to have the field
+      constrain(checker, innerType, requiredRecord)
+      let optResult = typeOption(innerResult)
+      checker.types[node.id] = optResult
+      return optResult
+    } else if innerD.kind == "Any" {
+      // Any can have any field - return optional Any
+      let optResult = typeOption(typeAny())
+      checker.types[node.id] = optResult
+      return optResult
+    } else {
+      addError(checker, node.id, "Cannot access field on optional non-record")
+      checker.types[node.id] = typeAny()
+      return typeAny()
+    }
+  }
+
+  // Enum member access - returns Number
+  if objD.kind == "Enum" {
+    // Enum fields map member names to their numeric values
+    if objD.fields and objD.fields[fieldName] != nil {
+      let t = typeNumber()
+      checker.types[node.id] = t
+      return t
+    }
+    addError(checker, node.id, "Unknown enum member: " + fieldName)
+    checker.types[node.id] = typeAny()
+    return typeAny()
+  }
+
+  // Regular record access
+  if objD.kind == "Record" {
+    let fieldType = objD.fields and objD.fields[fieldName]
+    if !fieldType {
+      addError(checker, node.id, "Missing field: " + fieldName)
+      checker.types[node.id] = typeAny()
+      return typeAny()
+    }
+    checker.types[node.id] = fieldType
+    return fieldType
+  }
+
+  if objD.kind == "TypeVar" {
+    // Constrain: objType <: Record({ fieldName: resultType })
+    let requiredRecord = typeRecord(.{ [fieldName]: resultType })
+    constrain(checker, objType, requiredRecord)
+    checker.types[node.id] = resultType
+    return resultType
+  }
+
+  // Non-record, non-TypeVar - error
+  if objD.kind != "Any" {
+    addError(checker, node.id,
+      "Cannot access field on type " + prettyType(checker, objType))
+  }
+  checker.types[node.id] = typeAny()
+  typeAny()
+}
+
+// If expression
+fn synthIf(checker, node) {
+  // Check condition (lx uses truthiness, not strict Bool)
+  synthExpr(checker, node.condition)
+
+  // Synthesize then branch
+  let thenType = synthExpr(checker, node.then)
+
+  if node.else {
+    // With else: join both branches
+    let elseType = synthExpr(checker, node.else)
+
+    let thenD = deref(checker, thenType)
+    let elseD = deref(checker, elseType)
+
+    // Check for branch mismatch (incompatible concrete types)
+    if thenD.kind != "TypeVar" and elseD.kind != "TypeVar" and
+       thenD.kind != "Any" and elseD.kind != "Any" and
+       thenD.kind != "Nil" and elseD.kind != "Nil" {
+      // Both are concrete non-nil types - check compatibility
+      if thenD.kind != elseD.kind {
+        addError(checker, node.id, "Branch mismatch")
+        checker.types[node.id] = typeAny()
+        return typeAny()
+      }
+    }
+
+    // Fresh result type, constrain both branches
+    let resultType = freshTypeVar(checker)
+    constrain(checker, thenType, resultType)
+    constrain(checker, elseType, resultType)
+
+    checker.types[node.id] = resultType
+    return resultType
+  } else {
+    // No else branch - result is Option[thenType]
+    let thenD = deref(checker, thenType)
+    if thenD.kind == "Nil" {
+      checker.types[node.id] = typeNil()
+      return typeNil()
+    }
+    if thenD.kind == "Option" {
+      // Avoid Option[Option[T]]
+      checker.types[node.id] = thenType
+      return thenType
+    }
+    let optType = typeOption(thenType)
+    checker.types[node.id] = optType
+    return optType
+  }
+}
+
+// Array literal
+fn synthArray(checker, node) {
+  let elems = node.elements or []
+
+  if len(elems) == 0 {
+    // Empty array - element type is fresh
+    let elemType = freshTypeVar(checker)
+    let t = typeArray(elemType)
+    checker.types[node.id] = t
+    return t
+  }
+
+  // Non-empty: unify all elements
+  let elemType = freshTypeVar(checker)
+  for elem in elems {
+    let et = synthExpr(checker, elem)
+    constrain(checker, et, elemType)
+  }
+
+  let t = typeArray(elemType)
+  checker.types[node.id] = t
+  t
+}
+
+// Binary operations
+fn synthBinary(checker, node) {
+  let op = node.operator and node.operator.lexeme or ""
+  let leftType = synthExpr(checker, node.left)
+  let rightType = synthExpr(checker, node.right)
+
+  // Arithmetic: both must be Number, result is Number
+  if op == "+" or op == "-" or op == "*" or op == "/" or op == "%" {
+    if op == "+" {
+      // String concatenation check
+      let leftD = deref(checker, leftType)
+      let rightD = deref(checker, rightType)
+      if leftD.kind == "String" or rightD.kind == "String" {
+        constrain(checker, leftType, typeString())
+        constrain(checker, rightType, typeString())
+        checker.types[node.id] = typeString()
+        return typeString()
+      }
+    }
+
+    if !constrain(checker, leftType, typeNumber()) {
+      addError(checker, node.left.id, "Expected number")
+    }
+    if !constrain(checker, rightType, typeNumber()) {
+      addError(checker, node.right.id, "Expected number")
+    }
+
+    checker.types[node.id] = typeNumber()
+    return typeNumber()
+  }
+
+  // Comparison: result is Bool
+  if op == "==" or op == "!=" or op == "<" or op == ">" or
+     op == "<=" or op == ">=" {
+    checker.types[node.id] = typeBool()
+    return typeBool()
+  }
+
+  // Bitwise: both Number, result Number
+  if op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>" {
+    constrain(checker, leftType, typeNumber())
+    constrain(checker, rightType, typeNumber())
+    checker.types[node.id] = typeNumber()
+    return typeNumber()
+  }
+
+  checker.types[node.id] = typeAny()
+  typeAny()
+}
+
+// Unary operations
+fn synthUnary(checker, node) {
+  let op = node.operator and node.operator.lexeme or ""
+  let operandType = synthExpr(checker, node.operand)
+
+  if op == "-" {
+    constrain(checker, operandType, typeNumber())
+    checker.types[node.id] = typeNumber()
+    return typeNumber()
+  }
+
+  if op == "!" {
+    checker.types[node.id] = typeBool()
+    return typeBool()
+  }
+
+  if op == "~" {
+    constrain(checker, operandType, typeNumber())
+    checker.types[node.id] = typeNumber()
+    return typeNumber()
+  }
+
+  checker.types[node.id] = typeAny()
+  typeAny()
+}
+
+// Logical operations (and/or)
+// In lx: `a and b` returns b if a is truthy, else a
+//        `a or b` returns a if a is truthy, else b
+fn synthLogical(checker, node) {
+  let leftType = synthExpr(checker, node.left)
+  let rightType = synthExpr(checker, node.right)
+
+  let op = node.operator and node.operator.lexeme or ""
+  let leftD = deref(checker, leftType)
+
+  // Check if left is definitely falsy (Nil or Bool false literal)
+  let leftFalsy = leftD.kind == "Nil"
+
+  // Check if left is definitely truthy (non-nil, non-bool, or we can't tell)
+  // In lx, only nil and false are falsy
+  let leftTruthy = leftD.kind != "Nil" and leftD.kind != "Bool" and leftD.kind != "TypeVar"
+
+  if op == "and" {
+    // `a and b`: if a is falsy, return a; if a is truthy, return b
+    if leftFalsy {
+      checker.types[node.id] = leftType
+      return leftType
+    }
+    if leftTruthy {
+      checker.types[node.id] = rightType
+      return rightType
+    }
+    // Unknown - join both types
+    let resultType = freshTypeVar(checker)
+    constrain(checker, leftType, resultType)
+    constrain(checker, rightType, resultType)
+    checker.types[node.id] = resultType
+    return resultType
+  }
+
+  if op == "or" {
+    // `a or b`: if a is truthy, return a; if a is falsy, return b
+    if leftTruthy {
+      checker.types[node.id] = leftType
+      return leftType
+    }
+    if leftFalsy {
+      checker.types[node.id] = rightType
+      return rightType
+    }
+    // Unknown - join both types
+    let resultType = freshTypeVar(checker)
+    constrain(checker, leftType, resultType)
+    constrain(checker, rightType, resultType)
+    checker.types[node.id] = resultType
+    return resultType
+  }
+
+  // Default
+  checker.types[node.id] = leftType
+  leftType
+}
+
+// Block expression
+fn synthBlock(checker, node) {
   let exprs = node.expressions or []
   let lastType = typeNil()
 
@@ -164,120 +698,12 @@ fn checkBlock(checker, node) {
     lastType = synthExpr(checker, expr)
   }
 
-  // Blocks return the last expression value
   checker.types[node.id] = lastType
   lastType
 }
 
-// Pattern: Function - shows how to handle scope
-fn checkFunction(checker, node) {
-  // You would enter a new scope here
-  // let params = node.params or []
-
-  // Analyze body
-  if node.body {
-    synthExpr(checker, node.body)
-  }
-
-  // Functions are typed as Function(params, ret)
-  // For skeleton, just use Any->Any
-  let t = typeFunction([typeAny()], typeAny())
-  checker.types[node.id] = t
-  t
-}
-
-// Pattern: If expression - shows control flow handling
-fn checkIf(checker, node) {
-  // Check condition
-  synthExpr(checker, node.condition)
-
-  // Check both branches
-  let thenType = synthExpr(checker, node.then)
-  let elseType = node.else and synthExpr(checker, node.else) or typeNil()
-
-  // Result is union/join of branches
-  // For skeleton, just pick the then type
-  checker.types[node.id] = thenType
-  thenType
-}
-
-// Pattern: Array literal - shows collection handling
-fn checkArray(checker, node) {
-  let elems = node.elements or []
-
-  // Check all elements
-  for elem in elems {
-    synthExpr(checker, elem)
-  }
-
-  // Infer Array[T] - for skeleton just use Array[Any]
-  let t = typeArray(typeAny())
-  checker.types[node.id] = t
-  t
-}
-
-// Pattern: Let binding - shows how to track declarations
-fn checkLet(checker, node) {
-  // Check initializer if present
-  if node.init {
-    let initType = synthExpr(checker, node.init)
-    // In a real checker, you'd track this binding for the name
-    if node.name and node.name.id {
-      checker.types[node.name.id] = initType
-    }
-  }
-
-  // Let statements return nil
-  let t = typeNil()
-  checker.types[node.id] = t
-  t
-}
-
-// Pattern: Call - shows function application
-fn checkCall(checker, node) {
-  // Check callee
-  synthExpr(checker, node.callee)
-
-  // Check arguments
-  let args = node.args or []
-  for arg in args {
-    synthExpr(checker, arg)
-  }
-
-  // Result type would be inferred from callee type
-  // For skeleton, just return Any
-  let t = typeAny()
-  checker.types[node.id] = t
-  t
-}
-
-// Pattern: Unary operations
-fn checkUnary(checker, node) {
-  let op = node.operator and node.operator.lexeme or ""
-  synthExpr(checker, node.operand)
-
-  let t =
-    op == "-" and typeNumber() or
-    op == "!" and typeBool() or
-    typeAny()
-
-  checker.types[node.id] = t
-  t
-}
-
-// Pattern: Logical operations (and/or)
-fn checkLogical(checker, node) {
-  synthExpr(checker, node.left)
-  synthExpr(checker, node.right)
-
-  // Logical ops can return either operand - for skeleton use Any
-  let t = typeAny()
-  checker.types[node.id] = t
-  t
-}
-
-// Pattern: For loops
-fn checkFor(checker, node) {
+// For loop (C-style)
+fn synthFor(checker, node) {
   if node.init { synthExpr(checker, node.init) }
   if node.condition { synthExpr(checker, node.condition) }
   if node.update { synthExpr(checker, node.update) }
@@ -289,56 +715,503 @@ fn checkFor(checker, node) {
   t
 }
 
+// For-in loop
+fn synthForIn(checker, node) {
+  let iterableType = synthExpr(checker, node.iterable)
+
+  // Bind the value binder
+  if node.valueBinder {
+    // Create a fresh type var for the element
+    let elemType = freshTypeVar(checker)
+
+    // Constrain iterable to Array[elemType]
+    constrain(checker, iterableType, typeArray(elemType))
+
+    // Find the binding for valueBinder and bind it
+    // The resolver should have created a local for it
+    let binding = checker.resolvedNames[node.id]
+    if binding and binding.valueBinderDeclId {
+      envBind(checker, binding.valueBinderDeclId, elemType)
+    }
+  }
+
+  if node.body { synthExpr(checker, node.body) }
+
+  let t = typeNil()
+  checker.types[node.id] = t
+  t
+}
+
+// Collect expression (C-style)
+fn synthCollect(checker, node) {
+  if node.init { synthExpr(checker, node.init) }
+  if node.condition { synthExpr(checker, node.condition) }
+  if node.update { synthExpr(checker, node.update) }
+
+  let bodyType = typeAny()
+  if node.body { bodyType = synthExpr(checker, node.body) }
+
+  let t = typeArray(bodyType)
+  checker.types[node.id] = t
+  t
+}
+
+// Collect-in expression
+fn synthCollectIn(checker, node) {
+  let iterableType = synthExpr(checker, node.iterable)
+
+  // Bind the value binder
+  if node.valueBinder {
+    let elemType = freshTypeVar(checker)
+    constrain(checker, iterableType, typeArray(elemType))
+
+    let binding = checker.resolvedNames[node.id]
+    if binding and binding.valueBinderDeclId {
+      envBind(checker, binding.valueBinderDeclId, elemType)
+    }
+  }
+
+  let bodyType = typeAny()
+  if node.body { bodyType = synthExpr(checker, node.body) }
+
+  let t = typeArray(bodyType)
+  checker.types[node.id] = t
+  t
+}
+
+// Return statement
+fn synthReturn(checker, node) {
+  let valueType = typeNil()
+  if node.value {
+    valueType = synthExpr(checker, node.value)
+  }
+
+  // Constrain to current function's return type
+  if checker.currentReturn {
+    constrain(checker, valueType, checker.currentReturn)
+  }
+
+  checker.types[node.id] = valueType
+  valueType
+}
+
+// Assignment
+fn synthAssignment(checker, node) {
+  let valueType = synthExpr(checker, node.value)
+
+  // Special handling for dot assignment (closed record model)
+  if node.target.type == NODE.Dot {
+    let dotNode = node.target
+    let objType = synthExpr(checker, dotNode.object)
+    let objD = deref(checker, objType)
+    let propNode = dotNode.property
+    let fieldName = propNode.value or propNode.name or propNode
+
+    // Cannot assign to field on optional value
+    if objD.kind == "Option" {
+      addError(checker, node.id, "Cannot assign to field on optional value")
+      checker.types[node.id] = valueType
+      return valueType
+    }
+
+    // For TypeVar (unbound), closed model: cannot create field
+    if objD.kind == "TypeVar" {
+      addError(checker, dotNode.id, "Missing field: " + fieldName)
+      checker.types[node.id] = valueType
+      return valueType
+    }
+
+    // For Record, check field exists
+    if objD.kind == "Record" {
+      let fieldType = objD.fields and objD.fields[fieldName]
+      if !fieldType {
+        addError(checker, dotNode.id, "Missing field: " + fieldName)
+        checker.types[node.id] = valueType
+        return valueType
+      }
+      // Constrain value to field type
+      if !constrain(checker, valueType, fieldType) {
+        addError(checker, node.id, "Assignment mismatch")
+      }
+      checker.types[dotNode.id] = fieldType
+      checker.types[node.id] = valueType
+      return valueType
+    }
+
+    // Non-record type
+    if objD.kind != "Any" {
+      addError(checker, dotNode.id, "Cannot access field on type " + prettyType(checker, objType))
+    }
+    checker.types[node.id] = valueType
+    return valueType
+  }
+
+  // Special handling for index assignment
+  if node.target.type == NODE.Index {
+    let indexNode = node.target
+    let objType = synthExpr(checker, indexNode.object)
+    let indexType = synthExpr(checker, indexNode.index)
+    let objD = deref(checker, objType)
+    let indexTypeD = deref(checker, indexType)
+
+    // Determine if key is numeric or string
+    let keyIsNumeric = indexTypeD.kind == "Number"
+    let keyIsString = indexTypeD.kind == "String"
+    let keyIsTypeVar = indexTypeD.kind == "TypeVar"
+
+    // For hashmap/map key type validation
+    if objD.kind == "Record" or objD.kind == "Map" or objD.kind == "TypeVar" {
+      if !keyIsNumeric and !keyIsString and !keyIsTypeVar {
+        addError(checker, node.id, "Hashmap key type must be number or string.")
+        checker.types[node.id] = valueType
+        return valueType
+      }
+    }
+
+    // Try to get the constant key value
+    let keyValue = nil
+    let indexExpr = indexNode.index
+
+    // Unwrap groupings
+    let unwrappedIndex = unwrapGroupings(indexExpr)
+    if unwrappedIndex.type == NODE.Number {
+      keyValue = unwrappedIndex.value
+    } else if unwrappedIndex.type == NODE.String {
+      keyValue = unwrappedIndex.value
+    } else if unwrappedIndex.type == NODE.Dot {
+      // Check if it's an enum member access
+      let objIndexType = checker.types[unwrappedIndex.object.id]
+      let objIndexD = objIndexType and deref(checker, objIndexType)
+      if objIndexD and objIndexD.kind == "Enum" and objIndexD.fields {
+        let memberName = unwrappedIndex.property.value or unwrappedIndex.property.name
+        let memberValue = objIndexD.fields[memberName]
+        if memberValue != nil {
+          keyValue = memberValue
+        }
+      }
+    }
+
+    if objD.kind == "Record" {
+      // Check for empty record FIRST - infer as Map (only with String key)
+      if !objD.fields or len(keys(objD.fields)) == 0 {
+        if keyIsString {
+          // Empty record with string key - infer Map type
+          let mapType = helper.typeMap(indexType, valueType)
+          // Update the object's type to Map via environment and types table
+          let objBinding = checker.resolvedNames[indexNode.object.id]
+          if objBinding and objBinding.declaredAt {
+            envBind(checker, objBinding.declaredAt, mapType)
+            checker.types[objBinding.declaredAt] = mapType
+          }
+          checker.types[indexNode.object.id] = mapType
+          checker.types[indexNode.id] = valueType
+          checker.types[node.id] = valueType
+          return valueType
+        } else if keyIsNumeric {
+          // Empty record with numeric key - infer Array type
+          let arrType = typeArray(valueType)
+          let objBinding = checker.resolvedNames[indexNode.object.id]
+          if objBinding and objBinding.declaredAt {
+            envBind(checker, objBinding.declaredAt, arrType)
+            checker.types[objBinding.declaredAt] = arrType
+          }
+          checker.types[indexNode.object.id] = arrType
+          checker.types[indexNode.id] = valueType
+          checker.types[node.id] = valueType
+          return valueType
+        }
+        // TypeVar key - leave as unknown for now
+        checker.types[indexNode.id] = valueType
+        checker.types[node.id] = valueType
+        return valueType
+      }
+
+      if keyValue != nil {
+        // Check if field exists
+        let fieldType = objD.fields and objD.fields[keyValue]
+        if !fieldType {
+          addError(checker, indexNode.id, "Missing field: " + str(keyValue))
+          checker.types[node.id] = valueType
+          return valueType
+        }
+        // Constrain value to field type
+        if !constrain(checker, valueType, fieldType) {
+          addError(checker, node.id, "Assignment mismatch")
+        }
+        checker.types[indexNode.id] = fieldType
+        checker.types[node.id] = valueType
+        return valueType
+      }
+      // Variable key - can't determine field at compile time
+      // Return optional based on field types
+      let fieldKeys = keys(objD.fields)
+      let commonType = freshTypeVar(checker)
+      for fk in fieldKeys {
+        constrain(checker, objD.fields[fk], commonType)
+      }
+      constrain(checker, valueType, commonType)
+      checker.types[indexNode.id] = commonType
+      checker.types[node.id] = valueType
+      return valueType
+    }
+
+    if objD.kind == "TypeVar" {
+      // Unknown object - infer based on key type
+      if keyIsNumeric {
+        // Numeric key - infer Array
+        let arrType = typeArray(valueType)
+        constrain(checker, objType, arrType)
+        let objBinding = checker.resolvedNames[indexNode.object.id]
+        if objBinding and objBinding.declaredAt {
+          envBind(checker, objBinding.declaredAt, arrType)
+        }
+        checker.types[indexNode.id] = valueType
+        checker.types[node.id] = valueType
+        return valueType
+      } else if keyIsString {
+        // String key - infer Map
+        let mapType = helper.typeMap(indexType, valueType)
+        constrain(checker, objType, mapType)
+        let objBinding = checker.resolvedNames[indexNode.object.id]
+        if objBinding and objBinding.declaredAt {
+          envBind(checker, objBinding.declaredAt, mapType)
+        }
+        checker.types[indexNode.id] = valueType
+        checker.types[node.id] = valueType
+        return valueType
+      }
+      // TypeVar key - leave as unknown, constrain to Indexable later if needed
+      checker.types[indexNode.id] = valueType
+      checker.types[node.id] = valueType
+      return valueType
+    }
+  }
+
+  // Regular assignment
+  let targetType = synthExpr(checker, node.target)
+
+  // Constrain: valueType <: targetType
+  if !constrain(checker, valueType, targetType) {
+    addError(checker, node.id, "Assignment mismatch: cannot assign " +
+      prettyType(checker, valueType) + " to " + prettyType(checker, targetType))
+  }
+
+  checker.types[node.id] = valueType
+  valueType
+}
+
+// Index access
+fn synthIndex(checker, node) {
+  let objType = synthExpr(checker, node.object)
+  let indexType = synthExpr(checker, node.index)
+
+  // Fresh result type
+  let resultType = freshTypeVar(checker)
+
+  let objD = deref(checker, objType)
+  let indexTypeD = deref(checker, indexType)
+
+  if objD.kind == "Array" {
+    // Array indexing - index must be Number
+    if indexTypeD.kind != "Number" and indexTypeD.kind != "TypeVar" {
+      addError(checker, node.id, "Array index must be a number")
+      checker.types[node.id] = resultType
+      return resultType
+    }
+    constrain(checker, indexType, typeNumber())
+    constrain(checker, objD.elem, resultType)
+  } else if objD.kind == "Map" {
+    // Map indexing
+    constrain(checker, indexType, objD.key)
+    constrain(checker, objD.elem, resultType)
+  } else if objD.kind == "Record" {
+    // Record indexing with constant key
+    let indexNode = node.index
+
+    // Try to get the constant key value
+    let keyValue = nil
+    if indexNode.type == NODE.Number {
+      keyValue = indexNode.value
+    } else if indexNode.type == NODE.String {
+      keyValue = indexNode.value
+    }
+
+    if keyValue != nil and objD.fields {
+      let fieldType = objD.fields[keyValue]
+      if fieldType {
+        checker.types[node.id] = fieldType
+        return fieldType
+      }
+    }
+
+    // Variable key on Record - return Option[fieldType]
+    // The key might not exist at runtime, so result is optional
+    if objD.fields and len(keys(objD.fields)) > 0 {
+      // Get the common type of all fields
+      let fieldKeys = keys(objD.fields)
+      let commonType = freshTypeVar(checker)
+      for fk in fieldKeys {
+        constrain(checker, objD.fields[fk], commonType)
+      }
+      let optType = typeOption(commonType)
+      checker.types[node.id] = optType
+      return optType
+    }
+    // Empty record - return fresh Option
+  } else if objD.kind == "String" {
+    // String indexing - index must be Number
+    if indexTypeD.kind != "Number" and indexTypeD.kind != "TypeVar" {
+      addError(checker, node.id, "String index must be a number")
+      checker.types[node.id] = typeString()
+      return typeString()
+    }
+    constrain(checker, indexType, typeNumber())
+    checker.types[node.id] = typeString()
+    return typeString()
+  } else if objD.kind == "TypeVar" {
+    // Unknown object - check if index type has bounds that tell us Array vs Map
+    // Look at index TypeVar's lower bounds to see if it's constrained to String or Number
+    if indexTypeD.kind == "TypeVar" {
+      let indexBounds = indexTypeD.lowerBounds or []
+      for lb in indexBounds {
+        let dlb = deref(checker, lb)
+        if dlb.kind == "String" {
+          // Index is constrained to String - infer Map
+          let mapType = helper.typeMap(typeString(), resultType)
+          constrain(checker, objType, mapType)
+          checker.types[node.id] = resultType
+          return resultType
+        } else if dlb.kind == "Number" {
+          // Index is constrained to Number - infer Array
+          let arrType = typeArray(resultType)
+          constrain(checker, objType, arrType)
+          checker.types[node.id] = resultType
+          return resultType
+        }
+      }
+    } else if indexTypeD.kind == "String" {
+      // Concrete String index - infer Map
+      let mapType = helper.typeMap(typeString(), resultType)
+      constrain(checker, objType, mapType)
+    } else if indexTypeD.kind == "Number" {
+      // Concrete Number index - infer Array
+      let arrType = typeArray(resultType)
+      constrain(checker, objType, arrType)
+    }
+    // Otherwise leave as fresh for later resolution
+  }
+
+  checker.types[node.id] = resultType
+  resultType
+}
+
+// Import
+fn synthImport(checker, node) {
+  // Imports return the exported value
+  let t = typeAny()
+  checker.types[node.id] = t
+  t
+}
+
+// Arrow operator (pipeline)
+fn synthArrow(checker, node) {
+  // x->f(a) is like f(x, a)
+  // The right side should be a Call node
+  if node.right.type == NODE.Call {
+    // Synthesize x
+    synthExpr(checker, node.left)
+    // Synthesize the call (which includes x as implicit first arg)
+    return synthExpr(checker, node.right)
+  }
+
+  let t = typeAny()
+  checker.types[node.id] = t
+  t
+}
+
+// Intrinsic call
+fn synthIntrinsicCall(checker, node) {
+  let args = node.args or []
+
+  // Handle specific intrinsics
+  if node.intrinsic == "array_new" {
+    // array_new() creates an empty array with fresh element type
+    let elemType = freshTypeVar(checker)
+    let t = typeArray(elemType)
+    checker.types[node.id] = t
+    return t
+  }
+
+  if node.intrinsic == "array_push" or node.intrinsic == "array_append" {
+    // array_push/array_append(arr, elem) - constrain elem to array's element type
+    if len(args) >= 2 {
+      let arrType = synthExpr(checker, args[0])
+      let elemType = synthExpr(checker, args[1])
+      let arrD = deref(checker, arrType)
+      if arrD.kind == "Array" {
+        constrain(checker, elemType, arrD.elem)
+      } else if arrD.kind == "TypeVar" {
+        // Constrain arrType to be Array[elemType]
+        constrain(checker, arrType, typeArray(elemType))
+      }
+      let t = typeNil()  // push/append returns nil
+      checker.types[node.id] = t
+      return t
+    }
+  }
+
+  // Default: synthesize args and return Any
+  for arg in args {
+    synthExpr(checker, arg)
+  }
+
+  let t = typeAny()
+  checker.types[node.id] = t
+  t
+}
+
 // Main expression synthesizer - dispatches by node type
 fn synthExpr(checker, node) {
   if !node { return typeNil() }
 
-  // ExprStmt is very common in lowered AST
-  if node.type == NODE.ExprStmt {
-    return checkExprStmt(checker, node)
-  }
-
-  // Dispatch based on node type
+  if node.type == NODE.ExprStmt { return synthExprStmt(checker, node) }
   if node.type == NODE.Number or node.type == NODE.String or
      node.type == NODE.Bool or node.type == NODE.Nil {
-    return checkLiteral(checker, node)
+    return synthLiteral(checker, node)
   }
-  if node.type == NODE.Identifier {
-    return checkIdentifier(checker, node)
+  if node.type == NODE.Identifier { return synthIdentifier(checker, node) }
+  if node.type == NODE.Let { return synthLet(checker, node) }
+  if node.type == NODE.Function { return synthFunction(checker, node) }
+  if node.type == NODE.Call { return synthCall(checker, node) }
+  if node.type == NODE.Hashmap { return synthHashmap(checker, node) }
+  if node.type == NODE.Dot { return synthDot(checker, node) }
+  if node.type == NODE.If { return synthIf(checker, node) }
+  if node.type == NODE.Array { return synthArray(checker, node) }
+  if node.type == NODE.Binary { return synthBinary(checker, node) }
+  if node.type == NODE.Unary { return synthUnary(checker, node) }
+  if node.type == NODE.Logical { return synthLogical(checker, node) }
+  if node.type == NODE.Block { return synthBlock(checker, node) }
+  if node.type == NODE.Grouping {
+    let inner = synthExpr(checker, node.expression)
+    checker.types[node.id] = inner
+    return inner
   }
-  if node.type == NODE.Binary {
-    return checkBinary(checker, node)
-  }
-  if node.type == NODE.Unary {
-    return checkUnary(checker, node)
-  }
-  if node.type == NODE.Logical {
-    return checkLogical(checker, node)
-  }
-  if node.type == NODE.Block {
-    return checkBlock(checker, node)
-  }
-  if node.type == NODE.Function {
-    return checkFunction(checker, node)
-  }
-  if node.type == NODE.If {
-    return checkIf(checker, node)
-  }
-  if node.type == NODE.Array {
-    return checkArray(checker, node)
-  }
-  if node.type == NODE.Let {
-    return checkLet(checker, node)
-  }
-  if node.type == NODE.Call {
-    return checkCall(checker, node)
-  }
-  if node.type == NODE.For {
-    return checkFor(checker, node)
+  if node.type == NODE.For { return synthFor(checker, node) }
+  if node.type == NODE.ForIn { return synthForIn(checker, node) }
+  if node.type == NODE.Collect { return synthCollect(checker, node) }
+  if node.type == NODE.CollectIn { return synthCollectIn(checker, node) }
+  if node.type == NODE.Return { return synthReturn(checker, node) }
+  if node.type == NODE.Assignment { return synthAssignment(checker, node) }
+  if node.type == NODE.Index { return synthIndex(checker, node) }
+  if node.type == NODE.Import { return synthImport(checker, node) }
+  if node.type == NODE.Arrow { return synthArrow(checker, node) }
+  if node.type == NODE.IntrinsicCall { return synthIntrinsicCall(checker, node) }
+  if node.type == NODE.Break or node.type == NODE.Continue {
+    checker.types[node.id] = typeNil()
+    return typeNil()
   }
 
-  // TODO: Handle other node types (Dot, Index, Hashmap, Return, etc.)
-  // For unhandled nodes, assign Any to avoid crashes
+  // For unhandled nodes, assign Any
   let t = typeAny()
   if node.id {
     checker.types[node.id] = t
@@ -379,6 +1252,7 @@ fn typecheck(ast, resolveResult, opts) {
     success: !checker.hadError,
     types: checker.types,           // Node ID -> type
     errors: checker.errors,         // List of error objects
+    recordEnumKeyOrigins: checker.recordEnumKeyOrigins,  // Track enum keys in records
   }
 }
 

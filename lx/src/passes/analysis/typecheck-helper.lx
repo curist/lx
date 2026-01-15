@@ -11,7 +11,12 @@ fn typeString()  { .{ kind: "String" } }
 fn typeEnum(fields) { .{ kind: "Enum", fields: fields } }
 
 fn typeVar(id) {
-  .{ kind: "TypeVar", id: id }
+  .{
+    kind: "TypeVar",
+    id: id,
+    lowerBounds: [],  // types this var must be a supertype of
+    upperBounds: [],  // types this var must be a subtype of
+  }
 }
 
 fn typeFunction(params, ret) {
@@ -252,6 +257,425 @@ fn derefAll(checker, t) {
   }
 
   t
+}
+
+// ========================================================
+// Simple-Sub Constraint Solving
+// ========================================================
+
+// Check if a type is a primitive (non-composite) type
+fn isPrimitive(t) {
+  t.kind == "Nil" or t.kind == "Number" or
+  t.kind == "Bool" or t.kind == "String"
+}
+
+// Generate a unique key for a type (for caching)
+fn typeKey(t) {
+  if !t { return "nil" }
+  if !t.kind { return "?" }  // Unknown type structure
+  if t.kind == "TypeVar" { return "v" + str(t.id) }
+  if t.kind == "Nil" or t.kind == "Number" or t.kind == "Bool" or t.kind == "String" or t.kind == "Any" {
+    return t.kind
+  }
+  if t.kind == "Option" { return "O(" + typeKey(t.value) + ")" }
+  if t.kind == "Array" { return "A(" + typeKey(t.elem) + ")" }
+  if t.kind == "Map" { return "M(" + typeKey(t.key) + "," + typeKey(t.elem) + ")" }
+  if t.kind == "Function" {
+    let paramKeys = collect p in (t.params or []) { typeKey(p) }
+    return "F(" + join(paramKeys, ",") + ")->" + typeKey(t.return)
+  }
+  if t.kind == "Record" {
+    let fields = t.fields
+    // Defensive check - ensure fields is a hashmap
+    if !fields or type(fields) != "map" {
+      return "R{}"
+    }
+    // Use unsorted keys for simplicity - ordering doesn't affect cache correctness,
+    // just means potentially more cache misses for equivalent types
+    let fieldKeys = keys(fields)
+    let fieldStrings = []
+    for let i = 0; i < len(fieldKeys); i = i + 1 {
+      let k = fieldKeys[i]
+      push(fieldStrings, str(k) + ":" + typeKey(fields[k]))
+    }
+    return "R{" + join(fieldStrings, ",") + "}"
+  }
+  if t.kind == "Enum" {
+    // Encode enum fields for proper caching - different enums have different fields
+    let fields = t.fields
+    if !fields or type(fields) != "map" {
+      return "E{}"
+    }
+    let fieldKeys = keys(fields)
+    let fieldStrings = []
+    for let i = 0; i < len(fieldKeys); i = i + 1 {
+      let k = fieldKeys[i]
+      push(fieldStrings, str(k))
+    }
+    return "E{" + join(fieldStrings, ",") + "}"
+  }
+  t.kind
+}
+
+// Generate a cache key for a constraint pair
+// Cache all constraint pairs to prevent exponential re-checking
+fn constraintCacheKey(lhs, rhs) {
+  typeKey(lhs) + "<:" + typeKey(rhs)
+}
+
+// Core constraint function: enforce lhs <: rhs
+// Returns true if constraint succeeded, false if it failed
+fn constrain(checker, lhs, rhs) {
+  // Dereference both sides (follow TypeVar bindings)
+  lhs = deref(checker, lhs)
+  rhs = deref(checker, rhs)
+
+  // Identity check
+  if lhs == rhs { return true }
+
+  // Check if both are same TypeVar
+  if lhs.kind == "TypeVar" and rhs.kind == "TypeVar" and lhs.id == rhs.id {
+    return true
+  }
+
+  // Cache check to prevent infinite recursion and exponential re-checking
+  let cacheKey = constraintCacheKey(lhs, rhs)
+  if checker.constraintCache[cacheKey] { return true }
+  checker.constraintCache[cacheKey] = true
+
+  // Rule: Any <: T and T <: Any always hold
+  if lhs.kind == "Any" or rhs.kind == "Any" { return true }
+
+  // Rule: T? <: U? => constrain(T, U) - MUST come before general Option rules
+  if lhs.kind == "Option" and rhs.kind == "Option" {
+    return constrain(checker, lhs.value, rhs.value)
+  }
+
+  // Rule: Nil <: T? (Nil is subtype of Option)
+  if lhs.kind == "Nil" and rhs.kind == "Option" { return true }
+
+  // Rule: T <: T? (value is subtype of optional)
+  if rhs.kind == "Option" {
+    // T <: U? allowed if T <: U or T is Nil
+    if lhs.kind == "Nil" { return true }
+    return constrain(checker, lhs, rhs.value)
+  }
+
+  // TypeVar cases - propagate bounds
+  // NOTE: These must come BEFORE "Option <: concrete" check because
+  // Option[T] can be a valid bound for a TypeVar
+  if lhs.kind == "TypeVar" {
+    // Occurs check: lhs cannot appear inside rhs (would create infinite type)
+    if occurs(checker, lhs.id, rhs) {
+      return false
+    }
+    // Add rhs to lhs.upperBounds
+    push(lhs.upperBounds, rhs)
+    // Propagate: for each lb in lhs.lowerBounds, constrain(lb, rhs)
+    for lb in lhs.lowerBounds {
+      if !constrain(checker, lb, rhs) { return false }
+    }
+    return true
+  }
+
+  if rhs.kind == "TypeVar" {
+    // Occurs check: rhs cannot appear inside lhs (would create infinite type)
+    if occurs(checker, rhs.id, lhs) {
+      return false
+    }
+    // Check for conflicts with existing lower bounds
+    // Two concrete primitives (e.g., Number and String) cannot both be subtypes
+    // EXCEPT: Nil can coexist with any type (will coalesce to Option[T])
+    if isPrimitive(lhs) and lhs.kind != "Nil" {
+      for lb in rhs.lowerBounds {
+        let dlb = deref(checker, lb)
+        // Skip Nil in conflict check - Nil + T → Option[T]
+        if dlb.kind == "Nil" { continue }
+        if isPrimitive(dlb) and dlb.kind != lhs.kind {
+          return false  // Conflict: different concrete primitives
+        }
+      }
+    }
+    // Check for Record field conflicts
+    if lhs.kind == "Record" {
+      for lb in rhs.lowerBounds {
+        let dlb = deref(checker, lb)
+        if dlb.kind == "Record" {
+          // Check overlapping fields for type conflicts
+          let lhsFields = lhs.fields or .{}
+          let lbFields = dlb.fields or .{}
+          for k in keys(lhsFields) {
+            let lbField = lbFields[k]
+            if lbField {
+              let lhsFieldD = deref(checker, lhsFields[k])
+              let lbFieldD = deref(checker, lbField)
+              // If both are concrete primitives and different, conflict
+              if isPrimitive(lhsFieldD) and isPrimitive(lbFieldD) and lhsFieldD.kind != lbFieldD.kind {
+                return false  // Conflict: different field types
+              }
+            }
+          }
+        }
+      }
+    }
+    // Add lhs to rhs.lowerBounds
+    push(rhs.lowerBounds, lhs)
+    // Propagate: for each ub in rhs.upperBounds, constrain(lhs, ub)
+    for ub in rhs.upperBounds {
+      if !constrain(checker, lhs, ub) { return false }
+    }
+    return true
+  }
+
+  // Rule: Option[T] <: concrete non-Option fails (cannot drop optionality)
+  // This must come AFTER TypeVar cases since Option can be a valid TypeVar bound
+  if lhs.kind == "Option" { return false }
+
+  // Primitives: must be same kind
+  if isPrimitive(lhs) and isPrimitive(rhs) {
+    return lhs.kind == rhs.kind
+  }
+
+  // Function: contravariant params, covariant return
+  if lhs.kind == "Function" and rhs.kind == "Function" {
+    let lhsParams = lhs.params or []
+    let rhsParams = rhs.params or []
+
+    // For function subtyping, we need:
+    // - rhs can accept at least as many params as lhs requires
+    // - For shared params, contravariant: rhsParam <: lhsParam
+    let lhsLen = len(lhsParams)
+    let rhsLen = len(rhsParams)
+    let minLen = lhsLen < rhsLen and lhsLen or rhsLen
+
+    // Contravariant params: constrain(rhsParam, lhsParam)
+    for let i = 0; i < minLen; i = i + 1 {
+      if !constrain(checker, rhsParams[i], lhsParams[i]) { return false }
+    }
+
+    // Covariant return: constrain(lhsRet, rhsRet)
+    return constrain(checker, lhs.return, rhs.return)
+  }
+
+  // Record: width + depth subtyping
+  // Record(fs0) <: Record(fs1) => for each field in fs1, fs0 must have it with subtype
+  if lhs.kind == "Record" and rhs.kind == "Record" {
+    let lhsFields = lhs.fields or .{}
+    let rhsFields = rhs.fields or .{}
+
+    // For each field in rhs, lhs must have that field with subtype
+    for k in keys(rhsFields) {
+      let lhsField = lhsFields[k]
+      if !lhsField {
+        return false  // Missing required field
+      }
+      if !constrain(checker, lhsField, rhsFields[k]) { return false }
+    }
+    return true  // Extra fields in lhs are OK (width subtyping)
+  }
+
+  // Array: covariant element type
+  if lhs.kind == "Array" and rhs.kind == "Array" {
+    return constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  // Map: covariant in both key and elem
+  if lhs.kind == "Map" and rhs.kind == "Map" {
+    return constrain(checker, lhs.key, rhs.key) and
+           constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  // Enum: check field compatibility
+  if lhs.kind == "Enum" and rhs.kind == "Enum" {
+    let lhsFields = lhs.fields or .{}
+    let rhsFields = rhs.fields or .{}
+    for k in keys(rhsFields) {
+      if lhsFields[k] == nil { return false }
+    }
+    return true
+  }
+
+  // No rule applies
+  false
+}
+
+// Coalesce a TypeVar's bounds into a final type
+// If Nil appears alongside non-nil lower bounds, produce Option[T]
+// When bounds disagree (different concrete types), fall back to Any
+fn coalesceTypeVar(checker, tv) {
+  if !tv or tv.kind != "TypeVar" { return tv }
+
+  let lbs = tv.lowerBounds or []
+
+  // Check if Nil appears in lower bounds
+  let hasNil = false
+  let nonNilBounds = []
+  for lb in lbs {
+    let dlb = deref(checker, lb)
+    if dlb.kind == "Nil" {
+      hasNil = true
+    } else if dlb.kind == "TypeVar" {
+      // Recursively coalesce nested TypeVars
+      let coalesced = coalesceTypeVar(checker, dlb)
+      if coalesced.kind == "Nil" {
+        hasNil = true
+      } else if coalesced.kind == "Option" {
+        hasNil = true
+        push(nonNilBounds, coalesced.value)
+      } else if coalesced.kind != "TypeVar" {
+        push(nonNilBounds, coalesced)
+      }
+    } else {
+      push(nonNilBounds, dlb)
+    }
+  }
+
+  // Check if all non-nil bounds are compatible
+  // Bounds are compatible if they're all the same primitive kind, or all Records
+  let resultType = nil
+  if len(nonNilBounds) > 0 {
+    let firstKind = nonNilBounds[0].kind
+    let allCompatible = true
+
+    for let i = 1; i < len(nonNilBounds); i = i + 1 {
+      let bound = nonNilBounds[i]
+      if bound.kind != firstKind {
+        // Different kinds - check if we can still merge (e.g., Records can merge fields)
+        if firstKind != "Record" or bound.kind != "Record" {
+          allCompatible = false
+          break
+        }
+      }
+    }
+
+    if allCompatible {
+      if firstKind == "Record" and len(nonNilBounds) > 1 {
+        // Merge Record fields from all bounds with conflict detection
+        let mergedFields = .{}
+        let fieldConflict = false
+        for bound in nonNilBounds {
+          let fields = bound.fields or .{}
+          for k in keys(fields) {
+            let newType = fields[k]
+            if !mergedFields[k] {
+              mergedFields[k] = newType
+            } else {
+              // Field already exists - check for conflicts
+              let existingType = mergedFields[k]
+              let existingD = deref(checker, existingType)
+              let newD = deref(checker, newType)
+
+              // Check if types are compatible
+              if existingD.kind and newD.kind {
+                // Both are concrete - check if same kind
+                if isPrimitive(existingD) and isPrimitive(newD) {
+                  if existingD.kind != newD.kind {
+                    // Primitive conflict (e.g., Number vs String)
+                    fieldConflict = true
+                    break
+                  }
+                } else if existingD.kind != newD.kind {
+                  // Different structural kinds (e.g., Record vs Array)
+                  if existingD.kind != "TypeVar" and newD.kind != "TypeVar" {
+                    fieldConflict = true
+                    break
+                  }
+                }
+              }
+              // Keep existing type (first wins for compatible types)
+            }
+          }
+          if fieldConflict { break }
+        }
+        if fieldConflict {
+          resultType = typeAny()
+        } else {
+          resultType = typeRecord(mergedFields)
+        }
+      } else {
+        resultType = nonNilBounds[0]
+      }
+    } else {
+      // Incompatible bounds - fall back to Any
+      resultType = typeAny()
+    }
+  }
+
+  // If we have Nil + other types, coalesce to Option[T]
+  if hasNil and resultType {
+    return typeOption(resultType)
+  }
+
+  // If only Nil bounds, return Nil
+  if hasNil and !resultType {
+    return typeNil()
+  }
+
+  // Return the merged result if we have one
+  if resultType {
+    return resultType
+  }
+
+  // Check upper bounds for a concrete type
+  let ubs = tv.upperBounds or []
+  for ub in ubs {
+    let dub = deref(checker, ub)
+    if dub.kind != "TypeVar" {
+      return dub
+    }
+  }
+
+  // Still a type variable - return the TypeVar itself (not Any)
+  tv
+}
+
+// Pretty-print a type for error messages
+fn prettyType(checker, t) {
+  t = deref(checker, t)
+  if !t { return "?" }
+
+  if t.kind == "TypeVar" {
+    let coalesced = coalesceTypeVar(checker, t)
+    if coalesced.kind != "TypeVar" {
+      return prettyType(checker, coalesced)
+    }
+    return "?" + str(t.id)
+  }
+
+  if t.kind == "Option" {
+    return prettyType(checker, t.value) + "?"
+  }
+
+  if t.kind == "Array" {
+    return "Array[" + prettyType(checker, t.elem) + "]"
+  }
+
+  if t.kind == "Map" {
+    return "Map[" + prettyType(checker, t.key) + ", " + prettyType(checker, t.elem) + "]"
+  }
+
+  if t.kind == "Function" {
+    let params = collect p in (t.params or []) { prettyType(checker, p) }
+    return "(" + join(params, ", ") + ") -> " + prettyType(checker, t.return)
+  }
+
+  if t.kind == "Record" {
+    // Sort keys for consistent output
+    let sortedKeys = sort(keys(t.fields or .{}), stringLess)
+    let fieldStrs = collect k in sortedKeys {
+      str(k) + ": " + prettyType(checker, t.fields[k])
+    }
+    return ".{ " + join(fieldStrs, ", ") + " }"
+  }
+
+  if t.kind == "Enum" {
+    // Sort keys for consistent output
+    let sortedKeys = sort(keys(t.fields or .{}), stringLess)
+    let fieldStrs = collect k in sortedKeys { str(k) }
+    return "enum { " + join(fieldStrs, ", ") + " }"
+  }
+
+  t.kind
 }
 
 // ========================================================
@@ -641,6 +1065,12 @@ fn sccTopo(nodes, edgesFor) {
   typeEquals,
   occurs,
   derefAll,
+
+  // Simple-Sub constraint solving
+  isPrimitive,
+  constrain,
+  coalesceTypeVar,
+  prettyType,
 
   // Builtin catalog
   builtinTypeByName,

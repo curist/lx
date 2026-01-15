@@ -234,6 +234,59 @@ fn register(test) {
     assert.equal(deref(result, getExprType(result, 0)).kind, "Number")
     assert.equal(deref(result, getExprType(result, 1)).kind, "String")
   })
+
+  // Issue A: Any lower bound should not block later refinement
+  test("typecheck - Any does not block later refinement", fn(assert) {
+    let result = parseAndTypecheck("{
+      let x
+      x = import \"src/types.lx\"
+      x = 1
+      x
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 2)).kind, "Number")
+  })
+
+  // Issue B: range/keys on empty record should refine after map evidence
+  test("typecheck - range on empty record refines after later evidence", fn(assert) {
+    let result = parseAndTypecheck("{
+      let r = .{}
+      let k = range(r)[0]
+      r[\"a\"] = 1
+      k
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    // Index 1 is `let k = ...` - getExprType returns the type of the bound variable k
+    assert.equal(deref(result, getExprType(result, 1)).kind, "String")
+  })
+
+  test("typecheck - keys on empty record refines after later evidence", fn(assert) {
+    let result = parseAndTypecheck("{
+      let r = .{}
+      let k = keys(r)[0]
+      r[\"a\"] = 1
+      k
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    // Index 1 is `let k = ...` - getExprType returns the type of the bound variable k
+    assert.equal(deref(result, getExprType(result, 1)).kind, "String")
+  })
+
+  // Grouping should not break empty record refinement
+  test("typecheck - range with grouping refines after later evidence", fn(assert) {
+    let result = parseAndTypecheck("{
+      let r = .{}
+      let k = range((r))[0]
+      r[\"a\"] = 1
+      k
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 1)).kind, "String")
+  })
 }
 
 .{ register }

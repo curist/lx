@@ -262,11 +262,37 @@ fn synthCall(checker, node) {
     if len(argTypes) != 1 {
       addError(checker, node.id, calleeD.builtinName + "() expects 1 argument")
     } else {
+      let argType = argTypes[0]
+      let argD = deref(checker, argType)
+
+      // If argument is an empty Record bound to an identifier, convert to TypeVar
+      // so that later index assignments (r["a"] = 1) can refine the type.
+      // Note: This changes dot-access semantics - after promotion, r.a defers via
+      // TypeVar constraint instead of immediately erroring. This is acceptable since
+      // calling range/keys on an empty record signals map-like usage intent.
+      if argD.kind == "Record" and (!argD.fields or len(keys(argD.fields or .{})) == 0) {
+        // Unwrap groupings: range((r)) should work like range(r)
+        let argNode = unwrapGroupings(args[0])
+        // Check if it's an identifier
+        if argNode.type == NODE.Identifier {
+          let binding = checker.resolvedNames[argNode.id]
+          if binding and binding.declaredAt {
+            // Create fresh TypeVar and update binding
+            let tv = freshTypeVar(checker)
+            constrain(checker, argType, tv)  // Record{} <: TypeVar
+            envBind(checker, binding.declaredAt, tv)
+            checker.types[binding.declaredAt] = tv
+            checker.types[argNode.id] = tv
+            argType = tv
+          }
+        }
+      }
+
       // Track for deferred refinement
       checker.builtinConstraints = checker.builtinConstraints or []
       push(checker.builtinConstraints, .{
         kind: calleeD.builtinName,
-        arg: argTypes[0],
+        arg: argType,
         elem: elem,
         nodeId: node.id,
       })

@@ -575,6 +575,13 @@ let DOCS = .{
     markdown: "`str(value) -> string`\nConvert a value to a string (uses runtime formatting).",
     source: "API.md",
   },
+  ["stringLess"]: .{
+    name: "stringLess",
+    signature: "stringLess(a: string | nil, b: string | nil) -> bool",
+    description: "Lexicographic comparison. Returns `true` if `a < b`. Nil is less than any string.",
+    markdown: "`stringLess(a: string | nil, b: string | nil) -> bool`\nLexicographic comparison. Returns `true` if `a < b`. Nil is less than any string.",
+    source: "API.md",
+  },
   ["substr"]: .{
     name: "substr",
     signature: "substr(s: string, start: number, end?: number) -> string",
@@ -698,6 +705,7 @@ let NATIVE_NAMES = .{
   ["split"]: true,
   ["startsWith"]: true,
   ["str"]: true,
+  ["stringLess"]: true,
   ["substr"]: true,
   ["tolower"]: true,
   ["tonumber"]: true,

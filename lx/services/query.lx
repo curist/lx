@@ -15,23 +15,6 @@ let NODE = types.NODE
 // Helpers
 // ========================================
 
-fn stringLess(a, b) {
-  if !a and b { return true }
-  if a and !b { return false }
-  if !a and !b { return false }
-
-  let alen = len(a)
-  let blen = len(b)
-  let n = alen < blen and alen or blen
-  for let i = 0; i < n; i = i + 1 {
-    let ca = ord(a[i])
-    let cb = ord(b[i])
-    if ca < cb { return true }
-    if ca > cb { return false }
-  }
-  alen < blen
-}
-
 fn keyLess(a, b) {
   let ta = type(a)
   let tb = type(b)

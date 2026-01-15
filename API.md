@@ -14,6 +14,7 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `substr(s: string, start: number, end?: number) -> string` Substring from start to end (exclusive). Supports negative indices (count from end). If end omitted, goes to end of string.
 - `startsWith(s: string, prefix: string) -> bool` String prefix test.
 - `endsWith(s: string, suffix: string) -> bool` String suffix test.
+- `stringLess(a: string | nil, b: string | nil) -> bool` Lexicographic comparison. Returns `true` if `a < b`. Nil is less than any string.
 - `contains(haystack: array | string, needle) -> bool` Membership test for arrays/strings.
 - `tolower(s: string) -> string` Lowercase ASCII.
 - `toupper(s: string) -> string` Uppercase ASCII.

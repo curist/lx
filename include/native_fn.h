@@ -1076,6 +1076,43 @@ static bool endsWithNative(int argCount, Value *args) {
   return true;
 }
 
+static bool stringLessNative(int argCount, Value *args) {
+  if (argCount < 2) {
+    args[-1] = CSTRING_VAL("Error: stringLess takes 2 args.");
+    return false;
+  }
+
+  // Handle nil cases (matching lx semantics: nil < string, nil == nil)
+  bool aIsNil = IS_NIL(args[0]);
+  bool bIsNil = IS_NIL(args[1]);
+
+  if (aIsNil && bIsNil) {
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+  if (aIsNil) {
+    args[-1] = BOOL_VAL(true);
+    return true;
+  }
+  if (bIsNil) {
+    args[-1] = BOOL_VAL(false);
+    return true;
+  }
+
+  // Both must be strings
+  if (!IS_STRING(args[0]) || !IS_STRING(args[1])) {
+    args[-1] = CSTRING_VAL("Error: stringLess arguments must be strings or nil.");
+    return false;
+  }
+
+  ObjString *a = AS_STRING(args[0]);
+  ObjString *b = AS_STRING(args[1]);
+
+  int cmp = strcmp(a->chars, b->chars);
+  args[-1] = BOOL_VAL(cmp < 0);
+  return true;
+}
+
 static bool containsNative(int argCount, Value *args) {
   if (argCount < 2) {
     args[-1] = CSTRING_VAL("Error: contains takes 2 args.");
@@ -2414,6 +2451,7 @@ void defineBuiltinNatives() {
   defineNative("substr", substrNative);
   defineNative("startsWith", startsWithNative);
   defineNative("endsWith", endsWithNative);
+  defineNative("stringLess", stringLessNative);
   defineNative("contains", containsNative);
   defineNative("tolower", tolowerNative);
   defineNative("toupper", toupperNative);

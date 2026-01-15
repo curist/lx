@@ -254,6 +254,28 @@ fn synthCall(checker, node) {
   // Constrain: calleeType <: (args) -> result
   let calleeD = deref(checker, calleeType)
 
+  // Special handling for range/keys - deferred refinement
+  if calleeD.kind == "Function" and (calleeD.builtinName == "range" or calleeD.builtinName == "keys") {
+    let elem = freshTypeVar(checker)
+    let out = typeArray(elem)
+
+    if len(argTypes) != 1 {
+      addError(checker, node.id, calleeD.builtinName + "() expects 1 argument")
+    } else {
+      // Track for deferred refinement
+      checker.builtinConstraints = checker.builtinConstraints or []
+      push(checker.builtinConstraints, .{
+        kind: calleeD.builtinName,
+        arg: argTypes[0],
+        elem: elem,
+        nodeId: node.id,
+      })
+    }
+
+    checker.types[node.id] = out
+    return out
+  }
+
   if calleeD.kind == "Function" {
     // Check arity
     let calleeParams = calleeD.params or []
@@ -1049,18 +1071,20 @@ fn synthIndex(checker, node) {
   let indexTypeD = deref(checker, indexType)
 
   if objD.kind == "Array" {
-    // Array indexing - index must be Number
+    // Array indexing - index must be Number, return element type directly
     if indexTypeD.kind != "Number" and indexTypeD.kind != "TypeVar" {
       addError(checker, node.id, "Array index must be a number")
       checker.types[node.id] = resultType
       return resultType
     }
     constrain(checker, indexType, typeNumber())
-    constrain(checker, objD.elem, resultType)
+    checker.types[node.id] = objD.elem
+    return objD.elem
   } else if objD.kind == "Map" {
-    // Map indexing
+    // Map indexing - return element type directly
     constrain(checker, indexType, objD.key)
-    constrain(checker, objD.elem, resultType)
+    checker.types[node.id] = objD.elem
+    return objD.elem
   } else if objD.kind == "Record" {
     // Record indexing with constant key
     let indexNode = node.index
@@ -1283,6 +1307,9 @@ fn typecheck(ast, resolveResult, opts) {
 
   // Traverse the AST
   synthExpr(checker, ast)
+
+  // Solve deferred range/keys constraints
+  helper.solveBuiltinConstraints(checker)
 
   // Return results
   .{

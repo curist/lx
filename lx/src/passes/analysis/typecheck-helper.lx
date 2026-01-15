@@ -344,7 +344,14 @@ fn constrain(checker, lhs, rhs) {
   checker.constraintCache[cacheKey] = true
 
   // Rule: Any <: T and T <: Any always hold
-  if lhs.kind == "Any" or rhs.kind == "Any" { return true }
+  // But still add bounds for TypeVars so coalescing works
+  if lhs.kind == "Any" {
+    if rhs.kind == "TypeVar" {
+      push(rhs.lowerBounds, lhs)
+    }
+    return true
+  }
+  if rhs.kind == "Any" { return true }
 
   // Rule: T? <: U? => constrain(T, U) - MUST come before general Option rules
   if lhs.kind == "Option" and rhs.kind == "Option" {
@@ -483,6 +490,14 @@ fn constrain(checker, lhs, rhs) {
   if lhs.kind == "Map" and rhs.kind == "Map" {
     return constrain(checker, lhs.key, rhs.key) and
            constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  // Empty Record <: Map (empty record can act as empty map)
+  if lhs.kind == "Record" and rhs.kind == "Map" {
+    let lhsFields = lhs.fields or .{}
+    if len(keys(lhsFields)) == 0 {
+      return true
+    }
   }
 
   // Enum: check field compatibility
@@ -1048,6 +1063,90 @@ fn sccTopo(nodes, edgesFor) {
 }
 
 // ========================================================
+// Range/Keys deferred refinement
+// ========================================================
+
+// Determine key type for a Record: String, Number, or Any if mixed
+fn recordKeyType(record) {
+  let fieldKeys = keys(record.fields or .{})
+  if len(fieldKeys) == 0 { return typeAny() }
+
+  let sawString = false
+  let sawNumber = false
+  for k in fieldKeys {
+    if type(k) == "string" { sawString = true }
+    else if type(k) == "number" { sawNumber = true }
+    else { return typeAny() }
+  }
+
+  if sawString and !sawNumber { return typeString() }
+  if sawNumber and !sawString { return typeNumber() }
+  typeAny()
+}
+
+// Infer element type from a concrete argument type
+fn inferFromConcrete(checker, arg, kind) {
+  if kind == "range" {
+    if arg.kind == "Number" { return typeNumber() }
+    if arg.kind == "Array" { return typeNumber() }
+    if arg.kind == "String" { return typeString() }
+    if arg.kind == "Map" { return arg.key }
+    if arg.kind == "Record" { return recordKeyType(arg) }
+    if arg.kind == "Enum" { return typeString() }
+  }
+  if kind == "keys" {
+    if arg.kind == "Map" { return arg.key }
+    if arg.kind == "Record" { return recordKeyType(arg) }
+    if arg.kind == "Enum" { return typeString() }
+  }
+  nil
+}
+
+// Infer element type from TypeVar bounds
+fn inferFromBounds(checker, tv, kind) {
+  // Check upper bounds first (constraints from function body)
+  let upperCandidates = tv.upperBounds or []
+  for bound in upperCandidates {
+    let inferred = inferFromConcrete(checker, deref(checker, bound), kind)
+    if inferred { return inferred }
+  }
+  // Then check lower bounds (constraints from call sites)
+  let lowerCandidates = tv.lowerBounds or []
+  for bound in lowerCandidates {
+    let inferred = inferFromConcrete(checker, deref(checker, bound), kind)
+    if inferred { return inferred }
+  }
+  nil
+}
+
+// Solve a single range/keys constraint
+fn solveRangeKeys(checker, item) {
+  let arg = deref(checker, item.arg)
+  let elem = item.elem
+  let kind = item.kind
+
+
+  // If arg is still unknown, try to infer from bounds
+  if arg.kind == "TypeVar" {
+    let inferred = inferFromBounds(checker, arg, kind)
+    if !inferred { return false }
+    return constrain(checker, inferred, elem)
+  }
+
+  let inferred = inferFromConcrete(checker, arg, kind)
+  if !inferred { return false }
+  return constrain(checker, inferred, elem)
+}
+
+// Solve all deferred builtin constraints
+fn solveBuiltinConstraints(checker) {
+  let constraints = checker.builtinConstraints or []
+  solveWorklist(constraints, fn(item) {
+    solveRangeKeys(checker, item)
+  })
+}
+
+// ========================================================
 // Exports
 // ========================================================
 
@@ -1087,6 +1186,9 @@ fn sccTopo(nodes, edgesFor) {
 
   // Builtin catalog
   builtinTypeByName,
+
+  // Deferred refinement
+  solveBuiltinConstraints,
 
   // Algorithms
   solveWorklist,

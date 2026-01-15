@@ -697,6 +697,7 @@ let BUILTIN_TYPES = .{
   substr: typeFunction([typeString(), typeNumber()], typeString()),
   startsWith: typeFunction([typeString(), typeString()], typeBool()),
   endsWith: typeFunction([typeString(), typeString()], typeBool()),
+  stringLess: typeFunction([typeOption(typeString()), typeOption(typeString())], typeBool()),
   contains: typeFunction([typeAny(), typeAny()], typeBool()),
   tolower: typeFunction([typeString()], typeString()),
   toupper: typeFunction([typeString()], typeString()),
@@ -728,6 +729,18 @@ let BUILTIN_TYPES = .{
     nanotime: typeFunction([], typeNumber()),
     format: typeFunction([typeNumber()], typeString()),
     parse: typeFunction([typeString(), typeString()], typeNumber()),
+  }),
+
+  Fiber: typeRecord(.{
+    create: typeFunction([typeAny()], typeAny()),  // fn -> fiber
+    resume: typeFunction([typeAny()], typeRecord(.{
+      tag: typeString(),
+      value: typeAny(),
+      error: typeAny(),
+    })),
+    yield: typeFunction([typeAny()], typeAny()),
+    status: typeFunction([typeAny()], typeString()),
+    current: typeFunction([], typeAny()),
   }),
 
   Lx: typeRecord(.{

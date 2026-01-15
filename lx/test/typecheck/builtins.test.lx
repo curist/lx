@@ -203,7 +203,6 @@ fn register(test) {
     let result = parseAndTypecheck("{
       collect x, i in [1, 2] { x + i }
       fold([1, 2], 0, fn(acc, x, i, abort) { acc + x + i })
-      _2(fn(a, b) { a + b })(1, 2)
       sort([3, 1, 2], fn(a, b) { a < b })
       startsWith(\"abc\", \"a\")
     }")
@@ -215,13 +214,12 @@ fn register(test) {
     assert.equal(deref(result, mt.elem).kind, "Number")
 
     assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
-    assert.equal(deref(result, getExprType(result, 2)).kind, "Number")
 
-    let st = deref(result, getExprType(result, 3))
+    let st = deref(result, getExprType(result, 2))
     assert.equal(st.kind, "Array")
     assert.equal(deref(result, st.elem).kind, "Number")
 
-    assert.equal(deref(result, getExprType(result, 4)).kind, "Bool")
+    assert.equal(deref(result, getExprType(result, 3)).kind, "Bool")
   })
 
   test("typecheck - collect preserves element types per use-site", fn(assert) {

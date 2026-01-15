@@ -265,6 +265,43 @@ fn synthCall(checker, node) {
         "Too few arguments: expected at least " + str(minArity) +
         ", got " + str(len(argTypes)))
     } else {
+      // Builtin-specific validation
+      let builtinName = calleeD.builtinName
+      if builtinName == "len" {
+        // len() requires array or string
+        if len(argTypes) >= 1 {
+          let argD = deref(checker, argTypes[0])
+          if argD.kind and argD.kind != "Array" and argD.kind != "String" and argD.kind != "TypeVar" and argD.kind != "Any" {
+            addError(checker, node.id, "len() requires array or string")
+          }
+        }
+      } else if builtinName == "nameOf" {
+        // nameOf() requires enum as first arg
+        if len(argTypes) >= 1 {
+          let argD = deref(checker, argTypes[0])
+          if argD.kind and argD.kind != "Enum" and argD.kind != "TypeVar" and argD.kind != "Any" {
+            addError(checker, node.id, "nameOf() requires enum")
+          } else if argD.kind == "Enum" and len(argTypes) >= 2 {
+            // Check value type matches enum values
+            let valueD = deref(checker, argTypes[1])
+            if valueD.kind and valueD.kind != "TypeVar" and valueD.kind != "Any" {
+              // Check if enum values are all numbers or all strings
+              let enumFields = argD.fields or .{}
+              let enumValueKind = nil
+              for k in keys(enumFields) {
+                let v = enumFields[k]
+                if type(v) == "number" { enumValueKind = "Number" }
+                else if type(v) == "string" { enumValueKind = "String" }
+                break
+              }
+              if enumValueKind and valueD.kind != enumValueKind {
+                addError(checker, node.id, "nameOf() value mismatch")
+              }
+            }
+          }
+        }
+      }
+
       // Constrain argument types (contravariant)
       let numParams = len(calleeParams)
       for let i = 0; i < len(argTypes) and i < numParams; i = i + 1 {

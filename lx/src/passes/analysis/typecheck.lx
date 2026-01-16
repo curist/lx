@@ -1503,8 +1503,12 @@ fn synthImport(checker, node) {
   let importInfo = checker.resolveResult and checker.resolveResult.importInfoByNodeId or .{}
   let info = importInfo[node.id]
   let t = info and info.importType
-  if !t and checker.program and checker.program.exports and node.path and node.path.type == NODE.String {
-    t = checker.program.exports[node.path.value]
+  if !t and checker.program and checker.program.exports {
+    let importPath = info and info.importResult and info.importResult.path or nil
+    if !importPath and node.path and node.path.type == NODE.String {
+      importPath = node.path.value
+    }
+    if importPath { t = checker.program.exports[importPath] }
   }
   if t {
     let cloned = cloneType(checker, t, .{})

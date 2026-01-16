@@ -117,8 +117,103 @@ fn make(opts) {
   let wholeProgramDceArtifact = nil  // Cached artifact for ANALYSIS_DCE_WHOLE_PROGRAM
   let compileDepth = 0
 
+  // Build dependency graph from import info in resolve pass results
+  fn buildDependencyGraph() {
+    // Returns: { modulePath: [importedModulePaths] }
+    let deps = .{}
+    for path in compiledModules {
+      deps[path] = []
+      let r = cache[path]
+      if !r or r.status != "done" { continue }
+      let passes = r.passes or .{}
+      let resolveResult = passes.resolve
+      if !resolveResult { continue }
+
+      let importInfo = resolveResult.importInfoByNodeId or .{}
+      for nodeId in keys(importInfo) {
+        let info = importInfo[nodeId]
+        let importResult = info and info.importResult
+        let importPath = importResult and importResult.path
+        if importPath {
+          push(deps[path], importPath)
+        }
+      }
+    }
+    deps
+  }
+
+  // Topologically sort modules using Kahn's algorithm
+  // Returns modules in dependency order (dependencies before dependents)
+  fn topologicalSort(deps) {
+    // Build in-degree map and adjacency (dependents) list
+    let inDegree = .{}
+    let dependents = .{}  // module -> [modules that depend on it]
+    let allModules = keys(deps)
+
+    for path in allModules {
+      inDegree[path] = 0
+      dependents[path] = []
+    }
+
+    // Calculate in-degrees
+    for path in allModules {
+      let imports = deps[path] or []
+      for importPath in imports {
+        // Only count if the imported module is in our graph
+        if inDegree[importPath] != nil {
+          inDegree[path] = inDegree[path] + 1
+          push(dependents[importPath], path)
+        }
+      }
+    }
+
+    // Kahn's algorithm: start with modules that have no dependencies
+    let queue = []
+    let result = []
+
+    for path in allModules {
+      if inDegree[path] == 0 {
+        push(queue, path)
+      }
+    }
+
+    for len(queue) > 0 {
+      let path = queue[0]
+      // Remove first element (shift)
+      let newQueue = []
+      for let i = 1; i < len(queue); i = i + 1 {
+        push(newQueue, queue[i])
+      }
+      queue = newQueue
+
+      push(result, path)
+
+      // Decrease in-degree of dependents
+      for dependent in dependents[path] {
+        inDegree[dependent] = inDegree[dependent] - 1
+        if inDegree[dependent] == 0 {
+          push(queue, dependent)
+        }
+      }
+    }
+
+    // If result doesn't contain all modules, there's a cycle
+    // Add remaining modules in original order
+    if len(result) < len(allModules) {
+      let inResult = .{}
+      for path in result { inResult[path] = true }
+      for path in compiledModules {
+        if !inResult[path] {
+          push(result, path)
+        }
+      }
+    }
+
+    result
+  }
+
   fn runWholeProgramTypecheck(entryResult) {
-    // Typecheck in reverse discovery order so imports are processed first.
+    // Typecheck in dependency order so imports are processed before dependents.
 
     // Check if we need to rerun based on programStamp
     let currentProgramStamp = stamps.computeProgramStamp(compiledModules)
@@ -128,8 +223,11 @@ fn make(opts) {
 
     let programExports = .{}
 
-    for let i = len(compiledModules) - 1; i >= 0; i = i - 1 {
-      let path = compiledModules[i]
+    // Build dependency graph and topologically sort
+    let deps = buildDependencyGraph()
+    let sortedModules = topologicalSort(deps)
+
+    for path in sortedModules {
       let r = cache[path]
       if !r or r.status != "done" { continue }
       let passes = r.passes or .{}

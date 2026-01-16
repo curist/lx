@@ -137,7 +137,15 @@ fn initScanner(src) {
     ["|"]: fn() { Token(TOKEN.PIPE) },
     ["^"]: fn() { Token(TOKEN.CARET) },
     ["!"]: fn() { Token(match("=") and TOKEN.BANG_EQUAL or TOKEN.BANG) },
-    ["="]: fn() { Token(match("=") and TOKEN.EQUAL_EQUAL or TOKEN.EQUAL) },
+    ["="]: fn() {
+      Token(if match("=") {
+        TOKEN.EQUAL_EQUAL
+      } else if match(">") {
+        TOKEN.ARROW
+      } else {
+        TOKEN.EQUAL
+      })
+    },
     ["<"]: fn() {
       Token(if match("=") {
         TOKEN.LESS_EQUAL

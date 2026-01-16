@@ -467,6 +467,111 @@ test("parser - anonymous function", fn(assert) {
   assert.equal(node.body.type, NODE.Block)
 })
 
+test("parser - arrow function single param expression body", fn(assert) {
+  let result = parse("let add = x => x + 1", "test.lx")
+  assert.truthy(result.success)
+
+  let letNode = first(result)
+  assert.equal(letNode.type, NODE.Let)
+
+  let lambda = letNode.init
+  assert.equal(lambda.type, NODE.Lambda)
+  assert.equal(len(lambda.params), 1)
+  assert.equal(lambda.params[0].name, "x")
+  assert.equal(lambda.defaults[0], nil)
+  assert.equal(lambda.body.type, NODE.Binary)
+})
+
+test("parser - arrow function single param block body", fn(assert) {
+  let result = parse("x => { x + 1 }", "test.lx")
+  assert.truthy(result.success)
+
+  let lambda = first(result)
+  assert.equal(lambda.type, NODE.Lambda)
+  assert.equal(len(lambda.params), 1)
+  assert.equal(lambda.params[0].name, "x")
+  assert.equal(lambda.body.type, NODE.Block)
+})
+
+test("parser - arrow function no params", fn(assert) {
+  let result = parse("() => 42", "test.lx")
+  assert.truthy(result.success)
+
+  let lambda = first(result)
+  assert.equal(lambda.type, NODE.Lambda)
+  assert.equal(len(lambda.params), 0)
+  assert.equal(lambda.body.type, NODE.Number)
+  assert.equal(lambda.body.value, 42)
+})
+
+test("parser - arrow function single param with parens", fn(assert) {
+  let result = parse("(x) => x + 1", "test.lx")
+  assert.truthy(result.success)
+
+  let lambda = first(result)
+  assert.equal(lambda.type, NODE.Lambda)
+  assert.equal(len(lambda.params), 1)
+  assert.equal(lambda.params[0].name, "x")
+})
+
+test("parser - arrow function multiple params", fn(assert) {
+  let result = parse("(x, y) => x + y", "test.lx")
+  assert.truthy(result.success)
+
+  let lambda = first(result)
+  assert.equal(lambda.type, NODE.Lambda)
+  assert.equal(len(lambda.params), 2)
+  assert.equal(lambda.params[0].name, "x")
+  assert.equal(lambda.params[1].name, "y")
+  assert.equal(lambda.defaults[0], nil)
+  assert.equal(lambda.defaults[1], nil)
+})
+
+test("parser - arrow function with default value", fn(assert) {
+  let result = parse("(x = 1) => x", "test.lx")
+  assert.truthy(result.success)
+
+  let lambda = first(result)
+  assert.equal(lambda.type, NODE.Lambda)
+  assert.equal(len(lambda.params), 1)
+  assert.equal(lambda.params[0].name, "x")
+  assert.equal(lambda.defaults[0].type, NODE.Number)
+  assert.equal(lambda.defaults[0].value, 1)
+})
+
+test("parser - arrow function multiple params with defaults", fn(assert) {
+  let result = parse("(x, y = 2, z = 3) => x + y + z", "test.lx")
+  assert.truthy(result.success)
+
+  let lambda = first(result)
+  assert.equal(lambda.type, NODE.Lambda)
+  assert.equal(len(lambda.params), 3)
+  assert.equal(lambda.params[0].name, "x")
+  assert.equal(lambda.params[1].name, "y")
+  assert.equal(lambda.params[2].name, "z")
+  assert.equal(lambda.defaults[0], nil)
+  assert.equal(lambda.defaults[1].value, 2)
+  assert.equal(lambda.defaults[2].value, 3)
+})
+
+test("parser - arrow function with complex default", fn(assert) {
+  let result = parse("(x = [1, 2, 3]) => x", "test.lx")
+  assert.truthy(result.success)
+
+  let lambda = first(result)
+  assert.equal(lambda.type, NODE.Lambda)
+  assert.equal(lambda.defaults[0].type, NODE.Array)
+})
+
+test("parser - arrow function in call", fn(assert) {
+  let result = parse("map(arr, x => x * 2)", "test.lx")
+  assert.truthy(result.success)
+
+  let call = first(result)
+  assert.equal(call.type, NODE.Call)
+  assert.equal(call.args[1].type, NODE.Lambda)
+})
+
 test("parser - named function", fn(assert) {
   let result = parse("fn add(a, b) { a + b }", "test.lx")
   assert.truthy(result.success)

@@ -7,7 +7,6 @@ Yet another [Lox](https://github.com/munificent/craftinginterpreters) derived pr
 * Dynamic
 * Compiled
 * Alpha quality
-* Small and pragmatic
 * (Almost) everything is expression
 * (Half) self hosted; Lx can compile itself, but relies on a C runtime
 

@@ -235,13 +235,27 @@ fn BlockNode(filename, startToken, expressions, endToken) {
   node
 }
 
-fn FunctionNode(filename, startToken, name, params, body, endToken) {
+fn FunctionNode(filename, startToken, name, params, defaults, body, endToken) {
   let node = Node(NODE.Function, filename, startToken)
   node.name = name
   node.params = params
+  node.defaults = defaults
   node.body = body
   node.endLine = endToken.line
   node.endCol = endToken.col
+  node
+}
+
+fn LambdaNode(filename, startToken, params, defaults, body) {
+  // startToken should be the parameter token (identifier) or '(' token.
+  let node = Node(NODE.Lambda, filename, startToken)
+  node.params = params
+  node.defaults = defaults
+  node.body = body
+  if body {
+    node.endLine = body.endLine
+    node.endCol = body.endCol
+  }
   node
 }
 
@@ -471,8 +485,8 @@ fn parse(src, filename) {
   nodeIdCounter = 0
 
   let parser = .{
-    current: 0,
-    previous: 0,
+    current: nil,
+    previous: nil,
     hadError: false,
     panicMode: false,
     errors: [],
@@ -632,19 +646,150 @@ fn parse(src, filename) {
 
   fn variable(canAssign) {
     let nameToken = parser.previous
-    let name = IdentifierNode(filename, nameToken)
+    let nameNode = IdentifierNode(filename, nameToken)
 
+    // Arrow function: x => expr / x => { block }
+    if match(TOKEN.ARROW) {
+      let startToken = nameToken
+
+      let body = if match(TOKEN.LEFT_BRACE) {
+        block()
+      } else {
+        expression()
+      }
+
+      return LambdaNode(filename, startToken, [nameNode], [], body)
+    }
+
+    // assignment handling
     if canAssign and match(TOKEN.EQUAL) {
       let value = expression()
       if !value { return nil }
-      return AssignmentNode(filename, name, value, parser.previous)
+      return AssignmentNode(filename, nameNode, value, parser.previous)
     }
 
-    return name
+    return nameNode
+  }
+
+  fn tokAt(offset) {
+    if offset == 0 { return parser.current }
+    return scanner.peek(offset - 1)
+  }
+
+  fn skipDefaultExpr(i0) {
+    // Skip tokens until ',' or ')' at depth 0.
+    // This is only for lookahead; it doesn't validate correctness.
+    let depthParen = 0
+    let depthBracket = 0
+    let depthBrace = 0
+    let i = i0
+
+    for true {
+      let t = tokAt(i).type
+      if t == TOKEN.EOF { return nil }
+
+      if t == TOKEN.LEFT_PAREN { depthParen = depthParen + 1 }
+      else if t == TOKEN.RIGHT_PAREN {
+        if depthParen == 0 and depthBracket == 0 and depthBrace == 0 {
+          return i  // stop at the ')' that closes param list
+        }
+        depthParen = depthParen - 1
+      }
+      else if t == TOKEN.LEFT_BRACKET { depthBracket = depthBracket + 1 }
+      else if t == TOKEN.RIGHT_BRACKET { depthBracket = depthBracket - 1 }
+      else if t == TOKEN.LEFT_BRACE { depthBrace = depthBrace + 1 }
+      else if t == TOKEN.RIGHT_BRACE { depthBrace = depthBrace - 1 }
+
+      if t == TOKEN.COMMA and depthParen == 0 and depthBracket == 0 and depthBrace == 0 {
+        return i
+      }
+
+      i = i + 1
+    }
+  }
+
+  fn isArrowParamListAhead() {
+    let i = 0
+
+    // () =>
+    if tokAt(i).type == TOKEN.RIGHT_PAREN {
+      return tokAt(i + 1).type == TOKEN.ARROW
+    }
+
+    // (x ...) =>
+    if tokAt(i).type != TOKEN.IDENTIFIER { return false }
+    i = i + 1
+
+    for true {
+      let t = tokAt(i).type
+
+      // Optional default: x = <expr>
+      if t == TOKEN.EQUAL {
+        i = i + 1
+        let stop = skipDefaultExpr(i)
+        if !stop { return false }
+        i = stop
+        t = tokAt(i).type
+      }
+
+      if t == TOKEN.COMMA {
+        i = i + 1
+        if tokAt(i).type != TOKEN.IDENTIFIER { return false }
+        i = i + 1
+        continue
+      }
+
+      if t == TOKEN.RIGHT_PAREN {
+        return tokAt(i + 1).type == TOKEN.ARROW
+      }
+
+      return false
+    }
   }
 
   fn grouping() {
-    let startToken = parser.previous
+    let startToken = parser.previous  // '(' token
+
+    // If this looks like (params) => ..., parse arrow params, not a grouping expr.
+    if isArrowParamListAhead() {
+      let params = []
+      let defaults = []
+
+      if !check(TOKEN.RIGHT_PAREN) {
+        consumeIdentifier("Expect parameter name.")
+        push(params, IdentifierNode(filename, parser.previous))
+
+        if match(TOKEN.EQUAL) {
+          push(defaults, expression())
+        } else {
+          push(defaults, nil)
+        }
+
+        for match(TOKEN.COMMA) and !check(TOKEN.RIGHT_PAREN) {
+          consumeIdentifier("Expect parameter name.")
+          push(params, IdentifierNode(filename, parser.previous))
+
+          if match(TOKEN.EQUAL) {
+            push(defaults, expression())
+          } else {
+            push(defaults, nil)
+          }
+        }
+      }
+
+      consume(TOKEN.RIGHT_PAREN, "Expect ')' after parameters.")
+      consume(TOKEN.ARROW, "Expect '=>' after parameters.")
+
+      let body = if match(TOKEN.LEFT_BRACE) {
+        block()
+      } else {
+        expression()
+      }
+
+      return LambdaNode(filename, startToken, params, defaults, body)
+    }
+
+    // Otherwise: normal grouping
     let expr = expression()
     consume(TOKEN.RIGHT_PAREN, "Expect ')' after expression.")
     GroupingNode(filename, expr, startToken, parser.previous)
@@ -1052,9 +1197,7 @@ fn parse(src, filename) {
 
     let body = block()
 
-    let funcNode = FunctionNode(filename, startToken, name, params, body, parser.previous)
-    funcNode.defaults = defaults
-    funcNode
+    FunctionNode(filename, startToken, name, params, defaults, body, parser.previous)
   }
 
   fn ifExpr() {
@@ -1262,57 +1405,58 @@ fn parse(src, filename) {
 
   // Parse rules table
   let parseRules = .{
-    [TOKEN.IMPORT]:          [nil,        nil,    PREC.NONE],
-    [TOKEN.LEFT_PAREN]:      [grouping,   call,   PREC.CALL],
-    [TOKEN.RIGHT_PAREN]:     [nil,        nil,    PREC.NONE],
-    [TOKEN.LEFT_BRACE]:      [block,      nil,    PREC.NONE],
-    [TOKEN.RIGHT_BRACE]:     [nil,        nil,    PREC.NONE],
-    [TOKEN.LEFT_BRACKET]:    [array,      index,  PREC.CALL],
-    [TOKEN.RIGHT_BRACKET]:   [nil,        nil,    PREC.NONE],
-    [TOKEN.DOT_BRACE]:       [hashmap,    nil,    PREC.NONE],
-    [TOKEN.COMMA]:           [nil,        nil,    PREC.NONE],
-    [TOKEN.DOT]:             [nil,        dot,    PREC.CALL],
-    [TOKEN.MINUS]:           [unary,      binary, PREC.TERM],
-    [TOKEN.MINUS_GREATER]:   [nil,        arrow,  PREC.PIPELINE],
-    [TOKEN.PLUS]:            [nil,        binary, PREC.TERM],
-    [TOKEN.SEMICOLON]:       [nil,        nil,    PREC.NONE],
-    [TOKEN.SLASH]:           [nil,        binary, PREC.FACTOR],
-    [TOKEN.STAR]:            [nil,        binary, PREC.FACTOR],
-    [TOKEN.MOD]:             [nil,        binary, PREC.FACTOR],
-    [TOKEN.BANG]:            [unary,      nil,    PREC.UNARY],
-    [TOKEN.BANG_EQUAL]:      [nil,        binary, PREC.EQUALITY],
-    [TOKEN.EQUAL]:           [nil,        nil,    PREC.NONE],
-    [TOKEN.EQUAL_EQUAL]:     [nil,        binary, PREC.EQUALITY],
-    [TOKEN.GREATER]:         [nil,        binary, PREC.COMPARISON],
-    [TOKEN.GREATER_EQUAL]:   [nil,        binary, PREC.COMPARISON],
-    [TOKEN.GREATER_GREATER]: [nil,        binary, PREC.BIT_SHIFT],
-    [TOKEN.LESS]:            [nil,        binary, PREC.COMPARISON],
-    [TOKEN.LESS_EQUAL]:      [nil,        binary, PREC.COMPARISON],
-    [TOKEN.LESS_LESS]:       [nil,        binary, PREC.BIT_SHIFT],
-    [TOKEN.AMPERSAND]:       [nil,        binary, PREC.BIT_AND],
-    [TOKEN.PIPE]:            [nil,        binary, PREC.BIT_OR],
-    [TOKEN.CARET]:           [nil,        binary, PREC.BIT_XOR],
-    [TOKEN.LET]:             [letExpr,    nil,    PREC.NONE],
-    [TOKEN.ENUM]:            [enumExpr,   nil,    PREC.NONE],
-    [TOKEN.IDENTIFIER]:      [variable,   nil,    PREC.NONE],
-    [TOKEN.STRING]:          [string,     nil,    PREC.NONE],
-    [TOKEN.NUMBER]:          [number,     nil,    PREC.NONE],
-    [TOKEN.AND]:             [nil,        and_,   PREC.AND],
-    [TOKEN.ELSE]:            [nil,        nil,    PREC.NONE],
-    [TOKEN.FALSE]:           [literal,    nil,    PREC.NONE],
-    [TOKEN.FOR]:             [forExpr,    nil,    PREC.NONE],
-    [TOKEN.FN]:              [fnExpr,     nil,    PREC.NONE],
-    [TOKEN.IF]:              [ifExpr,     nil,    PREC.NONE],
-    [TOKEN.NIL]:             [literal,    nil,    PREC.NONE],
-    [TOKEN.OR]:              [nil,        or_,    PREC.OR],
-    [TOKEN.RETURN]:          [returnStatement, nil, PREC.NONE],
-    [TOKEN.BREAK]:           [breakStmt,  nil,    PREC.NONE],
-    [TOKEN.CONTINUE]:        [continueStmt, nil,  PREC.NONE],
-    [TOKEN.TRUE]:            [literal,    nil,    PREC.NONE],
-    [TOKEN.IN]:              [nil,        nil,    PREC.NONE],
-    [TOKEN.COLLECT]:         [collectExpr, nil,   PREC.NONE],
-    [TOKEN.ERROR]:           [nil,        nil,    PREC.NONE],
-    [TOKEN.EOF]:             [nil,        nil,    PREC.NONE],
+    [TOKEN.IMPORT]:          [nil,             nil,    PREC.NONE],
+    [TOKEN.LEFT_PAREN]:      [grouping,        call,   PREC.CALL],
+    [TOKEN.RIGHT_PAREN]:     [nil,             nil,    PREC.NONE],
+    [TOKEN.LEFT_BRACE]:      [block,           nil,    PREC.NONE],
+    [TOKEN.RIGHT_BRACE]:     [nil,             nil,    PREC.NONE],
+    [TOKEN.LEFT_BRACKET]:    [array,           index,  PREC.CALL],
+    [TOKEN.RIGHT_BRACKET]:   [nil,             nil,    PREC.NONE],
+    [TOKEN.DOT_BRACE]:       [hashmap,         nil,    PREC.NONE],
+    [TOKEN.COMMA]:           [nil,             nil,    PREC.NONE],
+    [TOKEN.DOT]:             [nil,             dot,    PREC.CALL],
+    [TOKEN.MINUS]:           [unary,           binary, PREC.TERM],
+    [TOKEN.MINUS_GREATER]:   [nil,             arrow,  PREC.PIPELINE],
+    [TOKEN.PLUS]:            [nil,             binary, PREC.TERM],
+    [TOKEN.SEMICOLON]:       [nil,             nil,    PREC.NONE],
+    [TOKEN.SLASH]:           [nil,             binary, PREC.FACTOR],
+    [TOKEN.STAR]:            [nil,             binary, PREC.FACTOR],
+    [TOKEN.MOD]:             [nil,             binary, PREC.FACTOR],
+    [TOKEN.BANG]:            [unary,           nil,    PREC.UNARY],
+    [TOKEN.BANG_EQUAL]:      [nil,             binary, PREC.EQUALITY],
+    [TOKEN.EQUAL]:           [nil,             nil,    PREC.NONE],
+    [TOKEN.EQUAL_EQUAL]:     [nil,             binary, PREC.EQUALITY],
+    [TOKEN.ARROW]:           [nil,             nil,    PREC.NONE],
+    [TOKEN.GREATER]:         [nil,             binary, PREC.COMPARISON],
+    [TOKEN.GREATER_EQUAL]:   [nil,             binary, PREC.COMPARISON],
+    [TOKEN.GREATER_GREATER]: [nil,             binary, PREC.BIT_SHIFT],
+    [TOKEN.LESS]:            [nil,             binary, PREC.COMPARISON],
+    [TOKEN.LESS_EQUAL]:      [nil,             binary, PREC.COMPARISON],
+    [TOKEN.LESS_LESS]:       [nil,             binary, PREC.BIT_SHIFT],
+    [TOKEN.AMPERSAND]:       [nil,             binary, PREC.BIT_AND],
+    [TOKEN.PIPE]:            [nil,             binary, PREC.BIT_OR],
+    [TOKEN.CARET]:           [nil,             binary, PREC.BIT_XOR],
+    [TOKEN.LET]:             [letExpr,         nil,    PREC.NONE],
+    [TOKEN.ENUM]:            [enumExpr,        nil,    PREC.NONE],
+    [TOKEN.IDENTIFIER]:      [variable,        nil,    PREC.NONE],
+    [TOKEN.STRING]:          [string,          nil,    PREC.NONE],
+    [TOKEN.NUMBER]:          [number,          nil,    PREC.NONE],
+    [TOKEN.AND]:             [nil,             and_,   PREC.AND],
+    [TOKEN.ELSE]:            [nil,             nil,    PREC.NONE],
+    [TOKEN.FALSE]:           [literal,         nil,    PREC.NONE],
+    [TOKEN.FOR]:             [forExpr,         nil,    PREC.NONE],
+    [TOKEN.FN]:              [fnExpr,          nil,    PREC.NONE],
+    [TOKEN.IF]:              [ifExpr,          nil,    PREC.NONE],
+    [TOKEN.NIL]:             [literal,         nil,    PREC.NONE],
+    [TOKEN.OR]:              [nil,             or_,    PREC.OR],
+    [TOKEN.RETURN]:          [returnStatement, nil,    PREC.NONE],
+    [TOKEN.BREAK]:           [breakStmt,       nil,    PREC.NONE],
+    [TOKEN.CONTINUE]:        [continueStmt,    nil,    PREC.NONE],
+    [TOKEN.TRUE]:            [literal,         nil,    PREC.NONE],
+    [TOKEN.IN]:              [nil,             nil,    PREC.NONE],
+    [TOKEN.COLLECT]:         [collectExpr,     nil,    PREC.NONE],
+    [TOKEN.ERROR]:           [nil,             nil,    PREC.NONE],
+    [TOKEN.EOF]:             [nil,             nil,    PREC.NONE],
   }
 
   let DEFAULT_RULE = [nil, nil, PREC.NONE]

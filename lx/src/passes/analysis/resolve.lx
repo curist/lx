@@ -502,7 +502,11 @@ fn isInFunction(scope) {
         }
 
         // Store import metadata in side table (consistent with non-cached path)
-        let importInfo = .{ importResult: cached }
+        let importInfo = .{
+          importResult: cached,
+          importType: nil,
+          importBindings: nil,
+        }
         let typeInfo = extractImportType(cached)
         if typeInfo {
           importInfo.importType = typeInfo.importType
@@ -543,7 +547,11 @@ fn isInFunction(scope) {
       }
 
       // Store import metadata in side table
-      let importInfo = .{ importResult: result }
+      let importInfo = .{
+        importResult: result,
+        importType: nil,
+        importBindings: nil,
+      }
       let typeInfo = extractImportType(result)
       if typeInfo {
         importInfo.importType = typeInfo.importType

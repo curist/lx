@@ -591,4 +591,164 @@ test("lower - default arguments preserve position spans", fn(assert) {
   assert.equal(lowered.col, parsed.col)
 })
 
+// ========================================
+// Lambda (Arrow Function) Lowering Tests
+// ========================================
+
+test("lower - lambda single param expression body", fn(assert) {
+  let result = parseAndLower("x => x + 1")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  // Lambda should be lowered to anonymous Function
+  assert.equal(node.type, NODE.Function)
+  assert.equal(node.name, nil)
+  assert.equal(len(node.params), 1)
+  assert.equal(node.params[0].name, "x")
+
+  // Body should be a Block wrapping the expression
+  assert.equal(node.body.type, NODE.Block)
+  assert.equal(len(node.body.expressions), 1)
+  assert.equal(node.body.expressions[0].type, NODE.Binary)
+})
+
+test("lower - lambda single param block body", fn(assert) {
+  let result = parseAndLower("x => { x + 1 }")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(node.name, nil)
+  assert.equal(len(node.params), 1)
+  assert.equal(node.params[0].name, "x")
+
+  // Body is already a Block, should stay as-is
+  assert.equal(node.body.type, NODE.Block)
+  assert.equal(len(node.body.expressions), 1)
+  assert.equal(node.body.expressions[0].type, NODE.Binary)
+})
+
+test("lower - lambda no params", fn(assert) {
+  let result = parseAndLower("() => 42")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(node.name, nil)
+  assert.equal(len(node.params), 0)
+
+  // Body should be a Block wrapping the number
+  assert.equal(node.body.type, NODE.Block)
+  assert.equal(node.body.expressions[0].type, NODE.Number)
+  assert.equal(node.body.expressions[0].value, 42)
+})
+
+test("lower - lambda multiple params", fn(assert) {
+  let result = parseAndLower("(x, y) => x + y")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(node.name, nil)
+  assert.equal(len(node.params), 2)
+  assert.equal(node.params[0].name, "x")
+  assert.equal(node.params[1].name, "y")
+})
+
+test("lower - lambda with default value", fn(assert) {
+  let result = parseAndLower("(x = 1) => x")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(node.name, nil)
+  assert.equal(len(node.params), 1)
+  assert.equal(node.params[0].name, "x")
+
+  // Should have defaults and nil check injected
+  assert.truthy(node.defaults)
+  assert.equal(len(node.defaults), 1)
+  assert.equal(node.defaults[0].type, NODE.Number)
+  assert.equal(node.defaults[0].value, 1)
+
+  // Body should have nil check for x
+  assert.equal(node.body.type, NODE.Block)
+  assert.truthy(len(node.body.expressions) >= 2)
+  assert.equal(node.body.expressions[0].type, NODE.If)
+})
+
+test("lower - lambda with multiple defaults", fn(assert) {
+  let result = parseAndLower("(x, y = 2, z = 3) => x + y + z")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+  assert.equal(len(node.params), 3)
+
+  assert.equal(node.defaults[0], nil)
+  assert.equal(node.defaults[1].value, 2)
+  assert.equal(node.defaults[2].value, 3)
+})
+
+test("lower - lambda in let binding", fn(assert) {
+  let result = parseAndLower("let add = x => x + 1")
+  assert.truthy(result.success)
+
+  let letNode = first(result)
+  assert.equal(letNode.type, NODE.Let)
+
+  let lambda = letNode.init
+  assert.equal(lambda.type, NODE.Function)
+  assert.equal(lambda.name, nil)
+})
+
+test("lower - lambda as call argument", fn(assert) {
+  let result = parseAndLower("map(arr, x => x * 2)")
+  assert.truthy(result.success)
+
+  let call = first(result)
+  assert.equal(call.type, NODE.Call)
+  assert.equal(call.args[1].type, NODE.Function)
+  assert.equal(call.args[1].name, nil)
+})
+
+test("lower - lambda with arrow operator in body", fn(assert) {
+  let result = parseAndLower("x => x->str()")
+  assert.truthy(result.success)
+
+  let node = first(result)
+  assert.equal(node.type, NODE.Function)
+
+  // The body should have the arrow lowered to a Call
+  let bodyExpr = node.body.expressions[0]
+  assert.equal(bodyExpr.type, NODE.Call)
+  assert.equal(bodyExpr.callee.name, "str")
+  assert.equal(bodyExpr.args[0].name, "x")
+})
+
+test("lower - nested lambdas", fn(assert) {
+  let result = parseAndLower("x => y => x + y")
+  assert.truthy(result.success)
+
+  let outer = first(result)
+  assert.equal(outer.type, NODE.Function)
+  assert.equal(outer.params[0].name, "x")
+
+  // Inner lambda should also be lowered to Function
+  let inner = outer.body.expressions[0]
+  assert.equal(inner.type, NODE.Function)
+  assert.equal(inner.params[0].name, "y")
+})
+
+test("lower - lambda preserves position", fn(assert) {
+  let result = parseAndLower("x => x")
+  assert.truthy(result.success)
+
+  let parsed = result.parseResult.ast.expressions[0]
+  let lowered = first(result)
+
+  assert.equal(lowered.line, parsed.line)
+  assert.equal(lowered.col, parsed.col)
+})
+
 suite.run()

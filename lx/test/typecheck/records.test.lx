@@ -82,9 +82,15 @@ fn register(test) {
     assert.truthy(hasError(result, "Assignment mismatch"))
   })
 
-  test("typecheck - dot assignment does not create new record fields", fn(assert) {
-    // Closed record model: `x.a = ...` does not turn `x` into a record.
+  test("typecheck - dot assignment on nil-initialized rejects field access", fn(assert) {
+    // `let x` means x is nil at runtime, can't access fields on nil
     let result = parseAndTypecheck("{ let x\nx.a = 1 }")
+    assert.truthy(!result.success)
+  })
+
+  test("typecheck - dot assignment on concrete record rejects new fields", fn(assert) {
+    // Closed record model: can't add fields to a concrete record type
+    let result = parseAndTypecheck("{ let x = .{ b: 1 }\nx.a = 1 }")
     assert.truthy(hasError(result, "Missing field: a"))
   })
 

@@ -354,8 +354,9 @@ fn synthLet(checker, node) {
     checker.types[node.id] = initType
     return initType
   } else {
-    // Uninitialized - fresh type var
+    // Uninitialized - fresh type var (runtime value is nil)
     let t = freshTypeVar(checker)
+    t.uninitializedLocal = true  // Mark for field access checking
     if declId {
       envBind(checker, declId, t)
       checker.types[node.name.id] = t
@@ -767,6 +768,12 @@ fn synthDot(checker, node) {
   }
 
   if objD.kind == "TypeVar" {
+    // Error if it's an uninitialized local (nil at runtime)
+    if objD.uninitializedLocal {
+      addError(checker, node.id, "Cannot access field on nil value")
+      checker.types[node.id] = typeAny()
+      return typeAny()
+    }
     // Constrain: objType <: Record({ fieldName: resultType })
     let requiredRecord = typeRecord(.{ [fieldName]: resultType })
     constrain(checker, objType, requiredRecord)
@@ -1204,9 +1211,19 @@ fn synthAssignment(checker, node) {
       return valueType
     }
 
-    // For TypeVar (unbound), closed model: cannot create field
+    // For TypeVar, add constraint that it must have this field
+    // But error if it's an uninitialized local (nil at runtime)
     if objD.kind == "TypeVar" {
-      addError(checker, dotNode.id, "Missing field: " + fieldName)
+      if objD.uninitializedLocal {
+        addError(checker, dotNode.id, "Cannot access field on nil value")
+        checker.types[node.id] = valueType
+        return valueType
+      }
+      let requiredRecord = typeRecord(.{ [fieldName]: valueType })
+      if !constrain(checker, objType, requiredRecord) {
+        addError(checker, dotNode.id, "Cannot access field '" + fieldName + "' on type " + prettyType(checker, objType))
+      }
+      checker.types[dotNode.id] = valueType
       checker.types[node.id] = valueType
       return valueType
     }

@@ -122,6 +122,30 @@ fn register(test) {
     let result = parseAndTypecheck("fn f(x) { x(x) }")
     assert.truthy(len(result.errors) > 0)
   })
+
+  // Minimal repro for resolve.lx issue:
+  // Record type from makeX() should flow to helper function parameter
+  test("typecheck - record type flows through function parameter", fn(assert) {
+    let result = parseAndTypecheck("{
+      fn makeState() {
+        .{ count: 0, done: false }
+      }
+      fn update(state) {
+        state.done = true
+      }
+      let s = makeState()
+      update(s)
+    }")
+    assert.truthy(result.success)
+    assert.truthy(!hasError(result, "Missing field"))
+  })
+
+  // Check what happens when reading from uninitialized (nil)
+  test("typecheck - dot read on nil-initialized should fail", fn(assert) {
+    let result = parseAndTypecheck("{ let x\nx.a }")
+    // `let x` means x is nil, can't read field on nil
+    assert.truthy(!result.success)
+  })
 }
 
 .{ register }

@@ -84,6 +84,9 @@ let typeString = helper.typeString
 let typeArray = helper.typeArray
 let typeFunction = helper.typeFunction
 let typeRecord = helper.typeRecord
+let typeMap = helper.typeMap
+let typeEnum = helper.typeEnum
+let typeIndexable = helper.typeIndexable
 let typeOption = helper.typeOption
 let freshTypeVar = helper.freshTypeVar
 let deref = helper.deref
@@ -120,6 +123,57 @@ fn isOptionalish(checker, t) {
   }
 
   false
+}
+
+// Clone a type tree and freshen TypeVars to avoid cross-module ID collisions.
+fn cloneType(checker, t, memo) {
+  if !t { return t }
+
+  if t.kind == "TypeVar" {
+    let existing = memo[t.id]
+    if existing { return existing }
+    let fresh = freshTypeVar(checker)
+    memo[t.id] = fresh
+    let lbs = t.lowerBounds or []
+    let ubs = t.upperBounds or []
+    fresh.lowerBounds = collect lb in lbs { cloneType(checker, lb, memo) }
+    fresh.upperBounds = collect ub in ubs { cloneType(checker, ub, memo) }
+    fresh
+  } else if t.kind == "Option" {
+    typeOption(cloneType(checker, t.value, memo))
+  } else if t.kind == "Array" {
+    typeArray(cloneType(checker, t.elem, memo))
+  } else if t.kind == "Map" {
+    typeMap(cloneType(checker, t.key, memo), cloneType(checker, t.elem, memo))
+  } else if t.kind == "Function" {
+    let params = collect p in (t.params or []) { cloneType(checker, p, memo) }
+    let ret = cloneType(checker, t.return, memo)
+    let fnType = typeFunction(params, ret)
+    if t.minArity != nil { fnType.minArity = t.minArity }
+    if t.paramNames != nil { fnType.paramNames = t.paramNames }
+    if t.builtinName != nil { fnType.builtinName = t.builtinName }
+    fnType
+  } else if t.kind == "Record" {
+    let fields = .{}
+    for k in keys(t.fields or .{}) {
+      fields[k] = cloneType(checker, t.fields[k], memo)
+    }
+    typeRecord(fields)
+  } else if t.kind == "Enum" {
+    let fields = .{}
+    for k in keys(t.fields or .{}) { fields[k] = t.fields[k] }
+    typeEnum(fields)
+  } else if t.kind == "Indexable" {
+    let out = typeIndexable(
+      cloneType(checker, t.elem, memo),
+      cloneType(checker, t.key, memo),
+      t.nodeId
+    )
+    out.sawNumericIndex = t.sawNumericIndex
+    out
+  } else {
+    t
+  }
 }
 
 // ========================================================
@@ -1391,7 +1445,18 @@ fn synthIndex(checker, node) {
 // Import
 fn synthImport(checker, node) {
   // Imports return the exported value
-  let t = typeAny()
+  let importInfo = checker.resolveResult and checker.resolveResult.importInfoByNodeId or .{}
+  let info = importInfo[node.id]
+  let t = info and info.importType
+  if !t and checker.program and checker.program.exports and node.path and node.path.type == NODE.String {
+    t = checker.program.exports[node.path.value]
+  }
+  if t {
+    let cloned = cloneType(checker, t, .{})
+    checker.types[node.id] = cloned
+    return cloned
+  }
+  t = typeAny()
   checker.types[node.id] = t
   t
 }

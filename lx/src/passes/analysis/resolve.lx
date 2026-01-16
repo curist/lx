@@ -448,8 +448,9 @@ fn isInFunction(scope) {
       return nil
     }
 
-    // Use the same AST that was typechecked (prefer post-resolve transforms)
-    let modAst = (result.passes["lower-intrinsics"] and result.passes["lower-intrinsics"].ast) or
+    // Use the same AST that was typechecked (prefer lowered AST when typecheck runs there)
+    let modAst = (result.passes.typecheck and result.passes.lower and result.passes.lower.ast) or
+                 (result.passes["lower-intrinsics"] and result.passes["lower-intrinsics"].ast) or
                  (result.passes["anf-inline"] and result.passes["anf-inline"].ast) or
                  (result.passes.anf and result.passes.anf.ast) or
                  (result.passes.lower and result.passes.lower.ast)

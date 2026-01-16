@@ -1,0 +1,65 @@
+// Typecheck: module import typing
+let Driver = import "src/driver.lx"
+let helpers = import "test/typecheck/helpers.lx"
+
+fn makeDriver(mainSource) {
+  Driver.make(.{
+    loadSource: fn(path) {
+      if path == "test/fixtures/typecheck/main.lx" {
+        return mainSource
+      } else if path == "test/fixtures/typecheck/add.lx" {
+        return "fn add(a, b) { a + b }\nadd"
+      } else if path == "test/fixtures/typecheck/record.lx" {
+        return ".{ a: 1, b: \"s\" }"
+      }
+      nil
+    },
+    withTypecheck: true,
+  })
+}
+
+fn parseAndTypecheckModule(source) {
+  let driver = makeDriver(source)
+  let tc = driver.buildModule("test/fixtures/typecheck/main.lx", Driver.ARTIFACT.ANALYSIS_TYPECHECK)
+  let result = driver.cache["test/fixtures/typecheck/main.lx"]
+  let passes = result and result.passes or .{}
+
+  .{
+    success: tc and tc.success,
+    errors: tc and tc.errors or [],
+    types: tc and tc.types or .{},
+    lowerResult: passes.lower,
+  }
+}
+
+fn hasErrorContains(result, needle) {
+  for let i = 0; i < len(result.errors); i = i + 1 {
+    if contains(result.errors[i].message, needle) { return true }
+  }
+  false
+}
+
+fn register(test) {
+  let parseAndTypecheck = parseAndTypecheckModule
+  let getExprType = helpers.getExprType
+  let deref = helpers.deref
+
+  test("typecheck - imported function enforces param types", fn(assert) {
+    let result = parseAndTypecheck("{ let add = import \"test/fixtures/typecheck/add.lx\"\nadd(1, \"x\") }")
+    assert.truthy(hasErrorContains(result, "Argument 2 (b) mismatch in call to add"))
+  })
+
+  test("typecheck - imported function returns typed value", fn(assert) {
+    let result = parseAndTypecheck("{ let add = import \"test/fixtures/typecheck/add.lx\"\nadd(1, 2) }")
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Number")
+  })
+
+  test("typecheck - imported record preserves field types", fn(assert) {
+    let result = parseAndTypecheck("{ let r = import \"test/fixtures/typecheck/record.lx\"\nr.a }")
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Number")
+  })
+}
+
+.{ register }

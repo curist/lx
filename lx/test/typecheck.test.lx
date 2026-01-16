@@ -18,6 +18,7 @@ let test = suite.defineTest
 {import "test/typecheck/records.test.lx"}.register(test)
 {import "test/typecheck/collections.test.lx"}.register(test)
 {import "test/typecheck/option.test.lx"}.register(test)
+{import "test/typecheck/module.test.lx"}.register(test)
 {import "test/typecheck/builtins.test.lx"}.register(test)
 
 suite.run()

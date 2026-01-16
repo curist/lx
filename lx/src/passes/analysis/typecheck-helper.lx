@@ -8,7 +8,7 @@ fn typeNil()     { .{ kind: "Nil" } }
 fn typeNumber()  { .{ kind: "Number" } }
 fn typeBool()    { .{ kind: "Bool" } }
 fn typeString()  { .{ kind: "String" } }
-fn typeEnum(fields) { .{ kind: "Enum", fields: fields } }
+fn typeEnum(fields) { .{ kind: "Enum", fields } }
 
 fn typeVar(id) {
   .{
@@ -20,32 +20,32 @@ fn typeVar(id) {
 }
 
 fn typeFunction(params, ret) {
-  .{ kind: "Function", params: params, return: ret }
+  .{ kind: "Function", params, return: ret }
 }
 
 fn typeArray(elem) {
-  .{ kind: "Array", elem: elem }
+  .{ kind: "Array", elem }
 }
 
 fn typeRecord(fields) {
-  .{ kind: "Record", fields: fields }
+  .{ kind: "Record", fields }
 }
 
 fn typeMap(key, elem) {
-  .{ kind: "Map", key: key, elem: elem }
+  .{ kind: "Map", key, elem }
 }
 
 fn typeOption(value) {
   // Avoid Option[Option[T]]
-  value and value.kind == "Option" and value or .{ kind: "Option", value: value }
+  value and value.kind == "Option" and value or .{ kind: "Option", value }
 }
 
 fn typeIndexable(elem, key, nodeId) {
   .{
     kind: "Indexable",
-    elem: elem,
-    key: key,
-    nodeId: nodeId,
+    elem,
+    key,
+    nodeId,
     sawNumericIndex: false,
   }
 }
@@ -110,8 +110,7 @@ fn derefWithRootVar(checker, t) {
 
 // Structural type equality
 fn typeEquals(checker, a, b) {
-  let eq
-  eq = fn(x, y, depth) {
+  fn eq (x, y, depth) {
     if depth > 200 {
       // Defensive: if something went cyclic due to a bug, be conservative and
       // treat as not equal so we don't suppress progress.
@@ -430,6 +429,13 @@ fn constrain(checker, lhs, rhs) {
     // Propagate: for each ub in rhs.upperBounds, constrain(lhs, ub)
     for ub in rhs.upperBounds {
       if !constrain(checker, lhs, ub) { return false }
+    }
+    // Also propagate non-Nil lower bounds to any narrowed TypeVars
+    // This preserves evidence like Bool from f(true) after nil guards
+    if rhs.narrowedTo and lhs.kind != "Nil" {
+      for narrowedTV in rhs.narrowedTo {
+        if !constrain(checker, lhs, narrowedTV) { return false }
+      }
     }
     return true
   }

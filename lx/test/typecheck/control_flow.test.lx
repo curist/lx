@@ -37,6 +37,140 @@ fn register(test) {
     assert.equal(deref(result, getExprType(result, 2)).kind, "Bool")
     assert.equal(deref(result, getExprType(result, 3)).kind, "Nil")
   })
+
+  // Nil guard narrowing tests
+  test("typecheck - nil guard narrows Option to value type", fn(assert) {
+    // f(nil) constrains x to Option[Number], the guard should narrow x to Number
+    // so x + 1 typechecks. Return type is Option[Number] due to early return nil.
+    let result = parseAndTypecheck("{
+      fn f(x) {
+        if !x { return }
+        x + 1
+      }
+      f(nil)
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    let ft = deref(result, getExprType(result, 0))
+    assert.equal(ft.kind, "Function")
+    // Return type is Option[Number] because function can return nil or Number
+    let retT = deref(result, ft.return)
+    assert.equal(retT.kind, "Option")
+    assert.equal(deref(result, retT.value).kind, "Number")
+  })
+
+  test("typecheck - nil guard with grouped condition", fn(assert) {
+    // Groupings like ((!x)) should still trigger narrowing
+    let result = parseAndTypecheck("{
+      fn f(x) {
+        if ((!x)) { return }
+        x + 1
+      }
+      f(nil)
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    let ft = deref(result, getExprType(result, 0))
+    assert.equal(ft.kind, "Function")
+    let retT = deref(result, ft.return)
+    assert.equal(retT.kind, "Option")
+    assert.equal(deref(result, retT.value).kind, "Number")
+  })
+
+  test("typecheck - nil guard only narrows in same block", fn(assert) {
+    // Narrowing should not leak into closures
+    // inner() captures x with original type (Option), not narrowed type
+    // So inner() + 1 should FAIL because inner() returns Option
+    let result = parseAndTypecheck("{
+      fn f(x) {
+        if !x { return 0 }
+        fn inner() { x }
+        inner() + 1
+      }
+      f(nil)
+    }")
+    // This should fail because closure captures un-narrowed x (Option)
+    // and inner() + 1 is Option + Number which is invalid
+    assert.truthy(!result.success)
+  })
+
+  test("typecheck - nil guard with block body that returns", fn(assert) {
+    // Block body { return } should also trigger narrowing
+    let result = parseAndTypecheck("{
+      fn f(x) {
+        if !x { { return } }
+        x + 1
+      }
+      f(nil)
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    let ft = deref(result, getExprType(result, 0))
+    // Return type is Option[Number] because function can return nil or Number
+    let retT = deref(result, ft.return)
+    assert.equal(retT.kind, "Option")
+    assert.equal(deref(result, retT.value).kind, "Number")
+  })
+
+  test("typecheck - no narrowing when guard has else branch", fn(assert) {
+    // if !x { return } else { ... } should NOT narrow after the if
+    let result = parseAndTypecheck("{
+      fn f(x) {
+        if !x { return } else { 0 }
+        x + 1
+      }
+      f(nil)
+    }")
+    // This should fail because x is still Option after an if-else
+    assert.truthy(!result.success)
+  })
+
+  test("typecheck - nil guard preserves non-Nil lower bounds", fn(assert) {
+    // f(true) constrains x to have Bool as lower bound
+    // After nil guard, x + 1 should still fail because x could be Bool
+    let result = parseAndTypecheck("{
+      fn f(x) {
+        if !x { return }
+        x + 1
+      }
+      f(true)
+    }")
+    // This should fail: Bool is not compatible with Number for +
+    assert.truthy(!result.success)
+  })
+
+  test("typecheck - constraints between guard and closure persist", fn(assert) {
+    // x + 1 before the closure constrains x to Number
+    // After the closure, x should still be Number
+    let result = parseAndTypecheck("{
+      fn f(x) {
+        if !x { return 0 }
+        let y = x + 1
+        fn inner() { 0 }
+        x + 2
+      }
+      f(nil)
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    let ft = deref(result, getExprType(result, 0))
+    let retT = deref(result, ft.return)
+    assert.equal(retT.kind, "Number")
+  })
+
+  test("typecheck - narrowing only when x has Nil bound", fn(assert) {
+    // f(1) constrains x to Number only (no Nil bound)
+    // The nil guard shouldn't narrow x since it's not optional
+    // x + 1 should still work because x is Number
+    let result = parseAndTypecheck("{
+      fn f(x) {
+        if !x { return 0 }
+        x + 1
+      }
+      f(1)
+    }")
+    assert.truthy(result.success)
+  })
 }
 
 .{ register }

@@ -21,6 +21,57 @@ fn unwrapGroupings(node) {
   node
 }
 
+// Check if a condition is a nil guard pattern (!x)
+// Returns the identifier node if it matches, nil otherwise
+fn isNilGuard(condition) {
+  let node = unwrapGroupings(condition)
+  if !node { return nil }
+
+  // Check for !x pattern
+  if node.type == NODE.Unary {
+    let op = node.operator and node.operator.lexeme or ""
+    if op == "!" {
+      let operand = unwrapGroupings(node.operand)
+      if operand and operand.type == NODE.Identifier {
+        return operand
+      }
+    }
+  }
+
+  nil
+}
+
+// Check if a branch always returns (never falls through)
+fn branchAlwaysReturns(node) {
+  if !node { return false }
+
+  let unwrapped = unwrapGroupings(node)
+
+  // Direct return
+  if unwrapped.type == NODE.Return { return true }
+
+  // Block whose last expression is return
+  if unwrapped.type == NODE.Block {
+    let exprs = unwrapped.expressions or []
+    if len(exprs) > 0 {
+      return branchAlwaysReturns(exprs[len(exprs) - 1])
+    }
+    return false
+  }
+
+  // ExprStmt wrapping a return
+  if unwrapped.type == NODE.ExprStmt {
+    return branchAlwaysReturns(unwrapped.expr)
+  }
+
+  // If where both branches return
+  if unwrapped.type == NODE.If and unwrapped.else {
+    return branchAlwaysReturns(unwrapped.then) and branchAlwaysReturns(unwrapped.else)
+  }
+
+  false
+}
+
 // ========================================================
 // Type Constructors and Utilities (from helper)
 // ========================================================
@@ -39,6 +90,37 @@ let deref = helper.deref
 let constrain = helper.constrain
 let prettyType = helper.prettyType
 let coalesceTypeVar = helper.coalesceTypeVar
+
+// Check if a type is "optionalish" (has Nil evidence or might become optional)
+// Narrowing should only happen when the type could be nil
+//
+// NOTE: We allow narrowing on empty-bounds TypeVars. At function-body time,
+// parameters have no bounds yet; call-site evidence (e.g., f(nil)) arrives
+// later. The narrowedTo back-link ensures any later non-Nil bounds propagate
+// and keep the type sound. This is "might be optional" semantics rather than
+// strict "is optional", but it's necessary for single-pass body synthesis.
+fn isOptionalish(checker, t) {
+  t = deref(checker, t)
+  if !t { return false }
+
+  // Explicit Option type
+  if t.kind == "Option" { return true }
+
+  // TypeVar: allow narrowing if bounds are empty (might get Nil later)
+  // or if Nil is already among the lower bounds
+  if t.kind == "TypeVar" {
+    let lbs = t.lowerBounds or []
+    // Empty bounds: constraints haven't been added yet, might become optional
+    if len(lbs) == 0 { return true }
+    // Has bounds: only narrow if Nil is among them
+    for lb in lbs {
+      let lbD = deref(checker, lb)
+      if lbD and lbD.kind == "Nil" { return true }
+    }
+  }
+
+  false
+}
 
 // ========================================================
 // Checker State
@@ -440,14 +522,12 @@ fn synthHashmap(checker, node) {
       // If not an enum member access, reject it
       if !isLiteralKey {
         addError(checker, keyNode.id, "Record literal computed key must be a literal string, number, or enum member.")
-        addError(checker, keyNode.id, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value")
         hasError = true
       }
     } else {
       // Non-literal computed key (e.g., a variable)
       synthExpr(checker, keyNode)
       addError(checker, keyNode.id, "Record literal computed key must be a literal string, number, or enum member.")
-      addError(checker, keyNode.id, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value")
       hasError = true
     }
 
@@ -774,13 +854,99 @@ fn synthLogical(checker, node) {
   leftType
 }
 
+// Check if an expression is a nil guard and return the guarded identifier
+fn tryGetNilGuard(checker, expr) {
+  let unwrapped = unwrapGroupings(expr)
+  if unwrapped.type == NODE.ExprStmt { unwrapped = unwrapGroupings(unwrapped.expr) }
+
+  if unwrapped.type == NODE.If and !unwrapped.else {
+    let guardedId = isNilGuard(unwrapped.condition)
+    if guardedId and branchAlwaysReturns(unwrapped.then) {
+      return guardedId
+    }
+  }
+  nil
+}
+
 // Block expression
 fn synthBlock(checker, node) {
   let exprs = node.expressions or []
   let lastType = typeNil()
 
-  for expr in exprs {
+  // Save original env for restoration (narrowing is block-scoped)
+  let savedEnv = .{}
+  let narrowedEnv = .{}  // Store narrowed types to preserve constraints across closures
+  let narrowedIds = []
+
+  for let i = 0; i < len(exprs); i = i + 1 {
+    let expr = exprs[i]
+
+    // For closures, temporarily restore original bindings (closures should not see narrowed types)
+    let unwrappedExpr = unwrapGroupings(expr)
+    let isClosure = unwrappedExpr.type == NODE.Function
+    if isClosure and len(narrowedIds) > 0 {
+      for declId in narrowedIds {
+        envBind(checker, declId, savedEnv[declId])
+      }
+    }
+
+    // Synthesize current expression
     lastType = synthExpr(checker, expr)
+
+    // Re-apply narrowing after closure synthesis (restore same narrowed TypeVar to preserve constraints)
+    if isClosure and len(narrowedIds) > 0 {
+      for declId in narrowedIds {
+        envBind(checker, declId, narrowedEnv[declId])
+      }
+    }
+
+    // Check if this expression is a nil guard - narrow for subsequent expressions
+    // Only narrow if the type is optional (has Nil evidence)
+    let guardedId = tryGetNilGuard(checker, expr)
+    if guardedId {
+      let binding = checker.resolvedNames[guardedId.id]
+      if binding and binding.declaredAt {
+        let declId = binding.declaredAt
+        let currentType = envLookup(checker, declId)
+        if currentType and isOptionalish(checker, currentType) {
+          // Save original for restoration
+          if !savedEnv[declId] {
+            savedEnv[declId] = currentType
+            push(narrowedIds, declId)
+          }
+
+          // Create a fresh TypeVar for the narrowed (non-nil) version
+          // The original TypeVar may be Option[T], we want just T
+          let narrowedTV = freshTypeVar(checker)
+
+          // Constrain: narrowed <: original
+          // This shares upper bounds: if original <: Number, then narrowed <: Number
+          constrain(checker, narrowedTV, currentType)
+
+          // Link narrowed back to original so lower bounds propagate
+          // When Bool <: original, we want Bool <: narrowed too (except Nil)
+          let currentD = deref(checker, currentType)
+          if currentD.kind == "TypeVar" {
+            // Track that narrowedTV is the nil-stripped version of currentType
+            // Store this relationship for constraint propagation
+            narrowedTV.narrowedFrom = currentType
+            currentType.narrowedTo = currentType.narrowedTo or []
+            push(currentType.narrowedTo, narrowedTV)
+          }
+
+          // Store narrowed type for restoration after closures
+          narrowedEnv[declId] = narrowedTV
+
+          // Use narrowed type for subsequent lookups
+          envBind(checker, declId, narrowedTV)
+        }
+      }
+    }
+  }
+
+  // Restore original env (don't leak narrowing out of block)
+  for declId in narrowedIds {
+    envBind(checker, declId, savedEnv[declId])
   }
 
   checker.types[node.id] = lastType

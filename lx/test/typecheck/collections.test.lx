@@ -40,7 +40,6 @@ fn register(test) {
     let result = parseAndTypecheck("{ let k = \"a\"\nlet m = .{ [k]: 1 }\nm }")
     assert.truthy(!result.success)
     assert.truthy(hasError(result, "Record literal computed key must be a literal string, number, or enum member."))
-    assert.truthy(hasError(result, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value"))
   })
 
   test("typecheck - enum member key can form Record", fn(assert) {
@@ -92,14 +91,12 @@ fn register(test) {
     let result = parseAndTypecheck("{ let obj = .{ x: \"foo\" }\nlet m = .{ [obj.x]: 1 }\nm }")
     assert.truthy(!result.success)
     assert.truthy(hasError(result, "Record literal computed key must be a literal string, number, or enum member."))
-    assert.truthy(hasError(result, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value"))
   })
 
   test("typecheck - shadowed enum name is not treated as enum", fn(assert) {
     let result = parseAndTypecheck("{ let E = enum { A }\n{ let E = \"not an enum\"\n  let m = .{ [E.A]: 1 }\n  m\n}\n}")
     assert.truthy(!result.success)
     assert.truthy(hasError(result, "Record literal computed key must be a literal string, number, or enum member."))
-    assert.truthy(hasError(result, "Hint: To build a Map with dynamic keys, use:\n  let m = .{}\n  m[key] = value"))
   })
 
   test("typecheck - index assignment recognizes enum member literal key", fn(assert) {

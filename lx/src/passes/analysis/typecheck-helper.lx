@@ -87,11 +87,13 @@ fn bindTypeVar(checker, id, type) {
 
 // Follow type variable bindings until fixed point
 fn deref(checker, type) {
-  if type.kind == "TypeVar" {
+  let seen = .{}
+  for type and type.kind == "TypeVar" {
+    if seen[type.id] { return type }
+    seen[type.id] = true
     let bound = getTypeVarBinding(checker, type.id)
-    if bound {
-      return deref(checker, bound)
-    }
+    if !bound { break }
+    type = bound
   }
   type
 }
@@ -99,7 +101,10 @@ fn deref(checker, type) {
 // Dereference and return both root TypeVar (if any) and final type
 fn derefWithRootVar(checker, t) {
   let root = nil
+  let seen = .{}
   for t and t.kind == "TypeVar" {
+    if seen[t.id] { break }
+    seen[t.id] = true
     root = t
     let bound = getTypeVarBinding(checker, t.id)
     if !bound { break }
@@ -651,40 +656,47 @@ fn coalesceTypeVar(checker, tv) {
 }
 
 // Pretty-print a type for error messages
-fn prettyType(checker, t) {
+fn prettyTypeWithStack(checker, t, stack) {
   t = deref(checker, t)
   if !t { return "?" }
 
   if t.kind == "TypeVar" {
+    if stack[t.id] { return "?" + str(t.id) }
+    stack[t.id] = true
     let coalesced = coalesceTypeVar(checker, t)
     if coalesced.kind != "TypeVar" {
-      return prettyType(checker, coalesced)
+      let result = prettyTypeWithStack(checker, coalesced, stack)
+      stack[t.id] = nil
+      return result
     }
+    stack[t.id] = nil
     return "?" + str(t.id)
   }
 
   if t.kind == "Option" {
-    return prettyType(checker, t.value) + "?"
+    return prettyTypeWithStack(checker, t.value, stack) + "?"
   }
 
   if t.kind == "Array" {
-    return "Array[" + prettyType(checker, t.elem) + "]"
+    return "Array[" + prettyTypeWithStack(checker, t.elem, stack) + "]"
   }
 
   if t.kind == "Map" {
-    return "Map[" + prettyType(checker, t.key) + ", " + prettyType(checker, t.elem) + "]"
+    return "Map[" + prettyTypeWithStack(checker, t.key, stack) + ", " +
+      prettyTypeWithStack(checker, t.elem, stack) + "]"
   }
 
   if t.kind == "Function" {
-    let params = collect p in (t.params or []) { prettyType(checker, p) }
-    return "(" + join(params, ", ") + ") -> " + prettyType(checker, t.return)
+    let params = collect p in (t.params or []) { prettyTypeWithStack(checker, p, stack) }
+    return "(" + join(params, ", ") + ") -> " +
+      prettyTypeWithStack(checker, t.return, stack)
   }
 
   if t.kind == "Record" {
     // Sort keys for consistent output
     let sortedKeys = sort(keys(t.fields or .{}), stringLess)
     let fieldStrs = collect k in sortedKeys {
-      str(k) + ": " + prettyType(checker, t.fields[k])
+      str(k) + ": " + prettyTypeWithStack(checker, t.fields[k], stack)
     }
     return ".{ " + join(fieldStrs, ", ") + " }"
   }
@@ -697,6 +709,10 @@ fn prettyType(checker, t) {
   }
 
   t.kind
+}
+
+fn prettyType(checker, t) {
+  prettyTypeWithStack(checker, t, .{})
 }
 
 // ========================================================

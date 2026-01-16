@@ -6,6 +6,12 @@ fn register(test) {
   let getExprType = helpers.getExprType
   let deref = helpers.deref
   let hasError = helpers.hasError
+  let hasErrorContains = fn(result, needle) {
+    for let i = 0; i < len(result.errors); i = i + 1 {
+      if contains(result.errors[i].message, needle) { return true }
+    }
+    false
+  }
 
   test("typecheck - record literal and field access", fn(assert) {
     let result = parseAndTypecheck("{ let r = .{ a: 1, b: 2 }\nr.a }")
@@ -43,7 +49,10 @@ fn register(test) {
 
   test("typecheck - missing record field surfaces error at call", fn(assert) {
     let result = parseAndTypecheck("{ fn getA(x) { x.a }\nlet b = .{ b: 1 }\ngetA(b) }")
-    assert.truthy(hasError(result, "Argument mismatch") or hasError(result, "Missing field: a"))
+    assert.truthy(
+      hasErrorContains(result, "Argument 1 (x) mismatch in call to getA") or
+      hasError(result, "Missing field: a")
+    )
   })
 
   test("typecheck - dot on non-record contains to Any", fn(assert) {

@@ -30,7 +30,14 @@ fn register(test) {
 
   test("typecheck - wrong argument type surfaces error", fn(assert) {
     let result = parseAndTypecheck("{ fn add(a, b) { a + b }\nadd(1, \"x\") }")
-    assert.truthy(hasError(result, "Argument mismatch"))
+    assert.truthy(hasError(result,
+      "Argument 2 (b) mismatch in call to add: expected Number, got String"))
+  })
+
+  test("typecheck - mismatch on anonymous call includes param name", fn(assert) {
+    let result = parseAndTypecheck("{ (fn(a, b) { a + b })(1, \"x\") }")
+    assert.truthy(hasError(result,
+      "Argument 2 (b) mismatch: expected Number, got String"))
   })
 
   test("typecheck - call allows extra args", fn(assert) {

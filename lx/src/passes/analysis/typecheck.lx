@@ -298,6 +298,7 @@ fn synthFunction(checker, node) {
     checker.types[param.id] = pt
     push(paramTypes, pt)
   }
+  let paramNames = collect p in params { p.name }
 
   // Fresh type var for return
   let retType = freshTypeVar(checker)
@@ -308,6 +309,7 @@ fn synthFunction(checker, node) {
   // (allows recursive functions to look up their own type)
   let fnType = typeFunction(paramTypes, retType)
   fnType.minArity = minArity
+  fnType.paramNames = paramNames
   checker.types[node.id] = fnType
 
   // For named functions, bind the function to the environment
@@ -349,6 +351,10 @@ fn synthCall(checker, node) {
 
   // Constrain: calleeType <: (args) -> result
   let calleeD = deref(checker, calleeType)
+  let calleeName =
+    node.callee and node.callee.type == NODE.Identifier and node.callee.name or
+    calleeD and calleeD.kind == "Function" and calleeD.builtinName or
+    nil
 
   // Special handling for range/keys - deferred refinement
   if calleeD.kind == "Function" and (calleeD.builtinName == "range" or calleeD.builtinName == "keys") {
@@ -449,8 +455,18 @@ fn synthCall(checker, node) {
       // Constrain argument types (contravariant)
       let numParams = len(calleeParams)
       for let i = 0; i < len(argTypes) and i < numParams; i = i + 1 {
+        let expected = prettyType(checker, calleeParams[i])
+        let actual = prettyType(checker, argTypes[i])
         if !constrain(checker, argTypes[i], calleeParams[i]) {
-          addError(checker, node.id, "Argument mismatch")
+          let paramName = calleeD.paramNames and calleeD.paramNames[i]
+          let label = "Argument " + str(i + 1)
+          if paramName { label = label + " (" + paramName + ")" }
+          if calleeName {
+            label = label + " mismatch in call to " + calleeName
+          } else {
+            label = label + " mismatch"
+          }
+          addError(checker, node.id, label + ": expected " + expected + ", got " + actual)
         }
       }
       // Constrain return type (covariant)

@@ -517,9 +517,9 @@ fn compileBinary(gen, node) {
     let absoluteSlot = computeAbsoluteSlot(gen, plan.binding)
     let operandSlot = localSlot(absoluteSlot)
     if operandSlot < 256 {
-      if plan.kind == "CMP_LOCAL_K" {
+      if plan.kind == "CMP_LK" {
         // Emit comparison: opcode slot k cmp_kind (4 bytes)
-        emit4(gen, OP.CMP_LOCAL_K, operandSlot, plan.k, plan.cmpKind, node.line)
+        emit4(gen, OP.CMP_LK, operandSlot, plan.k, plan.cmpKind, node.line)
         return
       } else {
         // Emit arithmetic: opcode slot k (3 bytes)
@@ -817,12 +817,12 @@ fn compileAssignment(gen, node, mode) {
     // select.lx has already verified bindings are locals - just compute slots and emit
     if mode == MODE.STMT {
       if let plan = select.assignmentSuper(gen, node, mode) {
-        if plan.kind == "ADD_LOCAL_IMM" {
+        if plan.kind == "INC_L" {
           let absoluteSlot = computeAbsoluteSlot(gen, plan.targetBinding)
-          emit3(gen, OP.ADD_LOCAL_IMM, localSlot(absoluteSlot), plan.imm, node.line)
+          emit3(gen, OP.INC_L, localSlot(absoluteSlot), plan.imm, node.line)
           return
         }
-        if plan.kind == "BINOP_LOCALS" {
+        if plan.kind == "BINOP_LL_SET" {
           // Compute absolute slots for all three operands
           let destSlot = computeAbsoluteSlot(gen, plan.targetBinding)
           let lhsSlot = computeAbsoluteSlot(gen, plan.lhsBinding)

@@ -289,32 +289,32 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return simpleInstruction("OP_CLOSE_UPVALUE", offset);
     case OP_UNWIND:
       return unwindInstruction("OP_UNWIND", chunk, offset);
-    case OP_ADD_LOCAL_IMM:
-      return twoByteInstruction("OP_ADD_LOCAL_IMM", chunk, offset);
+    case OP_INC_L:
+      return twoByteInstruction("OP_INC_L", chunk, offset);
     case OP_STORE_LOCAL:
       return byteInstruction("OP_STORE_LOCAL", chunk, offset);
     case OP_GETI:
       return twoByteInstruction("OP_GETI", chunk, offset);
     case OP_SETI:
       return threeByteInstruction("OP_SETI", chunk, offset);
-    case OP_ADD_LOCALS:
-      return threeByteInstruction("OP_ADD_LOCALS", chunk, offset);
-    case OP_SUB_LOCALS:
-      return threeByteInstruction("OP_SUB_LOCALS", chunk, offset);
-    case OP_MUL_LOCALS:
-      return threeByteInstruction("OP_MUL_LOCALS", chunk, offset);
-    case OP_DIV_LOCALS:
-      return threeByteInstruction("OP_DIV_LOCALS", chunk, offset);
-    case OP_ADD_LOCAL_K:
-      return twoByteInstruction("OP_ADD_LOCAL_K", chunk, offset);
-    case OP_SUB_LOCAL_K:
-      return twoByteInstruction("OP_SUB_LOCAL_K", chunk, offset);
-    case OP_MUL_LOCAL_K:
-      return twoByteInstruction("OP_MUL_LOCAL_K", chunk, offset);
-    case OP_DIV_LOCAL_K:
-      return twoByteInstruction("OP_DIV_LOCAL_K", chunk, offset);
-    case OP_CMP_LOCAL_K:
-      return threeByteInstruction("OP_CMP_LOCAL_K", chunk, offset);
+    case OP_ADD_LL_SET:
+      return threeByteInstruction("OP_ADD_LL_SET", chunk, offset);
+    case OP_SUB_LL_SET:
+      return threeByteInstruction("OP_SUB_LL_SET", chunk, offset);
+    case OP_MUL_LL_SET:
+      return threeByteInstruction("OP_MUL_LL_SET", chunk, offset);
+    case OP_DIV_LL_SET:
+      return threeByteInstruction("OP_DIV_LL_SET", chunk, offset);
+    case OP_ADD_LK:
+      return twoByteInstruction("OP_ADD_LK", chunk, offset);
+    case OP_SUB_LK:
+      return twoByteInstruction("OP_SUB_LK", chunk, offset);
+    case OP_MUL_LK:
+      return twoByteInstruction("OP_MUL_LK", chunk, offset);
+    case OP_DIV_LK:
+      return twoByteInstruction("OP_DIV_LK", chunk, offset);
+    case OP_CMP_LK:
+      return threeByteInstruction("OP_CMP_LK", chunk, offset);
     case OP_GET_PROPERTY:
       return twoByteInstruction("OP_GET_PROPERTY", chunk, offset);
     case OP_SET_PROPERTY:

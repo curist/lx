@@ -168,22 +168,24 @@ let OP = enum {
   ASSOC,
   APPEND,
 
-  // Superinstructions
-  ADD_LOCAL_IMM,    // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
+  // Superinstructions (misc)
+  INC_L,            // local[a] += imm (self-increment)
   STORE_LOCAL,      // SET_LOCAL + POP
   GETI,             // GET_LOCAL×2 + GET_BY_INDEX
   SETI,             // GET_LOCAL×3 + SET_BY_INDEX
-  ADD_LOCALS,       // GET_LOCAL×2 + ADD + SET_LOCAL (dest = lhs + rhs)
-  SUB_LOCALS,       // GET_LOCAL×2 + SUB + SET_LOCAL (dest = lhs - rhs)
-  MUL_LOCALS,       // GET_LOCAL×2 + MUL + SET_LOCAL (dest = lhs * rhs)
-  DIV_LOCALS,       // GET_LOCAL×2 + DIV + SET_LOCAL (dest = lhs / rhs)
 
-  // Local arithmetic with constant (expression form - pushes result)
-  ADD_LOCAL_K,      // GET_LOCAL + CONST_BYTE + ADD (push local + k)
-  SUB_LOCAL_K,      // GET_LOCAL + CONST_BYTE + SUB (push local - k)
-  MUL_LOCAL_K,      // GET_LOCAL + CONST_BYTE + MUL (push local * k)
-  DIV_LOCAL_K,      // GET_LOCAL + CONST_BYTE + DIV (push local / k)
-  CMP_LOCAL_K,      // GET_LOCAL + CONST_BYTE + CMP (push comparison result)
+  // Arithmetic superinstructions - statement form (store to local)
+  ADD_LL_SET,       // local[d] = local[a] + local[b]
+  SUB_LL_SET,       // local[d] = local[a] - local[b]
+  MUL_LL_SET,       // local[d] = local[a] * local[b]
+  DIV_LL_SET,       // local[d] = local[a] / local[b]
+
+  // Arithmetic superinstructions - expression form (push result)
+  ADD_LK,           // push(local[a] + k)
+  SUB_LK,           // push(local[a] - k)
+  MUL_LK,           // push(local[a] * k)
+  DIV_LK,           // push(local[a] / k)
+  CMP_LK,           // push(local[a] cmp k)
 
   // Special/optimization
   COALESCE_CONST,   // Replace TOS with constant if TOS is falsy

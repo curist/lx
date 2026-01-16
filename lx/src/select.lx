@@ -63,8 +63,8 @@ fn selectUnaryOpcode(gen, node) {
 // Binary expression superinstructions (local op constant)
 // -----------------------------------------------------------------------------
 
-// Returns: .{ kind: "LOCAL_K", opcode, binding, k } or
-//          .{ kind: "CMP_LOCAL_K", cmpKind, binding, k } or nil
+// Returns: .{ kind: "LK", opcode, binding, k } or
+//          .{ kind: "CMP_LK", cmpKind, binding, k } or nil
 // Matches: local +/-/*/÷/</<=/>/>=/<=/!= k (where local is identifier bound to local, k is literal 0-255)
 fn selectBinaryLocalK(gen, node) {
   if !node or node.type != NODE.Binary { return nil }
@@ -73,10 +73,10 @@ fn selectBinaryLocalK(gen, node) {
 
   // Arithmetic operations
   let arithmeticOps = .{
-    ["+"]: OP.ADD_LOCAL_K,
-    ["-"]: OP.SUB_LOCAL_K,
-    ["*"]: OP.MUL_LOCAL_K,
-    ["/"]: OP.DIV_LOCAL_K,
+    ["+"]: OP.ADD_LK,
+    ["-"]: OP.SUB_LK,
+    ["*"]: OP.MUL_LK,
+    ["/"]: OP.DIV_LK,
   }
 
   // Comparison operations
@@ -126,7 +126,7 @@ fn selectBinaryLocalK(gen, node) {
   // Return appropriate structure
   if comparisonOp {
     return .{
-      kind: "CMP_LOCAL_K",
+      kind: "CMP_LK",
       cmpKind: comparisonOp,
       binding: binding,
       k: Math.floor(k),
@@ -134,7 +134,7 @@ fn selectBinaryLocalK(gen, node) {
   }
 
   return .{
-    kind: "LOCAL_K",
+    kind: "LK",
     opcode: arithmeticOp,
     binding: binding,
     k: Math.floor(k),
@@ -238,11 +238,11 @@ fn selectLogicalOrCoalesceConst(gen, node) {
 
 // Returns nil if not applicable, otherwise a plan with verified bindings:
 //
-// 1) ADD_LOCAL_IMM pattern:
-//    .{ kind: "ADD_LOCAL_IMM", targetBinding: <binding>, imm: <0..255> }
+// 1) INC_L pattern:
+//    .{ kind: "INC_L", targetBinding: <binding>, imm: <0..255> }
 //
-// 2) BINOP_LOCALS pattern (general x = y op z):
-//    .{ kind: "BINOP_LOCALS", operator: "+"|"-"|"*"|"/",
+// 2) BINOP_LL_SET pattern (general x = y op z):
+//    .{ kind: "BINOP_LL_SET", operator: "+"|"-"|"*"|"/",
 //       targetBinding, lhsBinding, rhsBinding }
 //
 // 3) SETI pattern (arr[idx] = val where all are identifiers):
@@ -257,14 +257,14 @@ fn selectAssignmentSuper(gen, node, mode) {
   // node: NODE.Assignment
   if !node or node.type != NODE.Assignment { return }
 
-  // Patterns for Identifier targets (ADD_LOCAL_IMM, BINOP_LOCALS)
+  // Patterns for Identifier targets (INC_L, BINOP_LL_SET)
   if node.target.type == NODE.Identifier {
     let value = node.value
     if !value or value.type != NODE.Binary { return }
 
     let binOp = value.operator and value.operator.lexeme or ""
 
-    // Try ADD_LOCAL_IMM pattern first (more specific: i = i + imm)
+    // Try INC_L pattern first (more specific: i = i + imm)
     if binOp == "+" {
       // target: i
       // value: (i + <imm>)
@@ -277,7 +277,7 @@ fn selectAssignmentSuper(gen, node, mode) {
           let targetBinding = gen.resolvedNames[node.target.id]
           if targetBinding and targetBinding.kind == "local" {
             return .{
-              kind: "ADD_LOCAL_IMM",
+              kind: "INC_L",
               targetBinding: targetBinding,
               imm: Math.floor(imm),
             }
@@ -286,13 +286,13 @@ fn selectAssignmentSuper(gen, node, mode) {
       }
     }
 
-    // Try BINOP_LOCALS pattern (general x = y op z where all are identifiers)
+    // Try BINOP_LL_SET pattern (general x = y op z where all are identifiers)
     // Only for numeric operations to avoid issues with string concatenation
     let operators = .{
-      ["+"]: OP.ADD_LOCALS,
-      ["-"]: OP.SUB_LOCALS,
-      ["*"]: OP.MUL_LOCALS,
-      ["/"]: OP.DIV_LOCALS,
+      ["+"]: OP.ADD_LL_SET,
+      ["-"]: OP.SUB_LL_SET,
+      ["*"]: OP.MUL_LL_SET,
+      ["/"]: OP.DIV_LL_SET,
     }
     if let opcode = operators[binOp] {
       if !value.left or value.left.type != NODE.Identifier { return }
@@ -302,7 +302,7 @@ fn selectAssignmentSuper(gen, node, mode) {
       let leftCls = classOf(gen, value.left)
       let rightCls = classOf(gen, value.right)
 
-      // Only emit BINOP_LOCALS if we know both operands are numeric
+      // Only emit BINOP_LL_SET if we know both operands are numeric
       // For +, we need to be sure they're not strings
       // For -, *, /, they're always numeric operations
       if binOp == "+" {
@@ -324,7 +324,7 @@ fn selectAssignmentSuper(gen, node, mode) {
          lhsBinding and lhsBinding.kind == "local" and
          rhsBinding and rhsBinding.kind == "local" {
         return .{
-          kind: "BINOP_LOCALS",
+          kind: "BINOP_LL_SET",
           opcode,
           targetBinding,
           lhsBinding,

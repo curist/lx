@@ -113,20 +113,24 @@ let STACK_MIN = .{
   // UNWIND is dynamic: needs count values
   // Handled specially in processInstruction
 
-  // Superinstructions
-  [OP.ADD_LOCAL_IMM]:      0,  // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL: reads from local slot
+  // Superinstructions (misc)
+  [OP.INC_L]:              0,  // local[a] += imm: reads from local slot
   [OP.STORE_LOCAL]:        1,  // SET_LOCAL + POP: needs value to store
   [OP.GETI]:  0,    // GET_LOCAL×2 + GET_BY_INDEX: reads all from local slots
   [OP.SETI]:  0,    // GET_LOCAL×3 + SET_BY_INDEX: reads all from local slots
-  [OP.ADD_LOCALS]: 0,  // GET_LOCAL×2 + ADD + SET_LOCAL: reads all from local slots
-  [OP.SUB_LOCALS]: 0,  // GET_LOCAL×2 + SUB + SET_LOCAL: reads all from local slots
-  [OP.MUL_LOCALS]: 0,  // GET_LOCAL×2 + MUL + SET_LOCAL: reads all from local slots
-  [OP.DIV_LOCALS]: 0,  // GET_LOCAL×2 + DIV + SET_LOCAL: reads all from local slots
-  [OP.ADD_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + ADD: reads from local slot
-  [OP.SUB_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + SUB: reads from local slot
-  [OP.MUL_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + MUL: reads from local slot
-  [OP.DIV_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + DIV: reads from local slot
-  [OP.CMP_LOCAL_K]: 0,  // GET_LOCAL + CONST_BYTE + CMP: reads from local slot
+
+  // Arithmetic superinstructions - statement form
+  [OP.ADD_LL_SET]: 0,  // local[d] = local[a] + local[b]: reads all from local slots
+  [OP.SUB_LL_SET]: 0,  // local[d] = local[a] - local[b]: reads all from local slots
+  [OP.MUL_LL_SET]: 0,  // local[d] = local[a] * local[b]: reads all from local slots
+  [OP.DIV_LL_SET]: 0,  // local[d] = local[a] / local[b]: reads all from local slots
+
+  // Arithmetic superinstructions - expression form
+  [OP.ADD_LK]: 0,  // push(local[a] + k): reads from local slot
+  [OP.SUB_LK]: 0,  // push(local[a] - k): reads from local slot
+  [OP.MUL_LK]: 0,  // push(local[a] * k): reads from local slot
+  [OP.DIV_LK]: 0,  // push(local[a] / k): reads from local slot
+  [OP.CMP_LK]: 0,  // push(local[a] cmp k): reads from local slot
   [OP.GET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_BY_INDEX: reads from local slot
   [OP.SET_PROPERTY]:  0,    // GET_LOCAL + CONSTANT + GET_LOCAL + SET_BY_INDEX: reads from local slots
 
@@ -226,20 +230,24 @@ let STACK_EFFECTS = .{
   [OP.JUMP_IF_TRUE]:  -1,
   [OP.JUMP_IF_FALSE]: -1,
 
-  // Superinstructions
-  [OP.ADD_LOCAL_IMM]:      0,   // i += imm (statement-only, no value on stack)
+  // Superinstructions (misc)
+  [OP.INC_L]:              0,   // local[a] += imm (statement-only, no value on stack)
   [OP.STORE_LOCAL]:       -1,   // SET_LOCAL + POP: net -1
   [OP.GETI]:  1,     // GET_LOCAL×2 + GET_BY_INDEX: net +1 (2 pushes, GET_BY_INDEX is -1)
   [OP.SETI]:  0,     // arr[idx] = val (statement-only, no value on stack)
-  [OP.ADD_LOCALS]: 0,     // dest = lhs + rhs (statement-only, no value on stack)
-  [OP.SUB_LOCALS]: 0,     // dest = lhs - rhs (statement-only, no value on stack)
-  [OP.MUL_LOCALS]: 0,     // dest = lhs * rhs (statement-only, no value on stack)
-  [OP.DIV_LOCALS]: 0,     // dest = lhs / rhs (statement-only, no value on stack)
-  [OP.ADD_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + ADD: net +1 (push result)
-  [OP.SUB_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + SUB: net +1 (push result)
-  [OP.MUL_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + MUL: net +1 (push result)
-  [OP.DIV_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + DIV: net +1 (push result)
-  [OP.CMP_LOCAL_K]:  1,     // GET_LOCAL + CONST_BYTE + CMP: net +1 (push bool result)
+
+  // Arithmetic superinstructions - statement form
+  [OP.ADD_LL_SET]: 0,     // local[d] = local[a] + local[b] (statement-only)
+  [OP.SUB_LL_SET]: 0,     // local[d] = local[a] - local[b] (statement-only)
+  [OP.MUL_LL_SET]: 0,     // local[d] = local[a] * local[b] (statement-only)
+  [OP.DIV_LL_SET]: 0,     // local[d] = local[a] / local[b] (statement-only)
+
+  // Arithmetic superinstructions - expression form
+  [OP.ADD_LK]:  1,     // push(local[a] + k): net +1
+  [OP.SUB_LK]:  1,     // push(local[a] - k): net +1
+  [OP.MUL_LK]:  1,     // push(local[a] * k): net +1
+  [OP.DIV_LK]:  1,     // push(local[a] / k): net +1
+  [OP.CMP_LK]:  1,     // push(local[a] cmp k): net +1
   [OP.GET_PROPERTY]:  1,     // GET_LOCAL + CONSTANT + GET_BY_INDEX: net +1
   [OP.SET_PROPERTY]:  0,     // obj.field = val or obj[const] = val (statement-only, no value on stack)
 
@@ -332,20 +340,24 @@ let INSTRUCTION_LENGTHS = .{
   [OP.MULTIPLY_INT]:  1,  // No operands
   [OP.NEGATE_INT]:    1,  // No operands
 
-  // Superinstructions
-  [OP.ADD_LOCAL_IMM]:      3,  // opcode + slot + imm
+  // Superinstructions (misc)
+  [OP.INC_L]:              3,  // opcode + slot + imm
   [OP.STORE_LOCAL]:        2,  // opcode + slot
   [OP.GETI]:    3,  // opcode + arr_slot + idx_slot
   [OP.SETI]:    4,  // opcode + arr_slot + idx_slot + val_slot
-  [OP.ADD_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
-  [OP.SUB_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
-  [OP.MUL_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
-  [OP.DIV_LOCALS]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
-  [OP.ADD_LOCAL_K]:    3,  // opcode + slot + k
-  [OP.SUB_LOCAL_K]:    3,  // opcode + slot + k
-  [OP.MUL_LOCAL_K]:    3,  // opcode + slot + k
-  [OP.DIV_LOCAL_K]:    3,  // opcode + slot + k
-  [OP.CMP_LOCAL_K]:    4,  // opcode + slot + k + cmp_kind
+
+  // Arithmetic superinstructions - statement form
+  [OP.ADD_LL_SET]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
+  [OP.SUB_LL_SET]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
+  [OP.MUL_LL_SET]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
+  [OP.DIV_LL_SET]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
+
+  // Arithmetic superinstructions - expression form
+  [OP.ADD_LK]:    3,  // opcode + slot + k
+  [OP.SUB_LK]:    3,  // opcode + slot + k
+  [OP.MUL_LK]:    3,  // opcode + slot + k
+  [OP.DIV_LK]:    3,  // opcode + slot + k
+  [OP.CMP_LK]:    4,  // opcode + slot + k + cmp_kind
   [OP.GET_PROPERTY]:  3,  // opcode + obj_slot + const_idx
   [OP.SET_PROPERTY]:  4,  // opcode + obj_slot + const_idx + val_slot
 

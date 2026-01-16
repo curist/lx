@@ -100,22 +100,24 @@ typedef enum {
   OP_ASSOC,
   OP_APPEND,
 
-  // Superinstructions
-  OP_ADD_LOCAL_IMM,       // GET_LOCAL + CONST_BYTE + ADD + SET_LOCAL
+  // Superinstructions (misc)
+  OP_INC_L,               // local[a] += imm (self-increment)
   OP_STORE_LOCAL,         // SET_LOCAL + POP
   OP_GETI,                // GET_LOCAL×2 + GET_BY_INDEX
   OP_SETI,                // GET_LOCAL×3 + SET_BY_INDEX
-  OP_ADD_LOCALS,          // GET_LOCAL×2 + ADD + SET_LOCAL (dest = lhs + rhs)
-  OP_SUB_LOCALS,          // GET_LOCAL×2 + SUB + SET_LOCAL (dest = lhs - rhs)
-  OP_MUL_LOCALS,          // GET_LOCAL×2 + MUL + SET_LOCAL (dest = lhs * rhs)
-  OP_DIV_LOCALS,          // GET_LOCAL×2 + DIV + SET_LOCAL (dest = lhs / rhs)
 
-  // Local arithmetic with constant (expression form - pushes result)
-  OP_ADD_LOCAL_K,         // GET_LOCAL + CONST_BYTE + ADD (push local + k)
-  OP_SUB_LOCAL_K,         // GET_LOCAL + CONST_BYTE + SUB (push local - k)
-  OP_MUL_LOCAL_K,         // GET_LOCAL + CONST_BYTE + MUL (push local * k)
-  OP_DIV_LOCAL_K,         // GET_LOCAL + CONST_BYTE + DIV (push local / k)
-  OP_CMP_LOCAL_K,         // GET_LOCAL + CONST_BYTE + CMP (push comparison result)
+  // Arithmetic superinstructions - statement form (store to local)
+  OP_ADD_LL_SET,          // local[d] = local[a] + local[b]
+  OP_SUB_LL_SET,          // local[d] = local[a] - local[b]
+  OP_MUL_LL_SET,          // local[d] = local[a] * local[b]
+  OP_DIV_LL_SET,          // local[d] = local[a] / local[b]
+
+  // Arithmetic superinstructions - expression form (push result)
+  OP_ADD_LK,              // push(local[a] + k)
+  OP_SUB_LK,              // push(local[a] - k)
+  OP_MUL_LK,              // push(local[a] * k)
+  OP_DIV_LK,              // push(local[a] / k)
+  OP_CMP_LK,              // push(local[a] cmp k)
 
   // Special/optimization
   OP_COALESCE_CONST,      // Replace TOS with constant if TOS is falsy

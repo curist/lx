@@ -2072,13 +2072,13 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_ADD_LOCAL_IMM: {
-        // Superinstruction: i += imm (statement-only, no value on stack)
+      case OP_INC_L: {
+        // Superinstruction: local[a] += imm (statement-only, no value on stack)
         uint8_t slot = READ_BYTE();
         uint8_t imm = READ_BYTE();
         Value local = slots[slot];
         if (!IS_NUMBER(local)) {
-          runtimeError("ADD_LOCAL_IMM operand must be a number.");
+          runtimeError("INC_L operand must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
         Value result;
@@ -2133,8 +2133,8 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_ADD_LOCALS: {
-        // Superinstruction: dest = lhs + rhs (statement-only, no value on stack)
+      case OP_ADD_LL_SET: {
+        // Superinstruction: local[d] = local[a] + local[b] (statement-only)
         uint8_t destSlot = READ_BYTE();
         uint8_t lhsSlot = READ_BYTE();
         uint8_t rhsSlot = READ_BYTE();
@@ -2157,7 +2157,7 @@ static InterpretResult runUntil(int stopFrameCount) {
         } else if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
           result = NUMBER_VAL(AS_NUMBER(lhs) + AS_NUMBER(rhs));
         } else {
-          runtimeError("ADD_LOCALS operands must be numbers.");
+          runtimeError("ADD_LL_SET operands must be numbers.");
           return INTERPRET_RUNTIME_ERROR;
         }
 
@@ -2165,8 +2165,8 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_SUB_LOCALS: {
-        // Superinstruction: dest = lhs - rhs (statement-only, no value on stack)
+      case OP_SUB_LL_SET: {
+        // Superinstruction: local[d] = local[a] - local[b] (statement-only)
         uint8_t destSlot = READ_BYTE();
         uint8_t lhsSlot = READ_BYTE();
         uint8_t rhsSlot = READ_BYTE();
@@ -2189,7 +2189,7 @@ static InterpretResult runUntil(int stopFrameCount) {
         } else if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
           result = NUMBER_VAL(AS_NUMBER(lhs) - AS_NUMBER(rhs));
         } else {
-          runtimeError("SUB_LOCALS operands must be numbers.");
+          runtimeError("SUB_LL_SET operands must be numbers.");
           return INTERPRET_RUNTIME_ERROR;
         }
 
@@ -2197,8 +2197,8 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_MUL_LOCALS: {
-        // Superinstruction: dest = lhs * rhs (statement-only, no value on stack)
+      case OP_MUL_LL_SET: {
+        // Superinstruction: local[d] = local[a] * local[b] (statement-only)
         uint8_t destSlot = READ_BYTE();
         uint8_t lhsSlot = READ_BYTE();
         uint8_t rhsSlot = READ_BYTE();
@@ -2221,7 +2221,7 @@ static InterpretResult runUntil(int stopFrameCount) {
         } else if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
           result = NUMBER_VAL(AS_NUMBER(lhs) * AS_NUMBER(rhs));
         } else {
-          runtimeError("MUL_LOCALS operands must be numbers.");
+          runtimeError("MUL_LL_SET operands must be numbers.");
           return INTERPRET_RUNTIME_ERROR;
         }
 
@@ -2229,8 +2229,8 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_DIV_LOCALS: {
-        // Superinstruction: dest = lhs / rhs (statement-only, no value on stack)
+      case OP_DIV_LL_SET: {
+        // Superinstruction: local[d] = local[a] / local[b] (statement-only)
         uint8_t destSlot = READ_BYTE();
         uint8_t lhsSlot = READ_BYTE();
         uint8_t rhsSlot = READ_BYTE();
@@ -2243,7 +2243,7 @@ static InterpretResult runUntil(int stopFrameCount) {
         if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
           result = NUMBER_VAL(AS_NUMBER(lhs) / AS_NUMBER(rhs));
         } else {
-          runtimeError("DIV_LOCALS operands must be numbers.");
+          runtimeError("DIV_LL_SET operands must be numbers.");
           return INTERPRET_RUNTIME_ERROR;
         }
 
@@ -2251,13 +2251,13 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_ADD_LOCAL_K: {
-        // Superinstruction: push(local + k)
+      case OP_ADD_LK: {
+        // Superinstruction: push(local[a] + k)
         uint8_t slot = READ_BYTE();
         uint8_t k = READ_BYTE();
         Value local = slots[slot];
         if (!IS_NUMBER(local)) {
-          runtimeError("ADD_LOCAL_K operand must be a number.");
+          runtimeError("ADD_LK operand must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
         Value result;
@@ -2278,13 +2278,13 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_SUB_LOCAL_K: {
-        // Superinstruction: push(local - k)
+      case OP_SUB_LK: {
+        // Superinstruction: push(local[a] - k)
         uint8_t slot = READ_BYTE();
         uint8_t k = READ_BYTE();
         Value local = slots[slot];
         if (!IS_NUMBER(local)) {
-          runtimeError("SUB_LOCAL_K operand must be a number.");
+          runtimeError("SUB_LK operand must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
         Value result;
@@ -2305,13 +2305,13 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_MUL_LOCAL_K: {
-        // Superinstruction: push(local * k)
+      case OP_MUL_LK: {
+        // Superinstruction: push(local[a] * k)
         uint8_t slot = READ_BYTE();
         uint8_t k = READ_BYTE();
         Value local = slots[slot];
         if (!IS_NUMBER(local)) {
-          runtimeError("MUL_LOCAL_K operand must be a number.");
+          runtimeError("MUL_LK operand must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
         Value result;
@@ -2332,13 +2332,13 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_DIV_LOCAL_K: {
-        // Superinstruction: push(local / k)
+      case OP_DIV_LK: {
+        // Superinstruction: push(local[a] / k)
         uint8_t slot = READ_BYTE();
         uint8_t k = READ_BYTE();
         Value local = slots[slot];
         if (!IS_NUMBER(local)) {
-          runtimeError("DIV_LOCAL_K operand must be a number.");
+          runtimeError("DIV_LK operand must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
         if (k == 0) {
@@ -2353,15 +2353,15 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
-      case OP_CMP_LOCAL_K: {
-        // Superinstruction: push(local cmp k)
+      case OP_CMP_LK: {
+        // Superinstruction: push(local[a] cmp k)
         uint8_t slot = READ_BYTE();
         uint8_t k = READ_BYTE();
         uint8_t cmp_kind = READ_BYTE();
         Value local = slots[slot];
 
         if (!IS_NUMBER(local)) {
-          runtimeError("CMP_LOCAL_K operand must be a number.");
+          runtimeError("CMP_LK operand must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
 

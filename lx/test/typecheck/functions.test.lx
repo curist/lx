@@ -48,6 +48,44 @@ fn register(test) {
     assert.truthy(!hasError(result, "Unresolved call"))
   })
 
+  test("typecheck - trailing defaults lower min arity", fn(assert) {
+    let result = parseAndTypecheck("{ fn f(a, b = 2) { a }\nf(1) }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.truthy(!hasError(result, "Too few arguments"))
+  })
+
+  test("typecheck - all defaults allow zero args", fn(assert) {
+    let result = parseAndTypecheck("{ fn f(a = 1, b = 2) { a + b }\nf() }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.truthy(!hasError(result, "Too few arguments"))
+  })
+
+  test("typecheck - non-trailing default does not lower min arity", fn(assert) {
+    let result = parseAndTypecheck("{ fn f(a = 1, b) { b }\nf(1) }")
+    assert.truthy(len(result.errors) > 0)
+    assert.truthy(hasError(result, "Too few arguments: expected at least 2, got 1"))
+  })
+
+  test("typecheck - default record arg allows omitted optional param", fn(assert) {
+    let result = parseAndTypecheck("{
+      fn callme(a, opt = .{}) {
+        println(a)
+        if let hello = opt.hello {
+          println(\"hello\", hello)
+        } else {
+          println(\"hello stranger\")
+        }
+      }
+      callme(1)
+      callme(1, .{ hello: \"world\" })
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.truthy(!hasError(result, "Too few arguments"))
+  })
+
   test("typecheck - unknown callee can grow tracked arity", fn(assert) {
     let result = parseAndTypecheck("{
       fn g(f) {

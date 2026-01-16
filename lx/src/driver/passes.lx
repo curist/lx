@@ -13,12 +13,13 @@ let dce = import "src/passes/analysis/dce.lx"
 let helpers = import "src/driver/helpers.lx"
 
 // Canonical pass execution order
-let PASS_ORDER = ["parse", "lower", "anf", "resolve", "dce", "anf-inline", "lower-intrinsics"]
+let PASS_ORDER = ["parse", "lower", "resolve-lower", "anf", "resolve", "dce", "anf-inline", "lower-intrinsics"]
 
 // Check if a pass is enabled given the current needs configuration
 fn passEnabled(passName, needs) {
   if passName == "parse" { return true }
   if passName == "lower" { return needs.withLower == true }
+  if passName == "resolve-lower" { return needs.withTypecheck == true }
   if passName == "anf" { return needs.withAnf == true }
   if passName == "resolve" { return true }
   if passName == "dce" { return needs.withDce == true }
@@ -60,6 +61,19 @@ let PASS_DEFS = .{
       }
 
       result
+    },
+  },
+  ["resolve-lower"]: .{
+    name: "resolve-lower",
+    mutatesAst: false,
+    requires: ["loweredAst"],
+    provides: ["resolutionLower"],
+    run: fn(ctx, state) {
+      let opts = .{
+        importCache: ctx.importCache,
+        compileModule: ctx.compileModule,
+      }
+      resolve(state.ast, opts)
     },
   },
   anf: .{

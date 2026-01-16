@@ -276,6 +276,19 @@ fn synthLet(checker, node) {
 // Function definition
 fn synthFunction(checker, node) {
   let params = node.params or []
+  let defaults = node.defaults or []
+
+  // Compute minArity from trailing defaults (only trailing defaults can be omitted)
+  let minArity = len(params)
+  if len(defaults) == len(params) and len(defaults) > 0 {
+    for let i = len(defaults) - 1; i >= 0; i = i - 1 {
+      if defaults[i] != nil {
+        minArity = i
+      } else {
+        break
+      }
+    }
+  }
 
   // Create fresh type vars for parameters and bind them
   let paramTypes = []
@@ -294,6 +307,7 @@ fn synthFunction(checker, node) {
   // Create the function type before synthesizing body
   // (allows recursive functions to look up their own type)
   let fnType = typeFunction(paramTypes, retType)
+  fnType.minArity = minArity
   checker.types[node.id] = fnType
 
   // For named functions, bind the function to the environment

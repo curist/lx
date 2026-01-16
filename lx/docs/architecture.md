@@ -38,6 +38,10 @@ Crucially:
 * **Analyses** compute *facts* about a representation without mutating it.
 * Code generation is *mechanical* and delegates all policy to analysis + selection layers.
 
+Note: `analysis.resolve.lower` is derived from the **post-lower, pre-ANF AST** and
+is used by typecheck to align with lowered syntax. It is not computed from
+`ast.final`.
+
 ---
 
 ## Core Design Principles
@@ -49,7 +53,9 @@ Crucially:
    Transforms and analyses are distinct concepts with different invariants and lifecycles.
 
 3. **Single canonical AST**
-   At any point in compilation, there is exactly one “current” AST that downstream passes and analyses must agree on.
+   Codegen and backend analyses agree on a single canonical AST (`ast.final`).
+   Tooling analyses may use earlier ASTs, but must pair them with analyses
+   produced for that same representation.
 
 4. **Explicit facts, not implicit state**
    Semantic knowledge (bindings, deadness, type facts) lives in side tables keyed by `nodeId`, not inside the AST.
@@ -182,7 +188,22 @@ Properties:
 * Required by all binding-aware passes and analyses.
 * Establishes core semantic invariants of the program.
 * Does not depend on other analyses.
-* Treated as representation-agnostic in the current pipeline; downstream transforms must preserve its invariants.
+* Tied to the AST representation it was computed on.
+* For tooling on the lowered AST, use `analysis.resolve.lower`.
+
+---
+
+### **`analysis.resolve.lower`**
+
+Produced by the `resolve-lower` pass (same implementation as `resolve.lx`).
+
+Contains the same tables as `analysis.resolve`, but keyed to the post-lower,
+pre-ANF AST.
+
+Properties:
+
+* Used by typecheck to align with the lowered AST shape.
+* Does not affect codegen (which uses `analysis.resolve` on `ast.final`).
 
 ---
 
@@ -233,6 +254,8 @@ Properties:
 * Tooling-oriented.
 * No impact on runtime or codegen.
 * May be computed lazily or omitted in non-tooling pipelines.
+* Preferably computed on the lowered AST with `analysis.resolve.lower`.
+* Falls back to `ast.final` + `analysis.resolve` when lower is disabled.
 
 ---
 
@@ -349,6 +372,10 @@ ast.final
    object.bytes
 ```
 
+`analysis.resolve.lower` is produced from the lowered AST (post-lower, pre-ANF)
+and is consumed by typecheck; it is intentionally kept separate from the
+`ast.final` analysis set used by codegen.
+
 ---
 
 ## Why Canonical Artifacts Matter
@@ -409,7 +436,7 @@ Checklist:
 
 Notes:
 
-* `PASS_DEFS` lives in `lx/src/driver.lx`.
+* `PASS_DEFS` lives in `lx/src/driver/passes.lx`.
 * `ARTIFACT_SPEC` is the single source of truth for artifact dependencies.
 * The planner validates these at startup; invalid references fail fast.
 
@@ -524,6 +551,9 @@ This pass exists specifically because it can rely on resolver metadata.
   * `scopeInfo`
   * `nodes`
 * Does **not** mutate the AST
+* Scheduled as two passes:
+  * `resolve` on `ast.final` for codegen and post-ANF analyses
+  * `resolve-lower` on the lowered AST for typecheck
 
 ---
 
@@ -565,7 +595,7 @@ This pass is intentionally replaceable by a stronger future analysis (`rep`).
 ### **typecheck.lx** — AST analysis (tooling-oriented)
 
 **Role:** AST analysis
-**Input:** AST + resolve tables
+**Input:** lowered AST + `analysis.resolve.lower` (preferred), or `ast.final` + `analysis.resolve` (fallback)
 **Output:** side tables
 
 * Monomorphic, best-effort inference

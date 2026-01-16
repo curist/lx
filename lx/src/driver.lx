@@ -136,12 +136,19 @@ fn make(opts) {
       let resolveResult = passes.resolve
       if !resolveResult or resolveResult.success != true { continue }
 
-      let ast = helpers.getFinalAst(passes)
+      let lowerResult = passes.lower
+      let resolveLower = passes["resolve-lower"]
+      let useLower = lowerResult and lowerResult.ast and resolveLower and resolveLower.success == true
+
+      let ast = useLower and lowerResult.ast or helpers.getFinalAst(passes)
       if !ast { continue }
 
-      let enumInfo = helpers.getFinalEnumInfo(passes)
+      let enumInfo = useLower and lowerResult.enumInfo or helpers.getFinalEnumInfo(passes)
 
-      let tc = typecheck(ast, resolveResult, .{
+      let tcResolve = useLower and resolveLower or resolveResult
+      if !tcResolve or tcResolve.success != true { continue }
+
+      let tc = typecheck(ast, tcResolve, .{
         enumInfo: enumInfo,
         program: .{ exports: programExports },
       }) or .{ success: false, errors: ["typecheck returned nil"], types: .{}, typeVarBindings: .{} }

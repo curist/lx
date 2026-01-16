@@ -14,6 +14,7 @@ let ARTIFACT = .{
 
   // Per-module analysis artifacts
   ANALYSIS_RESOLVE: "analysis.resolve",            // Name resolution and scope info
+  ANALYSIS_RESOLVE_LOWER: "analysis.resolve.lower", // Name resolution on lowered AST
   ANALYSIS_DCE_LOCAL: "analysis.dce.local",        // Local dead code analysis
   ANALYSIS_FASTCHECK: "analysis.fastcheck",        // Fast type representation analysis
   ANALYSIS_TYPECHECK: "analysis.typecheck",        // Optional type inference
@@ -46,6 +47,10 @@ let ARTIFACT_SPEC = .{
   [ARTIFACT.ANALYSIS_RESOLVE]: .{
     requires: ["ast.pre_resolve"],
     produces: ["resolve"],
+  },
+  [ARTIFACT.ANALYSIS_RESOLVE_LOWER]: .{
+    requires: ["ast.pre_resolve"],
+    produces: ["resolve-lower"],
   },
   [ARTIFACT.ANALYSIS_DCE_LOCAL]: .{
     requires: [ARTIFACT.ANALYSIS_RESOLVE],
@@ -81,7 +86,11 @@ let ARTIFACT_SPEC = .{
     produces: [],
   },
   [ARTIFACT.ANALYSIS_TYPECHECK]: .{
-    requires: [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE],
+    requires: [
+      ARTIFACT.AST_FINAL,
+      ARTIFACT.ANALYSIS_RESOLVE,
+      ARTIFACT.ANALYSIS_RESOLVE_LOWER,
+    ],
     produces: [],
   },
   [ARTIFACT.BYTECODE_FUNCTION]: .{

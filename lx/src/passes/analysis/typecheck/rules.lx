@@ -1,0 +1,298 @@
+// ========================================================
+// Rule-Based Type Synthesis
+// ========================================================
+// Declarative rule handlers for type checking specific constructs.
+// Rules are prioritized and applied in order until one matches.
+
+let .{ NODE } = import "src/types.lx"
+let helper = import "src/passes/analysis/typecheck/helpers.lx"
+
+let typeAny = helper.typeAny
+let typeNumber = helper.typeNumber
+let typeOption = helper.typeOption
+let typeRecord = helper.typeRecord
+let freshTypeVar = helper.freshTypeVar
+let deref = helper.deref
+let constrain = helper.constrain
+let prettyType = helper.prettyType
+
+// ========================================================
+// Dot Access Rules
+// ========================================================
+// Each rule handles a specific case of field access (obj.field)
+
+// Rule: Option[T].field -> Option[fieldType]
+// Unwraps nested Options and wraps result in Option
+fn dotRuleOption(checker, node, objType, objD, fieldName, addError) {
+  if objD.kind != "Option" { return nil }
+
+  // Unwrap through nested Options
+  let innerType = objD.value
+  let innerD = deref(checker, innerType)
+  for innerD.kind == "Option" {
+    innerType = innerD.value
+    innerD = deref(checker, innerType)
+  }
+
+  // Create constraint on inner type
+  let innerResult = freshTypeVar(checker)
+  let requiredRecord = typeRecord(.{ [fieldName]: innerResult })
+
+  if innerD.kind == "Record" {
+    let fieldType = innerD.fields and innerD.fields[fieldName]
+    if !fieldType {
+      addError(checker, node.id, "Missing field: " + fieldName)
+      return .{ type: typeAny(), handled: true }
+    }
+    return .{ type: typeOption(fieldType), handled: true }
+  }
+
+  if innerD.kind == "TypeVar" {
+    // Defer resolution - constrain inner to have the field
+    constrain(checker, innerType, requiredRecord)
+    return .{ type: typeOption(innerResult), handled: true }
+  }
+
+  if innerD.kind == "Any" {
+    // Any can have any field - return optional Any
+    return .{ type: typeOption(typeAny()), handled: true }
+  }
+
+  // Optional non-record - error
+  addError(checker, node.id, "Cannot access field on optional non-record")
+  .{ type: typeAny(), handled: true }
+}
+
+// Rule: Enum.member -> Number
+fn dotRuleEnum(checker, node, objType, objD, fieldName, addError) {
+  if objD.kind != "Enum" { return nil }
+
+  if objD.fields and objD.fields[fieldName] != nil {
+    return .{ type: typeNumber(), handled: true }
+  }
+
+  addError(checker, node.id, "Unknown enum member: " + fieldName)
+  .{ type: typeAny(), handled: true }
+}
+
+// Rule: Record.field -> fieldType
+fn dotRuleRecord(checker, node, objType, objD, fieldName, addError) {
+  if objD.kind != "Record" { return nil }
+
+  let fieldType = objD.fields and objD.fields[fieldName]
+  if !fieldType {
+    addError(checker, node.id, "Missing field: " + fieldName)
+    return .{ type: typeAny(), handled: true }
+  }
+
+  .{ type: fieldType, handled: true }
+}
+
+// Rule: TypeVar.field -> fresh TypeVar with constraint
+fn dotRuleTypeVar(checker, node, objType, objD, fieldName, addError) {
+  if objD.kind != "TypeVar" { return nil }
+
+  // Error if it's an uninitialized local (nil at runtime)
+  if objD.uninitializedLocal {
+    addError(checker, node.id, "Cannot access field on nil value")
+    return .{ type: typeAny(), handled: true }
+  }
+
+  // Constrain: objType <: Record({ fieldName: resultType })
+  let resultType = freshTypeVar(checker)
+  let requiredRecord = typeRecord(.{ [fieldName]: resultType })
+  constrain(checker, objType, requiredRecord)
+
+  .{ type: resultType, handled: true }
+}
+
+// Rule: Any.field -> Any (no error)
+fn dotRuleAny(checker, node, objType, objD, fieldName, addError) {
+  if objD.kind != "Any" { return nil }
+  .{ type: typeAny(), handled: true }
+}
+
+// Rule: Fallback - error for non-record types
+fn dotRuleFallback(checker, node, objType, objD, fieldName, addError) {
+  addError(checker, node.id,
+    "Cannot access field on type " + prettyType(checker, objType))
+  .{ type: typeAny(), handled: true }
+}
+
+// Apply dot rules in priority order
+// Returns the resulting type
+fn applyDotRules(checker, node, objType, fieldName, addError) {
+  let objD = deref(checker, objType)
+
+  // Rules in priority order
+  let rules = [
+    dotRuleOption,   // Priority 100: Option unwrapping
+    dotRuleEnum,     // Priority 90: Enum member access
+    dotRuleRecord,   // Priority 80: Record field access
+    dotRuleTypeVar,  // Priority 70: TypeVar constraint emission
+    dotRuleAny,      // Priority 60: Any passthrough
+    dotRuleFallback, // Priority 0: Error fallback
+  ]
+
+  for rule in rules {
+    let result = rule(checker, node, objType, objD, fieldName, addError)
+    if result and result.handled {
+      return result.type
+    }
+  }
+
+  // Should never reach here due to fallback rule
+  typeAny()
+}
+
+// ========================================================
+// Builtin Call Rules
+// ========================================================
+// Validation and special handling for builtin functions
+
+let typeArray = helper.typeArray
+
+// Builtin rules table: builtinName -> { validate, synthesize }
+// - validate: fn(checker, node, argTypes, addError) -> Bool (false to continue normal processing)
+// - synthesize: fn(checker, node, argTypes, args, addError) -> Type or nil (nil to continue)
+
+let BUILTIN_RULES = .{
+  // range/keys: deferred refinement with special empty record promotion
+  range: .{
+    synthesize: fn(checker, node, argTypes, args, addError, envBind, unwrapGroupings) {
+      synthesizeRangeKeys(checker, node, "range", argTypes, args, addError, envBind, unwrapGroupings)
+    },
+  },
+
+  keys: .{
+    synthesize: fn(checker, node, argTypes, args, addError, envBind, unwrapGroupings) {
+      synthesizeRangeKeys(checker, node, "keys", argTypes, args, addError, envBind, unwrapGroupings)
+    },
+  },
+
+  // len: requires array or string
+  len: .{
+    validate: fn(checker, node, argTypes, addError) {
+      if len(argTypes) >= 1 {
+        let argD = deref(checker, argTypes[0])
+        if argD.kind and argD.kind != "Array" and argD.kind != "String" and argD.kind != "TypeVar" and argD.kind != "Any" {
+          addError(checker, node.id, "len() requires array or string")
+        }
+      }
+      false  // Continue normal processing
+    },
+  },
+
+  // nameOf: requires enum as first arg
+  nameOf: .{
+    validate: fn(checker, node, argTypes, addError) {
+      if len(argTypes) >= 1 {
+        let argD = deref(checker, argTypes[0])
+        if argD.kind and argD.kind != "Enum" and argD.kind != "TypeVar" and argD.kind != "Any" {
+          addError(checker, node.id, "nameOf() requires enum")
+        } else if argD.kind == "Enum" and len(argTypes) >= 2 {
+          // Check value type matches enum values
+          let valueD = deref(checker, argTypes[1])
+          if valueD.kind and valueD.kind != "TypeVar" and valueD.kind != "Any" {
+            // Check if enum values are all numbers or all strings
+            let enumFields = argD.fields or .{}
+            let enumValueKind = nil
+            for k in keys(enumFields) {
+              let v = enumFields[k]
+              if type(v) == "number" { enumValueKind = "Number" }
+              else if type(v) == "string" { enumValueKind = "String" }
+              break
+            }
+            if enumValueKind and valueD.kind != enumValueKind {
+              addError(checker, node.id, "nameOf() value mismatch")
+            }
+          }
+        }
+      }
+      false  // Continue normal processing
+    },
+  },
+}
+
+// Shared implementation for range/keys deferred refinement
+fn synthesizeRangeKeys(checker, node, builtinName, argTypes, args, addError, envBind, unwrapGroupings) {
+  let elem = freshTypeVar(checker)
+  let out = typeArray(elem)
+
+  if len(argTypes) != 1 {
+    addError(checker, node.id, builtinName + "() expects 1 argument")
+  } else {
+    let argType = argTypes[0]
+    let argD = deref(checker, argType)
+
+    // If argument is an empty Record bound to an identifier, convert to TypeVar
+    // so that later index assignments (r["a"] = 1) can refine the type.
+    if argD.kind == "Record" and (!argD.fields or len(keys(argD.fields or .{})) == 0) {
+      let argNode = unwrapGroupings(args[0])
+      if argNode.type == NODE.Identifier {
+        let binding = checker.resolvedNames[argNode.id]
+        if binding and binding.declaredAt {
+          let tv = freshTypeVar(checker)
+          constrain(checker, argType, tv)
+          envBind(checker, binding.declaredAt, tv)
+          checker.types[binding.declaredAt] = tv
+          checker.types[argNode.id] = tv
+          argType = tv
+        }
+      }
+    }
+
+    // Track for deferred refinement
+    checker.builtinConstraints = checker.builtinConstraints or []
+    push(checker.builtinConstraints, .{
+      kind: builtinName,
+      arg: argType,
+      elem: elem,
+      nodeId: node.id,
+    })
+  }
+
+  out
+}
+
+// Apply builtin rules for a call
+// phase: "synthesize" | "validate" | nil (default: both)
+// Returns { type, handled } if handled during synthesis, nil otherwise
+fn applyBuiltinRules(checker, node, builtinName, argTypes, args, addError, envBind, unwrapGroupings, phase = nil) {
+  let rule = BUILTIN_RULES[builtinName]
+  if !rule { return nil }
+
+  // Try synthesize first (for builtins with special return types)
+  if (phase == nil or phase == "synthesize") and rule.synthesize {
+    let resultType = rule.synthesize(checker, node, argTypes, args, addError, envBind, unwrapGroupings)
+    if resultType {
+      return .{ type: resultType, handled: true }
+    }
+  }
+
+  // Try validate (for builtins that just need arg validation)
+  if (phase == nil or phase == "validate") and rule.validate {
+    rule.validate(checker, node, argTypes, addError)
+  }
+
+  nil  // Continue normal processing
+}
+
+// ========================================================
+// Exports
+// ========================================================
+
+.{
+  // Dot access rules
+  applyDotRules,
+  dotRuleOption,
+  dotRuleEnum,
+  dotRuleRecord,
+  dotRuleTypeVar,
+  dotRuleAny,
+  dotRuleFallback,
+
+  // Builtin call rules
+  BUILTIN_RULES,
+  applyBuiltinRules,
+}

@@ -1,6 +1,18 @@
 // Typecheck: builtin functions
 let helpers = import "test/typecheck/helpers.lx"
 
+fn hasDuplicateError(result, needle) {
+  let seen = false
+  let errors = result.errors or []
+  for err in errors {
+    if err.message == needle {
+      if seen { return true }
+      seen = true
+    }
+  }
+  false
+}
+
 fn register(test) {
   let parseAndTypecheck = helpers.parseAndTypecheck
   let getExprType = helpers.getExprType
@@ -66,6 +78,12 @@ fn register(test) {
     assert.truthy(!result.success)
     // This is a typecheck error even though runtime checks are dynamic.
     assert.truthy(helpers.hasError(result, "len() requires array or string"))
+  })
+
+  test("typecheck - len does not emit duplicate diagnostics", fn(assert) {
+    let result = parseAndTypecheck("len(.{})")
+    assert.truthy(!result.success)
+    assert.truthy(!hasDuplicateError(result, "len() requires array or string"))
   })
 
   test("typecheck - len behavior preserved through alias", fn(assert) {
@@ -185,6 +203,12 @@ fn register(test) {
     let result = parseAndTypecheck("nameOf([1, 2], 1)")
     assert.truthy(!result.success)
     assert.truthy(helpers.hasError(result, "nameOf() requires enum"))
+  })
+
+  test("typecheck - nameOf does not emit duplicate diagnostics", fn(assert) {
+    let result = parseAndTypecheck("nameOf([1, 2], 1)")
+    assert.truthy(!result.success)
+    assert.truthy(!hasDuplicateError(result, "nameOf() requires enum"))
   })
 
   test("typecheck - nameOf rejects map/record", fn(assert) {

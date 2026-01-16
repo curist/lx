@@ -6,71 +6,16 @@
 // - Functions + Records + Nil/Option support
 // - Monomorphic let bindings
 
-let helper = import "src/passes/analysis/typecheck-helper.lx"
+let helper = import "src/passes/analysis/typecheck/helpers.lx"
+let factsModule = import "src/passes/analysis/typecheck/facts.lx"
+let rulesModule = import "src/passes/analysis/typecheck/rules.lx"
 let .{ NODE } = import "src/types.lx"
 
-// ========================================================
-// Utility Functions
-// ========================================================
-
-// Unwrap Grouping nodes to get the inner expression
-fn unwrapGroupings(node) {
-  for node and node.type == NODE.Grouping {
-    node = node.expression
-  }
-  node
-}
-
-// Check if a condition is a nil guard pattern (!x)
-// Returns the identifier node if it matches, nil otherwise
-fn isNilGuard(condition) {
-  let node = unwrapGroupings(condition)
-  if !node { return nil }
-
-  // Check for !x pattern
-  if node.type == NODE.Unary {
-    let op = node.operator and node.operator.lexeme or ""
-    if op == "!" {
-      let operand = unwrapGroupings(node.operand)
-      if operand and operand.type == NODE.Identifier {
-        return operand
-      }
-    }
-  }
-
-  nil
-}
-
-// Check if a branch always returns (never falls through)
-fn branchAlwaysReturns(node) {
-  if !node { return false }
-
-  let unwrapped = unwrapGroupings(node)
-
-  // Direct return
-  if unwrapped.type == NODE.Return { return true }
-
-  // Block whose last expression is return
-  if unwrapped.type == NODE.Block {
-    let exprs = unwrapped.expressions or []
-    if len(exprs) > 0 {
-      return branchAlwaysReturns(exprs[len(exprs) - 1])
-    }
-    return false
-  }
-
-  // ExprStmt wrapping a return
-  if unwrapped.type == NODE.ExprStmt {
-    return branchAlwaysReturns(unwrapped.expr)
-  }
-
-  // If where both branches return
-  if unwrapped.type == NODE.If and unwrapped.else {
-    return branchAlwaysReturns(unwrapped.then) and branchAlwaysReturns(unwrapped.else)
-  }
-
-  false
-}
+// Import utilities from facts module
+let unwrapGroupings = factsModule.unwrapGroupings
+let branchAlwaysReturns = factsModule.branchAlwaysReturns
+let isNilGuard = factsModule.isNilGuard
+let computeFacts = factsModule.computeFacts
 
 // ========================================================
 // Type Constructors and Utilities (from helper)
@@ -230,8 +175,7 @@ fn makeChecker(resolveResult, opts = .{}) {
     env: .{},                                    // declNodeId -> type (for locals/upvalues)
     currentReturn: nil,                          // Current function's return type var
 
-    // === Statement position tracking ===
-    inStatementPosition: false,                  // True when expression result is discarded
+    // facts: will be set after makeChecker() by typecheck()
   }
 }
 
@@ -258,29 +202,6 @@ fn envLookup(checker, declNodeId) {
 
 fn envBind(checker, declNodeId, t) {
   checker.env[declNodeId] = t
-}
-
-// ========================================================
-// Statement Position Tracking
-// ========================================================
-//
-// inStatementPosition tracks whether an expression's result is discarded.
-// When true, we skip certain checks like branch type matching in if-else,
-// since mismatched types don't matter if the value isn't used.
-//
-// Key rules:
-// - Default is false (expression position - result is used)
-// - Set to true for non-last expressions in blocks
-// - Reset to false when entering contexts where values ARE used:
-//   let initializers, function bodies, call arguments, array elements,
-//   hashmap values, assignment RHS, collect bodies, etc.
-
-fn inExpressionPosition(checker, node) {
-  let saved = checker.inStatementPosition
-  checker.inStatementPosition = false
-  let result = synthExpr(checker, node)
-  checker.inStatementPosition = saved
-  result
 }
 
 // ========================================================
@@ -347,7 +268,7 @@ fn synthLet(checker, node) {
   let declId = node.name and node.name.id
 
   if node.init {
-    let initType = inExpressionPosition(checker, node.init)
+    let initType = synthExpr(checker, node.init)
     let initD = deref(checker, initType)
 
     // Special handling for nil init: create a TypeVar with Nil as lower bound
@@ -442,7 +363,7 @@ fn synthFunction(checker, node) {
   // Synthesize body
   let bodyType = typeNil()
   if node.body {
-    bodyType = inExpressionPosition(checker, node.body)
+    bodyType = synthExpr(checker, node.body)
     // Body type constrains return type
     constrain(checker, bodyType, retType)
   }
@@ -457,7 +378,7 @@ fn synthCall(checker, node) {
   let args = node.args or []
 
   // Synthesize argument types (arguments are always used)
-  let argTypes = collect arg in args { inExpressionPosition(checker, arg) }
+  let argTypes = collect arg in args { synthExpr(checker, arg) }
 
   // Fresh result type
   let resultType = freshTypeVar(checker)
@@ -472,52 +393,15 @@ fn synthCall(checker, node) {
     calleeD and calleeD.kind == "Function" and calleeD.builtinName or
     nil
 
-  // Special handling for range/keys - deferred refinement
-  if calleeD.kind == "Function" and (calleeD.builtinName == "range" or calleeD.builtinName == "keys") {
-    let elem = freshTypeVar(checker)
-    let out = typeArray(elem)
-
-    if len(argTypes) != 1 {
-      addError(checker, node.id, calleeD.builtinName + "() expects 1 argument")
-    } else {
-      let argType = argTypes[0]
-      let argD = deref(checker, argType)
-
-      // If argument is an empty Record bound to an identifier, convert to TypeVar
-      // so that later index assignments (r["a"] = 1) can refine the type.
-      // Note: This changes dot-access semantics - after promotion, r.a defers via
-      // TypeVar constraint instead of immediately erroring. This is acceptable since
-      // calling range/keys on an empty record signals map-like usage intent.
-      if argD.kind == "Record" and (!argD.fields or len(keys(argD.fields or .{})) == 0) {
-        // Unwrap groupings: range((r)) should work like range(r)
-        let argNode = unwrapGroupings(args[0])
-        // Check if it's an identifier
-        if argNode.type == NODE.Identifier {
-          let binding = checker.resolvedNames[argNode.id]
-          if binding and binding.declaredAt {
-            // Create fresh TypeVar and update binding
-            let tv = freshTypeVar(checker)
-            constrain(checker, argType, tv)  // Record{} <: TypeVar
-            envBind(checker, binding.declaredAt, tv)
-            checker.types[binding.declaredAt] = tv
-            checker.types[argNode.id] = tv
-            argType = tv
-          }
-        }
-      }
-
-      // Track for deferred refinement
-      checker.builtinConstraints = checker.builtinConstraints or []
-      push(checker.builtinConstraints, .{
-        kind: calleeD.builtinName,
-        arg: argType,
-        elem: elem,
-        nodeId: node.id,
-      })
+  // Try builtin synthesize rules first (for special builtins like range/keys)
+  if calleeD.kind == "Function" and calleeD.builtinName {
+    let builtinResult = rulesModule.applyBuiltinRules(
+      checker, node, calleeD.builtinName, argTypes, args, addError, envBind, unwrapGroupings, "synthesize"
+    )
+    if builtinResult and builtinResult.handled {
+      checker.types[node.id] = builtinResult.type
+      return builtinResult.type
     }
-
-    checker.types[node.id] = out
-    return out
   }
 
   if calleeD.kind == "Function" {
@@ -531,41 +415,11 @@ fn synthCall(checker, node) {
         "Too few arguments: expected at least " + str(minArity) +
         ", got " + str(len(argTypes)))
     } else {
-      // Builtin-specific validation
-      let builtinName = calleeD.builtinName
-      if builtinName == "len" {
-        // len() requires array or string
-        if len(argTypes) >= 1 {
-          let argD = deref(checker, argTypes[0])
-          if argD.kind and argD.kind != "Array" and argD.kind != "String" and argD.kind != "TypeVar" and argD.kind != "Any" {
-            addError(checker, node.id, "len() requires array or string")
-          }
-        }
-      } else if builtinName == "nameOf" {
-        // nameOf() requires enum as first arg
-        if len(argTypes) >= 1 {
-          let argD = deref(checker, argTypes[0])
-          if argD.kind and argD.kind != "Enum" and argD.kind != "TypeVar" and argD.kind != "Any" {
-            addError(checker, node.id, "nameOf() requires enum")
-          } else if argD.kind == "Enum" and len(argTypes) >= 2 {
-            // Check value type matches enum values
-            let valueD = deref(checker, argTypes[1])
-            if valueD.kind and valueD.kind != "TypeVar" and valueD.kind != "Any" {
-              // Check if enum values are all numbers or all strings
-              let enumFields = argD.fields or .{}
-              let enumValueKind = nil
-              for k in keys(enumFields) {
-                let v = enumFields[k]
-                if type(v) == "number" { enumValueKind = "Number" }
-                else if type(v) == "string" { enumValueKind = "String" }
-                break
-              }
-              if enumValueKind and valueD.kind != enumValueKind {
-                addError(checker, node.id, "nameOf() value mismatch")
-              }
-            }
-          }
-        }
+      // Apply builtin validation rules (for len, nameOf, etc.)
+      if calleeD.builtinName {
+        rulesModule.applyBuiltinRules(
+          checker, node, calleeD.builtinName, argTypes, args, addError, envBind, unwrapGroupings, "validate"
+        )
       }
 
       // Constrain argument types (contravariant)
@@ -694,7 +548,7 @@ fn synthHashmap(checker, node) {
       hasError = true
     }
 
-    let valueType = inExpressionPosition(checker, valueNode)
+    let valueType = synthExpr(checker, valueNode)
     if fieldKey != nil {
       fields[fieldKey] = valueType
     }
@@ -712,105 +566,17 @@ fn synthHashmap(checker, node) {
 }
 
 // Field access (dot)
+// Delegates to rule-based dispatch in rules.lx
 fn synthDot(checker, node) {
   let objType = synthExpr(checker, node.object)
   let propNode = node.property
   let fieldName = propNode.value or propNode.name or propNode
 
-  // Fresh result type
-  let resultType = freshTypeVar(checker)
+  // Apply dot rules to determine result type
+  let resultType = rulesModule.applyDotRules(checker, node, objType, fieldName, addError)
 
-  let objD = deref(checker, objType)
-
-  // Handle Option types - field access on optional yields optional result
-  // Unwrap nested Options (Option[Option[T]].field → Option[fieldType])
-  if objD.kind == "Option" {
-    // Unwrap through nested Options
-    let innerType = objD.value
-    let innerD = deref(checker, innerType)
-    for innerD.kind == "Option" {
-      innerType = innerD.value
-      innerD = deref(checker, innerType)
-    }
-
-    // Create constraint on inner type
-    let innerResult = freshTypeVar(checker)
-    let requiredRecord = typeRecord(.{ [fieldName]: innerResult })
-
-    if innerD.kind == "Record" {
-      let fieldType = innerD.fields and innerD.fields[fieldName]
-      if !fieldType {
-        addError(checker, node.id, "Missing field: " + fieldName)
-        checker.types[node.id] = typeAny()
-        return typeAny()
-      }
-      let optResult = typeOption(fieldType)
-      checker.types[node.id] = optResult
-      return optResult
-    } else if innerD.kind == "TypeVar" {
-      // Defer resolution - constrain inner to have the field
-      constrain(checker, innerType, requiredRecord)
-      let optResult = typeOption(innerResult)
-      checker.types[node.id] = optResult
-      return optResult
-    } else if innerD.kind == "Any" {
-      // Any can have any field - return optional Any
-      let optResult = typeOption(typeAny())
-      checker.types[node.id] = optResult
-      return optResult
-    } else {
-      addError(checker, node.id, "Cannot access field on optional non-record")
-      checker.types[node.id] = typeAny()
-      return typeAny()
-    }
-  }
-
-  // Enum member access - returns Number
-  if objD.kind == "Enum" {
-    // Enum fields map member names to their numeric values
-    if objD.fields and objD.fields[fieldName] != nil {
-      let t = typeNumber()
-      checker.types[node.id] = t
-      return t
-    }
-    addError(checker, node.id, "Unknown enum member: " + fieldName)
-    checker.types[node.id] = typeAny()
-    return typeAny()
-  }
-
-  // Regular record access
-  if objD.kind == "Record" {
-    let fieldType = objD.fields and objD.fields[fieldName]
-    if !fieldType {
-      addError(checker, node.id, "Missing field: " + fieldName)
-      checker.types[node.id] = typeAny()
-      return typeAny()
-    }
-    checker.types[node.id] = fieldType
-    return fieldType
-  }
-
-  if objD.kind == "TypeVar" {
-    // Error if it's an uninitialized local (nil at runtime)
-    if objD.uninitializedLocal {
-      addError(checker, node.id, "Cannot access field on nil value")
-      checker.types[node.id] = typeAny()
-      return typeAny()
-    }
-    // Constrain: objType <: Record({ fieldName: resultType })
-    let requiredRecord = typeRecord(.{ [fieldName]: resultType })
-    constrain(checker, objType, requiredRecord)
-    checker.types[node.id] = resultType
-    return resultType
-  }
-
-  // Non-record, non-TypeVar - error
-  if objD.kind != "Any" {
-    addError(checker, node.id,
-      "Cannot access field on type " + prettyType(checker, objType))
-  }
-  checker.types[node.id] = typeAny()
-  typeAny()
+  checker.types[node.id] = resultType
+  resultType
 }
 
 // If expression
@@ -830,7 +596,8 @@ fn synthIf(checker, node) {
 
     // Check for branch mismatch (incompatible concrete types)
     // Skip if in statement position - result is discarded anyway
-    if !checker.inStatementPosition {
+    let inStmtPos = checker.facts and checker.facts.stmtPosition[node.id]
+    if !inStmtPos {
       if thenD.kind != "TypeVar" and elseD.kind != "TypeVar" and
          thenD.kind != "Any" and elseD.kind != "Any" and
          thenD.kind != "Nil" and elseD.kind != "Nil" {
@@ -883,7 +650,7 @@ fn synthArray(checker, node) {
   // Non-empty: unify all elements
   let elemType = freshTypeVar(checker)
   for elem in elems {
-    let et = inExpressionPosition(checker, elem)
+    let et = synthExpr(checker, elem)
     constrain(checker, et, elemType)
   }
 
@@ -1035,29 +802,19 @@ fn synthLogical(checker, node) {
   leftType
 }
 
-// Check if an expression is a nil guard and return the guarded identifier
-fn tryGetNilGuard(checker, expr) {
-  let unwrapped = unwrapGroupings(expr)
-  if unwrapped.type == NODE.ExprStmt { unwrapped = unwrapGroupings(unwrapped.expr) }
-
-  if unwrapped.type == NODE.If and !unwrapped.else {
-    let guardedId = isNilGuard(unwrapped.condition)
-    if guardedId and branchAlwaysReturns(unwrapped.then) {
-      return guardedId
-    }
-  }
-  nil
-}
-
 // Block expression
+// Uses refinement overlay for nil-guard narrowing:
+// - refinements: declId -> { original, narrowed } mapping
+// - Closures see original env (not narrowed)
+// - Other expressions see narrowed env
+// - Refinements don't leak out of block scope
 fn synthBlock(checker, node) {
   let exprs = node.expressions or []
   let lastType = typeNil()
 
-  // Save original env for restoration (narrowing is block-scoped)
-  let savedEnv = .{}
-  let narrowedEnv = .{}  // Store narrowed types to preserve constraints across closures
-  let narrowedIds = []
+  // Refinement overlay: declId -> { original: Type, narrowed: Type }
+  let refinements = .{}
+  let refinementKeys = []  // Track keys in order for iteration
 
   for let i = 0; i < len(exprs); i = i + 1 {
     let expr = exprs[i]
@@ -1065,80 +822,57 @@ fn synthBlock(checker, node) {
     // For closures, temporarily restore original bindings (closures should not see narrowed types)
     let unwrappedExpr = unwrapGroupings(expr)
     let isClosure = unwrappedExpr.type == NODE.Function
-    if isClosure and len(narrowedIds) > 0 {
-      for declId in narrowedIds {
-        envBind(checker, declId, savedEnv[declId])
+    if isClosure and len(refinementKeys) > 0 {
+      for declId in refinementKeys {
+        envBind(checker, declId, refinements[declId].original)
       }
     }
-
-    // Track statement position: non-last expressions have their result discarded
-    let savedStatementPos = checker.inStatementPosition
-    let isLast = i == len(exprs) - 1
-    if !isLast {
-      checker.inStatementPosition = true
-    }
-    // Last expression inherits outer statement position
 
     // Synthesize current expression
     lastType = synthExpr(checker, expr)
 
-    // Restore statement position
-    checker.inStatementPosition = savedStatementPos
-
     // Re-apply narrowing after closure synthesis (restore same narrowed TypeVar to preserve constraints)
-    if isClosure and len(narrowedIds) > 0 {
-      for declId in narrowedIds {
-        envBind(checker, declId, narrowedEnv[declId])
+    if isClosure and len(refinementKeys) > 0 {
+      for declId in refinementKeys {
+        envBind(checker, declId, refinements[declId].narrowed)
       }
     }
 
-    // Check if this expression is a nil guard - narrow for subsequent expressions
-    // Only narrow if the type is optional (has Nil evidence)
-    let guardedId = tryGetNilGuard(checker, expr)
-    if guardedId {
-      let binding = checker.resolvedNames[guardedId.id]
-      if binding and binding.declaredAt {
-        let declId = binding.declaredAt
-        let currentType = envLookup(checker, declId)
-        if currentType and isOptionalish(checker, currentType) {
-          // Save original for restoration
-          if !savedEnv[declId] {
-            savedEnv[declId] = currentType
-            push(narrowedIds, declId)
-          }
+    // Apply refinement from pre-computed facts (not inline detection)
+    let guard = checker.facts and checker.facts.nilGuardReturn[expr.id]
+    if guard and i < len(exprs) - 1 {
+      let declId = guard.declId
+      let currentType = envLookup(checker, declId)
+      if currentType and isOptionalish(checker, currentType) and !refinements[declId] {
+        // Create a fresh TypeVar for the narrowed (non-nil) version
+        let narrowedTV = freshTypeVar(checker)
 
-          // Create a fresh TypeVar for the narrowed (non-nil) version
-          // The original TypeVar may be Option[T], we want just T
-          let narrowedTV = freshTypeVar(checker)
+        // Constrain: narrowed <: original
+        // This shares upper bounds: if original <: Number, then narrowed <: Number
+        constrain(checker, narrowedTV, currentType)
 
-          // Constrain: narrowed <: original
-          // This shares upper bounds: if original <: Number, then narrowed <: Number
-          constrain(checker, narrowedTV, currentType)
-
-          // Link narrowed back to original so lower bounds propagate
-          // When Bool <: original, we want Bool <: narrowed too (except Nil)
-          let currentD = deref(checker, currentType)
-          if currentD.kind == "TypeVar" {
-            // Track that narrowedTV is the nil-stripped version of currentType
-            // Store this relationship for constraint propagation
-            narrowedTV.narrowedFrom = currentType
-            currentType.narrowedTo = currentType.narrowedTo or []
-            push(currentType.narrowedTo, narrowedTV)
-          }
-
-          // Store narrowed type for restoration after closures
-          narrowedEnv[declId] = narrowedTV
-
-          // Use narrowed type for subsequent lookups
-          envBind(checker, declId, narrowedTV)
+        // Link narrowed back to original so lower bounds propagate
+        // When Bool <: original, we want Bool <: narrowed too (except Nil)
+        let currentD = deref(checker, currentType)
+        if currentD.kind == "TypeVar" {
+          narrowedTV.narrowedFrom = currentType
+          currentType.narrowedTo = currentType.narrowedTo or []
+          push(currentType.narrowedTo, narrowedTV)
         }
+
+        // Store in refinement overlay
+        refinements[declId] = .{ original: currentType, narrowed: narrowedTV }
+        push(refinementKeys, declId)
+
+        // Use narrowed type for subsequent lookups
+        envBind(checker, declId, narrowedTV)
       }
     }
   }
 
   // Restore original env (don't leak narrowing out of block)
-  for declId in narrowedIds {
-    envBind(checker, declId, savedEnv[declId])
+  for declId in refinementKeys {
+    envBind(checker, declId, refinements[declId].original)
   }
 
   checker.types[node.id] = lastType
@@ -1193,7 +927,7 @@ fn synthCollect(checker, node) {
 
   let bodyType = typeAny()
   if node.body {
-    bodyType = inExpressionPosition(checker, node.body)
+    bodyType = synthExpr(checker, node.body)
   }
 
   let t = typeArray(bodyType)
@@ -1218,7 +952,7 @@ fn synthCollectIn(checker, node) {
 
   let bodyType = typeAny()
   if node.body {
-    bodyType = inExpressionPosition(checker, node.body)
+    bodyType = synthExpr(checker, node.body)
   }
 
   let t = typeArray(bodyType)
@@ -1244,7 +978,7 @@ fn synthReturn(checker, node) {
 
 // Assignment
 fn synthAssignment(checker, node) {
-  let valueType = inExpressionPosition(checker, node.value)
+  let valueType = synthExpr(checker, node.value)
 
   // Special handling for dot assignment (closed record model)
   if node.target.type == NODE.Dot {
@@ -1326,24 +1060,22 @@ fn synthAssignment(checker, node) {
     }
 
     // Try to get the constant key value
-    let keyValue = nil
-    let indexExpr = indexNode.index
+    // First check pre-computed facts for simple literals
+    let keyValue = checker.facts and checker.facts.literalKeyValue[indexNode.id]
 
-    // Unwrap groupings
-    let unwrappedIndex = unwrapGroupings(indexExpr)
-    if unwrappedIndex.type == NODE.Number {
-      keyValue = unwrappedIndex.value
-    } else if unwrappedIndex.type == NODE.String {
-      keyValue = unwrappedIndex.value
-    } else if unwrappedIndex.type == NODE.Dot {
-      // Check if it's an enum member access
-      let objIndexType = checker.types[unwrappedIndex.object.id]
-      let objIndexD = objIndexType and deref(checker, objIndexType)
-      if objIndexD and objIndexD.kind == "Enum" and objIndexD.fields {
-        let memberName = unwrappedIndex.property.value or unwrappedIndex.property.name
-        let memberValue = objIndexD.fields[memberName]
-        if memberValue != nil {
-          keyValue = memberValue
+    // If not found in facts, try enum member access (needs type info)
+    if keyValue == nil {
+      let unwrappedIndex = unwrapGroupings(indexNode.index)
+      if unwrappedIndex.type == NODE.Dot {
+        // Check if it's an enum member access
+        let objIndexType = checker.types[unwrappedIndex.object.id]
+        let objIndexD = objIndexType and deref(checker, objIndexType)
+        if objIndexD and objIndexD.kind == "Enum" and objIndexD.fields {
+          let memberName = unwrappedIndex.property.value or unwrappedIndex.property.name
+          let memberValue = objIndexD.fields[memberName]
+          if memberValue != nil {
+            keyValue = memberValue
+          }
         }
       }
     }
@@ -1485,15 +1217,8 @@ fn synthIndex(checker, node) {
     return objD.elem
   } else if objD.kind == "Record" {
     // Record indexing with constant key
-    let indexNode = node.index
-
-    // Try to get the constant key value
-    let keyValue = nil
-    if indexNode.type == NODE.Number {
-      keyValue = indexNode.value
-    } else if indexNode.type == NODE.String {
-      keyValue = indexNode.value
-    }
+    // Use pre-computed facts for literal keys
+    let keyValue = checker.facts and checker.facts.literalKeyValue[node.id]
 
     if keyValue != nil and objD.fields {
       let fieldType = objD.fields[keyValue]
@@ -1619,8 +1344,8 @@ fn synthIntrinsicCall(checker, node) {
   if node.intrinsic == "array_push" or node.intrinsic == "array_append" {
     // array_push/array_append(arr, elem) - constrain elem to array's element type
     if len(args) >= 2 {
-      let arrType = inExpressionPosition(checker, args[0])
-      let elemType = inExpressionPosition(checker, args[1])
+      let arrType = synthExpr(checker, args[0])
+      let elemType = synthExpr(checker, args[1])
       let arrD = deref(checker, arrType)
       if arrD.kind == "Array" {
         constrain(checker, elemType, arrD.elem)
@@ -1636,7 +1361,7 @@ fn synthIntrinsicCall(checker, node) {
 
   // Default: synthesize args and return Any
   for arg in args {
-    inExpressionPosition(checker, arg)
+    synthExpr(checker, arg)
   }
 
   let t = typeAny()
@@ -1715,8 +1440,12 @@ fn typecheck(ast, resolveResult, opts) {
     }
   }
 
+  // Phase 1: Compute facts (pre-computed static properties)
+  let facts = computeFacts(ast, resolveResult)
+
   // Create checker with data from other passes
   let checker = makeChecker(resolveResult, opts)
+  checker.facts = facts  // Store facts in checker for access during synthesis
 
   // Traverse the AST
   synthExpr(checker, ast)

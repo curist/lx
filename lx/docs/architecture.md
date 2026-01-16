@@ -86,7 +86,10 @@ src/passes/
     dce.lx
     fastcheck.lx
     typecheck.lx
-    typecheck-helper.lx
+    typecheck/
+      facts.lx
+      helpers.lx
+      rules.lx
   emit/
     codegen.lx
   verify/

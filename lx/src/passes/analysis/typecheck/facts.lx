@@ -1,0 +1,270 @@
+// ========================================================
+// Fact Extraction for Type Checking
+// ========================================================
+// Pre-computes static properties of AST nodes in a single traversal.
+// These facts are consumed by the type checker's rule application phase.
+
+let .{ NODE } = import "src/types.lx"
+
+// ========================================================
+// AST Utilities
+// ========================================================
+
+// Unwrap Grouping nodes to get the inner expression
+fn unwrapGroupings(node) {
+  for node and node.type == NODE.Grouping {
+    node = node.expression
+  }
+  node
+}
+
+// Check if a condition is a nil guard pattern (!x)
+// Returns the identifier node if it matches, nil otherwise
+fn isNilGuard(condition) {
+  let node = unwrapGroupings(condition)
+  if !node { return nil }
+
+  // Check for !x pattern
+  if node.type == NODE.Unary {
+    let op = node.operator and node.operator.lexeme or ""
+    if op == "!" {
+      let operand = unwrapGroupings(node.operand)
+      if operand and operand.type == NODE.Identifier {
+        return operand
+      }
+    }
+  }
+
+  nil
+}
+
+// Check if a branch always returns (never falls through)
+fn branchAlwaysReturns(node) {
+  if !node { return false }
+
+  let unwrapped = unwrapGroupings(node)
+
+  // Direct return
+  if unwrapped.type == NODE.Return { return true }
+
+  // Block whose last expression is return
+  if unwrapped.type == NODE.Block {
+    let exprs = unwrapped.expressions or []
+    if len(exprs) > 0 {
+      return branchAlwaysReturns(exprs[len(exprs) - 1])
+    }
+    return false
+  }
+
+  // ExprStmt wrapping a return
+  if unwrapped.type == NODE.ExprStmt {
+    return branchAlwaysReturns(unwrapped.expr)
+  }
+
+  // If where both branches return
+  if unwrapped.type == NODE.If and unwrapped.else {
+    return branchAlwaysReturns(unwrapped.then) and branchAlwaysReturns(unwrapped.else)
+  }
+
+  false
+}
+
+// ========================================================
+// Fact Structures
+// ========================================================
+
+fn makeFacts() {
+  .{
+    // nodeId -> Bool: whether expression result is discarded
+    stmtPosition: .{},
+
+    // nodeId -> Bool: whether a branch always returns
+    alwaysReturns: .{},
+
+    // nodeId -> { guardedId: nodeId, identNode: node } or nil
+    // For expressions that are nil guard patterns (if !x { return })
+    nilGuardReturn: .{},
+
+    // nodeId -> literal value (String, Number, or enum member value)
+    // For index expressions with constant keys
+    literalKeyValue: .{},
+  }
+}
+
+// ========================================================
+// Fact Computation
+// ========================================================
+
+// Compute facts for an AST node and its children
+fn computeFactsForNode(node, facts, resolveResult, ctx) {
+  if !node { return }
+
+  let isStmtPos = ctx.inStmtPosition or false
+
+  // Record statement position for this node
+  if isStmtPos {
+    facts.stmtPosition[node.id] = true
+  }
+
+  // Compute alwaysReturns for If nodes with else branch
+  if node.type == NODE.If and node.else {
+    facts.alwaysReturns[node.id] = branchAlwaysReturns(node.then) and branchAlwaysReturns(node.else)
+  } else if node.type == NODE.Return {
+    facts.alwaysReturns[node.id] = true
+  } else if node.type == NODE.Block {
+    let exprs = node.expressions or []
+    if len(exprs) > 0 {
+      facts.alwaysReturns[node.id] = branchAlwaysReturns(exprs[len(exprs) - 1])
+    }
+  }
+
+  // Check for nil guard pattern in blocks
+  if node.type == NODE.Block {
+    let exprs = node.expressions or []
+    for let i = 0; i < len(exprs); i = i + 1 {
+      let expr = exprs[i]
+      let unwrapped = unwrapGroupings(expr)
+      if unwrapped.type == NODE.ExprStmt {
+        unwrapped = unwrapGroupings(unwrapped.expr)
+      }
+
+      // Check if this is a nil guard: if !x { return }
+      if unwrapped.type == NODE.If and !unwrapped.else {
+        let guardedId = isNilGuard(unwrapped.condition)
+        if guardedId and branchAlwaysReturns(unwrapped.then) {
+          // This expression is a nil guard - record for narrowing
+          let binding = resolveResult.resolvedNames[guardedId.id]
+          if binding and binding.declaredAt {
+            facts.nilGuardReturn[expr.id] = .{
+              guardedId: guardedId.id,
+              declId: binding.declaredAt,
+              identNode: guardedId,
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Compute literal key values for Index nodes
+  if node.type == NODE.Index {
+    let indexExpr = unwrapGroupings(node.index)
+    if indexExpr {
+      if indexExpr.type == NODE.Number {
+        facts.literalKeyValue[node.id] = indexExpr.value
+      } else if indexExpr.type == NODE.String {
+        facts.literalKeyValue[node.id] = indexExpr.value
+      }
+      // Enum member access handled during type synthesis (needs type info)
+    }
+  }
+
+  // Recurse into children with appropriate context
+  if node.type == NODE.Block {
+    let exprs = node.expressions or []
+    for let i = 0; i < len(exprs); i = i + 1 {
+      let isLast = i == len(exprs) - 1
+      // Non-last expressions in blocks are in statement position
+      let childCtx = .{
+        inStmtPosition: !isLast or isStmtPos,
+      }
+      computeFactsForNode(exprs[i], facts, resolveResult, childCtx)
+    }
+  } else if node.type == NODE.ExprStmt {
+    computeFactsForNode(node.expr, facts, resolveResult, ctx)
+  } else if node.type == NODE.Let {
+    // Initializer is in expression position (result is used)
+    computeFactsForNode(node.init, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.Function {
+    // Function body: last expression is in expression position
+    computeFactsForNode(node.body, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.If {
+    computeFactsForNode(node.condition, facts, resolveResult, .{ inStmtPosition: false })
+    // Branches inherit statement position from parent
+    computeFactsForNode(node.then, facts, resolveResult, ctx)
+    if node.else {
+      computeFactsForNode(node.else, facts, resolveResult, ctx)
+    }
+  } else if node.type == NODE.For or node.type == NODE.ForIn {
+    // For loop parts
+    computeFactsForNode(node.init, facts, resolveResult, .{ inStmtPosition: true })
+    computeFactsForNode(node.condition, facts, resolveResult, .{ inStmtPosition: false })
+    computeFactsForNode(node.update, facts, resolveResult, .{ inStmtPosition: true })
+    computeFactsForNode(node.iterable, facts, resolveResult, .{ inStmtPosition: false })
+    computeFactsForNode(node.body, facts, resolveResult, .{ inStmtPosition: true })
+  } else if node.type == NODE.Collect or node.type == NODE.CollectIn {
+    // Collect body is in expression position (contributes to array)
+    computeFactsForNode(node.init, facts, resolveResult, .{ inStmtPosition: true })
+    computeFactsForNode(node.condition, facts, resolveResult, .{ inStmtPosition: false })
+    computeFactsForNode(node.update, facts, resolveResult, .{ inStmtPosition: true })
+    computeFactsForNode(node.iterable, facts, resolveResult, .{ inStmtPosition: false })
+    computeFactsForNode(node.body, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.Call {
+    computeFactsForNode(node.callee, facts, resolveResult, .{ inStmtPosition: false })
+    let args = node.args or []
+    for arg in args {
+      computeFactsForNode(arg, facts, resolveResult, .{ inStmtPosition: false })
+    }
+  } else if node.type == NODE.Binary or node.type == NODE.Logical {
+    computeFactsForNode(node.left, facts, resolveResult, .{ inStmtPosition: false })
+    computeFactsForNode(node.right, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.Unary {
+    computeFactsForNode(node.operand, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.Assignment {
+    computeFactsForNode(node.target, facts, resolveResult, .{ inStmtPosition: false })
+    computeFactsForNode(node.value, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.Index {
+    computeFactsForNode(node.object, facts, resolveResult, .{ inStmtPosition: false })
+    computeFactsForNode(node.index, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.Dot {
+    computeFactsForNode(node.object, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.Array {
+    let elems = node.elements or []
+    for elem in elems {
+      computeFactsForNode(elem, facts, resolveResult, .{ inStmtPosition: false })
+    }
+  } else if node.type == NODE.Hashmap {
+    let pairs = node.pairs or []
+    for pair in pairs {
+      computeFactsForNode(pair.key, facts, resolveResult, .{ inStmtPosition: false })
+      computeFactsForNode(pair.value, facts, resolveResult, .{ inStmtPosition: false })
+    }
+  } else if node.type == NODE.Return {
+    computeFactsForNode(node.value, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.Grouping {
+    computeFactsForNode(node.expression, facts, resolveResult, ctx)
+  } else if node.type == NODE.Arrow {
+    computeFactsForNode(node.left, facts, resolveResult, .{ inStmtPosition: false })
+    computeFactsForNode(node.right, facts, resolveResult, .{ inStmtPosition: false })
+  } else if node.type == NODE.IntrinsicCall {
+    let args = node.args or []
+    for arg in args {
+      computeFactsForNode(arg, facts, resolveResult, .{ inStmtPosition: false })
+    }
+  }
+}
+
+// Main entry point: compute all facts for an AST
+fn computeFacts(ast, resolveResult) {
+  let facts = makeFacts()
+
+  // Start with expression position (top-level result is used as module export)
+  computeFactsForNode(ast, facts, resolveResult, .{ inStmtPosition: false })
+
+  facts
+}
+
+// ========================================================
+// Exports
+// ========================================================
+
+.{
+  // Core functions
+  computeFacts,
+  makeFacts,
+
+  // Utilities (exported for use in typecheck.lx)
+  unwrapGroupings,
+  isNilGuard,
+  branchAlwaysReturns,
+}

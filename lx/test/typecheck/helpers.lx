@@ -4,7 +4,7 @@ let parse = import "src/passes/parse/parser.lx"
 let lower = import "src/passes/transform/lower.lx"
 let resolve = import "src/passes/analysis/resolve.lx"
 let typecheck = import "src/passes/analysis/typecheck.lx"
-let typecheckHelper = import "src/passes/analysis/typecheck-helper.lx"
+let typecheckHelper = import "src/passes/analysis/typecheck/helpers.lx"
 let types = import "src/types.lx"
 
 let NODE = types.NODE

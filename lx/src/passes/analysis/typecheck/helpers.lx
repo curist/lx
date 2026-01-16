@@ -908,7 +908,7 @@ fn builtinTypeByName(checker, name) {
 
   // Check parametric table (O(1) lookup + function call)
   if let parametricFn = PARAMETRIC_BUILTIN_TYPES[name] {
-    return parametricFn(checker) 
+    return parametricFn(checker)
   }
 
   nil

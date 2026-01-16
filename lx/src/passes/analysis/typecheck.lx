@@ -176,6 +176,33 @@ fn cloneType(checker, t, memo) {
   }
 }
 
+fn recordLiteralValues(node) {
+  if !node or node.type != NODE.Hashmap { return nil }
+  let pairs = node.pairs or []
+  let values = .{}
+  for pair in pairs {
+    let keyNode = unwrapGroupings(pair.key)
+    let valueNode = unwrapGroupings(pair.value)
+    let key = nil
+    if keyNode and keyNode.type == NODE.String {
+      key = keyNode.value
+    } else if keyNode and keyNode.type == NODE.Number {
+      key = keyNode.value
+    } else {
+      return nil
+    }
+    if !valueNode { return nil }
+    if valueNode.type == NODE.String {
+      values[key] = valueNode.value
+    } else if valueNode.type == NODE.Number {
+      values[key] = valueNode.value
+    } else {
+      return nil
+    }
+  }
+  values
+}
+
 // ========================================================
 // Checker State
 // ========================================================
@@ -187,6 +214,7 @@ fn makeChecker(resolveResult, opts = .{}) {
     resolvedNames: resolveResult.resolvedNames,  // Identifier -> binding info
     enumInfo: opts.enumInfo or .{},              // Node ID -> enum metadata
     program: opts.program,                       // Program-level context
+    recordValueBindings: .{},                    // declId -> { fieldName: literalValue }
 
     // === Result accumulation ===
     types: .{},                                  // Node ID -> inferred type
@@ -312,6 +340,16 @@ fn synthLet(checker, node) {
     if declId {
       envBind(checker, declId, initType)
       checker.types[node.name.id] = initType
+      let literalMap = recordLiteralValues(node.init)
+      if literalMap {
+        checker.recordValueBindings[declId] = literalMap
+      } else if node.init.type == NODE.Identifier {
+        let binding = checker.resolvedNames[node.init.id]
+        if binding and binding.declaredAt {
+          let bound = checker.recordValueBindings[binding.declaredAt]
+          if bound { checker.recordValueBindings[declId] = bound }
+        }
+      }
     }
     checker.types[node.id] = initType
     return initType
@@ -601,6 +639,23 @@ fn synthHashmap(checker, node) {
             member: memberName,
             enumName: unwrappedKey.object.name,
           })
+        }
+      }
+      // Also allow computed key from a record literal with string/number values
+      if !isLiteralKey {
+        let baseObj = unwrapGroupings(unwrappedKey.object)
+        if baseObj and baseObj.type == NODE.Identifier {
+          let binding = checker.resolvedNames[baseObj.id]
+          if binding and binding.declaredAt {
+            let recordValues = checker.recordValueBindings[binding.declaredAt]
+            if recordValues {
+              let memberName = unwrappedKey.property.value or unwrappedKey.property.name
+              if memberName and recordValues[memberName] != nil {
+                fieldKey = recordValues[memberName]
+                isLiteralKey = true
+              }
+            }
+          }
         }
       }
       // If not an enum member access, reject it

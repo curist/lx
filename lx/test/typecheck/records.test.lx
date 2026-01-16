@@ -87,6 +87,13 @@ fn register(test) {
     let result = parseAndTypecheck("{ let x\nx.a = 1 }")
     assert.truthy(hasError(result, "Missing field: a"))
   })
+
+  test("typecheck - computed key from record literal value is allowed", fn(assert) {
+    let result = parseAndTypecheck("{ let Keys = .{ A: \"a\" }\nlet r = .{ [Keys.A]: 1 }\nr.a }")
+    assert.truthy(!hasError(result, "Record literal computed key must be a literal string, number, or enum member."))
+    let t = deref(result, getExprType(result, 2))
+    assert.equal(t.kind, "Number")
+  })
 }
 
 .{ register }

@@ -229,6 +229,9 @@ fn makeChecker(resolveResult, opts = .{}) {
     // === Environment ===
     env: .{},                                    // declNodeId -> type (for locals/upvalues)
     currentReturn: nil,                          // Current function's return type var
+
+    // === Statement position tracking ===
+    inStatementPosition: false,                  // True when expression result is discarded
   }
 }
 
@@ -255,6 +258,29 @@ fn envLookup(checker, declNodeId) {
 
 fn envBind(checker, declNodeId, t) {
   checker.env[declNodeId] = t
+}
+
+// ========================================================
+// Statement Position Tracking
+// ========================================================
+//
+// inStatementPosition tracks whether an expression's result is discarded.
+// When true, we skip certain checks like branch type matching in if-else,
+// since mismatched types don't matter if the value isn't used.
+//
+// Key rules:
+// - Default is false (expression position - result is used)
+// - Set to true for non-last expressions in blocks
+// - Reset to false when entering contexts where values ARE used:
+//   let initializers, function bodies, call arguments, array elements,
+//   hashmap values, assignment RHS, collect bodies, etc.
+
+fn inExpressionPosition(checker, node) {
+  let saved = checker.inStatementPosition
+  checker.inStatementPosition = false
+  let result = synthExpr(checker, node)
+  checker.inStatementPosition = saved
+  result
 }
 
 // ========================================================
@@ -321,7 +347,7 @@ fn synthLet(checker, node) {
   let declId = node.name and node.name.id
 
   if node.init {
-    let initType = synthExpr(checker, node.init)
+    let initType = inExpressionPosition(checker, node.init)
     let initD = deref(checker, initType)
 
     // Special handling for nil init: create a TypeVar with Nil as lower bound
@@ -416,7 +442,7 @@ fn synthFunction(checker, node) {
   // Synthesize body
   let bodyType = typeNil()
   if node.body {
-    bodyType = synthExpr(checker, node.body)
+    bodyType = inExpressionPosition(checker, node.body)
     // Body type constrains return type
     constrain(checker, bodyType, retType)
   }
@@ -430,11 +456,8 @@ fn synthCall(checker, node) {
   let calleeType = synthExpr(checker, node.callee)
   let args = node.args or []
 
-  // Synthesize argument types
-  let argTypes = []
-  for arg in args {
-    push(argTypes, synthExpr(checker, arg))
-  }
+  // Synthesize argument types (arguments are always used)
+  let argTypes = collect arg in args { inExpressionPosition(checker, arg) }
 
   // Fresh result type
   let resultType = freshTypeVar(checker)
@@ -671,7 +694,7 @@ fn synthHashmap(checker, node) {
       hasError = true
     }
 
-    let valueType = synthExpr(checker, valueNode)
+    let valueType = inExpressionPosition(checker, valueNode)
     if fieldKey != nil {
       fields[fieldKey] = valueType
     }
@@ -806,14 +829,17 @@ fn synthIf(checker, node) {
     let elseD = deref(checker, elseType)
 
     // Check for branch mismatch (incompatible concrete types)
-    if thenD.kind != "TypeVar" and elseD.kind != "TypeVar" and
-       thenD.kind != "Any" and elseD.kind != "Any" and
-       thenD.kind != "Nil" and elseD.kind != "Nil" {
-      // Both are concrete non-nil types - check compatibility
-      if thenD.kind != elseD.kind {
-        addError(checker, node.id, "Branch mismatch")
-        checker.types[node.id] = typeAny()
-        return typeAny()
+    // Skip if in statement position - result is discarded anyway
+    if !checker.inStatementPosition {
+      if thenD.kind != "TypeVar" and elseD.kind != "TypeVar" and
+         thenD.kind != "Any" and elseD.kind != "Any" and
+         thenD.kind != "Nil" and elseD.kind != "Nil" {
+        // Both are concrete non-nil types - check compatibility
+        if thenD.kind != elseD.kind {
+          addError(checker, node.id, "Branch mismatch")
+          checker.types[node.id] = typeAny()
+          return typeAny()
+        }
       }
     }
 
@@ -857,7 +883,7 @@ fn synthArray(checker, node) {
   // Non-empty: unify all elements
   let elemType = freshTypeVar(checker)
   for elem in elems {
-    let et = synthExpr(checker, elem)
+    let et = inExpressionPosition(checker, elem)
     constrain(checker, et, elemType)
   }
 
@@ -1045,8 +1071,19 @@ fn synthBlock(checker, node) {
       }
     }
 
+    // Track statement position: non-last expressions have their result discarded
+    let savedStatementPos = checker.inStatementPosition
+    let isLast = i == len(exprs) - 1
+    if !isLast {
+      checker.inStatementPosition = true
+    }
+    // Last expression inherits outer statement position
+
     // Synthesize current expression
     lastType = synthExpr(checker, expr)
+
+    // Restore statement position
+    checker.inStatementPosition = savedStatementPos
 
     // Re-apply narrowing after closure synthesis (restore same narrowed TypeVar to preserve constraints)
     if isClosure and len(narrowedIds) > 0 {
@@ -1155,7 +1192,9 @@ fn synthCollect(checker, node) {
   if node.update { synthExpr(checker, node.update) }
 
   let bodyType = typeAny()
-  if node.body { bodyType = synthExpr(checker, node.body) }
+  if node.body {
+    bodyType = inExpressionPosition(checker, node.body)
+  }
 
   let t = typeArray(bodyType)
   checker.types[node.id] = t
@@ -1178,7 +1217,9 @@ fn synthCollectIn(checker, node) {
   }
 
   let bodyType = typeAny()
-  if node.body { bodyType = synthExpr(checker, node.body) }
+  if node.body {
+    bodyType = inExpressionPosition(checker, node.body)
+  }
 
   let t = typeArray(bodyType)
   checker.types[node.id] = t
@@ -1203,7 +1244,7 @@ fn synthReturn(checker, node) {
 
 // Assignment
 fn synthAssignment(checker, node) {
-  let valueType = synthExpr(checker, node.value)
+  let valueType = inExpressionPosition(checker, node.value)
 
   // Special handling for dot assignment (closed record model)
   if node.target.type == NODE.Dot {
@@ -1578,8 +1619,8 @@ fn synthIntrinsicCall(checker, node) {
   if node.intrinsic == "array_push" or node.intrinsic == "array_append" {
     // array_push/array_append(arr, elem) - constrain elem to array's element type
     if len(args) >= 2 {
-      let arrType = synthExpr(checker, args[0])
-      let elemType = synthExpr(checker, args[1])
+      let arrType = inExpressionPosition(checker, args[0])
+      let elemType = inExpressionPosition(checker, args[1])
       let arrD = deref(checker, arrType)
       if arrD.kind == "Array" {
         constrain(checker, elemType, arrD.elem)
@@ -1595,7 +1636,7 @@ fn synthIntrinsicCall(checker, node) {
 
   // Default: synthesize args and return Any
   for arg in args {
-    synthExpr(checker, arg)
+    inExpressionPosition(checker, arg)
   }
 
   let t = typeAny()

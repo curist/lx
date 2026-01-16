@@ -171,6 +171,126 @@ fn register(test) {
     }")
     assert.truthy(result.success)
   })
+
+  // Statement position tests - if-else used for side effects only
+  test("typecheck - if-else in statement position allows mismatched branches", fn(assert) {
+    // When if-else result is discarded (not last expression), branches can have different types
+    let result = parseAndTypecheck("{
+      let x = true
+      if x { 1 } else { \"string\" }
+      42
+    }")
+    // Should succeed - the if-else is in statement position, result discarded
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - if-else in expression position still requires matching branches", fn(assert) {
+    // When if-else is the last expression (return value), branches must match
+    let result = parseAndTypecheck("{
+      let x = true
+      if x { 1 } else { \"string\" }
+    }")
+    // Should fail - the if-else is in expression position (last expr in block)
+    assert.truthy(hasError(result, "Branch mismatch"))
+  })
+
+  test("typecheck - if-else-if chain in statement position allows mismatched branches", fn(assert) {
+    // Chained if-else with different types in each branch, result discarded
+    let result = parseAndTypecheck("{
+      let x = 1
+      if x == 1 {
+        \"one\"
+      } else if x == 2 {
+        2
+      } else {
+        true
+      }
+      nil
+    }")
+    // Should succeed - the entire if chain is in statement position
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - nested if in statement position allows mismatch", fn(assert) {
+    // Nested ifs, outer one in statement position
+    let result = parseAndTypecheck("{
+      let a = true
+      let b = false
+      if a {
+        if b { 1 } else { \"inner\" }
+      } else {
+        nil
+      }
+      42
+    }")
+    // Should succeed - outer if is in statement position
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - function return still checks branch mismatch", fn(assert) {
+    // Function body's last expression is always in expression position
+    let result = parseAndTypecheck("{
+      fn f(x) {
+        if x { 1 } else { \"string\" }
+      }
+      f(true)
+    }")
+    // Should fail - function return is always used
+    assert.truthy(hasError(result, "Branch mismatch"))
+  })
+
+  test("typecheck - let binding still checks branch mismatch", fn(assert) {
+    // Assigned if-else is in expression position
+    let result = parseAndTypecheck("{
+      let x = true
+      let y = if x { 1 } else { \"string\" }
+      42
+    }")
+    // Should fail - assigned value is used
+    assert.truthy(hasError(result, "Branch mismatch"))
+  })
+
+  test("typecheck - if-else as function argument still checks branch mismatch", fn(assert) {
+    // if-else passed as argument is in expression position
+    let result = parseAndTypecheck("{
+      fn f(x) { x }
+      let cond = true
+      f(if cond { 1 } else { \"string\" })
+    }")
+    // Should fail - argument value is used
+    assert.truthy(hasError(result, "Branch mismatch"))
+  })
+
+  test("typecheck - assignment RHS checks branch mismatch even in statement position", fn(assert) {
+    // assignment in non-last position, but RHS value is used
+    let result = parseAndTypecheck("{
+      let x = nil
+      x = if true { 1 } else { \"string\" }
+      42
+    }")
+    // Should fail - assignment RHS is used
+    assert.truthy(hasError(result, "Branch mismatch"))
+  })
+
+  test("typecheck - array element checks branch mismatch even in statement position", fn(assert) {
+    // array literal in non-last position, but elements are used
+    let result = parseAndTypecheck("{
+      [if true { 1 } else { \"string\" }]
+      42
+    }")
+    // Should fail - array elements are used
+    assert.truthy(hasError(result, "Branch mismatch"))
+  })
+
+  test("typecheck - hashmap value checks branch mismatch even in statement position", fn(assert) {
+    // hashmap literal in non-last position, but values are used
+    let result = parseAndTypecheck("{
+      .{ x: if true { 1 } else { \"string\" } }
+      42
+    }")
+    // Should fail - hashmap values are used
+    assert.truthy(hasError(result, "Branch mismatch"))
+  })
 }
 
 .{ register }

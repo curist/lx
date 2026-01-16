@@ -92,7 +92,7 @@ fn register(test) {
   test("typecheck - optional value cannot be used as Number", fn(assert) {
     let result = parseAndTypecheck("1 + (if true { 1 })")
     assert.truthy(!result.success)
-    assert.truthy(hasError(result, "Expected number"))
+    assert.truthy(hasError(result, "Expected Number for right operand of '+', got Number?"))
   })
 
   test("typecheck - Option.field defers through nested Option indirection", fn(assert) {

@@ -146,6 +146,27 @@ fn register(test) {
     // `let x` means x is nil, can't read field on nil
     assert.truthy(!result.success)
   })
+
+  // Test string concatenation with logical expression
+  test("typecheck - string concat with TypeVar and str()", fn(assert) {
+    // str(1) returns String, so this should be string concatenation
+    let result = parseAndTypecheck("{
+      fn test(x) {
+        x + str(1)
+      }
+    }")
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - string concat with logical and/or expression", fn(assert) {
+    // (flag and "A" or "B") + str(val) should be string concatenation
+    let result = parseAndTypecheck("{
+      fn test(flag, val) {
+        (flag and \"A\" or \"B\") + str(val)
+      }
+    }")
+    assert.truthy(result.success)
+  })
 }
 
 .{ register }

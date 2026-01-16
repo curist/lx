@@ -876,8 +876,15 @@ fn synthBinary(checker, node) {
   if op == "+" or op == "-" or op == "*" or op == "/" or op == "%" {
     if op == "+" {
       // String concatenation check
+      // Use coalesceTypeVar to resolve TypeVars with String bounds
       let leftD = deref(checker, leftType)
       let rightD = deref(checker, rightType)
+      if leftD.kind == "TypeVar" {
+        leftD = coalesceTypeVar(checker, leftD)
+      }
+      if rightD.kind == "TypeVar" {
+        rightD = coalesceTypeVar(checker, rightD)
+      }
       if leftD.kind == "String" or rightD.kind == "String" {
         constrain(checker, leftType, typeString())
         constrain(checker, rightType, typeString())
@@ -887,10 +894,12 @@ fn synthBinary(checker, node) {
     }
 
     if !constrain(checker, leftType, typeNumber()) {
-      addError(checker, node.left.id, "Expected number")
+      addError(checker, node.left.id,
+        "Expected Number for left operand of '" + op + "', got " + prettyType(checker, leftType))
     }
     if !constrain(checker, rightType, typeNumber()) {
-      addError(checker, node.right.id, "Expected number")
+      addError(checker, node.right.id,
+        "Expected Number for right operand of '" + op + "', got " + prettyType(checker, rightType))
     }
 
     checker.types[node.id] = typeNumber()

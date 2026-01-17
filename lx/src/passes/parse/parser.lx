@@ -58,72 +58,96 @@ let SYNC_BREAKPOINTS = .{
 // Node ID counter - reset at start of each parse()
 let nodeIdCounter = 0
 
-// AST Node constructors
-fn Node(type, filename, token) {
-  // Scanner's token.col points AFTER the token
-  // So: startCol = col - length, endCol = col
+// Helper: Calculate token start column
+// Scanner's token.col points AFTER the token
+// So: startCol = col - length, endCol = col
+fn tokenStartCol(token) {
   let tokenLen = len(token.lexeme)
   let startCol = token.col - tokenLen
   // Clamp to 0 in case of edge cases
   if startCol < 0 { startCol = 0 }
+  startCol
+}
 
+// Helper: Get next node ID
+fn nextNodeId() {
   nodeIdCounter = nodeIdCounter + 1
+  nodeIdCounter
+}
 
+// AST Node constructors
+fn NumberNode(filename, token) {
   .{
-    id: nodeIdCounter,
-    type: type,
+    id: nextNodeId(),
+    type: NODE.Number,
     filename: filename,
     line: token.line,
-    col: startCol,
+    col: tokenStartCol(token),
     endLine: token.line,
     endCol: token.col,
+    value: token.literal,
+    lexeme: token.lexeme,
   }
 }
 
-fn NumberNode(filename, token) {
-  let node = Node(NODE.Number, filename, token)
-  node.value = token.literal
-  node.lexeme = token.lexeme
-  node
-}
-
 fn StringNode(filename, token) {
-  let node = Node(NODE.String, filename, token)
-  node.value = token.literal
-  node.lexeme = token.lexeme
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.String,
+    filename: filename,
+    line: token.line,
+    col: tokenStartCol(token),
+    endLine: token.line,
+    endCol: token.col,
+    value: token.literal,
+    lexeme: token.lexeme,
+  }
 }
 
 fn BoolNode(filename, token) {
-  let node = Node(NODE.Bool, filename, token)
-  node.value = token.type == TOKEN.TRUE
-  node.lexeme = token.lexeme
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Bool,
+    filename: filename,
+    line: token.line,
+    col: tokenStartCol(token),
+    endLine: token.line,
+    endCol: token.col,
+    value: token.type == TOKEN.TRUE,
+    lexeme: token.lexeme,
+  }
 }
 
 fn NilNode(filename, token) {
-  let node = Node(NODE.Nil, filename, token)
-  node.lexeme = token.lexeme
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Nil,
+    filename: filename,
+    line: token.line,
+    col: tokenStartCol(token),
+    endLine: token.line,
+    endCol: token.col,
+    lexeme: token.lexeme,
+  }
 }
 
 fn IdentifierNode(filename, token) {
-  let node = Node(NODE.Identifier, filename, token)
-  node.name = token.lexeme
-  node.lexeme = token.lexeme
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Identifier,
+    filename: filename,
+    line: token.line,
+    col: tokenStartCol(token),
+    endLine: token.line,
+    endCol: token.col,
+    name: token.lexeme,
+    lexeme: token.lexeme,
+  }
 }
 
 fn BinaryNode(filename, left, operator, right) {
-  // Operator token.col points after the operator
-  let opLen = len(operator.lexeme)
-  let opStartCol = operator.col - opLen
-  if opStartCol < 0 { opStartCol = 0 }
-
-  nodeIdCounter = nodeIdCounter + 1
-
   .{
-    id: nodeIdCounter,
+    id: nextNodeId(),
     type: NODE.Binary,
     filename: filename,
     line: left.line,
@@ -135,48 +159,34 @@ fn BinaryNode(filename, left, operator, right) {
       type: operator.type,
       lexeme: operator.lexeme,
       line: operator.line,
-      col: opStartCol,  // Adjusted operator position
+      col: tokenStartCol(operator),
     },
     right: right,
   }
 }
 
 fn UnaryNode(filename, operator, operand) {
-  // Operator token.col points after the operator
-  let opLen = len(operator.lexeme)
-  let opStartCol = operator.col - opLen
-  if opStartCol < 0 { opStartCol = 0 }
-
-  nodeIdCounter = nodeIdCounter + 1
-
   .{
-    id: nodeIdCounter,
+    id: nextNodeId(),
     type: NODE.Unary,
     filename: filename,
     line: operator.line,
-    col: opStartCol,  // Start from operator
+    col: tokenStartCol(operator),  // Start from operator
     endLine: operand and operand.endLine or operator.line,
     endCol: operand and operand.endCol or operator.col,
     operator: .{
       type: operator.type,
       lexeme: operator.lexeme,
       line: operator.line,
-      col: opStartCol,  // Adjusted operator position
+      col: tokenStartCol(operator),
     },
     operand: operand,
   }
 }
 
 fn LogicalNode(filename, left, operator, right) {
-  // Operator token.col points after the operator
-  let opLen = len(operator.lexeme)
-  let opStartCol = operator.col - opLen
-  if opStartCol < 0 { opStartCol = 0 }
-
-  nodeIdCounter = nodeIdCounter + 1
-
   .{
-    id: nodeIdCounter,
+    id: nextNodeId(),
     type: NODE.Logical,
     filename: filename,
     line: left.line,
@@ -188,84 +198,103 @@ fn LogicalNode(filename, left, operator, right) {
       type: operator.type,
       lexeme: operator.lexeme,
       line: operator.line,
-      col: opStartCol,  // Adjusted operator position
+      col: tokenStartCol(operator),
     },
     right: right,
   }
 }
 
 fn GroupingNode(filename, expr, startToken, endToken) {
-  let node = Node(NODE.Grouping, filename, startToken)
-  node.expression = expr
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Grouping,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: endToken.line,
+    endCol: endToken.col,
+    expression: expr,
+  }
 }
 
 fn LetNode(filename, startToken, nameToken, init) {
-  let node = Node(NODE.Let, filename, startToken)
-  node.name = IdentifierNode(filename, nameToken)
-  node.init = init
-  if init {
-    node.endLine = init.endLine
-    node.endCol = init.endCol
-  } else {
-    node.endLine = nameToken.line
-    node.endCol = nameToken.col
+  .{
+    id: nextNodeId(),
+    type: NODE.Let,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: if init { init.endLine } else { nameToken.line },
+    endCol: if init { init.endCol } else { nameToken.col },
+    name: IdentifierNode(filename, nameToken),
+    init: init,
   }
-  node
 }
 
 fn LetDestructureNode(filename, startToken, bindings, init) {
-  let node = Node(NODE.LetDestructure, filename, startToken)
-  node.bindings = bindings
-  node.init = init
-  if init {
-    node.endLine = init.endLine
-    node.endCol = init.endCol
+  .{
+    id: nextNodeId(),
+    type: NODE.LetDestructure,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: if init { init.endLine } else { startToken.line },
+    endCol: if init { init.endCol } else { startToken.col },
+    bindings: bindings,
+    init: init,
   }
-  node
 }
 
 fn BlockNode(filename, startToken, expressions, endToken) {
-  let node = Node(NODE.Block, filename, startToken)
-  node.expressions = expressions
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Block,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: endToken.line,
+    endCol: endToken.col,
+    expressions: expressions,
+  }
 }
 
 fn FunctionNode(filename, startToken, name, params, defaults, body, endToken) {
-  let node = Node(NODE.Function, filename, startToken)
-  node.name = name
-  node.params = params
-  node.defaults = defaults
-  node.body = body
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Function,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: endToken.line,
+    endCol: endToken.col,
+    name: name,
+    params: params,
+    defaults: defaults,
+    body: body,
+  }
 }
 
 fn LambdaNode(filename, startToken, params, defaults, body) {
   // startToken should be the parameter token (identifier) or '(' token.
-  let node = Node(NODE.Lambda, filename, startToken)
-  node.params = params
-  node.defaults = defaults
-  node.body = body
-  if body {
-    node.endLine = body.endLine
-    node.endCol = body.endCol
+  .{
+    id: nextNodeId(),
+    type: NODE.Lambda,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: if body { body.endLine } else { startToken.line },
+    endCol: if body { body.endCol } else { startToken.col },
+    params: params,
+    defaults: defaults,
+    body: body,
   }
-  node
 }
 
 fn CallNode(filename, callee, args, endToken) {
   // endToken is the closing paren ")"
   // Its col points after it, which is exactly where the call ends
-  nodeIdCounter = nodeIdCounter + 1
-
   .{
-    id: nodeIdCounter,
+    id: nextNodeId(),
     type: NODE.Call,
     filename: filename,
     line: callee.line,
@@ -279,15 +308,8 @@ fn CallNode(filename, callee, args, endToken) {
 
 fn ArrowNode(filename, left, right, arrowToken) {
   // Start span from left operand (like Binary/Logical/Call/etc)
-  // Calculate arrow operator position
-  let opLen = len(arrowToken.lexeme)
-  let opStartCol = arrowToken.col - opLen
-  if opStartCol < 0 { opStartCol = 0 }
-
-  nodeIdCounter = nodeIdCounter + 1
-
   .{
-    id: nodeIdCounter,
+    id: nextNodeId(),
     type: NODE.Arrow,
     filename: filename,
     line: left.line,
@@ -299,112 +321,159 @@ fn ArrowNode(filename, left, right, arrowToken) {
       type: arrowToken.type,
       lexeme: arrowToken.lexeme,
       line: arrowToken.line,
-      col: opStartCol,
+      col: tokenStartCol(arrowToken),
     },
     right: right,
   }
 }
 
 fn IfNode(filename, startToken, condition, thenBranch, elseBranch) {
-  let node = Node(NODE.If, filename, startToken)
-  node.condition = condition
-  node.then = thenBranch
-  node.else = elseBranch
-  if elseBranch {
-    node.endLine = elseBranch.endLine
-    node.endCol = elseBranch.endCol
-  } else {
-    node.endLine = thenBranch.endLine
-    node.endCol = thenBranch.endCol
+  .{
+    id: nextNodeId(),
+    type: NODE.If,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: if elseBranch { elseBranch.endLine } else { thenBranch.endLine },
+    endCol: if elseBranch { elseBranch.endCol } else { thenBranch.endCol },
+    condition: condition,
+    then: thenBranch,
+    else: elseBranch,
   }
-  node
 }
 
 fn ForNode(filename, startToken, init, condition, update, body, endToken) {
-  let node = Node(NODE.For, filename, startToken)
-  node.init = init
-  node.condition = condition
-  node.update = update
-  node.body = body
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.For,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: endToken.line,
+    endCol: endToken.col,
+    init: init,
+    condition: condition,
+    update: update,
+    body: body,
+  }
 }
 
 fn ForInNode(filename, startToken, valueBinder, indexBinder, iterable, body, endToken) {
-  let node = Node(NODE.ForIn, filename, startToken)
-  node.valueBinder = valueBinder
-  node.indexBinder = indexBinder
-  node.iterable = iterable
-  node.body = body
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.ForIn,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: endToken.line,
+    endCol: endToken.col,
+    valueBinder: valueBinder,
+    indexBinder: indexBinder,
+    iterable: iterable,
+    body: body,
+  }
 }
 
 fn CollectNode(filename, startToken, init, condition, update, body, endToken) {
-  let node = Node(NODE.Collect, filename, startToken)
-  node.init = init
-  node.condition = condition
-  node.update = update
-  node.body = body
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Collect,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: endToken.line,
+    endCol: endToken.col,
+    init: init,
+    condition: condition,
+    update: update,
+    body: body,
+  }
 }
 
 fn CollectInNode(filename, startToken, valueBinder, indexBinder, iterable, body, endToken) {
-  let node = Node(NODE.CollectIn, filename, startToken)
-  node.valueBinder = valueBinder
-  node.indexBinder = indexBinder
-  node.iterable = iterable
-  node.body = body
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.CollectIn,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: endToken.line,
+    endCol: endToken.col,
+    valueBinder: valueBinder,
+    indexBinder: indexBinder,
+    iterable: iterable,
+    body: body,
+  }
 }
 
 fn ReturnNode(filename, startToken, value) {
-  let node = Node(NODE.Return, filename, startToken)
-  node.value = value
-  if value {
-    node.endLine = value.endLine
-    node.endCol = value.endCol
+  .{
+    id: nextNodeId(),
+    type: NODE.Return,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: if value { value.endLine } else { startToken.line },
+    endCol: if value { value.endCol } else { startToken.col },
+    value: value,
   }
-  node
 }
 
 fn BreakNode(filename, startToken) {
-  Node(NODE.Break, filename, startToken)
+  .{
+    id: nextNodeId(),
+    type: NODE.Break,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: startToken.line,
+    endCol: startToken.col,
+  }
 }
 
 fn ContinueNode(filename, token) {
-  Node(NODE.Continue, filename, token)
+  .{
+    id: nextNodeId(),
+    type: NODE.Continue,
+    filename: filename,
+    line: token.line,
+    col: tokenStartCol(token),
+    endLine: token.line,
+    endCol: token.col,
+  }
 }
 
 fn ArrayNode(filename, startToken, elements, endToken) {
-  let node = Node(NODE.Array, filename, startToken)
-  node.elements = elements
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Array,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: endToken.line,
+    endCol: endToken.col,
+    elements: elements,
+  }
 }
 
 fn HashmapNode(filename, startToken, pairs, endToken) {
-  let node = Node(NODE.Hashmap, filename, startToken)
-  node.pairs = pairs
-  node.endLine = endToken.line
-  node.endCol = endToken.col
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Hashmap,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: endToken.line,
+    endCol: endToken.col,
+    pairs: pairs,
+  }
 }
 
 fn IndexNode(filename, object, index, endToken) {
   // endToken is the closing bracket "]"
   // Its col points after it
-  nodeIdCounter = nodeIdCounter + 1
-
   .{
-    id: nodeIdCounter,
+    id: nextNodeId(),
     type: NODE.Index,
     filename: filename,
     line: object.line,
@@ -418,10 +487,8 @@ fn IndexNode(filename, object, index, endToken) {
 
 fn DotNode(filename, object, property, endToken) {
   // property is already a Node with correct positions
-  nodeIdCounter = nodeIdCounter + 1
-
   .{
-    id: nodeIdCounter,
+    id: nextNodeId(),
     type: NODE.Dot,
     filename: filename,
     line: object.line,
@@ -434,10 +501,8 @@ fn DotNode(filename, object, property, endToken) {
 }
 
 fn AssignmentNode(filename, target, value, equalToken) {
-  nodeIdCounter = nodeIdCounter + 1
-
   .{
-    id: nodeIdCounter,
+    id: nextNodeId(),
     type: NODE.Assignment,
     filename: filename,
     line: target.line,
@@ -450,27 +515,26 @@ fn AssignmentNode(filename, target, value, equalToken) {
 }
 
 fn ImportNode(filename, startToken, path) {
-  let node = Node(NODE.Import, filename, startToken)
-  node.path = path
-  node.endLine = path.endLine
-  node.endCol = path.endCol
-  node
+  .{
+    id: nextNodeId(),
+    type: NODE.Import,
+    filename: filename,
+    line: startToken.line,
+    col: tokenStartCol(startToken),
+    endLine: path.endLine,
+    endCol: path.endCol,
+    path: path,
+  }
 }
 
 fn StringKeyNodeFromToken(filename, token) {
   // Create a String node from a token's lexeme (for dot/hashmap keys)
-  let tokenLen = len(token.lexeme)
-  let startCol = token.col - tokenLen
-  if startCol < 0 { startCol = 0 }
-
-  nodeIdCounter = nodeIdCounter + 1
-
   .{
-    id: nodeIdCounter,
+    id: nextNodeId(),
     type: NODE.String,
     filename: filename,
     line: token.line,
-    col: startCol,
+    col: tokenStartCol(token),
     endLine: token.line,
     endCol: token.col,
     value: token.lexeme,

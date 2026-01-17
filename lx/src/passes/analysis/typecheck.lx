@@ -35,8 +35,10 @@ let typeIndexable = helper.typeIndexable
 let typeOption = helper.typeOption
 let freshTypeVar = helper.freshTypeVar
 let deref = helper.deref
+let derefAll = helper.derefAll
 let constrain = helper.constrain
 let prettyType = helper.prettyType
+let prettyTypeSnapshot = helper.prettyTypeSnapshot
 let coalesceTypeVar = helper.coalesceTypeVar
 
 // Check if a type is "optionalish" (has Nil evidence or might become optional)
@@ -428,12 +430,19 @@ fn synthCall(checker, node) {
       // Constrain argument types (contravariant)
       let numParams = len(calleeParams)
       for let i = 0; i < len(argTypes) and i < numParams; i = i + 1 {
-        // Eagerly compute expected/actual types BEFORE constraining
-        // (constrain() mutates TypeVars, so we'd get wrong types if we compute after)
-        let expected = prettyType(checker, calleeParams[i])
-        let actual = prettyType(checker, argTypes[i])
+        // Snapshot types BEFORE constraint (derefAll creates immutable copies)
+        // Coalesce first to resolve TypeVars to their bounds, then snapshot
+        let expectedCoalesced = coalesceTypeVar(checker, deref(checker, calleeParams[i]))
+        let actualCoalesced = coalesceTypeVar(checker, deref(checker, argTypes[i]))
+        let expectedSnap = derefAll(checker, expectedCoalesced)
+        let actualSnap = derefAll(checker, actualCoalesced)
 
         if !constrain(checker, argTypes[i], calleeParams[i]) {
+          // Use snapshot-safe printer to avoid "expected String, got String" errors
+          // (constrain() mutates TypeVars, so post-constraint pretty-printing is incorrect)
+          let expected = prettyTypeSnapshot(expectedSnap)
+          let actual = prettyTypeSnapshot(actualSnap)
+
           let paramName = calleeD.paramNames and calleeD.paramNames[i]
           let label = "Argument " + str(i + 1)
           if paramName { label = label + " (" + paramName + ")" }

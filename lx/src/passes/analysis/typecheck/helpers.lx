@@ -792,6 +792,77 @@ fn prettyType(checker, t) {
   prettyTypeWithStack(checker, t, .{})
 }
 
+// Snapshot-safe pretty printer (checker-independent)
+// Used for error messages after constraint failures to avoid printing
+// partially-mutated types. Takes a snapshot from derefAll().
+fn prettyTypeSnapshotWithStack(t, stack) {
+  if !t { return "?" }
+  if !t.kind { return "?" }
+
+  if t.kind == "TypeVar" {
+    // Cycle guard: don't coalesce, don't consult bounds
+    if stack[t.id] { return "?" + str(t.id) }
+    stack[t.id] = true
+    let out = "?" + str(t.id)
+    stack[t.id] = nil
+    return out
+  }
+
+  if t.kind == "Any" or t.kind == "Nil" or t.kind == "Number" or
+     t.kind == "Bool" or t.kind == "String" {
+    return t.kind
+  }
+
+  if t.kind == "Option" {
+    return prettyTypeSnapshotWithStack(t.value, stack) + "?"
+  }
+
+  if t.kind == "Array" {
+    return "Array[" + prettyTypeSnapshotWithStack(t.elem, stack) + "]"
+  }
+
+  if t.kind == "Map" {
+    return "Map[" +
+      prettyTypeSnapshotWithStack(t.key, stack) + ", " +
+      prettyTypeSnapshotWithStack(t.elem, stack) + "]"
+  }
+
+  if t.kind == "Function" {
+    let params = collect p in (t.params or []) { prettyTypeSnapshotWithStack(p, stack) }
+    return "(" + join(params, ", ") + ") -> " +
+      prettyTypeSnapshotWithStack(t.return, stack)
+  }
+
+  if t.kind == "Record" {
+    // Sort keys for consistent output - use keyLess for mixed string/number keys
+    let ks = sort(keys(t.fields or .{}), keyLess)
+    let fieldStrs = collect k in ks {
+      str(k) + ": " + prettyTypeSnapshotWithStack(t.fields[k], stack)
+    }
+    return ".{ " + join(fieldStrs, ", ") + " }"
+  }
+
+  if t.kind == "Enum" {
+    let ks = sort(keys(t.fields or .{}), keyLess)
+    let fieldStrs = collect k in ks { str(k) }
+    return "enum { " + join(fieldStrs, ", ") + " }"
+  }
+
+  if t.kind == "Indexable" {
+    // Snapshot printer uses Map fallback for stable output
+    return "Map[" +
+      prettyTypeSnapshotWithStack(t.key, stack) + ", " +
+      prettyTypeSnapshotWithStack(t.elem, stack) + "]"
+  }
+
+  // Fallback
+  t.kind
+}
+
+fn prettyTypeSnapshot(t) {
+  prettyTypeSnapshotWithStack(t, .{})
+}
+
 // ========================================================
 // Builtin Type Signatures
 // ========================================================
@@ -1162,6 +1233,7 @@ fn solveBuiltinConstraints(checker) {
   constrain,
   coalesceTypeVar,
   prettyType,
+  prettyTypeSnapshot,
 
   // Builtin catalog
   builtinTypeByName,

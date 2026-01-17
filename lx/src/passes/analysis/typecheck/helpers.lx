@@ -85,8 +85,42 @@ fn bindTypeVar(checker, id, type) {
 // Type Utilities
 // ========================================================
 
+// Comparator for mixed string/number keys (used for deterministic key sorting)
+// Defines total order: strings < numbers < other (stringified)
+fn keyLess(a, b) {
+  let ta = type(a)
+  let tb = type(b)
+  if ta != tb {
+    if ta == "string" { return true }
+    if tb == "string" { return false }
+    if ta == "number" { return true }
+    if tb == "number" { return false }
+    return stringLess(str(ta), str(tb))
+  }
+  if ta == "string" { return stringLess(a, b) }
+  if ta == "number" { return a < b }
+  return stringLess(str(a), str(b))
+}
+
 // Follow type variable bindings until fixed point
 fn deref(checker, type) {
+  // Use epoch-based cycle detection to avoid allocating a map each call
+  // Fallback to old approach if checker doesn't have epoch tracking (e.g., in tests)
+  if checker.derefEpoch != nil {
+    checker.derefEpoch = checker.derefEpoch + 1
+    let epoch = checker.derefEpoch
+
+    for type and type.kind == "TypeVar" {
+      if checker.derefSeen[type.id] == epoch { return type }
+      checker.derefSeen[type.id] = epoch
+      let bound = getTypeVarBinding(checker, type.id)
+      if !bound { break }
+      type = bound
+    }
+    return type
+  }
+
+  // Fallback: allocate seen map (old behavior for minimal checker contexts)
   let seen = .{}
   for type and type.kind == "TypeVar" {
     if seen[type.id] { return type }
@@ -100,6 +134,25 @@ fn deref(checker, type) {
 
 // Dereference and return both root TypeVar (if any) and final type
 fn derefWithRootVar(checker, t) {
+  // Use epoch-based cycle detection to avoid allocating a map each call
+  // Fallback to old approach if checker doesn't have epoch tracking
+  if checker.derefEpoch != nil {
+    checker.derefEpoch = checker.derefEpoch + 1
+    let epoch = checker.derefEpoch
+
+    let root = nil
+    for t and t.kind == "TypeVar" {
+      if checker.derefSeen[t.id] == epoch { break }
+      checker.derefSeen[t.id] = epoch
+      root = t
+      let bound = getTypeVarBinding(checker, t.id)
+      if !bound { break }
+      t = bound
+    }
+    return .{ root: root, type: t }
+  }
+
+  // Fallback: allocate seen map (old behavior for minimal checker contexts)
   let root = nil
   let seen = .{}
   for t and t.kind == "TypeVar" {
@@ -294,9 +347,9 @@ fn typeKey(t) {
     if !fields or type(fields) != "map" {
       return "R{}"
     }
-    // Use unsorted keys for simplicity - ordering doesn't affect cache correctness,
-    // just means potentially more cache misses for equivalent types
-    let fieldKeys = keys(fields)
+    // Sort keys for consistent caching - reduces cache misses for equivalent types
+    // Use keyLess comparator to handle mixed string/number keys
+    let fieldKeys = sort(keys(fields), keyLess)
     let fieldStrings = []
     for let i = 0; i < len(fieldKeys); i = i + 1 {
       let k = fieldKeys[i]
@@ -306,11 +359,12 @@ fn typeKey(t) {
   }
   if t.kind == "Enum" {
     // Encode enum fields for proper caching - different enums have different fields
+    // Sort keys for consistent caching
     let fields = t.fields
     if !fields or type(fields) != "map" {
       return "E{}"
     }
-    let fieldKeys = keys(fields)
+    let fieldKeys = sort(keys(fields), keyLess)
     let fieldStrings = []
     for let i = 0; i < len(fieldKeys); i = i + 1 {
       let k = fieldKeys[i]
@@ -352,6 +406,7 @@ fn constrain(checker, lhs, rhs) {
   if lhs.kind == "Any" {
     if rhs.kind == "TypeVar" {
       push(rhs.lowerBounds, lhs)
+      checker.constraintRevision = checker.constraintRevision + 1
     }
     return true
   }
@@ -382,6 +437,7 @@ fn constrain(checker, lhs, rhs) {
     }
     // Add rhs to lhs.upperBounds
     push(lhs.upperBounds, rhs)
+    checker.constraintRevision = checker.constraintRevision + 1
     // Propagate: for each lb in lhs.lowerBounds, constrain(lb, rhs)
     for lb in lhs.lowerBounds {
       if !constrain(checker, lb, rhs) { return false }
@@ -431,6 +487,7 @@ fn constrain(checker, lhs, rhs) {
     }
     // Add lhs to rhs.lowerBounds
     push(rhs.lowerBounds, lhs)
+    checker.constraintRevision = checker.constraintRevision + 1
     // Propagate: for each ub in rhs.upperBounds, constrain(lhs, ub)
     for ub in rhs.upperBounds {
       if !constrain(checker, lhs, ub) { return false }
@@ -531,6 +588,15 @@ fn constrain(checker, lhs, rhs) {
 fn coalesceTypeVar(checker, tv) {
   if !tv or tv.kind != "TypeVar" { return tv }
 
+  // Check cache: if constraints haven't changed since last coalesce, return cached result
+  // (only if checker has constraint revision tracking)
+  // DISABLED for now - needs more careful handling of recursive coalescing
+  // let currentRevision = checker.constraintRevision
+  // if currentRevision != nil and tv.coalesceRevision == currentRevision and tv.coalescedCache {
+  //   return tv.coalescedCache
+  // }
+  let currentRevision = checker.constraintRevision
+
   let lbs = tv.lowerBounds or []
 
   // Check if Nil appears in lower bounds
@@ -627,32 +693,43 @@ fn coalesceTypeVar(checker, tv) {
     }
   }
 
+  // Determine final result and cache it
+  let finalResult = nil
+
   // If we have Nil + other types, coalesce to Option[T]
   if hasNil and resultType {
-    return typeOption(resultType)
-  }
+    finalResult = typeOption(resultType)
+  } else if hasNil and !resultType {
+    // If only Nil bounds, return Nil
+    finalResult = typeNil()
+  } else if resultType {
+    // Return the merged result if we have one
+    finalResult = resultType
+  } else {
+    // Check upper bounds for a concrete type
+    let ubs = tv.upperBounds or []
+    for ub in ubs {
+      let dub = deref(checker, ub)
+      if dub.kind != "TypeVar" {
+        finalResult = dub
+        break
+      }
+    }
 
-  // If only Nil bounds, return Nil
-  if hasNil and !resultType {
-    return typeNil()
-  }
-
-  // Return the merged result if we have one
-  if resultType {
-    return resultType
-  }
-
-  // Check upper bounds for a concrete type
-  let ubs = tv.upperBounds or []
-  for ub in ubs {
-    let dub = deref(checker, ub)
-    if dub.kind != "TypeVar" {
-      return dub
+    // Still a type variable - return the TypeVar itself (not Any)
+    if !finalResult {
+      finalResult = tv
     }
   }
 
-  // Still a type variable - return the TypeVar itself (not Any)
-  tv
+  // Cache the result (only if checker has constraint revision tracking)
+  // DISABLED for now - needs more careful handling of recursive coalescing
+  // if currentRevision != nil {
+  //   tv.coalescedCache = finalResult
+  //   tv.coalesceRevision = currentRevision
+  // }
+
+  finalResult
 }
 
 // Pretty-print a type for error messages

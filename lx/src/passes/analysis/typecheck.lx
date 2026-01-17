@@ -170,6 +170,9 @@ fn makeChecker(resolveResult, opts = .{}) {
     nextTypeVarId: 1,                            // For generating fresh type vars
     typeVarBindings: .{},                        // For backward compat with deref
     constraintCache: .{},                        // Prevent infinite recursion in constrain
+    derefEpoch: 0,                               // Current epoch for deref cycle detection
+    derefSeen: .{},                              // TypeVar ID -> epoch (reused across deref calls)
+    constraintRevision: 0,                       // Incremented when bounds are added (for coalesce cache)
 
     // === Environment ===
     env: .{},                                    // declNodeId -> type (for locals/upvalues)
@@ -425,8 +428,11 @@ fn synthCall(checker, node) {
       // Constrain argument types (contravariant)
       let numParams = len(calleeParams)
       for let i = 0; i < len(argTypes) and i < numParams; i = i + 1 {
+        // Eagerly compute expected/actual types BEFORE constraining
+        // (constrain() mutates TypeVars, so we'd get wrong types if we compute after)
         let expected = prettyType(checker, calleeParams[i])
         let actual = prettyType(checker, argTypes[i])
+
         if !constrain(checker, argTypes[i], calleeParams[i]) {
           let paramName = calleeD.paramNames and calleeD.paramNames[i]
           let label = "Argument " + str(i + 1)

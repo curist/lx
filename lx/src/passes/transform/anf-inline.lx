@@ -111,6 +111,10 @@ fn isInlineSafeExprImpl(node, depth) {
     }
   }
 
+  if t == NODE.Grouping {
+    return isInlineSafeExprImpl(node.expression, d)
+  }
+
   false
 }
 
@@ -224,6 +228,11 @@ fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
 
   // Literals and other leaf nodes - no traversal needed
   if nt == NODE.Nil or nt == NODE.Bool or nt == NODE.Number or nt == NODE.String or nt == NODE.Import {
+    return
+  }
+
+  if nt == NODE.Grouping {
+    walk(node.expression, resolvedNames, state, node, "expression", nil)
     return
   }
 

@@ -530,6 +530,20 @@ fn compileBinary(gen, node) {
     // Cannot encode in u8; fall through to regular codegen
   }
 
+  // Try LOCAL_LOCAL pattern (local op local)
+  if let plan = select.binaryLocalLocal(gen, node) {
+    let lhsAbsSlot = computeAbsoluteSlot(gen, plan.lhsBinding)
+    let rhsAbsSlot = computeAbsoluteSlot(gen, plan.rhsBinding)
+    let lhsSlot = localSlot(lhsAbsSlot)
+    let rhsSlot = localSlot(rhsAbsSlot)
+    if lhsSlot < 256 and rhsSlot < 256 {
+      // Emit: opcode lhs rhs (3 bytes)
+      emit3(gen, plan.opcode, lhsSlot, rhsSlot, node.line)
+      return
+    }
+    // Cannot encode in u8; fall through to regular codegen
+  }
+
   // Regular path: select opcode, compile operands, emit
   let code = select.binaryCode(gen, node)
   if !code {

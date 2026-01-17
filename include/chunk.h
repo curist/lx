@@ -112,7 +112,13 @@ typedef enum {
   OP_MUL_LL_SET,          // local[d] = local[a] * local[b]
   OP_DIV_LL_SET,          // local[d] = local[a] / local[b]
 
-  // Arithmetic superinstructions - expression form (push result)
+  // Arithmetic superinstructions - expression form with two locals (push result)
+  OP_ADD_LL,              // push(local[a] + local[b])
+  OP_SUB_LL,              // push(local[a] - local[b])
+  OP_MUL_LL,              // push(local[a] * local[b])
+  OP_DIV_LL,              // push(local[a] / local[b])
+
+  // Arithmetic superinstructions - expression form with constant (push result)
   OP_ADD_LK,              // push(local[a] + k)
   OP_SUB_LK,              // push(local[a] - k)
   OP_MUL_LK,              // push(local[a] * k)

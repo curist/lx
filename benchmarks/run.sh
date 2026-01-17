@@ -89,8 +89,8 @@ run_lang() {
 }
 
 run_lang "lx" "$LX_BIN" "lx" "lx"
-run_lang "py" "$PY_BIN" "py" "py"
 run_lang "lua" "$LUA_BIN" "lua" "lua"
-run_lang "luajit" "$LUAJIT_BIN" "lua" "lua"
-run_lang "chez" "$CHEZ_BIN" "chez" "ss"
+# run_lang "luajit" "$LUAJIT_BIN" "lua" "lua"
+# run_lang "chez" "$CHEZ_BIN" "chez" "ss"
 run_lang "js" "$NODE_BIN" "js" "js"
+run_lang "py" "$PY_BIN" "py" "py"

@@ -2251,6 +2251,105 @@ static InterpretResult runUntil(int stopFrameCount) {
         break;
       }
 
+      case OP_ADD_LL: {
+        // Superinstruction: push(local[a] + local[b])
+        uint8_t lhsSlot = READ_BYTE();
+        uint8_t rhsSlot = READ_BYTE();
+
+        Value lhs = slots[lhsSlot];
+        Value rhs = slots[rhsSlot];
+
+        // Optimize for fixnums
+        if (IS_FIXNUM(lhs) && IS_FIXNUM(rhs)) {
+          int64_t a = AS_FIXNUM(lhs);
+          int64_t b = AS_FIXNUM(rhs);
+          int64_t r;
+          if (__builtin_add_overflow(a, b, &r)) {
+            push(NUMBER_VAL((double)a + (double)b));
+          } else {
+            pushInt64AsNumberOrFlonum(r);
+          }
+        } else if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
+          push(NUMBER_VAL(AS_NUMBER(lhs) + AS_NUMBER(rhs)));
+        } else {
+          runtimeError("ADD_LL operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        break;
+      }
+
+      case OP_SUB_LL: {
+        // Superinstruction: push(local[a] - local[b])
+        uint8_t lhsSlot = READ_BYTE();
+        uint8_t rhsSlot = READ_BYTE();
+
+        Value lhs = slots[lhsSlot];
+        Value rhs = slots[rhsSlot];
+
+        // Optimize for fixnums
+        if (IS_FIXNUM(lhs) && IS_FIXNUM(rhs)) {
+          int64_t a = AS_FIXNUM(lhs);
+          int64_t b = AS_FIXNUM(rhs);
+          int64_t r;
+          if (__builtin_sub_overflow(a, b, &r)) {
+            push(NUMBER_VAL((double)a - (double)b));
+          } else {
+            pushInt64AsNumberOrFlonum(r);
+          }
+        } else if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
+          push(NUMBER_VAL(AS_NUMBER(lhs) - AS_NUMBER(rhs)));
+        } else {
+          runtimeError("SUB_LL operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        break;
+      }
+
+      case OP_MUL_LL: {
+        // Superinstruction: push(local[a] * local[b])
+        uint8_t lhsSlot = READ_BYTE();
+        uint8_t rhsSlot = READ_BYTE();
+
+        Value lhs = slots[lhsSlot];
+        Value rhs = slots[rhsSlot];
+
+        // Optimize for fixnums
+        if (IS_FIXNUM(lhs) && IS_FIXNUM(rhs)) {
+          int64_t a = AS_FIXNUM(lhs);
+          int64_t b = AS_FIXNUM(rhs);
+          int64_t r;
+          if (__builtin_mul_overflow(a, b, &r)) {
+            push(NUMBER_VAL((double)a * (double)b));
+          } else {
+            pushInt64AsNumberOrFlonum(r);
+          }
+        } else if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
+          push(NUMBER_VAL(AS_NUMBER(lhs) * AS_NUMBER(rhs)));
+        } else {
+          runtimeError("MUL_LL operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        break;
+      }
+
+      case OP_DIV_LL: {
+        // Superinstruction: push(local[a] / local[b])
+        uint8_t lhsSlot = READ_BYTE();
+        uint8_t rhsSlot = READ_BYTE();
+
+        Value lhs = slots[lhsSlot];
+        Value rhs = slots[rhsSlot];
+
+        // Division always produces floating point result in lx
+        if (IS_NUMBER(lhs) && IS_NUMBER(rhs)) {
+          push(NUMBER_VAL(AS_NUMBER(lhs) / AS_NUMBER(rhs)));
+        } else {
+          runtimeError("DIV_LL operands must be numbers.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        break;
+      }
+
       case OP_ADD_LK: {
         // Superinstruction: push(local[a] + k)
         uint8_t slot = READ_BYTE();

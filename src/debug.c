@@ -305,6 +305,14 @@ int disassembleInstruction(Chunk* chunk, int offset, bool printCode) {
       return threeByteInstruction("OP_MUL_LL_SET", chunk, offset);
     case OP_DIV_LL_SET:
       return threeByteInstruction("OP_DIV_LL_SET", chunk, offset);
+    case OP_ADD_LL:
+      return twoByteInstruction("OP_ADD_LL", chunk, offset);
+    case OP_SUB_LL:
+      return twoByteInstruction("OP_SUB_LL", chunk, offset);
+    case OP_MUL_LL:
+      return twoByteInstruction("OP_MUL_LL", chunk, offset);
+    case OP_DIV_LL:
+      return twoByteInstruction("OP_DIV_LL", chunk, offset);
     case OP_ADD_LK:
       return twoByteInstruction("OP_ADD_LK", chunk, offset);
     case OP_SUB_LK:

@@ -125,7 +125,13 @@ let STACK_MIN = .{
   [OP.MUL_LL_SET]: 0,  // local[d] = local[a] * local[b]: reads all from local slots
   [OP.DIV_LL_SET]: 0,  // local[d] = local[a] / local[b]: reads all from local slots
 
-  // Arithmetic superinstructions - expression form
+  // Arithmetic superinstructions - expression form with two locals
+  [OP.ADD_LL]: 0,  // push(local[a] + local[b]): reads from local slots
+  [OP.SUB_LL]: 0,  // push(local[a] - local[b]): reads from local slots
+  [OP.MUL_LL]: 0,  // push(local[a] * local[b]): reads from local slots
+  [OP.DIV_LL]: 0,  // push(local[a] / local[b]): reads from local slots
+
+  // Arithmetic superinstructions - expression form with constant
   [OP.ADD_LK]: 0,  // push(local[a] + k): reads from local slot
   [OP.SUB_LK]: 0,  // push(local[a] - k): reads from local slot
   [OP.MUL_LK]: 0,  // push(local[a] * k): reads from local slot
@@ -242,7 +248,13 @@ let STACK_EFFECTS = .{
   [OP.MUL_LL_SET]: 0,     // local[d] = local[a] * local[b] (statement-only)
   [OP.DIV_LL_SET]: 0,     // local[d] = local[a] / local[b] (statement-only)
 
-  // Arithmetic superinstructions - expression form
+  // Arithmetic superinstructions - expression form with two locals
+  [OP.ADD_LL]:  1,     // push(local[a] + local[b]): net +1
+  [OP.SUB_LL]:  1,     // push(local[a] - local[b]): net +1
+  [OP.MUL_LL]:  1,     // push(local[a] * local[b]): net +1
+  [OP.DIV_LL]:  1,     // push(local[a] / local[b]): net +1
+
+  // Arithmetic superinstructions - expression form with constant
   [OP.ADD_LK]:  1,     // push(local[a] + k): net +1
   [OP.SUB_LK]:  1,     // push(local[a] - k): net +1
   [OP.MUL_LK]:  1,     // push(local[a] * k): net +1
@@ -352,7 +364,13 @@ let INSTRUCTION_LENGTHS = .{
   [OP.MUL_LL_SET]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
   [OP.DIV_LL_SET]: 4,  // opcode + dest_slot + lhs_slot + rhs_slot
 
-  // Arithmetic superinstructions - expression form
+  // Arithmetic superinstructions - expression form with two locals
+  [OP.ADD_LL]:    3,  // opcode + lhs_slot + rhs_slot
+  [OP.SUB_LL]:    3,  // opcode + lhs_slot + rhs_slot
+  [OP.MUL_LL]:    3,  // opcode + lhs_slot + rhs_slot
+  [OP.DIV_LL]:    3,  // opcode + lhs_slot + rhs_slot
+
+  // Arithmetic superinstructions - expression form with constant
   [OP.ADD_LK]:    3,  // opcode + slot + k
   [OP.SUB_LK]:    3,  // opcode + slot + k
   [OP.MUL_LK]:    3,  // opcode + slot + k

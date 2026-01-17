@@ -180,7 +180,13 @@ let OP = enum {
   MUL_LL_SET,       // local[d] = local[a] * local[b]
   DIV_LL_SET,       // local[d] = local[a] / local[b]
 
-  // Arithmetic superinstructions - expression form (push result)
+  // Arithmetic superinstructions - expression form with two locals (push result)
+  ADD_LL,           // push(local[a] + local[b])
+  SUB_LL,           // push(local[a] - local[b])
+  MUL_LL,           // push(local[a] * local[b])
+  DIV_LL,           // push(local[a] / local[b])
+
+  // Arithmetic superinstructions - expression form with constant (push result)
   ADD_LK,           // push(local[a] + k)
   SUB_LK,           // push(local[a] - k)
   MUL_LK,           // push(local[a] * k)

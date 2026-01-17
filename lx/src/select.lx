@@ -142,6 +142,60 @@ fn selectBinaryLocalK(gen, node) {
 }
 
 // -----------------------------------------------------------------------------
+// Binary expression superinstructions (local op local)
+// -----------------------------------------------------------------------------
+
+// Returns: .{ kind: "LL", opcode, lhsBinding, rhsBinding } or nil
+// Matches: local +/-/*// local (where both are identifiers bound to locals)
+fn selectBinaryLocalLocal(gen, node) {
+  if !node or node.type != NODE.Binary { return nil }
+
+  let op = node.operator and node.operator.lexeme or ""
+
+  // Arithmetic operations only (no comparisons for now)
+  let arithmeticOps = .{
+    ["+"]: OP.ADD_LL,
+    ["-"]: OP.SUB_LL,
+    ["*"]: OP.MUL_LL,
+    ["/"]: OP.DIV_LL,
+  }
+
+  let opcode = arithmeticOps[op]
+  if !opcode { return nil }
+
+  // Check pattern: both left and right are identifiers bound to locals
+  if !node.left or node.left.type != NODE.Identifier { return nil }
+  if !node.right or node.right.type != NODE.Identifier { return nil }
+
+  // Check both are local bindings
+  let lhsBinding = gen.resolvedNames[node.left.id]
+  let rhsBinding = gen.resolvedNames[node.right.id]
+  if !lhsBinding or lhsBinding.kind != "local" { return nil }
+  if !rhsBinding or rhsBinding.kind != "local" { return nil }
+
+  // Type safety: ensure both operands are numeric
+  let leftCls = classOf(gen, node.left)
+  let rightCls = classOf(gen, node.right)
+  let leftNum = isNumericClass(leftCls)
+  let rightNum = isNumericClass(rightCls)
+
+  // For addition, we must ensure it's not string concatenation
+  if op == "+" {
+    if !leftNum or !rightNum {
+      return nil  // Could be strings, don't optimize
+    }
+  }
+  // For -, *, /, they're always numeric operations
+
+  return .{
+    kind: "LL",
+    opcode: opcode,
+    lhsBinding: lhsBinding,
+    rhsBinding: rhsBinding,
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Binary selection
 // -----------------------------------------------------------------------------
 
@@ -425,6 +479,7 @@ let select = .{
   unaryOpcode: selectUnaryOpcode,
   binaryCode: selectBinaryCode,
   binaryLocalK: selectBinaryLocalK,
+  binaryLocalLocal: selectBinaryLocalLocal,
 
   // logical OR coalesce (pure match)
   logicalOrCoalesceConst: selectLogicalOrCoalesceConst,

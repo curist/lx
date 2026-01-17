@@ -73,7 +73,7 @@ fn HoistedFunction(declNodeId, declIndex, slot) {
 }
 
 // Resolver - main resolution state
-fn makeResolver(opts) {
+fn makeResolver(opts = .{}) {
   .{
     // Side tables (output)
     resolvedNames: .{},    // nodeId → BindingInfo
@@ -869,7 +869,7 @@ fn resolveExpr(resolver, node, context) {
 // Main API
 // ========================================
 
-fn resolve(ast, opts = .{}) {
+fn resolve(ast, opts) {
   let resolver = makeResolver(opts)
 
   // Root is an implicit block (same semantics as a Block node).

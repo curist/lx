@@ -17,7 +17,7 @@
 
 let _cache = .{}  // Map of baseDir -> {projectRoot}
 
-fn _isAbs(path) { path and path[0] == "/" }
+fn _isAbs(path = "") { path[0] == "/" }
 
 fn _computeRoots(baseDir) {
   // Check cache first

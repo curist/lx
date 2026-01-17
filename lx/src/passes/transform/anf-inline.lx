@@ -122,7 +122,7 @@ fn isInlineSafeExprImpl(node, depth) {
 // Walker (single traversal)
 // ------------------------------------------------------------
 
-fn walk(node, resolvedNames, state, parent, parentField, parentIndex) {
+fn walk(node, resolvedNames, state, parent = nil, parentField = nil, parentIndex = nil) {
   if !node { return }
   let t = type(node)
 
@@ -307,7 +307,7 @@ fn buildState(ast, resolvedNames) {
     blockById: .{},
   }
 
-  walk(ast, resolvedNames, state, nil, nil, nil)
+  walk(ast, resolvedNames, state)
   state
 }
 

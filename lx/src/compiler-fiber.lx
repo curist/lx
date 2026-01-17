@@ -18,8 +18,8 @@ let codegen = import "src/passes/emit/codegen.lx"
 fn parseErrorLocation(errorMsg) {
   let openBracket = nil
   let closeBracket = nil
-  let prevColon = nil
-  let lastColon = nil
+  let prevColon = -1
+  let lastColon = -1
 
   for let i = 0; i < len(errorMsg); i = i + 1 {
     let ch = errorMsg[i]
@@ -84,7 +84,7 @@ fn createCompilerFiber(source, filename, cancelled) {
     // Lower phase
     Fiber.yield(Events.progress("lower", "start", 0, 1))
     if checkCancel() { return Events.error("Cancelled") }
-    let lowerResult = lower(parseResult.ast, .{ nextNodeId: parseResult.nextNodeId })
+    let lowerResult = lower(parseResult.ast, .{ startNodeId: parseResult.nextNodeId })
     Fiber.yield(Events.progress("lower", "done", 1, 1))
     if checkCancel() { return Events.error("Cancelled") }
 
@@ -95,7 +95,7 @@ fn createCompilerFiber(source, filename, cancelled) {
     // ANF phase
     Fiber.yield(Events.progress("anf", "start", 0, 1))
     if checkCancel() { return Events.error("Cancelled") }
-    let anfResult = anf(lowerResult.ast, .{ nextNodeId: lowerResult.nextNodeId })
+    let anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
     Fiber.yield(Events.progress("anf", "done", 1, 1))
     if checkCancel() { return Events.error("Cancelled") }
 

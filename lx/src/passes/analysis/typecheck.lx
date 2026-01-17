@@ -748,10 +748,46 @@ fn synthUnary(checker, node) {
 // In lx: `a and b` returns b if a is truthy, else a
 //        `a or b` returns a if a is truthy, else b
 fn synthLogical(checker, node) {
+  let op = node.operator and node.operator.lexeme or ""
+
+  // --------------------------------------------------------
+  // Special-case: (cond and X) or Y  ==>  join(X, Y)
+  //
+  // This matches the common "ternary-ish" idiom and prevents
+  // `cond` from leaking into the result type.
+  //
+  // Semantically: the final value is always either X or Y:
+  //   - if cond is falsy: left becomes falsy, so `or` returns Y
+  //   - if cond is truthy: left becomes X, so `or` returns X (if truthy) else Y
+  // Either way, the final value is in {X, Y}, never cond.
+  // --------------------------------------------------------
+  if op == "or" {
+    let leftNode = unwrapGroupings(node.left)
+    let leftOp = leftNode and leftNode.operator and leftNode.operator.lexeme or ""
+    if leftNode and leftNode.type == NODE.Logical and leftOp == "and" {
+      // Synthesize subparts
+      // Note: cond is still synthesized for completeness/side effects,
+      // but its type does not contribute to the overall expression type.
+      synthExpr(checker, leftNode.left)          // cond
+      let xType = synthExpr(checker, leftNode.right)  // X
+      let yType = synthExpr(checker, node.right)      // Y
+
+      // Result is a join of X and Y
+      let resultType = freshTypeVar(checker)
+      constrain(checker, xType, resultType)
+      constrain(checker, yType, resultType)
+
+      checker.types[node.id] = resultType
+      return resultType
+    }
+  }
+
+  // -----------------------
+  // Existing general logic
+  // -----------------------
   let leftType = synthExpr(checker, node.left)
   let rightType = synthExpr(checker, node.right)
 
-  let op = node.operator and node.operator.lexeme or ""
   let leftD = deref(checker, leftType)
 
   // Check if left is definitely falsy (Nil or Bool false literal)

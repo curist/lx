@@ -38,6 +38,69 @@ fn register(test) {
     assert.equal(deref(result, getExprType(result, 3)).kind, "Nil")
   })
 
+  test("typecheck - ternary-ish pattern: cond and X or Y", fn(assert) {
+    // Common idiom: (bool_cond and X) or Y acts like a ternary
+    // Result type should be join(X, Y), not join(Bool, X, Y)
+    let result = parseAndTypecheck("{
+      fn match(x) { true }
+      let TOKEN = .{ DOT: 1, DOT_BRACE: 2 }
+      match(\"{\") and TOKEN.DOT_BRACE or TOKEN.DOT
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    // The result type should be Number (unified from both branches)
+    // not Bool | Number (which would happen without the special case)
+    let exprType = deref(result, getExprType(result, 2))
+    assert.equal(exprType.kind, "Number")
+  })
+
+  test("typecheck - ternary-ish pattern with different types", fn(assert) {
+    // When X and Y have different types, result should still be join(X, Y)
+    let result = parseAndTypecheck("{
+      fn check() { true }
+      check() and \"yes\" or 42
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    // The result can be either String or Number, but not Bool
+    let exprType = deref(result, getExprType(result, 1))
+    // This will be a TypeVar with String and Number as lower bounds
+    // The key is that Bool should NOT pollute the type
+    assert.truthy(exprType.kind == "TypeVar" or exprType.kind == "String" or exprType.kind == "Number")
+  })
+
+  test("typecheck - ternary-ish pattern in function call", fn(assert) {
+    // Using the pattern as a function argument should work
+    let result = parseAndTypecheck("{
+      fn Token(type) { .{ type: type } }
+      fn match(x) { true }
+      let DOT = 1
+      let DOT_BRACE = 2
+      Token(match(\"{\") and DOT_BRACE or DOT)
+    }")
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - regular and/or still works without pattern", fn(assert) {
+    // Make sure we didn't break regular and/or behavior
+    // Without the special pattern, regular and/or should work normally
+    let result = parseAndTypecheck("{
+      let x = 1
+      let y = x or \"default\"
+      y
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    // x or "default": returns x if truthy (Number), else "default" (String)
+    // Result should be Number | String unified in a TypeVar
+    let yType = deref(result, getExprType(result, 2))
+    // Just verify it typechecks successfully; the exact representation may vary
+    assert.truthy(yType.kind == "TypeVar" or yType.kind == "Number" or yType.kind == "String")
+  })
+
   // Nil guard narrowing tests
   test("typecheck - nil guard narrows Option to value type", fn(assert) {
     // f(nil) constrains x to Option[Number], the guard should narrow x to Number

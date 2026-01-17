@@ -93,7 +93,11 @@ fn initScanner(src) {
   }
 
   fn peekNext() {
-    if state.current + 1 < srcLen { peekAtIndex(state.current + 1).s }
+    if state.current + 1 < srcLen {
+      peekAtIndex(state.current + 1).s
+    } else {
+      ""
+    }
   }
 
   fn skipWhitespace() {

@@ -38,6 +38,20 @@ fn isNilGuard(condition) {
   nil
 }
 
+// Check if a condition is a truthy guard pattern (x)
+// Returns the identifier node if it matches, nil otherwise
+fn isTruthyGuard(condition) {
+  let node = unwrapGroupings(condition)
+  if !node { return nil }
+
+  // Check for plain identifier pattern
+  if node.type == NODE.Identifier {
+    return node
+  }
+
+  nil
+}
+
 // Check if a branch always returns (never falls through)
 fn branchAlwaysReturns(node) {
   if !node { return false }
@@ -84,6 +98,11 @@ fn makeFacts() {
     // nodeId -> { guardedId: nodeId, identNode: node } or nil
     // For expressions that are nil guard patterns (if !x { return })
     nilGuardReturn: .{},
+
+    // nodeId (of If) -> { declId: nodeId }
+    // For if statements with truthy guard pattern (if x { ... })
+    // Used for narrowing x to non-nil in the then branch
+    truthyGuardThen: .{},
 
     // nodeId -> literal value (String, Number, or enum member value)
     // For index expressions with constant keys
@@ -179,6 +198,17 @@ fn computeFactsForNode(node, facts, resolveResult, ctx) {
     // Function body: last expression is in expression position
     computeFactsForNode(node.body, facts, resolveResult, .{ inStmtPosition: false })
   } else if node.type == NODE.If {
+    // Check for truthy guard pattern (if x { ... })
+    let guardedId = isTruthyGuard(node.condition)
+    if guardedId {
+      let binding = resolveResult.resolvedNames[guardedId.id]
+      if binding and binding.declaredAt {
+        facts.truthyGuardThen[node.id] = .{
+          declId: binding.declaredAt,
+        }
+      }
+    }
+
     computeFactsForNode(node.condition, facts, resolveResult, .{ inStmtPosition: false })
     // Branches inherit statement position from parent
     computeFactsForNode(node.then, facts, resolveResult, ctx)
@@ -266,5 +296,6 @@ fn computeFacts(ast, resolveResult) {
   // Utilities (exported for use in typecheck.lx)
   unwrapGroupings,
   isNilGuard,
+  isTruthyGuard,
   branchAlwaysReturns,
 }

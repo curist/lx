@@ -584,8 +584,23 @@ fn synthIf(checker, node) {
   // Check condition (lx uses truthiness, not strict Bool)
   synthExpr(checker, node.condition)
 
-  // Synthesize then branch
+  // Branch-scoped overlay for truthy guard narrowing
+  let overlay = nil
+  let guard = checker.facts and checker.facts.truthyGuardThen and checker.facts.truthyGuardThen[node.id]
+  if guard and guard.declId {
+    overlay = applyNarrowingOverlay(checker, guard.declId)
+    if overlay {
+      envBind(checker, guard.declId, overlay.narrowed)
+    }
+  }
+
+  // Synthesize then branch (sees narrowed env)
   let thenType = synthExpr(checker, node.then)
+
+  // Restore before else branch
+  if overlay {
+    envBind(checker, guard.declId, overlay.original)
+  }
 
   if node.else {
     // With else: join both branches
@@ -838,6 +853,29 @@ fn synthLogical(checker, node) {
   leftType
 }
 
+// Helper: Apply narrowing overlay for a declaration
+// Returns { original, narrowed } if narrowing was applied, nil otherwise
+fn applyNarrowingOverlay(checker, declId) {
+  let currentType = envLookup(checker, declId)
+  if !currentType { return nil }
+
+  if !isOptionalish(checker, currentType) { return nil }
+
+  // Create narrowed type var
+  let narrowedTV = freshTypeVar(checker)
+  constrain(checker, narrowedTV, currentType)
+
+  let currentD = deref(checker, currentType)
+  if currentD.kind == "TypeVar" {
+    narrowedTV.narrowedFrom = currentType
+    currentType.narrowedTo = currentType.narrowedTo or []
+    push(currentType.narrowedTo, narrowedTV)
+  }
+
+  // Return overlay record so caller can restore
+  .{ original: currentType, narrowed: narrowedTV }
+}
+
 // Block expression
 // Uses refinement overlay for nil-guard narrowing:
 // - refinements: declId -> { original, narrowed } mapping
@@ -878,30 +916,16 @@ fn synthBlock(checker, node) {
     let guard = checker.facts and checker.facts.nilGuardReturn[expr.id]
     if guard and i < len(exprs) - 1 {
       let declId = guard.declId
-      let currentType = envLookup(checker, declId)
-      if currentType and isOptionalish(checker, currentType) and !refinements[declId] {
-        // Create a fresh TypeVar for the narrowed (non-nil) version
-        let narrowedTV = freshTypeVar(checker)
+      if !refinements[declId] {
+        let overlay = applyNarrowingOverlay(checker, declId)
+        if overlay {
+          // Store in refinement overlay
+          refinements[declId] = overlay
+          push(refinementKeys, declId)
 
-        // Constrain: narrowed <: original
-        // This shares upper bounds: if original <: Number, then narrowed <: Number
-        constrain(checker, narrowedTV, currentType)
-
-        // Link narrowed back to original so lower bounds propagate
-        // When Bool <: original, we want Bool <: narrowed too (except Nil)
-        let currentD = deref(checker, currentType)
-        if currentD.kind == "TypeVar" {
-          narrowedTV.narrowedFrom = currentType
-          currentType.narrowedTo = currentType.narrowedTo or []
-          push(currentType.narrowedTo, narrowedTV)
+          // Use narrowed type for subsequent lookups
+          envBind(checker, declId, overlay.narrowed)
         }
-
-        // Store in refinement overlay
-        refinements[declId] = .{ original: currentType, narrowed: narrowedTV }
-        push(refinementKeys, declId)
-
-        // Use narrowed type for subsequent lookups
-        envBind(checker, declId, narrowedTV)
       }
     }
   }

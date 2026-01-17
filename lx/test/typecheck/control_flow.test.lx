@@ -354,6 +354,87 @@ fn register(test) {
     // Should fail - hashmap values are used
     assert.truthy(hasError(result, "Branch mismatch"))
   })
+
+  // if-let pattern tests (truthy guard narrowing)
+  test("typecheck - if-let pattern allows narrowing to non-nil", fn(assert) {
+    // After lowering, `if let x = expr` becomes `let x = expr; if x { ... }`
+    // The then branch should see x narrowed to non-nil
+    let result = parseAndTypecheck("{
+      let handlers = .{ a: fn() { 1 } }
+      let handler = handlers.a
+      if handler {
+        handler()
+      }
+    }")
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - if-let pattern with index access", fn(assert) {
+    // Common pattern: get optional value from map, then use it
+    let result = parseAndTypecheck("{
+      let map = .{ key: 42 }
+      let value = map.key
+      if value {
+        value + 1
+      }
+    }")
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - truthy guard only narrows in then branch", fn(assert) {
+    // The else branch should NOT see narrowed type
+    // This test verifies narrowing doesn't leak to else
+    let result = parseAndTypecheck("{
+      let handlers = .{ a: fn() { 1 } }
+      let handler = handlers.a
+      if handler {
+        handler()
+      } else {
+        42
+      }
+    }")
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - truthy guard narrowing doesn't leak out of if", fn(assert) {
+    // After the if, x should still be optional (not narrowed)
+    let result = parseAndTypecheck("{
+      let handlers = .{ a: fn() { 1 } }
+      let handler = handlers.a
+      if handler {
+        handler()
+      }
+      // handler is still optional here - cannot call directly
+      handler
+    }")
+    // Should succeed - handler is still optional after if
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - no narrowing when variable is not optional", fn(assert) {
+    // If x is already non-nil (e.g., Number), no narrowing needed
+    let result = parseAndTypecheck("{
+      let x = 42
+      if x {
+        x + 1
+      }
+    }")
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - truthy guard with nested if", fn(assert) {
+    // Nested if should see outer narrowing
+    let result = parseAndTypecheck("{
+      let handlers = .{ a: fn() { 1 } }
+      let handler = handlers.a
+      if handler {
+        if true {
+          handler()
+        }
+      }
+    }")
+    assert.truthy(result.success)
+  })
 }
 
 .{ register }

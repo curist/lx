@@ -127,11 +127,11 @@ f()
 
   let bc = fnObj.chunk.bytecode
   assert.truthy(containsOp(bc, OP.ADD_INT))
-  // b = a * 3 now uses OP.MUL_LOCAL_K (better optimization)
-  assert.truthy(containsOp(bc, OP.MUL_LOCAL_K))
+  // b = a * 3 now uses OP.MUL_LK (multiply local by constant)
+  assert.truthy(containsOp(bc, OP.MUL_LK))
   assert.truthy(containsOp(bc, OP.NEGATE_INT))
-  // c - 1 now uses OP.SUB_LOCAL_K (better optimization)
-  assert.truthy(containsOp(bc, OP.SUB_LOCAL_K))
+  // c - 1 now uses OP.SUB_LK (subtract constant from local)
+  assert.truthy(containsOp(bc, OP.SUB_LK))
 
   assert.equal(containsOp(bc, OP.ADD), false)
   assert.equal(containsOp(bc, OP.MULTIPLY), false)
@@ -187,7 +187,8 @@ f()
   assert.equal(v.success, true)
 
   let bc = fnObj.chunk.bytecode
-  assert.truthy(containsOp(bc, OP.ADD_LOCAL_K))
+  // len() + 1 now uses OP.ADD_LK (add constant to local)
+  assert.truthy(containsOp(bc, OP.ADD_LK))
 })
 
 test("fastcheck: imported-module enum propagation enables *_INT ops", fn(assert) {

@@ -1,5 +1,5 @@
 // Snake game
-// Use arrow keys or WASD to move, press 'q' to quit
+// Use arrow keys or WASD to move, P or Space to pause, press 'q' to quit
 
 if !Lx.stdout.isTTY() {
   println("Error: This example requires a TTY (terminal).")
@@ -70,6 +70,8 @@ let bonusFood = .{row: 0, col: 0, active: false, spawnTime: 0}
 let bonusTimeout = 10000  // Bonus disappears after 10 seconds
 let score = 0
 let gameOver = false
+let paused = false
+let pauseStartTime = 0  // Track when pause started
 let speed = 100  // ms per game tick (snake movement speed)
 let fps = 120  // Target frames per second for rendering
 let nextBonusLength = 5  // Spawn bonus at length 5, 10, 15, etc.
@@ -152,21 +154,81 @@ fn drawBorder() {
   resetColor()
 }
 
-// Draw status bar
+// Draw status bar (responsive to terminal width)
 fn drawStatus() {
   moveTo(rows + 2, 1)
-  setColor(200, 200, 200)
+
+  // Build status string based on available width
+  let statusText = ""
+
+  // Core info always shown
+  let coreInfo = join([" Score: ", str(score), " | Len: ", str(len(snake))], "")
+
+  // Bonus info
+  let bonusInfo = ""
   if bonusFood.active {
-    print(join([" Score: ", str(score), " | Length: ", str(len(snake)), " | Grid: ", str(gridCols), "x", str(rows)], ""))
-    setColor(255, 215, 0)
-    print(" | ★ BONUS!")
-    setColor(200, 200, 200)
-    print(" | Arrow keys/WASD: move | q: quit ")
+    bonusInfo = " | ★ BONUS!"
   } else {
     let untilBonus = nextBonusLength - len(snake)
-    print(join([" Score: ", str(score), " | Length: ", str(len(snake)), " | Next bonus: ", str(untilBonus), " | Grid: ", str(gridCols), "x", str(rows), " | Arrow keys/WASD: move | q: quit "], ""))
+    bonusInfo = join([" | Bonus: ", str(untilBonus)], "")
   }
+
+  // Grid info
+  let gridInfo = join([" | Grid: ", str(gridCols), "x", str(rows)], "")
+
+  // Controls info (different lengths)
+  let controlsFull = " | WASD/Arrows: move | P/Space: pause | q: quit "
+  let controlsMed = " | Move: WASD/↑↓←→ | P: pause | q: quit "
+  let controlsShort = " | WASD/↑↓←→ | P: pause | q: quit "
+  let controlsMin = " | Controls: WASD/Arrows P q "
+
+  // Try different combinations from most detailed to least
+  // Full version
+  let fullStatus = join([coreInfo, bonusInfo, gridInfo, controlsFull], "")
+  if len(fullStatus) <= cols {
+    statusText = fullStatus
+  } else {
+    // Medium version (no grid, medium controls)
+    let medStatus = join([coreInfo, bonusInfo, controlsMed], "")
+    if len(medStatus) <= cols {
+      statusText = medStatus
+    } else {
+      // Compact version (no grid, short controls)
+      let compactStatus = join([coreInfo, bonusInfo, controlsShort], "")
+      if len(compactStatus) <= cols {
+        statusText = compactStatus
+      } else {
+        // Minimal version (no bonus, minimal controls)
+        let minStatus = join([coreInfo, controlsMin], "")
+        if len(minStatus) <= cols {
+          statusText = minStatus
+        } else {
+          // Ultra minimal - just core info
+          statusText = coreInfo
+        }
+      }
+    }
+  }
+
+  // Print with appropriate colors
+  setColor(200, 200, 200)
+  print(statusText)
+
+  // Highlight bonus if active and it was included
+  if bonusFood.active and len(statusText) > len(coreInfo) {
+    // Re-print just the bonus part in gold
+    moveTo(rows + 2, 1 + len(coreInfo))
+    setColor(255, 215, 0)
+    print(" | ★ BONUS!")
+  }
+
   resetColor()
+
+  // Clear any remaining characters on the line
+  let remaining = cols - len(statusText)
+  for i in range(remaining) {
+    print(" ")
+  }
 }
 
 // Draw snake
@@ -298,21 +360,6 @@ fn update() {
 
   snake = newSnake
 
-  // Incremental rendering: draw new head and update old head to body
-  // Draw new head
-  moveTo(newHead.row, toTermCol(newHead.col))
-  setColor(100, 255, 100)
-  print("●")
-
-  // Update old head (now at index 1) to look like body
-  if len(snake) > 1 {
-    let oldHead = snake[1]
-    moveTo(oldHead.row, toTermCol(oldHead.col))
-    setColor(50, 200, 50)
-    print("○")
-  }
-  resetColor()
-
   // Check if we should spawn bonus food
   if len(snake) >= nextBonusLength and !bonusFood.active {
     spawnBonusFood()
@@ -324,6 +371,31 @@ fn update() {
 fn handleInput(key) {
   if key == "q" {
     gameOver = true
+    return
+  }
+
+  // Pause/unpause with 'p' or space
+  if key == "p" or key == " " {
+    if paused {
+      // Calculate pause duration and adjust bonus timer
+      let pauseDuration = Date.now() - pauseStartTime
+      if bonusFood.active {
+        bonusFood.spawnTime = bonusFood.spawnTime + pauseDuration
+      }
+
+      // Trigger unpause with countdown
+      showCountdown()
+      paused = false
+    } else {
+      // Record when we paused
+      pauseStartTime = Date.now()
+      paused = true
+    }
+    return
+  }
+
+  // Don't allow movement input while paused
+  if paused {
     return
   }
 
@@ -340,6 +412,60 @@ fn handleInput(key) {
   }
   if (key == "\e[C" or key == "d") and direction != DIR.LEFT {
     nextDirection = DIR.RIGHT
+  }
+}
+
+// Draw pause screen
+fn drawPauseScreen() {
+  let msgRow = Math.floor(rows / 2)
+  let msg1 = "PAUSED"
+  let msg2 = "Press P or Space to resume"
+
+  // Center based on terminal width, not grid width
+  moveTo(msgRow, Math.floor((cols - len(msg1)) / 2) + 1)
+  setColor(255, 215, 0)
+  print(msg1)
+
+  moveTo(msgRow + 2, Math.floor((cols - len(msg2)) / 2) + 1)
+  setColor(200, 200, 200)
+  print(msg2)
+
+  resetColor()
+  Lx.stdout.flush()
+}
+
+// Show countdown before resuming
+fn showCountdown() {
+  let msgRow = Math.floor(rows / 2)
+
+  // Clear the pause screen text first (using terminal width centering)
+  let pauseMsg = "PAUSED"
+  let instructionMsg = "Press P or Space to resume"
+
+  moveTo(msgRow, Math.floor((cols - len(pauseMsg)) / 2) + 1)
+  for i in range(len(pauseMsg)) {
+    print(" ")
+  }
+
+  moveTo(msgRow + 2, Math.floor((cols - len(instructionMsg)) / 2) + 1)
+  for i in range(len(instructionMsg)) {
+    print(" ")
+  }
+
+  // Show countdown (centered on terminal width)
+  let countdown = [3, 2, 1]
+  for num in countdown {
+    let msg = str(num)
+    moveTo(msgRow, Math.floor((cols - len(msg)) / 2) + 1)
+    setColor(100, 255, 100)
+    print(msg)
+    resetColor()
+    Lx.stdout.flush()
+    Lx.sleep(1)
+
+    // Clear the number
+    moveTo(msgRow, Math.floor((cols - len(msg)) / 2) + 1)
+    print(" ")
   }
 }
 
@@ -408,12 +534,16 @@ let renderFiber = Fiber.create(fn() {
   }
 })
 
-// Render function - handles drawing non-snake elements
-// Snake is drawn incrementally in update() for performance
+// Render function
 fn render() {
-  drawFood()
-  drawBonusFood()
-  drawStatus()
+  if paused {
+    drawPauseScreen()
+  } else {
+    drawSnake()
+    drawFood()
+    drawBonusFood()
+    drawStatus()
+  }
   Lx.stdout.flush()
 }
 
@@ -438,10 +568,12 @@ for !gameOver {
     handleInput(inputResult.value)
   }
 
-  // Poll game logic fiber - update game state when ready
-  let logicResult = Fiber.resume(gameLogicFiber)
-  if logicResult.tag == "yield" and logicResult.value {
-    update()
+  // Poll game logic fiber - update game state when ready (only if not paused)
+  if !paused {
+    let logicResult = Fiber.resume(gameLogicFiber)
+    if logicResult.tag == "yield" and logicResult.value {
+      update()
+    }
   }
 
   // Poll render fiber - render frame when ready

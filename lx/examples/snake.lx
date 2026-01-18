@@ -54,18 +54,30 @@ let toTermCol = fn(gridCol) { gridCol * 2 }
 
 // Game state
 let snake = [.{row: Math.floor(rows / 2), col: Math.floor(gridCols / 2)}]
+let snakePos = .{}  // Hashmap for O(1) position lookups
 let direction = DIR_RIGHT
 let nextDirection = DIR_RIGHT
 let food = .{row: 0, col: 0}
-let bonusFood = .{row: 0, col: 0, active: false}
+let bonusFood = .{row: 0, col: 0, active: false, spawnTime: 0}
+let bonusTimeout = 10000  // Bonus disappears after 10 seconds
 let score = 0
 let gameOver = false
 let speed = 100  // ms per frame
 let nextBonusLength = 5  // Spawn bonus at length 5, 10, 15, etc.
 
+// Helper to make position key
+let posKey = fn(row, col) {
+  join([str(row), ",", str(col)], "")
+}
+
 // Initialize snake with length 3
 push(snake, .{row: snake[0].row, col: snake[0].col - 1})
 push(snake, .{row: snake[0].row, col: snake[0].col - 2})
+
+// Build initial position map
+for segment in snake {
+  snakePos[posKey(segment.row, segment.col)] = true
+}
 
 // Spawn food at random position
 let spawnFood = fn() {
@@ -73,13 +85,9 @@ let spawnFood = fn() {
     food.row = Math.floor(Math.random() * rows) + 1
     food.col = Math.floor(Math.random() * gridCols) + 1
 
-    // Make sure food doesn't spawn on snake or bonus food
-    let onSnake = false
-    for segment in snake {
-      if segment.row == food.row and segment.col == food.col {
-        onSnake = true
-      }
-    }
+    // Make sure food doesn't spawn on snake or bonus food (O(1) hashmap lookup)
+    let foodKey = posKey(food.row, food.col)
+    let onSnake = snakePos[foodKey]
     let onBonus = bonusFood.active and food.row == bonusFood.row and food.col == bonusFood.col
     if !onSnake and !onBonus {
       break
@@ -93,32 +101,16 @@ let spawnBonusFood = fn() {
     bonusFood.row = Math.floor(Math.random() * rows) + 1
     bonusFood.col = Math.floor(Math.random() * gridCols) + 1
 
-    // Make sure bonus doesn't spawn on snake or regular food
-    let onSnake = false
-    for segment in snake {
-      if segment.row == bonusFood.row and segment.col == bonusFood.col {
-        onSnake = true
-      }
-    }
+    // Make sure bonus doesn't spawn on snake or regular food (O(1) hashmap lookup)
+    let bonusKey = posKey(bonusFood.row, bonusFood.col)
+    let onSnake = snakePos[bonusKey]
     let onFood = bonusFood.row == food.row and bonusFood.col == food.col
     if !onSnake and !onFood {
       bonusFood.active = true
+      bonusFood.spawnTime = Date.now()
       break
     }
   }
-}
-
-// Check if position collides with snake
-let collidesWithSnake = fn(row, col, skipHead) {
-  let start = 0
-  if skipHead { start = 1 }
-
-  for i in range(start, len(snake)) {
-    if snake[i].row == row and snake[i].col == col {
-      return true
-    }
-  }
-  false
 }
 
 // Draw border
@@ -210,6 +202,12 @@ let clearPos = fn(row, col) {
 
 // Update game state
 let update = fn() {
+  // Check if bonus food has expired
+  if bonusFood.active and Date.now() - bonusFood.spawnTime > bonusTimeout {
+    bonusFood.active = false
+    clearPos(bonusFood.row, bonusFood.col)
+  }
+
   // Apply next direction (prevents reversing into self)
   direction = nextDirection
 
@@ -228,13 +226,7 @@ let update = fn() {
   if newHead.col < 1 { newHead.col = gridCols }
   if newHead.col > gridCols { newHead.col = 1 }
 
-  // Check self collision
-  if collidesWithSnake(newHead.row, newHead.col, false) {
-    gameOver = true
-    return
-  }
-
-  // Check food collision
+  // Check food collision first to know if we're growing
   let ateFood = newHead.row == food.row and newHead.col == food.col
   let ateBonus = bonusFood.active and newHead.row == bonusFood.row and newHead.col == bonusFood.col
 
@@ -252,6 +244,20 @@ let update = fn() {
     clearPos(bonusFood.row, bonusFood.col)
   }
 
+  // Check self collision using hashmap (O(1) instead of O(n))
+  // If not growing, the tail position will be freed up
+  let newHeadKey = posKey(newHead.row, newHead.col)
+  let tailKey = ""
+  if growAmount == 0 {
+    let tail = snake[len(snake) - 1]
+    tailKey = posKey(tail.row, tail.col)
+  }
+
+  if snakePos[newHeadKey] and newHeadKey != tailKey {
+    gameOver = true
+    return
+  }
+
   // Add new head (need to build new array with head first)
   let newSnake = [newHead]
   for segment in snake {
@@ -263,13 +269,18 @@ let update = fn() {
     let tail = snake[len(snake) - 1]
     for i in range(growAmount - 1) {
       push(newSnake, tail)
+      snakePos[posKey(tail.row, tail.col)] = true
     }
   }
+
+  // Update position hashmap: add new head
+  snakePos[newHeadKey] = true
 
   // Remove tail unless growing
   if growAmount == 0 {
     let tail = newSnake[len(newSnake) - 1]
     clearPos(tail.row, tail.col)
+    snakePos[tailKey] = nil  // Remove from hashmap
     pop(newSnake)
   }
 
@@ -290,6 +301,7 @@ let handleInput = fn(key) {
   }
 
   // Arrow keys and WASD - can't reverse direction
+  // Check against current direction to prevent reversal
   if (key == "\e[A" or key == "w") and direction != DIR_DOWN {
     nextDirection = DIR_UP
   }

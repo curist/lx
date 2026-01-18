@@ -7,31 +7,31 @@ if !Lx.stdout.isTTY() {
 }
 
 // ANSI helpers
-let moveTo = fn(row, col) {
+fn moveTo(row, col) {
   print(join(["\e[", str(row), ";", str(col), "H"], ""))
 }
 
-let clearScreen = fn() {
+fn clearScreen() {
   print("\e[2J")
 }
 
-let hideCursor = fn() {
+fn hideCursor() {
   print("\e[?25l")
 }
 
-let showCursor = fn() {
+fn showCursor() {
   print("\e[?25h")
 }
 
-let setColor = fn(r, g, b) {
+fn setColor(r, g, b) {
   print(join(["\e[38;2;", str(r), ";", str(g), ";", str(b), "m"], ""))
 }
 
-let setBgColor = fn(r, g, b) {
+fn setBgColor(r, g, b) {
   print(join(["\e[48;2;", str(r), ";", str(g), ";", str(b), "m"], ""))
 }
 
-let resetColor = fn() {
+fn resetColor() {
   print("\e[0m")
 }
 
@@ -44,10 +44,7 @@ let cols = size.cols
 let gridCols = Math.floor(cols / 2)
 
 // Direction constants
-let DIR_UP = 0
-let DIR_DOWN = 1
-let DIR_LEFT = 2
-let DIR_RIGHT = 3
+let DIR = enum { UP, DOWN, LEFT, RIGHT }
 
 // Convert grid coordinates to terminal coordinates
 let toTermCol = fn(gridCol) { gridCol * 2 }
@@ -55,14 +52,15 @@ let toTermCol = fn(gridCol) { gridCol * 2 }
 // Game state
 let snake = [.{row: Math.floor(rows / 2), col: Math.floor(gridCols / 2)}]
 let snakePos = .{}  // Hashmap for O(1) position lookups
-let direction = DIR_RIGHT
-let nextDirection = DIR_RIGHT
+let direction = DIR.RIGHT
+let nextDirection = DIR.RIGHT
 let food = .{row: 0, col: 0}
 let bonusFood = .{row: 0, col: 0, active: false, spawnTime: 0}
 let bonusTimeout = 10000  // Bonus disappears after 10 seconds
 let score = 0
 let gameOver = false
-let speed = 100  // ms per frame
+let speed = 100  // ms per game tick (snake movement speed)
+let fps = 120  // Target frames per second for rendering
 let nextBonusLength = 5  // Spawn bonus at length 5, 10, 15, etc.
 
 // Helper to make position key
@@ -80,7 +78,7 @@ for segment in snake {
 }
 
 // Spawn food at random position
-let spawnFood = fn() {
+fn spawnFood() {
   for true {
     food.row = Math.floor(Math.random() * rows) + 1
     food.col = Math.floor(Math.random() * gridCols) + 1
@@ -96,7 +94,7 @@ let spawnFood = fn() {
 }
 
 // Spawn bonus food at random position
-let spawnBonusFood = fn() {
+fn spawnBonusFood() {
   for true {
     bonusFood.row = Math.floor(Math.random() * rows) + 1
     bonusFood.col = Math.floor(Math.random() * gridCols) + 1
@@ -114,7 +112,7 @@ let spawnBonusFood = fn() {
 }
 
 // Draw border
-let drawBorder = fn() {
+fn drawBorder() {
   setColor(80, 80, 80)
   for col in range(1, cols + 1) {
     moveTo(1, col)
@@ -140,7 +138,7 @@ let drawBorder = fn() {
 }
 
 // Draw status bar
-let drawStatus = fn() {
+fn drawStatus() {
   moveTo(rows + 2, 1)
   setColor(200, 200, 200)
   let bonusMsg = ""
@@ -159,7 +157,7 @@ let drawStatus = fn() {
 }
 
 // Draw snake
-let drawSnake = fn() {
+fn drawSnake() {
   // Draw head
   let head = snake[0]
   moveTo(head.row, toTermCol(head.col))
@@ -177,7 +175,7 @@ let drawSnake = fn() {
 }
 
 // Draw food
-let drawFood = fn() {
+fn drawFood() {
   moveTo(food.row, toTermCol(food.col))
   setColor(255, 100, 100)
   print("◆")
@@ -185,7 +183,7 @@ let drawFood = fn() {
 }
 
 // Draw bonus food
-let drawBonusFood = fn() {
+fn drawBonusFood() {
   if bonusFood.active {
     moveTo(bonusFood.row, toTermCol(bonusFood.col))
     setColor(255, 215, 0)  // Gold color
@@ -195,13 +193,13 @@ let drawBonusFood = fn() {
 }
 
 // Clear position
-let clearPos = fn(row, col) {
+fn clearPos(row, col) {
   moveTo(row, toTermCol(col))
   print(" ")
 }
 
 // Update game state
-let update = fn() {
+fn update() {
   // Check if bonus food has expired
   if bonusFood.active and Date.now() - bonusFood.spawnTime > bonusTimeout {
     bonusFood.active = false
@@ -215,10 +213,10 @@ let update = fn() {
   let head = snake[0]
   let newHead = .{row: head.row, col: head.col}
 
-  if direction == DIR_UP { newHead.row = newHead.row - 1 }
-  if direction == DIR_DOWN { newHead.row = newHead.row + 1 }
-  if direction == DIR_LEFT { newHead.col = newHead.col - 1 }
-  if direction == DIR_RIGHT { newHead.col = newHead.col + 1 }
+  if direction == DIR.UP { newHead.row = newHead.row - 1 }
+  if direction == DIR.DOWN { newHead.row = newHead.row + 1 }
+  if direction == DIR.LEFT { newHead.col = newHead.col - 1 }
+  if direction == DIR.RIGHT { newHead.col = newHead.col + 1 }
 
   // Wrap around edges
   if newHead.row < 1 { newHead.row = rows }
@@ -294,7 +292,7 @@ let update = fn() {
 }
 
 // Handle input
-let handleInput = fn(key) {
+fn handleInput(key) {
   if key == "q" {
     gameOver = true
     return
@@ -302,22 +300,22 @@ let handleInput = fn(key) {
 
   // Arrow keys and WASD - can't reverse direction
   // Check against current direction to prevent reversal
-  if (key == "\e[A" or key == "w") and direction != DIR_DOWN {
-    nextDirection = DIR_UP
+  if (key == "\e[A" or key == "w") and direction != DIR.DOWN {
+    nextDirection = DIR.UP
   }
-  if (key == "\e[B" or key == "s") and direction != DIR_UP {
-    nextDirection = DIR_DOWN
+  if (key == "\e[B" or key == "s") and direction != DIR.UP {
+    nextDirection = DIR.DOWN
   }
-  if (key == "\e[D" or key == "a") and direction != DIR_RIGHT {
-    nextDirection = DIR_LEFT
+  if (key == "\e[D" or key == "a") and direction != DIR.RIGHT {
+    nextDirection = DIR.LEFT
   }
-  if (key == "\e[C" or key == "d") and direction != DIR_LEFT {
-    nextDirection = DIR_RIGHT
+  if (key == "\e[C" or key == "d") and direction != DIR.LEFT {
+    nextDirection = DIR.RIGHT
   }
 }
 
 // Draw game over screen
-let drawGameOver = fn() {
+fn drawGameOver() {
   let msgRow = Math.floor(rows / 2)
   let msg1 = "GAME OVER"
   let msg2 = join(["Final Score: ", str(score)], "")
@@ -352,8 +350,8 @@ let inputFiber = Fiber.create(fn() {
   }
 })
 
-// Timer fiber - yields true when it's time to update
-let timerFiber = Fiber.create(fn() {
+// Game logic fiber - yields true when it's time to update game state
+let gameLogicFiber = Fiber.create(fn() {
   let lastUpdate = Date.now()
   for true {
     let now = Date.now()
@@ -366,8 +364,23 @@ let timerFiber = Fiber.create(fn() {
   }
 })
 
-// Render fiber - handles all drawing
-let render = fn() {
+// Render fiber - yields true when it's time to render a frame
+let renderFiber = Fiber.create(fn() {
+  let frameTime = 1000 / fps  // ms per frame
+  let lastRender = Date.now()
+  for true {
+    let now = Date.now()
+    if now - lastRender >= frameTime {
+      lastRender = now
+      Fiber.yield(true)
+    } else {
+      Fiber.yield(false)
+    }
+  }
+})
+
+// Render function - handles all drawing
+fn render() {
   drawSnake()
   drawFood()
   drawBonusFood()
@@ -389,19 +402,22 @@ Lx.stdout.flush()
 
 // Game loop coordinating fibers
 for !gameOver {
-  // Poll input fiber
+  // Poll input fiber - handle keyboard input
   let inputResult = Fiber.resume(inputFiber)
   if inputResult.tag == "yield" and inputResult.value {
     handleInput(inputResult.value)
   }
 
-  // Poll timer fiber
-  let timerResult = Fiber.resume(timerFiber)
-  if timerResult.tag == "yield" and timerResult.value {
+  // Poll game logic fiber - update game state when ready
+  let logicResult = Fiber.resume(gameLogicFiber)
+  if logicResult.tag == "yield" and logicResult.value {
     update()
-    if !gameOver {
-      render()
-    }
+  }
+
+  // Poll render fiber - render frame when ready
+  let renderResult = Fiber.resume(renderFiber)
+  if renderResult.tag == "yield" and renderResult.value and !gameOver {
+    render()
   }
 
   // Small sleep to avoid busy loop (1ms)

@@ -114,4 +114,5 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `Lx.loadObj(bytes: string | array[number], printCode?: bool) -> fn` loads an lxobj and returns a callable closure.
 - `Lx.pcall(fn: fn, ...args) -> {ok,value,error}` calls a function and captures runtime errors instead of aborting.
 - `Lx.error(message: string) -> never` raises a runtime error (caught by `Lx.pcall`).
+- `Lx.sleep(seconds: number) -> nil` Sleep for the specified duration (supports sub-second precision via nanosleep).
 - `Lx.exit(code?: number) -> never` Exit the process.

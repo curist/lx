@@ -378,7 +378,7 @@ for !gameOver {
   }
 
   // Small sleep to avoid busy loop (1ms)
-  Lx.proc.system("sleep 0.001")
+  Lx.sleep(0.001)
 }
 
 // Game over

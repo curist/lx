@@ -65,6 +65,33 @@ static bool nanotimeNative(int argCount, Value *args) {
   return true;
 }
 
+static bool sleepNative(int argCount, Value *args) {
+  if (argCount != 1) {
+    args[-1] = CSTRING_VAL("Error: Lx.sleep takes 1 arg (seconds: number).");
+    return false;
+  }
+  if (!IS_NUMBER(args[0])) {
+    args[-1] = CSTRING_VAL("Error: Lx.sleep argument must be a number.");
+    return false;
+  }
+
+  double seconds = AS_NUMBER(args[0]);
+  if (seconds < 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.sleep seconds must be non-negative.");
+    return false;
+  }
+
+  // Use nanosleep for sub-second precision
+  struct timespec req;
+  req.tv_sec = (time_t)seconds;
+  req.tv_nsec = (long)((seconds - req.tv_sec) * 1000000000.0);
+
+  nanosleep(&req, NULL);
+
+  args[-1] = NIL_VAL;
+  return true;
+}
+
 static bool strftimeNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: Date.format takes 2 args.");
@@ -2546,6 +2573,7 @@ static void defineLxNatives() {
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "error", lxErrorNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "isLxObj", lxIsLxObjNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "loadObj", lxLoadObjNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "sleep", sleepNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "exit", exitNative);
 
   pop();

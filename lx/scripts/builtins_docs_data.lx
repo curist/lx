@@ -253,6 +253,13 @@ let DOCS = .{
     markdown: "`Lx.proc.system(cmd: string) -> number`\nRun a shell command (inherits stdio), returning exit code.",
     source: "API.md",
   },
+  ["Lx.sleep"]: .{
+    name: "Lx.sleep",
+    signature: "Lx.sleep(seconds: number) -> nil",
+    description: "Sleep for the specified duration (supports sub-second precision via nanosleep).",
+    markdown: "`Lx.sleep(seconds: number) -> nil`\nSleep for the specified duration (supports sub-second precision via nanosleep).",
+    source: "API.md",
+  },
   ["Lx.stderr"]: .{
     name: "Lx.stderr",
     signature: "Lx.stderr",
@@ -706,6 +713,7 @@ let NATIVE_NAMES = .{
   ["Lx.proc.getSize"]: true,
   ["Lx.proc.inflate"]: true,
   ["Lx.proc.system"]: true,
+  ["Lx.sleep"]: true,
   ["Lx.stderr"]: true,
   ["Lx.stderr.flush"]: true,
   ["Lx.stderr.isTTY"]: true,

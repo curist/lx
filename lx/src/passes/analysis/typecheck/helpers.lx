@@ -942,6 +942,7 @@ let BUILTIN_TYPES = .{
       error: typeAny(),
     })),
     error: typeFunction([typeAny()], typeNil()),
+    sleep: typeFunction([typeNumber()], typeNil()),
     fs: typeRecord(.{
       cwd: typeFunction([], typeString()),
       exists: typeFunction([typeString()], typeBool()),
@@ -973,6 +974,14 @@ let BUILTIN_TYPES = .{
       readFd: typeFunction([typeNumber()], typeOption(typeString())),
       poll: typeFunction([typeNumber()], typeBool()),
       unbuffered: typeFunction([], typeNil()),
+    }),
+    term: typeRecord(.{
+      getSize: typeFunction([], typeRecord(.{
+        rows: typeNumber(),
+        cols: typeNumber(),
+      })),
+      enterRawMode: typeFunction([], typeNil()),
+      exitRawMode: typeFunction([], typeNil()),
     }),
     proc: typeRecord(.{
       system: typeFunction([typeString()], typeNumber()),

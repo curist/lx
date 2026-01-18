@@ -102,6 +102,12 @@ This document is the source of truth for editor hover docs (LSP) for native buil
 - `Lx.zlib.deflate(data: array[number]) -> array[number]` Compress a byte array using zlib deflate (compatible with gzip).
 - `Lx.zlib.inflate(data: array[number]) -> array[number]` Decompress a zlib-compressed byte array.
 - `Lx.zlib.crc32(data: string | array[number]) -> number` Calculate CRC32 checksum of a string or byte array (unsigned 32-bit integer).
+- `Lx.term` - terminal control helpers namespace.
+- `Lx.term.getSize() -> {rows: number, cols: number}` Get current terminal size.
+- `Lx.term.enterRawMode() -> nil` Enter raw mode (disable line buffering, echo, signals). Terminal settings are restored on exit.
+- `Lx.term.exitRawMode() -> nil` Exit raw mode and restore original terminal settings.
+- `Lx.term.enableMouseTracking() -> nil` Enable mouse tracking (button press/release and drag events).
+- `Lx.term.disableMouseTracking() -> nil` Disable mouse tracking.
 - `Lx.globals() -> array[string | number]` List current global keys.
 - `Lx.doubleToUint8Array(x: number) -> array[number]` Convert a float64 to 8 bytes (little-endian).
 - `Lx.isLxObj(bytes: string | array[number]) -> bool` checks whether a byte buffer looks like an lxobj.

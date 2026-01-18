@@ -1,0 +1,56 @@
+// Raw input demo
+// Shows raw keyboard input (press 'q' to quit)
+
+if !Lx.stdout.isTTY() {
+  println("Error: This example requires a TTY (terminal).")
+  Lx.exit(1)
+}
+
+println("Raw Input Demo")
+println("==============")
+println()
+println("Type keys to see their raw bytes. Press 'q' to quit.")
+println()
+
+Lx.term.enterRawMode()
+
+for true {
+  if Lx.stdin.poll(16) {  // Poll every 16ms (~60fps)
+    let bytes = Lx.stdin.readFd(16)
+    if bytes {
+      // Check for 'q' to quit
+      if bytes == "q" {
+        break
+      }
+
+      // Display the key info
+      print("Key: ")
+
+      // Show each byte
+      for i in range(len(bytes)) {
+        let byte = ord(substr(bytes, i, i + 1))
+        print(str(byte) + " ")
+      }
+
+      // Show as string if printable
+      if len(bytes) == 1 and ord(bytes) >= 32 and ord(bytes) < 127 {
+        print("('" + bytes + "')")
+      }
+
+      // Detect common escape sequences
+      if bytes == "\e[A" { print(" [UP ARROW]") }
+      if bytes == "\e[B" { print(" [DOWN ARROW]") }
+      if bytes == "\e[C" { print(" [RIGHT ARROW]") }
+      if bytes == "\e[D" { print(" [LEFT ARROW]") }
+      if bytes == "\e" { print(" [ESC]") }
+      if bytes == "\r" { print(" [ENTER]") }
+      if bytes == "\x7f" { print(" [BACKSPACE]") }
+
+      println()
+    }
+  }
+}
+
+Lx.term.exitRawMode()
+println()
+println("Exited raw mode.")

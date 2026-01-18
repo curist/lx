@@ -1,0 +1,178 @@
+// Simple character movement game
+// Use arrow keys to move '@', press 'q' to quit
+
+if !Lx.stdout.isTTY() {
+  println("Error: This example requires a TTY (terminal).")
+  Lx.exit(1)
+}
+
+// ANSI helpers
+let moveTo = fn(row, col) {
+  print("\e[" + str(row) + ";" + str(col) + "H")
+}
+
+let clearScreen = fn() {
+  print("\e[2J")
+}
+
+let hideCursor = fn() {
+  print("\e[?25l")
+}
+
+let showCursor = fn() {
+  print("\e[?25h")
+}
+
+let setColor = fn(r, g, b) {
+  print("\e[38;2;" + str(r) + ";" + str(g) + ";" + str(b) + "m")
+}
+
+let resetColor = fn() {
+  print("\e[0m")
+}
+
+// Get terminal size
+let size = Lx.term.getSize()
+let maxRows = size.rows
+let maxCols = size.cols
+
+// Player position (start in center)
+let playerRow = Math.floor(maxRows / 2)
+let playerCol = Math.floor(maxCols / 2)
+
+// Last size for resize detection
+let lastRows = maxRows
+let lastCols = maxCols
+
+// Game state
+let running = true
+
+// Enter raw mode and setup
+Lx.term.enterRawMode()
+clearScreen()
+hideCursor()
+
+// Draw border
+let drawBorder = fn() {
+  setColor(100, 100, 100)
+  for col in range(1, maxCols + 1) {
+    moveTo(1, col)
+    print("-")
+    moveTo(maxRows, col)
+    print("-")
+  }
+  for row in range(1, maxRows + 1) {
+    moveTo(row, 1)
+    print("|")
+    moveTo(row, maxCols)
+    print("|")
+  }
+  resetColor()
+}
+
+// Draw instructions
+let drawInstructions = fn() {
+  moveTo(1, 3)
+  print(" Arrow keys/WASD: move | q: quit ")
+}
+
+// Draw player
+let drawPlayer = fn() {
+  moveTo(playerRow, playerCol)
+  setColor(255, 100, 100)
+  print("@")
+  resetColor()
+}
+
+// Clear player at position
+let clearPlayer = fn(row, col) {
+  moveTo(row, col)
+  print(" ")
+}
+
+// Initial draw
+drawBorder()
+drawInstructions()
+drawPlayer()
+Lx.stdout.flush()
+
+// Game loop
+for running {
+  // Check for resize
+  let currentSize = Lx.term.getSize()
+  if currentSize.rows != lastRows or currentSize.cols != lastCols {
+    maxRows = currentSize.rows
+    maxCols = currentSize.cols
+    lastRows = maxRows
+    lastCols = maxCols
+
+    // Clamp player position
+    if playerRow > maxRows - 1 { playerRow = maxRows - 1 }
+    if playerCol > maxCols - 1 { playerCol = maxCols - 1 }
+    if playerRow < 2 { playerRow = 2 }
+    if playerCol < 2 { playerCol = 2 }
+
+    // Redraw everything
+    clearScreen()
+    drawBorder()
+    drawInstructions()
+    drawPlayer()
+    Lx.stdout.flush()
+  }
+
+  // Poll for input
+  if Lx.stdin.poll(16) {  // ~60fps
+    let key = Lx.stdin.readFd(16)
+    if key {
+      let oldRow = playerRow
+      let oldCol = playerCol
+
+      // Handle input
+      if key == "q" {
+        running = false
+      }
+
+      // Arrow keys
+      if key == "\e[A" and playerRow > 2 {
+        playerRow = playerRow - 1
+      }
+      if key == "\e[B" and playerRow < maxRows - 1 {
+        playerRow = playerRow + 1
+      }
+      if key == "\e[C" and playerCol < maxCols - 1 {
+        playerCol = playerCol + 1
+      }
+      if key == "\e[D" and playerCol > 2 {
+        playerCol = playerCol - 1
+      }
+
+      // WASD keys
+      if key == "w" and playerRow > 2 {
+        playerRow = playerRow - 1
+      }
+      if key == "s" and playerRow < maxRows - 1 {
+        playerRow = playerRow + 1
+      }
+      if key == "d" and playerCol < maxCols - 1 {
+        playerCol = playerCol + 1
+      }
+      if key == "a" and playerCol > 2 {
+        playerCol = playerCol - 1
+      }
+
+      // Redraw if moved
+      if oldRow != playerRow or oldCol != playerCol {
+        clearPlayer(oldRow, oldCol)
+        drawPlayer()
+        Lx.stdout.flush()
+      }
+    }
+  }
+}
+
+// Cleanup
+clearScreen()
+showCursor()
+Lx.term.exitRawMode()
+println()
+println("Thanks for playing!")

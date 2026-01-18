@@ -1,0 +1,22 @@
+// Terminal information display
+// Shows terminal size and capabilities
+
+if !Lx.stdout.isTTY() {
+  println("Error: This example requires a TTY (terminal).")
+  Lx.exit(1)
+}
+
+let size = Lx.term.getSize()
+
+println("Terminal Information")
+println("====================")
+println()
+println("Size: " + str(size.cols) + " cols x " + str(size.rows) + " rows")
+println()
+println("Capabilities:")
+println("  stdout is TTY: " + str(Lx.stdout.isTTY()))
+println("  stderr is TTY: " + str(Lx.stderr.isTTY()))
+println()
+println("Environment:")
+println("  TERM: " + (Lx.env.TERM or "(not set)"))
+println("  COLORTERM: " + (Lx.env.COLORTERM or "(not set)"))

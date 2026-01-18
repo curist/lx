@@ -16,6 +16,10 @@
 #include <unistd.h>
 #include <zlib.h>
 
+// Terminal control
+#include <sys/ioctl.h>
+#include <termios.h>
+
 #include "lx/lxversion.h"
 
 #include "memory.h"
@@ -23,6 +27,10 @@
 #include "vm.h"
 
 #define RFC3339 "%Y-%m-%dT%H:%M:%S%z"
+
+// Terminal state
+static struct termios original_termios;
+static bool termios_saved = false;
 
 void defineBuiltinNatives();
 
@@ -2108,6 +2116,133 @@ static bool stdinReadFdNative(int argCount, Value *args) {
   return true;
 }
 
+// Terminal control natives
+
+static bool termGetSizeNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.term.getSize takes 0 args.");
+    return false;
+  }
+
+  struct winsize w;
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
+    args[-1] = CSTRING_VAL("Error: Failed to get terminal size.");
+    return false;
+  }
+
+  ObjHashmap* result = newHashmap();
+  push(OBJ_VAL(result));
+
+  push(CSTRING_VAL("rows"));
+  push(NUMBER_VAL((double)w.ws_row));
+  tableSet(&result->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  push(CSTRING_VAL("cols"));
+  push(NUMBER_VAL((double)w.ws_col));
+  tableSet(&result->table, vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+
+  args[-1] = OBJ_VAL(result);
+  pop(); // result
+  return true;
+}
+
+static bool termEnterRawModeNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.term.enterRawMode takes 0 args.");
+    return false;
+  }
+
+  // Save original terminal settings if not already saved
+  if (!termios_saved) {
+    if (tcgetattr(STDIN_FILENO, &original_termios) == -1) {
+      args[-1] = CSTRING_VAL("Error: Failed to get terminal attributes.");
+      return false;
+    }
+    termios_saved = true;
+  }
+
+  struct termios raw = original_termios;
+
+  // Disable canonical mode, echo, signals, and special processing
+  raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+
+  // Disable input processing (CR to NL conversion, flow control, etc.)
+  raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+
+  // Disable output processing (NL to CRNL conversion)
+  raw.c_oflag &= ~(OPOST);
+
+  // Set character size to 8 bits
+  raw.c_cflag |= (CS8);
+
+  // Minimum number of bytes and timeout for read
+  raw.c_cc[VMIN] = 0;   // Non-blocking reads
+  raw.c_cc[VTIME] = 0;  // No timeout
+
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+    args[-1] = CSTRING_VAL("Error: Failed to set raw mode.");
+    return false;
+  }
+
+  args[-1] = NIL_VAL;
+  return true;
+}
+
+static bool termExitRawModeNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.term.exitRawMode takes 0 args.");
+    return false;
+  }
+
+  if (!termios_saved) {
+    args[-1] = CSTRING_VAL("Error: Raw mode was never entered.");
+    return false;
+  }
+
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios) == -1) {
+    args[-1] = CSTRING_VAL("Error: Failed to restore terminal settings.");
+    return false;
+  }
+
+  args[-1] = NIL_VAL;
+  return true;
+}
+
+static bool termEnableMouseTrackingNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.term.enableMouseTracking takes 0 args.");
+    return false;
+  }
+
+  // Enable mouse tracking using ANSI escape sequences
+  // CSI ? 1000 h - Enable X11 mouse mode (button press/release)
+  // CSI ? 1002 h - Enable button event tracking (drag events)
+  // CSI ? 1006 h - Enable SGR extended mouse mode (better coordinate support)
+  printf("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+  fflush(stdout);
+
+  args[-1] = NIL_VAL;
+  return true;
+}
+
+static bool termDisableMouseTrackingNative(int argCount, Value *args) {
+  if (argCount != 0) {
+    args[-1] = CSTRING_VAL("Error: Lx.term.disableMouseTracking takes 0 args.");
+    return false;
+  }
+
+  // Disable mouse tracking
+  printf("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
+  fflush(stdout);
+
+  args[-1] = NIL_VAL;
+  return true;
+}
+
 static bool reverseNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: reverse takes 1 arg.");
@@ -2388,6 +2523,21 @@ static void defineLxNatives() {
   defineTableFunction(&zlib->table, "inflate", zlibInflateNative);
   defineTableFunction(&zlib->table, "crc32", zlibCrc32Native);
   pop(); // zlib
+
+  // Lx.term
+  ObjHashmap* term = newHashmap();
+  push(OBJ_VAL(term)); // root
+  push(CSTRING_VAL("term"));
+  push(OBJ_VAL(term));
+  tableSet(&AS_HASHMAP(vm.stack[1]), vm.stackTop[-2], vm.stackTop[-1]);
+  pop();
+  pop();
+  defineTableFunction(&term->table, "getSize", termGetSizeNative);
+  defineTableFunction(&term->table, "enterRawMode", termEnterRawModeNative);
+  defineTableFunction(&term->table, "exitRawMode", termExitRawModeNative);
+  defineTableFunction(&term->table, "enableMouseTracking", termEnableMouseTrackingNative);
+  defineTableFunction(&term->table, "disableMouseTracking", termDisableMouseTrackingNative);
+  pop(); // term
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "globals", globalsNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "doubleToUint8Array",

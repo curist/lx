@@ -338,6 +338,43 @@ let drawGameOver = fn() {
   Lx.stdout.flush()
 }
 
+// Input fiber - yields keyboard events
+let inputFiber = Fiber.create(fn() {
+  for true {
+    if Lx.stdin.poll(0) {
+      let key = Lx.stdin.readFd(16)
+      if key {
+        Fiber.yield(key)
+      }
+    } else {
+      Fiber.yield(nil)
+    }
+  }
+})
+
+// Timer fiber - yields true when it's time to update
+let timerFiber = Fiber.create(fn() {
+  let lastUpdate = Date.now()
+  for true {
+    let now = Date.now()
+    if now - lastUpdate >= speed {
+      lastUpdate = now
+      Fiber.yield(true)
+    } else {
+      Fiber.yield(false)
+    }
+  }
+})
+
+// Render fiber - handles all drawing
+let render = fn() {
+  drawSnake()
+  drawFood()
+  drawBonusFood()
+  drawStatus()
+  Lx.stdout.flush()
+}
+
 // Initialize
 Lx.term.enterRawMode()
 clearScreen()
@@ -350,30 +387,20 @@ drawSnake()
 drawStatus()
 Lx.stdout.flush()
 
-// Game loop
-let lastUpdate = Date.now()
-
+// Game loop coordinating fibers
 for !gameOver {
-  // Handle input (non-blocking)
-  if Lx.stdin.poll(0) {
-    let key = Lx.stdin.readFd(16)
-    if key {
-      handleInput(key)
-    }
+  // Poll input fiber
+  let inputResult = Fiber.resume(inputFiber)
+  if inputResult.tag == "yield" and inputResult.value {
+    handleInput(inputResult.value)
   }
 
-  // Update game state at fixed rate
-  let now = Date.now()
-  if now - lastUpdate >= speed {
-    lastUpdate = now
+  // Poll timer fiber
+  let timerResult = Fiber.resume(timerFiber)
+  if timerResult.tag == "yield" and timerResult.value {
     update()
-
     if !gameOver {
-      drawSnake()
-      drawFood()
-      drawBonusFood()
-      drawStatus()
-      Lx.stdout.flush()
+      render()
     }
   }
 

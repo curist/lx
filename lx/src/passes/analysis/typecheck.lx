@@ -180,6 +180,11 @@ fn makeChecker(resolveResult, opts = .{}) {
     env: .{},                                    // declNodeId -> type (for locals/upvalues)
     currentReturn: nil,                          // Current function's return type var
 
+    // === Fiber context (for incremental/cancellable typecheck) ===
+    fiberCtx: opts.fiberCtx or nil,              // Optional fiber context for yielding
+    nodesProcessed: 0,                           // Counter for progress tracking
+    yieldInterval: 50,                           // Yield every N nodes (throttling)
+
     // facts: will be set after makeChecker() by typecheck()
   }
 }
@@ -195,6 +200,39 @@ fn addError(checker, nodeId, message) {
     message: message,
     severity: "error",
   })
+}
+
+// ========================================================
+// Fiber Support (Progress & Cancellation)
+// ========================================================
+
+// Check if we should yield for progress reporting / cancellation
+// Returns true if cancelled (caller should abort)
+fn maybeYield(checker) {
+  if !checker.fiberCtx { return false }
+
+  checker.nodesProcessed = checker.nodesProcessed + 1
+
+  // Throttle yields - only yield every N nodes
+  if checker.nodesProcessed % checker.yieldInterval != 0 { return false }
+
+  // Yield progress event
+  if checker.fiberCtx.yield {
+    checker.fiberCtx.yield(.{
+      kind: "PROGRESS",  // Will be mapped to Events.EventKind.PROGRESS
+      pass: "typecheck",
+      phase: "synthesizing",
+      done: checker.nodesProcessed,
+      total: nil,  // Unknown total (could estimate from AST size)
+    })
+  }
+
+  // Check if cancelled
+  if checker.fiberCtx.checkCancel and checker.fiberCtx.checkCancel() {
+    return true  // Signal cancellation to caller
+  }
+
+  false
 }
 
 // ========================================================
@@ -942,6 +980,14 @@ fn synthBlock(checker, node) {
           envBind(checker, declId, overlay.narrowed)
         }
       }
+    }
+
+    // Yield point: after processing each expression in block
+    // (state is consistent - expression fully typed, env updated)
+    if maybeYield(checker) {
+      // Cancelled - return early with partial results
+      checker.types[node.id] = typeAny()
+      return typeAny()
     }
   }
 

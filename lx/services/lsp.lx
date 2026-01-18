@@ -63,7 +63,7 @@ fn hexVal(ch) {
   if c >= ord("0") and c <= ord("9") { return c - ord("0") }
   if c >= ord("a") and c <= ord("f") { return c - ord("a") + 10 }
   if c >= ord("A") and c <= ord("F") { return c - ord("A") + 10 }
-  nil
+  0
 }
 
 fn uriDecode(s) {
@@ -228,7 +228,6 @@ fn runWarmupStep(state) {
   }
 
   let r = query.compileWithDriver(state.driver, spec, .{
-    withTypecheck: false,
     mergeScope: "reachable",
   })
   if r and r.success {
@@ -658,7 +657,6 @@ fn compileForSpec(state, spec) {
   }
 
   ctxResult = query.compileWithDriver(state.driver, spec, .{
-    withTypecheck: false,
     mergeScope: "reachable",
   })
 
@@ -767,7 +765,7 @@ fn publishDiagnosticsFromCache(state, spec) {
   }
 
   let diags = query.queryDiagnostics(mod)
-  // LSP mode is intentionally fast: no constraint-solver diagnostics.
+  // LSP uses fast "query" profile without typecheck (use `lx check` for type errors)
   let out = []
   for let i = 0; i < len(diags); i = i + 1 {
     let d = diags[i]

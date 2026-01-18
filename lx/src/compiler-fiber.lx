@@ -9,6 +9,7 @@ let parse = import "src/passes/parse/parser.lx"
 let lower = import "src/passes/transform/lower.lx"
 let anf = import "src/passes/transform/anf.lx"
 let resolve = import "src/passes/analysis/resolve.lx"
+let typecheck = import "src/passes/analysis/typecheck.lx"
 let anfInline = import "src/passes/transform/anf-inline.lx"
 let lowerIntrinsics = import "src/passes/transform/lower-intrinsics.lx"
 let codegen = import "src/passes/emit/codegen.lx"
@@ -138,6 +139,51 @@ fn createCompilerFiber(source, filename, cancelled) {
       return Events.done(.{ success: false, errors: resolveResult.errors })
     }
 
+    // Typecheck phase
+    Fiber.yield(Events.progress("typecheck", "start", 0, 1))
+    if checkCancel() { return Events.error("Cancelled") }
+
+    // Create fiber context for typecheck (enables yields and cancellation)
+    let typecheckFiberCtx = .{
+      yield: fn(evt) {
+        // Map typecheck's event format to Events module format
+        if evt.kind == "PROGRESS" {
+          Fiber.yield(Events.progress(evt.pass, evt.phase, evt.done, evt.total))
+        }
+      },
+      checkCancel: checkCancel,
+    }
+
+    let typecheckResult = typecheck(anfResult.ast, resolveResult, .{
+      enumInfo: parseResult.enumInfo,
+      fiberCtx: typecheckFiberCtx,
+    })
+
+    // Yield diagnostics for typecheck errors
+    for err in typecheckResult.errors {
+      let node = resolveResult.nodes and resolveResult.nodes[err.nodeId]
+      let range = if node and node.line {
+        .{
+          start: .{ line: node.line, col: node.col },
+          end: .{ line: node.endLine or node.line, col: node.endCol or (node.col + 1) }
+        }
+      } else {
+        .{ start: .{ line: 1, col: 0 }, end: .{ line: 1, col: 1 } }
+      }
+      let severity = if err.severity == "error" {
+        Events.Severity.ERROR
+      } else if err.severity == "warning" {
+        Events.Severity.WARNING
+      } else {
+        Events.Severity.ERROR
+      }
+      Fiber.yield(Events.diag("typecheck", filename, range, severity, err.message, nil))
+      if checkCancel() { return Events.error("Cancelled") }
+    }
+
+    Fiber.yield(Events.progress("typecheck", "done", 1, 1))
+    if checkCancel() { return Events.error("Cancelled") }
+
     // ANF-inline phase
     Fiber.yield(Events.progress("anf-inline", "start", 0, 1))
     if checkCancel() { return Events.error("Cancelled") }
@@ -186,6 +232,7 @@ fn createCompilerFiber(source, filename, cancelled) {
       lowerResult,
       anfResult,
       resolveResult,
+      typecheckResult,
       codegenResult
     })
   })

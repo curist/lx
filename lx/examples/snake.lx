@@ -154,6 +154,35 @@ fn drawBorder() {
   resetColor()
 }
 
+// Create progress bar for bonus timer
+fn makeBonusProgressBar(barWidth) {
+  if !bonusFood.active {
+    return ""
+  }
+
+  let elapsed = Date.now() - bonusFood.spawnTime
+  let remaining = bonusTimeout - elapsed
+  let percent = remaining / bonusTimeout
+
+  // Clamp between 0 and 1
+  if percent < 0 { percent = 0 }
+  if percent > 1 { percent = 1 }
+
+  let fillCount = Math.floor(percent * barWidth)
+  let emptyCount = barWidth - fillCount
+
+  let parts = ["["]
+  for i in range(fillCount) {
+    push(parts, "|")
+  }
+  for i in range(emptyCount) {
+    push(parts, " ")
+  }
+  push(parts, "]")
+
+  join(parts, "")
+}
+
 // Draw status bar (responsive to terminal width)
 fn drawStatus() {
   moveTo(rows + 2, 1)
@@ -164,10 +193,11 @@ fn drawStatus() {
   // Core info always shown
   let coreInfo = join([" Score: ", str(score), " | Len: ", str(len(snake))], "")
 
-  // Bonus info
+  // Bonus info with progress bar
   let bonusInfo = ""
   if bonusFood.active {
-    bonusInfo = " | ★ BONUS!"
+    let progressBar = makeBonusProgressBar(10)
+    bonusInfo = join([" | ★ BONUS! ", progressBar], "")
   } else {
     let untilBonus = nextBonusLength - len(snake)
     bonusInfo = join([" | Bonus: ", str(untilBonus)], "")
@@ -216,10 +246,11 @@ fn drawStatus() {
 
   // Highlight bonus if active and it was included
   if bonusFood.active and len(statusText) > len(coreInfo) {
-    // Re-print just the bonus part in gold
+    // Re-print just the bonus part in gold (including progress bar)
     moveTo(rows + 2, 1 + len(coreInfo))
     setColor(255, 215, 0)
-    print(" | ★ BONUS!")
+    let progressBar = makeBonusProgressBar(10)
+    print(join([" | ★ BONUS! ", progressBar], ""))
   }
 
   resetColor()
@@ -494,9 +525,8 @@ fn drawGameOver() {
 // Input fiber - yields keyboard events
 let inputFiber = Fiber.create(fn() {
   for true {
-    if Lx.stdin.poll(0) {
-      let key = Lx.stdin.readFd(16)
-      if key {
+    if Lx.stdin.poll(1) {
+      if let key = Lx.stdin.readFd(16) {
         Fiber.yield(key)
       }
     } else {
@@ -581,23 +611,13 @@ for !gameOver {
   if renderResult.tag == "yield" and renderResult.value and !gameOver {
     render()
   }
-
-  // Small sleep to avoid busy loop (1ms)
-  Lx.sleep(0.001)
 }
 
 // Game over
 drawGameOver()
 
 // Wait for key press to exit
-for true {
-  if Lx.stdin.poll(100) {
-    let key = Lx.stdin.readFd(16)
-    if key {
-      break
-    }
-  }
-}
+Lx.stdin.poll(-1) 
 
 // Cleanup
 clearScreen()

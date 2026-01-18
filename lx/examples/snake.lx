@@ -35,22 +35,33 @@ fn resetColor() {
   print("\e[0m")
 }
 
+fn enterAltScreen() {
+  print("\e[?1049h")
+}
+
+fn leaveAltScreen() {
+  print("\e[?1049l")
+}
+
 // Get terminal size
 let size = Lx.term.getSize()
 let rows = size.rows - 2  // Leave room for status bar
 let cols = size.cols
 
 // Use only even columns to make grid more square (terminal chars are ~2x taller than wide)
-let gridCols = Math.floor(cols / 2)
+// Account for left and right borders (cols 1 and cols)
+let gridCols = Math.floor((cols - 2) / 2)
 
 // Direction constants
 let DIR = enum { UP, DOWN, LEFT, RIGHT }
 
 // Convert grid coordinates to terminal coordinates
-let toTermCol = fn(gridCol) { gridCol * 2 }
+// Offset by left border (column 1) so grid starts at column 3
+let toTermCol = fn(gridCol) { 1 + gridCol * 2 }
 
 // Game state
-let snake = [.{row: Math.floor(rows / 2), col: Math.floor(gridCols / 2)}]
+// Start snake inside the border (rows 2..rows, not 1..rows)
+let snake = [.{row: Math.floor(rows / 2) + 1, col: Math.floor(gridCols / 2)}]
 let snakePos = .{}  // Hashmap for O(1) position lookups
 let direction = DIR.RIGHT
 let nextDirection = DIR.RIGHT
@@ -80,7 +91,8 @@ for segment in snake {
 // Spawn food at random position
 fn spawnFood() {
   for true {
-    food.row = Math.floor(Math.random() * rows) + 1
+    // Spawn inside border: rows 2..rows (not 1..rows)
+    food.row = Math.floor(Math.random() * (rows - 1)) + 2
     food.col = Math.floor(Math.random() * gridCols) + 1
 
     // Make sure food doesn't spawn on snake or bonus food (O(1) hashmap lookup)
@@ -96,7 +108,8 @@ fn spawnFood() {
 // Spawn bonus food at random position
 fn spawnBonusFood() {
   for true {
-    bonusFood.row = Math.floor(Math.random() * rows) + 1
+    // Spawn inside border: rows 2..rows (not 1..rows)
+    bonusFood.row = Math.floor(Math.random() * (rows - 1)) + 2
     bonusFood.col = Math.floor(Math.random() * gridCols) + 1
 
     // Make sure bonus doesn't spawn on snake or regular food (O(1) hashmap lookup)
@@ -114,13 +127,15 @@ fn spawnBonusFood() {
 // Draw border
 fn drawBorder() {
   setColor(80, 80, 80)
-  for col in range(1, cols + 1) {
+  for col in range(cols + 1) {
+    if col == 0 { continue }
     moveTo(1, col)
     print("─")
     moveTo(rows + 1, col)
     print("─")
   }
-  for row in range(1, rows + 2) {
+  for row in range(rows + 2) {
+    if row == 0 { continue }
     moveTo(row, 1)
     print("│")
     moveTo(row, cols)
@@ -141,9 +156,7 @@ fn drawBorder() {
 fn drawStatus() {
   moveTo(rows + 2, 1)
   setColor(200, 200, 200)
-  let bonusMsg = ""
   if bonusFood.active {
-    bonusMsg = " | "
     print(join([" Score: ", str(score), " | Length: ", str(len(snake)), " | Grid: ", str(gridCols), "x", str(rows)], ""))
     setColor(255, 215, 0)
     print(" | ★ BONUS!")
@@ -166,7 +179,8 @@ fn drawSnake() {
 
   // Draw body
   setColor(50, 200, 50)
-  for i in range(1, len(snake)) {
+  for i in range(len(snake)) {
+    if i == 0 { continue }
     let segment = snake[i]
     moveTo(segment.row, toTermCol(segment.col))
     print("○")
@@ -218,9 +232,9 @@ fn update() {
   if direction == DIR.LEFT { newHead.col = newHead.col - 1 }
   if direction == DIR.RIGHT { newHead.col = newHead.col + 1 }
 
-  // Wrap around edges
-  if newHead.row < 1 { newHead.row = rows }
-  if newHead.row > rows { newHead.row = 1 }
+  // Wrap around edges (playfield is rows 2..rows, cols 1..gridCols)
+  if newHead.row < 2 { newHead.row = rows }
+  if newHead.row > rows { newHead.row = 2 }
   if newHead.col < 1 { newHead.col = gridCols }
   if newHead.col > gridCols { newHead.col = 1 }
 
@@ -283,6 +297,21 @@ fn update() {
   }
 
   snake = newSnake
+
+  // Incremental rendering: draw new head and update old head to body
+  // Draw new head
+  moveTo(newHead.row, toTermCol(newHead.col))
+  setColor(100, 255, 100)
+  print("●")
+
+  // Update old head (now at index 1) to look like body
+  if len(snake) > 1 {
+    let oldHead = snake[1]
+    moveTo(oldHead.row, toTermCol(oldHead.col))
+    setColor(50, 200, 50)
+    print("○")
+  }
+  resetColor()
 
   // Check if we should spawn bonus food
   if len(snake) >= nextBonusLength and !bonusFood.active {
@@ -379,9 +408,9 @@ let renderFiber = Fiber.create(fn() {
   }
 })
 
-// Render function - handles all drawing
+// Render function - handles drawing non-snake elements
+// Snake is drawn incrementally in update() for performance
 fn render() {
-  drawSnake()
   drawFood()
   drawBonusFood()
   drawStatus()
@@ -390,6 +419,7 @@ fn render() {
 
 // Initialize
 Lx.term.enterRawMode()
+enterAltScreen()
 clearScreen()
 hideCursor()
 
@@ -440,6 +470,7 @@ for true {
 // Cleanup
 clearScreen()
 showCursor()
+leaveAltScreen()
 Lx.term.exitRawMode()
 println()
 println("Thanks for playing!")

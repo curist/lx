@@ -1,0 +1,392 @@
+// Snake game
+// Use arrow keys or WASD to move, press 'q' to quit
+
+if !Lx.stdout.isTTY() {
+  println("Error: This example requires a TTY (terminal).")
+  Lx.exit(1)
+}
+
+// ANSI helpers
+let moveTo = fn(row, col) {
+  print(join(["\e[", str(row), ";", str(col), "H"], ""))
+}
+
+let clearScreen = fn() {
+  print("\e[2J")
+}
+
+let hideCursor = fn() {
+  print("\e[?25l")
+}
+
+let showCursor = fn() {
+  print("\e[?25h")
+}
+
+let setColor = fn(r, g, b) {
+  print(join(["\e[38;2;", str(r), ";", str(g), ";", str(b), "m"], ""))
+}
+
+let setBgColor = fn(r, g, b) {
+  print(join(["\e[48;2;", str(r), ";", str(g), ";", str(b), "m"], ""))
+}
+
+let resetColor = fn() {
+  print("\e[0m")
+}
+
+// Get terminal size
+let size = Lx.term.getSize()
+let rows = size.rows - 2  // Leave room for status bar
+let cols = size.cols
+
+// Use only even columns to make grid more square (terminal chars are ~2x taller than wide)
+let gridCols = Math.floor(cols / 2)
+
+// Direction constants
+let DIR_UP = 0
+let DIR_DOWN = 1
+let DIR_LEFT = 2
+let DIR_RIGHT = 3
+
+// Convert grid coordinates to terminal coordinates
+let toTermCol = fn(gridCol) { gridCol * 2 }
+
+// Game state
+let snake = [.{row: Math.floor(rows / 2), col: Math.floor(gridCols / 2)}]
+let direction = DIR_RIGHT
+let nextDirection = DIR_RIGHT
+let food = .{row: 0, col: 0}
+let bonusFood = .{row: 0, col: 0, active: false}
+let score = 0
+let gameOver = false
+let speed = 100  // ms per frame
+let nextBonusLength = 5  // Spawn bonus at length 5, 10, 15, etc.
+
+// Initialize snake with length 3
+push(snake, .{row: snake[0].row, col: snake[0].col - 1})
+push(snake, .{row: snake[0].row, col: snake[0].col - 2})
+
+// Spawn food at random position
+let spawnFood = fn() {
+  for true {
+    food.row = Math.floor(Math.random() * rows) + 1
+    food.col = Math.floor(Math.random() * gridCols) + 1
+
+    // Make sure food doesn't spawn on snake or bonus food
+    let onSnake = false
+    for segment in snake {
+      if segment.row == food.row and segment.col == food.col {
+        onSnake = true
+      }
+    }
+    let onBonus = bonusFood.active and food.row == bonusFood.row and food.col == bonusFood.col
+    if !onSnake and !onBonus {
+      break
+    }
+  }
+}
+
+// Spawn bonus food at random position
+let spawnBonusFood = fn() {
+  for true {
+    bonusFood.row = Math.floor(Math.random() * rows) + 1
+    bonusFood.col = Math.floor(Math.random() * gridCols) + 1
+
+    // Make sure bonus doesn't spawn on snake or regular food
+    let onSnake = false
+    for segment in snake {
+      if segment.row == bonusFood.row and segment.col == bonusFood.col {
+        onSnake = true
+      }
+    }
+    let onFood = bonusFood.row == food.row and bonusFood.col == food.col
+    if !onSnake and !onFood {
+      bonusFood.active = true
+      break
+    }
+  }
+}
+
+// Check if position collides with snake
+let collidesWithSnake = fn(row, col, skipHead) {
+  let start = 0
+  if skipHead { start = 1 }
+
+  for i in range(start, len(snake)) {
+    if snake[i].row == row and snake[i].col == col {
+      return true
+    }
+  }
+  false
+}
+
+// Draw border
+let drawBorder = fn() {
+  setColor(80, 80, 80)
+  for col in range(1, cols + 1) {
+    moveTo(1, col)
+    print("─")
+    moveTo(rows + 1, col)
+    print("─")
+  }
+  for row in range(1, rows + 2) {
+    moveTo(row, 1)
+    print("│")
+    moveTo(row, cols)
+    print("│")
+  }
+  moveTo(1, 1)
+  print("┌")
+  moveTo(1, cols)
+  print("┐")
+  moveTo(rows + 1, 1)
+  print("└")
+  moveTo(rows + 1, cols)
+  print("┘")
+  resetColor()
+}
+
+// Draw status bar
+let drawStatus = fn() {
+  moveTo(rows + 2, 1)
+  setColor(200, 200, 200)
+  let bonusMsg = ""
+  if bonusFood.active {
+    bonusMsg = " | "
+    print(join([" Score: ", str(score), " | Length: ", str(len(snake)), " | Grid: ", str(gridCols), "x", str(rows)], ""))
+    setColor(255, 215, 0)
+    print(" | ★ BONUS!")
+    setColor(200, 200, 200)
+    print(" | Arrow keys/WASD: move | q: quit ")
+  } else {
+    let untilBonus = nextBonusLength - len(snake)
+    print(join([" Score: ", str(score), " | Length: ", str(len(snake)), " | Next bonus: ", str(untilBonus), " | Grid: ", str(gridCols), "x", str(rows), " | Arrow keys/WASD: move | q: quit "], ""))
+  }
+  resetColor()
+}
+
+// Draw snake
+let drawSnake = fn() {
+  // Draw head
+  let head = snake[0]
+  moveTo(head.row, toTermCol(head.col))
+  setColor(100, 255, 100)
+  print("●")
+
+  // Draw body
+  setColor(50, 200, 50)
+  for i in range(1, len(snake)) {
+    let segment = snake[i]
+    moveTo(segment.row, toTermCol(segment.col))
+    print("○")
+  }
+  resetColor()
+}
+
+// Draw food
+let drawFood = fn() {
+  moveTo(food.row, toTermCol(food.col))
+  setColor(255, 100, 100)
+  print("◆")
+  resetColor()
+}
+
+// Draw bonus food
+let drawBonusFood = fn() {
+  if bonusFood.active {
+    moveTo(bonusFood.row, toTermCol(bonusFood.col))
+    setColor(255, 215, 0)  // Gold color
+    print("★")
+    resetColor()
+  }
+}
+
+// Clear position
+let clearPos = fn(row, col) {
+  moveTo(row, toTermCol(col))
+  print(" ")
+}
+
+// Update game state
+let update = fn() {
+  // Apply next direction (prevents reversing into self)
+  direction = nextDirection
+
+  // Calculate new head position
+  let head = snake[0]
+  let newHead = .{row: head.row, col: head.col}
+
+  if direction == DIR_UP { newHead.row = newHead.row - 1 }
+  if direction == DIR_DOWN { newHead.row = newHead.row + 1 }
+  if direction == DIR_LEFT { newHead.col = newHead.col - 1 }
+  if direction == DIR_RIGHT { newHead.col = newHead.col + 1 }
+
+  // Wrap around edges
+  if newHead.row < 1 { newHead.row = rows }
+  if newHead.row > rows { newHead.row = 1 }
+  if newHead.col < 1 { newHead.col = gridCols }
+  if newHead.col > gridCols { newHead.col = 1 }
+
+  // Check self collision
+  if collidesWithSnake(newHead.row, newHead.col, false) {
+    gameOver = true
+    return
+  }
+
+  // Check food collision
+  let ateFood = newHead.row == food.row and newHead.col == food.col
+  let ateBonus = bonusFood.active and newHead.row == bonusFood.row and newHead.col == bonusFood.col
+
+  let growAmount = 0
+  if ateFood {
+    score = score + 10
+    growAmount = 1
+    spawnFood()
+  }
+
+  if ateBonus {
+    score = score + 50
+    growAmount = growAmount + 3  // Bonus gives 3 extra segments
+    bonusFood.active = false
+    clearPos(bonusFood.row, bonusFood.col)
+  }
+
+  // Add new head (need to build new array with head first)
+  let newSnake = [newHead]
+  for segment in snake {
+    push(newSnake, segment)
+  }
+
+  // Add extra segments for growth at tail position
+  if growAmount > 1 {
+    let tail = snake[len(snake) - 1]
+    for i in range(growAmount - 1) {
+      push(newSnake, tail)
+    }
+  }
+
+  // Remove tail unless growing
+  if growAmount == 0 {
+    let tail = newSnake[len(newSnake) - 1]
+    clearPos(tail.row, tail.col)
+    pop(newSnake)
+  }
+
+  snake = newSnake
+
+  // Check if we should spawn bonus food
+  if len(snake) >= nextBonusLength and !bonusFood.active {
+    spawnBonusFood()
+    nextBonusLength = nextBonusLength + 5
+  }
+}
+
+// Handle input
+let handleInput = fn(key) {
+  if key == "q" {
+    gameOver = true
+    return
+  }
+
+  // Arrow keys and WASD - can't reverse direction
+  if (key == "\e[A" or key == "w") and direction != DIR_DOWN {
+    nextDirection = DIR_UP
+  }
+  if (key == "\e[B" or key == "s") and direction != DIR_UP {
+    nextDirection = DIR_DOWN
+  }
+  if (key == "\e[D" or key == "a") and direction != DIR_RIGHT {
+    nextDirection = DIR_LEFT
+  }
+  if (key == "\e[C" or key == "d") and direction != DIR_LEFT {
+    nextDirection = DIR_RIGHT
+  }
+}
+
+// Draw game over screen
+let drawGameOver = fn() {
+  let msgRow = Math.floor(rows / 2)
+  let msg1 = "GAME OVER"
+  let msg2 = join(["Final Score: ", str(score)], "")
+  let msg3 = join(["Final Length: ", str(len(snake))], "")
+
+  moveTo(msgRow, toTermCol(Math.floor((gridCols - len(msg1)) / 2)))
+  setColor(255, 100, 100)
+  print(msg1)
+
+  moveTo(msgRow + 2, toTermCol(Math.floor((gridCols - len(msg2)) / 2)))
+  setColor(200, 200, 200)
+  print(msg2)
+
+  moveTo(msgRow + 3, toTermCol(Math.floor((gridCols - len(msg3)) / 2)))
+  print(msg3)
+
+  resetColor()
+  Lx.stdout.flush()
+}
+
+// Initialize
+Lx.term.enterRawMode()
+clearScreen()
+hideCursor()
+
+drawBorder()
+spawnFood()
+drawFood()
+drawSnake()
+drawStatus()
+Lx.stdout.flush()
+
+// Game loop
+let lastUpdate = Date.now()
+
+for !gameOver {
+  // Handle input (non-blocking)
+  if Lx.stdin.poll(0) {
+    let key = Lx.stdin.readFd(16)
+    if key {
+      handleInput(key)
+    }
+  }
+
+  // Update game state at fixed rate
+  let now = Date.now()
+  if now - lastUpdate >= speed {
+    lastUpdate = now
+    update()
+
+    if !gameOver {
+      drawSnake()
+      drawFood()
+      drawBonusFood()
+      drawStatus()
+      Lx.stdout.flush()
+    }
+  }
+
+  // Small sleep to avoid busy loop (1ms)
+  Lx.proc.system("sleep 0.001")
+}
+
+// Game over
+drawGameOver()
+
+// Wait for key press to exit
+for true {
+  if Lx.stdin.poll(100) {
+    let key = Lx.stdin.readFd(16)
+    if key {
+      break
+    }
+  }
+}
+
+// Cleanup
+clearScreen()
+showCursor()
+Lx.term.exitRawMode()
+println()
+println("Thanks for playing!")
+println(join(["Final Score: ", str(score)], ""))
+println(join(["Final Length: ", str(len(snake))], ""))

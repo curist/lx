@@ -62,7 +62,7 @@ let TOKEN = enum(100) {
   EOF = 999,
 }
 
-let KEYWORDS = keys(TOKEN)->fold(.{}, fn(acc, k, _i, _abort) {
+let KEYWORDS = keys(TOKEN)->fold(.{}, fn(acc, k, _i) {
   let index = TOKEN[k]
   if index >= 400 and index < 500 {
     acc[tolower(k)] = true

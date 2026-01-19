@@ -10,6 +10,10 @@ fn fold(arr, acc, cb) {
   acc
 }
 
+fn map(arr, cb) {
+  collect x in arr { cb(x) }
+}
+
 fn sort(arr, compare) {
   // Merge sort (avoid quicksort recursion worst-case stack overflow).
   let length = len(arr)
@@ -47,5 +51,6 @@ return .{
   last,
   each,
   fold,
+  map,
   sort,
 }

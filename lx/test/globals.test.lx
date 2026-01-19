@@ -7,6 +7,13 @@ test("each", fn(assert) {
   assert.equal(a, 10)
 })
 
+test("map", fn(assert) {
+  let doubled = map([1, 2, 3], fn(x) { x * 2 })
+  assert.equal(doubled[0], 2)
+  assert.equal(doubled[1], 4)
+  assert.equal(doubled[2], 6)
+})
+
 test("contains", fn(assert) {
   assert.equal(contains([], "foo"), false)
   assert.equal(contains(["foo"], "foo"), true)

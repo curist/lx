@@ -30,14 +30,32 @@ let .{ planArtifactGraph, derivePassPlan, trimPassPlan, hasRequiredPasses } = pl
 // Driver Factory
 // ========================================
 
+fn normalizeDriverOpts(opts) {
+  let shape = .{
+    loadSource: nil,
+    profile: nil,
+    withLower: nil,
+    withTypecheck: nil,
+    withAnf: nil,
+    withAnfInline: nil,
+    withLowerIntrinsics: nil,
+    withDce: nil,
+    withImportLower: nil,
+    debug: nil,
+  }
+  let out = shape
+  if opts { out = opts }
+  out
+}
+
 fn make(opts) {
+  opts = normalizeDriverOpts(opts)
   let cache = .{}
   let compiledModules = []  // Track compilation order
-  let loadSource = opts["loadSource"]
+  let loadSource = opts.loadSource
 
   // Profile support: profile sets defaults, explicit flags override
-  // Use `opts["..."]` for optional keys so callers can omit them.
-  let profileName = opts["profile"] or "default"
+  let profileName = opts.profile or "default"
   let profileDefaults = profiles.getProfile(profileName)
   let defaultTarget = profiles.getDefaultTarget(profileName, ARTIFACT)
 
@@ -51,7 +69,7 @@ fn make(opts) {
   // Apply profile defaults, then override with explicit flags
   // Check if flag is explicitly set (not nil), if so use it, else use profile default
   let withLower = nil
-  let explicitWithLower = opts["withLower"]
+  let explicitWithLower = opts.withLower
   if explicitWithLower != nil {
     withLower = explicitWithLower
   } else {
@@ -59,7 +77,7 @@ fn make(opts) {
   }
 
   let withTypecheck = nil
-  let explicitWithTypecheck = opts["withTypecheck"]
+  let explicitWithTypecheck = opts.withTypecheck
   if explicitWithTypecheck != nil {
     withTypecheck = explicitWithTypecheck
   } else {
@@ -67,7 +85,7 @@ fn make(opts) {
   }
 
   let withAnf = nil
-  let explicitWithAnf = opts["withAnf"]
+  let explicitWithAnf = opts.withAnf
   if explicitWithAnf != nil {
     withAnf = explicitWithAnf
   } else {
@@ -75,7 +93,7 @@ fn make(opts) {
   }
 
   let withAnfInline = nil
-  let explicitWithAnfInline = opts["withAnfInline"]
+  let explicitWithAnfInline = opts.withAnfInline
   if explicitWithAnfInline != nil {
     withAnfInline = explicitWithAnfInline
   } else {
@@ -83,7 +101,7 @@ fn make(opts) {
   }
 
   let withLowerIntrinsics = nil
-  let explicitWithLowerIntrinsics = opts["withLowerIntrinsics"]
+  let explicitWithLowerIntrinsics = opts.withLowerIntrinsics
   if explicitWithLowerIntrinsics != nil {
     withLowerIntrinsics = explicitWithLowerIntrinsics
   } else {
@@ -91,11 +109,11 @@ fn make(opts) {
   }
 
   // DCE is on by default
-  let withDce = opts["withDce"] != false
+  let withDce = opts.withDce != false
 
   // Optional import overrides (used when compiling transitive imports).
   // Defaults to top-level behavior unless overridden.
-  let withImportLower = opts["withImportLower"]
+  let withImportLower = opts.withImportLower
   if withImportLower == nil { withImportLower = withLower }
 
   let planNeeds = .{
@@ -109,7 +127,7 @@ fn make(opts) {
   if !validateArtifactSpec(planNeeds) { return nil }
 
   // Debug flags (optional)
-  let debug = opts["debug"]
+  let debug = opts.debug
   let wholeProgramTypecheckDone = false
   let wholeProgramTypecheckStamp = nil
   let wholeProgramDceDone = false

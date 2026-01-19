@@ -1273,6 +1273,11 @@ fn constrain(checker, lhs, rhs) {
     return true
   }
 
+  if rhs.kind == "Option" and lhs.kind != "Option" {
+    if lhs.kind == "Nil" { return true }
+    return constrain(checker, lhs, rhs.value)
+  }
+
   if lhs.kind == "Option" and rhs.kind == "Option" {
     return constrain(checker, lhs.value, rhs.value)
   }

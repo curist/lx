@@ -62,6 +62,61 @@ fn isOptionalish(checker, t) {
   typeHasNilEvidence(checker, t)
 }
 
+fn isTagFieldName(fieldName) {
+  fieldName == "tag" or fieldName == "kind" or fieldName == "type"
+}
+
+fn extractTagTypeFromValue(checker, valueNode) {
+  let unwrapped = unwrapGroupings(valueNode)
+  if !unwrapped or unwrapped.type != NODE.Dot { return nil }
+
+  let objType = checker.types[unwrapped.object.id]
+  if !objType { objType = synthExpr(checker, unwrapped.object) }
+  let objD = objType and deref(checker, objType)
+  if !objD or objD.kind != "Enum" { return nil }
+
+  let memberName = unwrapped.property.value or unwrapped.property.name
+  if !memberName { return nil }
+  let memberValue = objD.fields and objD.fields[memberName]
+  if memberValue == nil { return nil }
+
+  let enumName = unwrapped.object and unwrapped.object.name
+  typeTag(objD.enumId, enumName, memberName, memberValue)
+}
+
+fn matchTagGuard(checker, condition) {
+  let node = unwrapGroupings(condition)
+  if !node or node.type != NODE.Binary { return nil }
+  let op = node.operator and node.operator.lexeme or ""
+  if op != "==" and op != "!=" { return nil }
+
+  fn matchSide(tagExpr, valueExpr) {
+    let tagNode = unwrapGroupings(tagExpr)
+    if !tagNode or tagNode.type != NODE.Dot { return nil }
+
+    let fieldName = tagNode.property and (tagNode.property.value or tagNode.property.name)
+    if !fieldName or !isTagFieldName(fieldName) { return nil }
+
+    let objNode = unwrapGroupings(tagNode.object)
+    if !objNode or objNode.type != NODE.Identifier { return nil }
+
+    let binding = checker.resolvedNames[objNode.id]
+    if !binding or !binding.declaredAt { return nil }
+
+    let tagType = extractTagTypeFromValue(checker, valueExpr)
+    if !tagType { return nil }
+
+    .{ declId: binding.declaredAt, tagType: tagType }
+  }
+
+  let match = matchSide(node.left, node.right)
+  if !match { match = matchSide(node.right, node.left) }
+  if !match { return nil }
+
+  match.negated = op == "!="
+  match
+}
+
 // Clone a type tree and freshen TypeVars to avoid cross-module ID collisions.
 fn cloneType(checker, t, memo) {
   if !t { return t }
@@ -547,24 +602,6 @@ fn synthHashmap(checker, node) {
   let enumKeyOrigins = []
   let tagInfo = nil
 
-  fn extractTagType(valueNode) {
-    let unwrapped = unwrapGroupings(valueNode)
-    if !unwrapped or unwrapped.type != NODE.Dot { return nil }
-
-    let objType = checker.types[unwrapped.object.id]
-    if !objType { objType = synthExpr(checker, unwrapped.object) }
-    let objD = objType and deref(checker, objType)
-    if !objD or objD.kind != "Enum" { return nil }
-
-    let memberName = unwrapped.property.value or unwrapped.property.name
-    if !memberName { return nil }
-    let memberValue = objD.fields and objD.fields[memberName]
-    if memberValue == nil { return nil }
-
-    let enumName = unwrapped.object and unwrapped.object.name
-    typeTag(objD.enumId, enumName, memberName, memberValue)
-  }
-
   for pair in pairs {
     let keyNode = pair.key
     let valueNode = pair.value
@@ -642,7 +679,7 @@ fn synthHashmap(checker, node) {
     }
     if isLiteralKey and type(fieldKey) == "string" and
        (fieldKey == "tag" or fieldKey == "kind" or fieldKey == "type") {
-      let tagType = extractTagType(valueNode)
+      let tagType = extractTagTypeFromValue(checker, valueNode)
       if tagType {
         if tagInfo {
           addError(checker, valueNode.id, "Multiple tag fields are not allowed.")
@@ -700,17 +737,43 @@ fn synthIf(checker, node) {
     }
   }
 
+  let tagGuard = matchTagGuard(checker, node.condition)
+  let tagOverlayThen = nil
+  if tagGuard and tagGuard.declId and tagGuard.tagType {
+    let constraint = tagGuard.negated and typeNot(tagGuard.tagType) or tagGuard.tagType
+    tagOverlayThen = applyTagNarrowingOverlay(checker, tagGuard.declId, constraint)
+    if tagOverlayThen {
+      envBind(checker, tagGuard.declId, tagOverlayThen.narrowed)
+    }
+  }
+
   // Synthesize then branch (sees narrowed env)
   let thenType = synthExpr(checker, node.then)
 
   // Restore before else branch
+  if tagOverlayThen {
+    envBind(checker, tagGuard.declId, tagOverlayThen.original)
+  }
   if overlay {
     envBind(checker, guard.declId, overlay.original)
   }
 
   if node.else {
+    let tagOverlayElse = nil
+    if tagGuard and tagGuard.declId and tagGuard.tagType {
+      let constraint = tagGuard.negated and tagGuard.tagType or typeNot(tagGuard.tagType)
+      tagOverlayElse = applyTagNarrowingOverlay(checker, tagGuard.declId, constraint)
+      if tagOverlayElse {
+        envBind(checker, tagGuard.declId, tagOverlayElse.narrowed)
+      }
+    }
+
     // With else: join both branches
     let elseType = synthExpr(checker, node.else)
+
+    if tagOverlayElse {
+      envBind(checker, tagGuard.declId, tagOverlayElse.original)
+    }
 
     let thenD = deref(checker, thenType)
     let elseD = deref(checker, elseType)
@@ -993,6 +1056,17 @@ fn applyNarrowingOverlay(checker, declId) {
   .{ original: currentType, narrowed: narrowedTV }
 }
 
+fn applyTagNarrowingOverlay(checker, declId, constraintType) {
+  let currentType = envLookup(checker, declId)
+  if !currentType { return nil }
+
+  let narrowedTV = freshTypeVar(checker)
+  constrain(checker, narrowedTV, currentType)
+  if constraintType { constrain(checker, narrowedTV, constraintType) }
+
+  .{ original: currentType, narrowed: narrowedTV }
+}
+
 // Block expression
 // Uses refinement overlay for nil-guard narrowing:
 // - refinements: declId -> { original, narrowed } mapping
@@ -1042,6 +1116,30 @@ fn synthBlock(checker, node) {
 
           // Use narrowed type for subsequent lookups
           envBind(checker, declId, overlay.narrowed)
+        }
+      }
+    }
+
+    let guardNode = unwrapGroupings(expr)
+    if guardNode and guardNode.type == NODE.ExprStmt {
+      guardNode = unwrapGroupings(guardNode.expr)
+    }
+    if guardNode and guardNode.type == NODE.If and !guardNode.else and i < len(exprs) - 1 {
+      if branchAlwaysReturns(guardNode.then) {
+        let tagGuard = matchTagGuard(checker, guardNode.condition)
+        if tagGuard and tagGuard.declId and tagGuard.tagType {
+          let constraint = tagGuard.negated and tagGuard.tagType or typeNot(tagGuard.tagType)
+          let overlay = refinements[tagGuard.declId]
+          if overlay {
+            constrain(checker, overlay.narrowed, constraint)
+          } else {
+            overlay = applyTagNarrowingOverlay(checker, tagGuard.declId, constraint)
+            if overlay {
+              refinements[tagGuard.declId] = overlay
+              push(refinementKeys, tagGuard.declId)
+              envBind(checker, tagGuard.declId, overlay.narrowed)
+            }
+          }
         }
       }
     }

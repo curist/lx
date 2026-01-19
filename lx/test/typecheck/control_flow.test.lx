@@ -183,6 +183,35 @@ fn register(test) {
     assert.truthy(!result.success)
   })
 
+  test("typecheck - tag guard narrows branches", fn(assert) {
+    let result = parseAndTypecheck("{
+      let Kind = enum { A, B }
+      fn f(node) {
+        if node.kind == Kind.A { node.a } else { node.b }
+      }
+      let a = .{ kind: Kind.A, a: 1 }
+      let b = .{ kind: Kind.B, b: 2 }
+      f(a)
+      f(b)
+    }")
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - tag guard return narrows after", fn(assert) {
+    let result = parseAndTypecheck("{
+      let Kind = enum { A, B }
+      fn f(node) {
+        if node.type != Kind.A { return 0 }
+        node.a
+      }
+      let a = .{ type: Kind.A, a: 1 }
+      let b = .{ type: Kind.B, b: 2 }
+      f(a)
+      f(b)
+    }")
+    assert.truthy(result.success)
+  })
+
   test("typecheck - guard without evidence does not narrow across closures", fn(assert) {
     // Without nil evidence, the guard should not allow x + 1 after the return.
     let result = parseAndTypecheck("{

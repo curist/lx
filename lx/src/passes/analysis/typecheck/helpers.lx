@@ -1074,6 +1074,15 @@ fn isSubtype(checker, lhs, rhs) {
     return finish(true)
   }
 
+  if lhs.kind == "Intersect" {
+    for part in (lhs.parts or []) {
+      if isSubtype(checker, part, rhs) {
+        return finish(true)
+      }
+    }
+    return finish(false)
+  }
+
   if rhs.kind == "Intersect" {
     for part in (rhs.parts or []) {
       if !isSubtype(checker, lhs, part) {
@@ -1233,6 +1242,13 @@ fn constrain(checker, lhs, rhs) {
       let restIntersect = typeIntersect(rest)
       return constrain(checker, tv, typeUnion([rhs, typeNot(restIntersect)]))
     }
+  }
+
+  if lhs.kind == "Intersect" {
+    for part in (lhs.parts or []) {
+      if constrain(checker, part, rhs) { return true }
+    }
+    return false
   }
 
   if lhs.kind == "TypeVar" {

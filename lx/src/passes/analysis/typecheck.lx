@@ -432,6 +432,58 @@ fn collectAllTypeVars(checker) {
   out
 }
 
+fn typeContainsTypeVarId(checker, t, tvId, seen) {
+  t = deref(checker, t)
+  if !t { return false }
+  if t.kind == "TypeVar" {
+    if t.id == tvId { return true }
+    if seen[t.id] { return false }
+    seen[t.id] = true
+
+    let bound = getTypeVarBinding(checker, t.id)
+    if bound and typeContainsTypeVarId(checker, bound, tvId, seen) { return true }
+    for lb in (t.lowerBounds or []) {
+      if typeContainsTypeVarId(checker, lb, tvId, seen) { return true }
+    }
+    for ub in (t.upperBounds or []) {
+      if typeContainsTypeVarId(checker, ub, tvId, seen) { return true }
+    }
+    return false
+  }
+  if t.kind == "Function" {
+    for param in (t.params or []) {
+      if typeContainsTypeVarId(checker, param, tvId, seen) { return true }
+    }
+    return typeContainsTypeVarId(checker, t.return, tvId, seen)
+  }
+  if t.kind == "Array" { return typeContainsTypeVarId(checker, t.elem, tvId, seen) }
+  if t.kind == "Map" or t.kind == "Indexable" {
+    return typeContainsTypeVarId(checker, t.key, tvId, seen) or
+      typeContainsTypeVarId(checker, t.elem, tvId, seen)
+  }
+  if t.kind == "Record" {
+    for k in keys(t.fields or .{}) {
+      if typeContainsTypeVarId(checker, t.fields[k], tvId, seen) { return true }
+    }
+    return false
+  }
+  if t.kind == "Option" { return typeContainsTypeVarId(checker, t.value, tvId, seen) }
+  if t.kind == "Union" {
+    for opt in (t.options or []) {
+      if typeContainsTypeVarId(checker, opt, tvId, seen) { return true }
+    }
+    return false
+  }
+  if t.kind == "Intersect" {
+    for part in (t.parts or []) {
+      if typeContainsTypeVarId(checker, part, tvId, seen) { return true }
+    }
+    return false
+  }
+  if t.kind == "Not" { return typeContainsTypeVarId(checker, t.value, tvId, seen) }
+  false
+}
+
 fn containsTypeVar(checker, t) {
   t = deref(checker, t)
   if !t { return false }
@@ -478,54 +530,131 @@ fn snapshotIfConcrete(checker, t) {
   snap
 }
 
+fn nodeSummary(node) {
+  if !node { return "node ?" }
+  let kind = nil
+  if node.type != nil {
+    kind = NODE->nameOf(node.type)
+    if !kind { kind = str(node.type) }
+  } else {
+    kind = "node"
+  }
+
+  let name = nil
+  if node.type == NODE.Identifier {
+    name = node.name
+  } else if node.type == NODE.Let and node.name {
+    name = node.name.name
+  } else if node.type == NODE.Function and node.name {
+    name = node.name.name
+  } else if node.type == NODE.Dot and node.property {
+    name = node.property.value or node.property.name
+  }
+
+  let loc = nil
+  if node.filename and node.line {
+    loc = node.filename + ":" + str(node.line) + ":" + str(node.col or 0)
+  } else if node.id {
+    loc = "#" + str(node.id)
+  } else {
+    loc = "?"
+  }
+
+  if name { return kind + " " + str(name) + " at " + loc }
+  kind + " at " + loc
+}
+
+fn collectTypeVarWitnesses(checker, tvId, limit = 3) {
+  let out = []
+  let typeMap = checker.types or .{}
+  let nodes = checker.resolveResult and checker.resolveResult.nodes or .{}
+
+  for nodeId in keys(typeMap) {
+    let t = typeMap[nodeId]
+    if typeContainsTypeVarId(checker, t, tvId, .{}) {
+      let node = nodes[nodeId] or .{ id: nodeId }
+      push(out, .{
+        nodeId: nodeId,
+        summary: nodeSummary(node),
+      })
+      if len(out) >= limit { break }
+    }
+  }
+
+  out
+}
+
+fn witnessLines(witnesses) {
+  if !witnesses or len(witnesses) == 0 { return "" }
+  let lines = collect w in witnesses { "  witness: " + w.summary }
+  "\n" + join(lines, "\n")
+}
+
 fn joinBoundSnapshots(checker, bounds) {
   if !bounds or len(bounds) == 0 { return "(none)" }
   let parts = collect b in bounds { prettyTypeSnapshot(derefAll(checker, b)) }
   join(parts, ", ")
 }
 
-fn reportInconsistentBounds(checker, tvId, lbs, ubs, lbSnap, ubSnap) {
+fn reportInconsistentBounds(checker, tvId, tv, lbs, ubs, lbSnap, ubSnap) {
+  let witnesses = collectTypeVarWitnesses(checker, tvId)
+  let nodeId = witnesses and witnesses[0] and witnesses[0].nodeId or nil
+  let coalesced = prettyTypeSnapshot(derefAll(checker, coalesceTypeVar(checker, tv)))
   let msg =
     "Internal typecheck error: inconsistent bounds for ?" + str(tvId) +
+    "\n  coalesced: " + coalesced +
     "\n  lower: " + joinBoundSnapshots(checker, lbs) +
     "\n  upper: " + joinBoundSnapshots(checker, ubs) +
-    "\n  violates: " + prettyTypeSnapshot(lbSnap) + " <: " + prettyTypeSnapshot(ubSnap)
-  addError(checker, nil, msg)
+    "\n  violates: " + prettyTypeSnapshot(lbSnap) + " <: " + prettyTypeSnapshot(ubSnap) +
+    witnessLines(witnesses)
+  addError(checker, nodeId, msg)
 }
 
 fn reportFieldInvariantConflict(checker, tvId, aSnap, bSnap) {
+  let witnesses = collectTypeVarWitnesses(checker, tvId)
+  let nodeId = witnesses and witnesses[0] and witnesses[0].nodeId or nil
   let msg =
     "Internal typecheck error: incompatible field-invariant bounds for ?" + str(tvId) +
     "\n  bound A: " + prettyTypeSnapshot(aSnap) +
-    "\n  bound B: " + prettyTypeSnapshot(bSnap)
-  addError(checker, nil, msg)
+    "\n  bound B: " + prettyTypeSnapshot(bSnap) +
+    witnessLines(witnesses)
+  addError(checker, nodeId, msg)
 }
 
 fn reportOpenFieldMismatch(checker, tvId, fieldName, fieldType, cachedType) {
+  let witnesses = collectTypeVarWitnesses(checker, tvId)
+  let nodeId = witnesses and witnesses[0] and witnesses[0].nodeId or nil
   let msg =
     "Internal typecheck error: open field cache mismatch for ?" + str(tvId) +
     "\n  field: " + str(fieldName) +
     "\n  record: " + prettyTypeSnapshot(fieldType) +
-    "\n  cached: " + prettyTypeSnapshot(cachedType)
-  addError(checker, nil, msg)
+    "\n  cached: " + prettyTypeSnapshot(cachedType) +
+    witnessLines(witnesses)
+  addError(checker, nodeId, msg)
 }
 
 fn reportOpenFieldMissing(checker, tvId, fieldName, recordType) {
+  let witnesses = collectTypeVarWitnesses(checker, tvId)
+  let nodeId = witnesses and witnesses[0] and witnesses[0].nodeId or nil
   let msg =
     "Internal typecheck error: open field cache missing on record for ?" + str(tvId) +
     "\n  field: " + str(fieldName) +
-    "\n  record: " + prettyTypeSnapshot(recordType)
-  addError(checker, nil, msg)
+    "\n  record: " + prettyTypeSnapshot(recordType) +
+    witnessLines(witnesses)
+  addError(checker, nodeId, msg)
 }
 
 fn reportOpenIndexMismatch(checker, tvId, keyTag, objType, elemType, cachedType) {
+  let witnesses = collectTypeVarWitnesses(checker, tvId)
+  let nodeId = witnesses and witnesses[0] and witnesses[0].nodeId or nil
   let msg =
     "Internal typecheck error: open index cache mismatch for ?" + str(tvId) +
     "\n  key: " + str(keyTag) +
     "\n  object: " + prettyTypeSnapshot(objType) +
     "\n  elem: " + prettyTypeSnapshot(elemType) +
-    "\n  cached: " + prettyTypeSnapshot(cachedType)
-  addError(checker, nil, msg)
+    "\n  cached: " + prettyTypeSnapshot(cachedType) +
+    witnessLines(witnesses)
+  addError(checker, nodeId, msg)
 }
 
 fn checkConstraintConsistency(checker) {
@@ -544,7 +673,7 @@ fn checkConstraintConsistency(checker) {
         let ubSnap = snapshotIfConcrete(checker, ub)
         if !lbSnap or !ubSnap { continue }
         if !isSubtype(checker, lbSnap, ubSnap) {
-          reportInconsistentBounds(checker, tvId, lbs, ubs, lbSnap, ubSnap)
+          reportInconsistentBounds(checker, tvId, tv, lbs, ubs, lbSnap, ubSnap)
           violated = true
           break
         }

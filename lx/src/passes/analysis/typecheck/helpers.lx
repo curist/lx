@@ -438,10 +438,53 @@ fn derefAll(checker, t) {
 // Boolean Algebra + Constraint Solving
 // ========================================================
 
+// NOTE: DNF helpers below are experimental and currently unused by isSubtype.
+// They remain for future ground-type checks behind an explicit flag.
+
 // Check if a type is a primitive (non-composite) type
 fn isPrimitive(t) {
   t.kind == "Nil" or t.kind == "Number" or
   t.kind == "Bool" or t.kind == "String"
+}
+
+fn containsTypeVar(checker, t) {
+  t = deref(checker, t)
+  if !t { return false }
+  if t.kind == "TypeVar" { return true }
+  if t.kind == "Function" {
+    for param in (t.params or []) {
+      if containsTypeVar(checker, param) { return true }
+    }
+    return containsTypeVar(checker, t.return)
+  }
+  if t.kind == "Array" { return containsTypeVar(checker, t.elem) }
+  if t.kind == "Map" {
+    return containsTypeVar(checker, t.key) or containsTypeVar(checker, t.elem)
+  }
+  if t.kind == "Indexable" {
+    return containsTypeVar(checker, t.key) or containsTypeVar(checker, t.elem)
+  }
+  if t.kind == "Record" {
+    for k in keys(t.fields or .{}) {
+      if containsTypeVar(checker, t.fields[k]) { return true }
+    }
+    return false
+  }
+  if t.kind == "Option" { return containsTypeVar(checker, t.value) }
+  if t.kind == "Union" {
+    for opt in (t.options or []) {
+      if containsTypeVar(checker, opt) { return true }
+    }
+    return false
+  }
+  if t.kind == "Intersect" {
+    for part in (t.parts or []) {
+      if containsTypeVar(checker, part) { return true }
+    }
+    return false
+  }
+  if t.kind == "Not" { return containsTypeVar(checker, t.value) }
+  false
 }
 
 // Generate a unique key for a type (for caching)
@@ -677,6 +720,54 @@ fn atomsDisjoint(checker, a, b) {
   false
 }
 
+fn typesDisjoint(checker, a, b) {
+  a = expandOption(deref(checker, a))
+  b = expandOption(deref(checker, b))
+  if !a or !b { return false }
+
+  if a.kind == "Bottom" or b.kind == "Bottom" { return true }
+  if a.kind == "Any" or b.kind == "Any" { return false }
+  if a.kind == "TypeVar" or b.kind == "TypeVar" { return false }
+
+  if a.kind == "Union" {
+    for opt in (a.options or []) {
+      if !typesDisjoint(checker, opt, b) { return false }
+    }
+    return true
+  }
+
+  if b.kind == "Union" {
+    for opt in (b.options or []) {
+      if !typesDisjoint(checker, a, opt) { return false }
+    }
+    return true
+  }
+
+  if a.kind == "Intersect" {
+    for part in (a.parts or []) {
+      if typesDisjoint(checker, part, b) { return true }
+    }
+    return false
+  }
+
+  if b.kind == "Intersect" {
+    for part in (b.parts or []) {
+      if typesDisjoint(checker, a, part) { return true }
+    }
+    return false
+  }
+
+  if a.kind == "Not" {
+    return isSubtype(checker, b, a.value)
+  }
+
+  if b.kind == "Not" {
+    return isSubtype(checker, a, b.value)
+  }
+
+  atomsDisjoint(checker, a, b)
+}
+
 fn simplifyClause(checker, clause) {
   let positives = []
   let negatives = []
@@ -721,13 +812,11 @@ fn dnfUnion(a, b) {
 fn dnfIntersect(a, b) {
   let out = []
   if type(a) != "array" or type(b) != "array" {
-    Lx.stderr.println("dnfIntersect non-array inputs:", type(a), type(b))
     return out
   }
   for ca in a {
     for cb in b {
       if type(ca) != "array" or type(cb) != "array" {
-        Lx.stderr.println("dnfIntersect clause non-array:", type(ca), type(cb))
         continue
       }
       let clause = []
@@ -744,15 +833,12 @@ fn toDNF(checker, t) {
   if !t { return [] }
   let tType = type(t)
   if tType != "map" {
-    Lx.stderr.println("toDNF non-map:", tType, str(t))
     return [ [ .{ atom: typeAny(), negated: false } ] ]
   }
   let kind = t.kind
   if !kind {
-    Lx.stderr.println("toDNF missing kind:", str(t))
     return [ [ .{ atom: typeAny(), negated: false } ] ]
   }
-  Lx.stderr.println("toDNF kind:", kind)
   if kind == "Any" { return [ [] ] }
   if kind == "Bottom" { return [] }
 
@@ -763,7 +849,6 @@ fn toDNF(checker, t) {
   if kind == "Union" {
     let opts = t.options or []
     if type(opts) != "array" {
-      Lx.stderr.println("toDNF Union options non-array:", type(opts), str(opts))
       return [ [ .{ atom: t, negated: false } ] ]
     }
     let out = []
@@ -776,7 +861,6 @@ fn toDNF(checker, t) {
   if kind == "Intersect" {
     let parts = t.parts or []
     if type(parts) != "array" {
-      Lx.stderr.println("toDNF Intersect parts non-array:", type(parts), str(parts))
       return [ [ .{ atom: t, negated: false } ] ]
     }
     let out = [ [] ]
@@ -789,11 +873,9 @@ fn toDNF(checker, t) {
   if kind == "Not" {
     let v = t.value
     if type(v) != "map" {
-      Lx.stderr.println("toDNF Not non-map:", type(v), str(v))
       return [ [ .{ atom: typeAny(), negated: false } ] ]
     }
     if !v.kind {
-      Lx.stderr.println("toDNF Not missing kind:", str(v))
       return [ [ .{ atom: typeAny(), negated: false } ] ]
     }
     return toDNFNot(checker, v)
@@ -807,27 +889,19 @@ fn toDNFNot(checker, t) {
   if !t { return [] }
   let tType = type(t)
   if tType != "map" {
-    Lx.stderr.println("toDNFNot non-map:", tType, str(t))
     return []
   }
   if !t.kind {
-    Lx.stderr.println("toDNFNot missing kind:", str(t))
     return []
   }
-  Lx.stderr.println("toDNFNot kind:", t.kind)
   if t.kind == "Any" { return [] }
   if t.kind == "Bottom" { return [ [] ] }
 
   if t.kind == "Not" { return toDNF(checker, t.value) }
 
-  if t.kind == "Union" or t.kind == "Intersect" {
-    return [ [ .{ atom: t, negated: true } ] ]
-  }
-
   if t.kind == "Union" {
     let opts = t.options or []
     if type(opts) != "array" {
-      Lx.stderr.println("toDNFNot Union options non-array:", type(opts), str(opts))
       return [ [ .{ atom: t, negated: true } ] ]
     }
     for opt in opts {
@@ -838,7 +912,6 @@ fn toDNFNot(checker, t) {
     }
     let out = [ [] ]
     for opt in opts {
-      Lx.stderr.println("toDNFNot Union opt type:", type(opt))
       out = dnfIntersect(out, toDNFNot(checker, opt))
     }
     return out
@@ -846,10 +919,8 @@ fn toDNFNot(checker, t) {
 
   if t.kind == "Intersect" {
     let parts = t.parts
-    Lx.stderr.println("toDNFNot Intersect parts type:", type(parts))
     if !parts { parts = [] }
     if type(parts) != "array" {
-      Lx.stderr.println("toDNFNot Intersect parts non-array:", type(parts), str(parts))
       return [ [ .{ atom: t, negated: true } ] ]
     }
     let out = []
@@ -943,83 +1014,69 @@ fn isSubtype(checker, lhs, rhs) {
   if lhs.kind == "Bottom" { return true }
   if rhs.kind == "Any" or lhs.kind == "Any" { return true }
 
-  let cacheKey = subtypeCacheKey(lhs, rhs)
-  checker.subtypeCache = checker.subtypeCache or .{}
-  let cached = checker.subtypeCache[cacheKey]
-  if cached != nil {
-    if cached == "visiting" { return true }
-    return cached
+  let cacheable = !containsTypeVar(checker, lhs) and !containsTypeVar(checker, rhs)
+  let cacheKey = nil
+  if cacheable {
+    cacheKey = subtypeCacheKey(lhs, rhs)
+    checker.subtypeCache = checker.subtypeCache or .{}
+    let cached = checker.subtypeCache[cacheKey]
+    if cached != nil {
+      if cached == "visiting" { return false }
+      return cached
+    }
+    checker.subtypeCache[cacheKey] = "visiting"
   }
-  checker.subtypeCache[cacheKey] = "visiting"
+
+  let finish = fn(result) {
+    if cacheable {
+      checker.subtypeCache[cacheKey] = result
+    }
+    result
+  }
 
   if lhs.kind == "Option" or rhs.kind == "Option" {
-    let result = isSubtype(checker, expandOption(lhs), expandOption(rhs))
-    checker.subtypeCache[cacheKey] = result
-    return result
+    return finish(isSubtype(checker, expandOption(lhs), expandOption(rhs)))
   }
 
   if rhs.kind == "Union" {
     for opt in (rhs.options or []) {
       if isSubtype(checker, lhs, opt) {
-        checker.subtypeCache[cacheKey] = true
-        return true
+        return finish(true)
       }
     }
-    checker.subtypeCache[cacheKey] = false
-    return false
+    return finish(false)
   }
 
   if lhs.kind == "Union" {
     for opt in (lhs.options or []) {
       if !isSubtype(checker, opt, rhs) {
-        checker.subtypeCache[cacheKey] = false
-        return false
+        return finish(false)
       }
     }
-    checker.subtypeCache[cacheKey] = true
-    return true
+    return finish(true)
   }
 
   if rhs.kind == "Intersect" {
     for part in (rhs.parts or []) {
       if !isSubtype(checker, lhs, part) {
-        checker.subtypeCache[cacheKey] = false
-        return false
+        return finish(false)
       }
     }
-    checker.subtypeCache[cacheKey] = true
-    return true
-  }
-
-  if lhs.kind == "Intersect" {
-    for part in (lhs.parts or []) {
-      if !isSubtype(checker, part, rhs) {
-        checker.subtypeCache[cacheKey] = false
-        return false
-      }
-    }
-    checker.subtypeCache[cacheKey] = true
-    return true
+    return finish(true)
   }
 
   if lhs.kind == "Not" {
     if rhs.kind == "Not" and typeEquals(lhs, rhs) {
-      checker.subtypeCache[cacheKey] = true
-      return true
+      return finish(true)
     }
-    checker.subtypeCache[cacheKey] = false
-    return false
+    return finish(false)
   }
 
   if rhs.kind == "Not" {
-    let result = atomsDisjoint(checker, lhs, rhs.value)
-    checker.subtypeCache[cacheKey] = result
-    return result
+    return finish(typesDisjoint(checker, lhs, rhs.value))
   }
 
-  let result = atomSubtype(checker, lhs, rhs)
-  checker.subtypeCache[cacheKey] = result
-  result
+  return finish(atomSubtype(checker, lhs, rhs))
 }
 
 fn typeHasNilEvidence(checker, t) {
@@ -1097,11 +1154,9 @@ fn constrain(checker, lhs, rhs) {
   rhs = deref(checker, rhs)
 
   if type(lhs) != "map" {
-    Lx.stderr.println("constrain lhs non-map:", type(lhs), str(lhs))
     return false
   }
   if type(rhs) != "map" {
-    Lx.stderr.println("constrain rhs non-map:", type(rhs), str(rhs))
     return false
   }
 

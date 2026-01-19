@@ -1199,9 +1199,15 @@ fn synthAssignment(checker, node) {
         checker.types[node.id] = valueType
         return valueType
       }
-      if fieldType.kind == "TypeVar" and len(fieldType.lowerBounds or []) > 0 {
-        let existing = typeUnion(fieldType.lowerBounds)
-        if !isSubtype(checker, valueType, existing) {
+      if fieldType.kind == "TypeVar" {
+        let existingBounds = fieldType.lowerBounds or []
+        let dv = deref(checker, valueType)
+        for lb in existingBounds {
+          let dlb = deref(checker, lb)
+          if dlb.kind == "Nil" or dv.kind == "Nil" { continue }
+          if isSubtype(checker, dv, dlb) or isSubtype(checker, dlb, dv) {
+            continue
+          }
           addError(checker, node.id, "Assignment mismatch")
           checker.types[dotNode.id] = fieldType
           checker.types[node.id] = valueType

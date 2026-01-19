@@ -147,6 +147,41 @@ fn register(test) {
     assert.equal(deref(result, mt.elem).kind, "Number")
   })
 
+  test("typecheck - index assignment nil widens map element type", fn(assert) {
+    let result = parseAndTypecheck("{
+      fn update(state) {
+        let key = \"a\"
+        state.pos[key] = true
+        state.pos[key] = nil
+        state.pos[key]
+      }
+      update(.{ pos: .{} })
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let t = deref(result, getExprType(result, 1))
+    assert.equal(t.kind, "Option")
+    assert.equal(deref(result, t.value).kind, "Bool")
+  })
+
+  test("typecheck - nil index assignment keeps open container callable", fn(assert) {
+    let result = parseAndTypecheck("{
+      fn update(state) {
+        let key = \"a\"
+        if state.pos[key] and key != \"\" {
+          println(\"hit\")
+        }
+        state.pos[key] = nil
+      }
+
+      let state = .{ pos: .{} }
+      state.pos[\"a\"] = true
+      update(state)
+    }")
+    assert.truthy(result.success)
+  })
+
   test("typecheck - index key must be number or string", fn(assert) {
     let result = parseAndTypecheck("{ let m = .{}\nm[true] = 1 }")
     assert.truthy(!result.success)

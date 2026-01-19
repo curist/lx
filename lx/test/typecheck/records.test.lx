@@ -116,6 +116,33 @@ fn register(test) {
     let t = deref(result, getExprType(result, 2))
     assert.equal(t.kind, "Number")
   })
+
+  test("typecheck - keys(record) index allows calls", fn(assert) {
+    let result = parseAndTypecheck("{
+      let Spec = .{
+        a: .{ requires: fn() { 1 } },
+        b: .{ requires: fn() { 2 } },
+      }
+      for k in keys(Spec) {
+        Spec[k].requires()
+      }
+    }")
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - keys(record) via let index allows calls", fn(assert) {
+    let result = parseAndTypecheck("{
+      let Spec = .{
+        a: .{ requires: fn() { 1 } },
+        b: .{ requires: fn() { 2 } },
+      }
+      let ks = keys(Spec)
+      for k in ks {
+        Spec[k].requires()
+      }
+    }")
+    assert.truthy(result.success)
+  })
 }
 
 .{ register }

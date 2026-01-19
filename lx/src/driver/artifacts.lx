@@ -32,11 +32,11 @@ let ARTIFACT = .{
 // Artifact specifications defining dependencies between artifacts
 let ARTIFACT_SPEC = .{
   ["source"]: .{
-    requires: () => [],
-    produces: () => [],
+    requires: needs => [],
+    produces: needs => [],
   },
   ["ast.pre_resolve"]: .{
-    requires: () => ["source"],
+    requires: needs => ["source"],
     produces: needs => {
       let out = ["parse"]
       if needs.withLower == true { push(out, "lower") }
@@ -45,19 +45,19 @@ let ARTIFACT_SPEC = .{
     },
   },
   [ARTIFACT.ANALYSIS_RESOLVE]: .{
-    requires: () => ["ast.pre_resolve"],
-    produces: () => ["resolve"],
+    requires: needs => ["ast.pre_resolve"],
+    produces: needs => ["resolve"],
   },
   [ARTIFACT.ANALYSIS_RESOLVE_LOWER]: .{
-    requires: () => ["ast.pre_resolve"],
-    produces: () => ["resolve-lower"],
+    requires: needs => ["ast.pre_resolve"],
+    produces: needs => ["resolve-lower"],
   },
   [ARTIFACT.ANALYSIS_DCE_LOCAL]: .{
-    requires: () => [ARTIFACT.ANALYSIS_RESOLVE],
+    requires: needs => [ARTIFACT.ANALYSIS_RESOLVE],
     produces: needs => { needs.withDce == true and ["dce"] or [] },
   },
   [ARTIFACT.AST_FINAL]: .{
-    requires: () => ["ast.pre_resolve", ARTIFACT.ANALYSIS_RESOLVE],
+    requires: needs => ["ast.pre_resolve", ARTIFACT.ANALYSIS_RESOLVE],
     produces: needs => {
       let out = []
       if needs.withAnfInline == true { push(out, "anf-inline") }
@@ -71,7 +71,7 @@ let ARTIFACT_SPEC = .{
       if needs.withDce == true { push(reqs, ARTIFACT.ANALYSIS_DCE_LOCAL) }
       reqs
     },
-    produces: () => [],
+    produces: needs => [],
   },
   [ARTIFACT.ANALYSIS_DCE_FINAL]: .{
     requires: needs => {
@@ -79,36 +79,36 @@ let ARTIFACT_SPEC = .{
       if needs.withDce == true { push(reqs, ARTIFACT.ANALYSIS_DCE_WHOLE_PROGRAM) }
       reqs
     },
-    produces: () => [],
+    produces: needs => [],
   },
   [ARTIFACT.ANALYSIS_FASTCHECK]: .{
-    requires: () => [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE],
-    produces: () => [],
+    requires: needs => [ARTIFACT.AST_FINAL, ARTIFACT.ANALYSIS_RESOLVE],
+    produces: needs => [],
   },
   [ARTIFACT.ANALYSIS_TYPECHECK]: .{
-    requires: () => [
+    requires: needs => [
       ARTIFACT.AST_FINAL,
       ARTIFACT.ANALYSIS_RESOLVE,
       ARTIFACT.ANALYSIS_RESOLVE_LOWER,
     ],
-    produces: () => [],
+    produces: needs => [],
   },
   [ARTIFACT.BYTECODE_FUNCTION]: .{
-    requires: () => [
+    requires: needs => [
       ARTIFACT.AST_FINAL,
       ARTIFACT.ANALYSIS_RESOLVE,
       ARTIFACT.ANALYSIS_FASTCHECK,
       ARTIFACT.ANALYSIS_DCE_FINAL,
     ],
-    produces: () => [],
+    produces: needs => [],
   },
   [ARTIFACT.BYTECODE_VERIFIED]: .{
-    requires: () => [ARTIFACT.BYTECODE_FUNCTION],
-    produces: () => [],
+    requires: needs => [ARTIFACT.BYTECODE_FUNCTION],
+    produces: needs => [],
   },
   [ARTIFACT.PROGRAM_MODULE_GRAPH]: .{
-    requires: () => ["source"],
-    produces: () => [],
+    requires: needs => ["source"],
+    produces: needs => [],
   },
 }
 
@@ -135,8 +135,8 @@ fn validateArtifactSpec(needs) {
 
   for id in artifactIds {
     let spec = ARTIFACT_SPEC[id]
-    let rawReqs = spec and spec.requires or (() => [])
-    let evaluatedReqs = rawReqs(needs)
+    if !spec { return false }
+    let evaluatedReqs = spec.requires(needs)
     if type(evaluatedReqs) != "array" {
       push(errors, "Artifact '" + id + "' requires must be an array")
       evaluatedReqs = []
@@ -148,8 +148,7 @@ fn validateArtifactSpec(needs) {
       }
     }
 
-    let rawProduces = spec and spec.produces or (() => [])
-    let evaluatedProduces = rawProduces(needs)
+    let evaluatedProduces = spec.produces(needs)
     if type(evaluatedProduces) != "array" {
       push(errors, "Artifact '" + id + "' produces must be an array")
       evaluatedProduces = []

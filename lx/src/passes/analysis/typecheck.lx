@@ -42,6 +42,7 @@ let freshTypeVar = helper.freshTypeVar
 let deref = helper.deref
 let derefAll = helper.derefAll
 let constrain = helper.constrain
+let typeEquals = helper.typeEquals
 let prettyType = helper.prettyType
 let prettyTypeSnapshot = helper.prettyTypeSnapshot
 let coalesceTypeVar = helper.coalesceTypeVar
@@ -208,6 +209,22 @@ fn recordLiteralValues(node) {
   values
 }
 
+fn recordFromKeysCall(checker, callNode) {
+  if !callNode or callNode.type != NODE.Call { return nil }
+  let callee = unwrapGroupings(callNode.callee)
+  if !callee or callee.type != NODE.Identifier { return nil }
+  let binding = checker.resolvedNames[callee.id]
+  if !binding or binding.kind != "builtin" or binding.name != "keys" { return nil }
+  let args = callNode.args or []
+  if len(args) != 1 { return nil }
+  let argNode = args[0]
+  let argType = checker.types[argNode.id]
+  if !argType { argType = synthExpr(checker, argNode) }
+  let argD = deref(checker, argType)
+  if argD.kind != "Record" { return nil }
+  argType
+}
+
 // ========================================================
 // Checker State
 // ========================================================
@@ -220,6 +237,8 @@ fn makeChecker(resolveResult, opts = .{}) {
     enumInfo: opts.enumInfo or .{},              // Node ID -> enum metadata
     program: opts.program,                       // Program-level context
     recordValueBindings: .{},                    // declId -> { fieldName: literalValue }
+    keysSourceByDeclId: .{},                     // declId -> Record type for keys(...) results
+    keyBindingRecord: .{},                       // loop binder declId -> Record type
 
     // === Result accumulation ===
     types: .{},                                  // Node ID -> inferred type
@@ -389,6 +408,18 @@ fn synthLet(checker, node) {
     if declId {
       envBind(checker, declId, initType)
       checker.types[node.name.id] = initType
+      let keysRecord = recordFromKeysCall(checker, node.init)
+      if keysRecord { checker.keysSourceByDeclId[declId] = keysRecord }
+      if node.init.type == NODE.Index {
+        let objNode = unwrapGroupings(node.init.object)
+        if objNode and objNode.type == NODE.Identifier {
+          let binding = checker.resolvedNames[objNode.id]
+          if binding and binding.declaredAt {
+            let recordType = checker.keysSourceByDeclId[binding.declaredAt]
+            if recordType { checker.keyBindingRecord[declId] = recordType }
+          }
+        }
+      }
       let literalMap = recordLiteralValues(node.init)
       if literalMap {
         checker.recordValueBindings[declId] = literalMap
@@ -397,6 +428,8 @@ fn synthLet(checker, node) {
         if binding and binding.declaredAt {
           let bound = checker.recordValueBindings[binding.declaredAt]
           if bound { checker.recordValueBindings[declId] = bound }
+          let keysRecord = checker.keysSourceByDeclId[binding.declaredAt]
+          if keysRecord { checker.keysSourceByDeclId[declId] = keysRecord }
         }
       }
     }
@@ -1192,6 +1225,14 @@ fn synthForIn(checker, node) {
     let binding = checker.resolvedNames[node.id]
     if binding and binding.valueBinderDeclId {
       envBind(checker, binding.valueBinderDeclId, elemType)
+      let recordType = recordFromKeysCall(checker, node.iterable)
+      if !recordType and node.iterable and node.iterable.type == NODE.Identifier {
+        let iterBinding = checker.resolvedNames[node.iterable.id]
+        if iterBinding and iterBinding.declaredAt {
+          recordType = checker.keysSourceByDeclId[iterBinding.declaredAt]
+        }
+      }
+      if recordType { checker.keyBindingRecord[binding.valueBinderDeclId] = recordType }
     }
   }
 
@@ -1230,6 +1271,14 @@ fn synthCollectIn(checker, node) {
     let binding = checker.resolvedNames[node.id]
     if binding and binding.valueBinderDeclId {
       envBind(checker, binding.valueBinderDeclId, elemType)
+      let recordType = recordFromKeysCall(checker, node.iterable)
+      if !recordType and node.iterable and node.iterable.type == NODE.Identifier {
+        let iterBinding = checker.resolvedNames[node.iterable.id]
+        if iterBinding and iterBinding.declaredAt {
+          recordType = checker.keysSourceByDeclId[iterBinding.declaredAt]
+        }
+      }
+      if recordType { checker.keyBindingRecord[binding.valueBinderDeclId] = recordType }
     }
   }
 
@@ -1501,6 +1550,26 @@ fn synthIndex(checker, node) {
       if fieldType {
         checker.types[node.id] = fieldType
         return fieldType
+      }
+    }
+
+    // If index key is from keys(record), treat as non-optional
+    let indexNode = unwrapGroupings(node.index)
+    if indexNode and indexNode.type == NODE.Identifier {
+      let binding = checker.resolvedNames[indexNode.id]
+      if binding and binding.declaredAt {
+        let keyRecord = checker.keyBindingRecord[binding.declaredAt]
+        if keyRecord and typeEquals(checker, objType, keyRecord) {
+          if objD.fields and len(keys(objD.fields)) > 0 {
+            let fieldKeys = keys(objD.fields)
+            let commonType = freshTypeVar(checker)
+            for fk in fieldKeys {
+              constrain(checker, objD.fields[fk], commonType)
+            }
+            checker.types[node.id] = commonType
+            return commonType
+          }
+        }
       }
     }
 

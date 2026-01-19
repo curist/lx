@@ -1202,8 +1202,11 @@ fn synthAssignment(checker, node) {
       if fieldType.kind == "TypeVar" {
         let existingBounds = fieldType.lowerBounds or []
         let dv = deref(checker, valueType)
+        if dv.kind == "TypeVar" { dv = coalesceTypeVar(checker, dv) }
         for lb in existingBounds {
           let dlb = deref(checker, lb)
+          if dlb.kind == "TypeVar" { dlb = coalesceTypeVar(checker, dlb) }
+          if dlb.kind == "TypeVar" or dv.kind == "TypeVar" { continue }
           if dlb.kind == "Nil" or dv.kind == "Nil" { continue }
           if isSubtype(checker, dv, dlb) or isSubtype(checker, dlb, dv) {
             continue

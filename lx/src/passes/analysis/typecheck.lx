@@ -530,8 +530,8 @@ fn snapshotIfConcrete(checker, t) {
   snap
 }
 
-fn nodeSummary(node) {
-  if !node { return "node ?" }
+fn nodeLabel(node) {
+  if !node { return "node" }
   let kind = nil
   if node.type != nil {
     kind = NODE->nameOf(node.type)
@@ -540,28 +540,50 @@ fn nodeSummary(node) {
     kind = "node"
   }
 
-  let name = nil
   if node.type == NODE.Identifier {
-    name = node.name
-  } else if node.type == NODE.Let and node.name {
-    name = node.name.name
-  } else if node.type == NODE.Function and node.name {
-    name = node.name.name
-  } else if node.type == NODE.Dot and node.property {
-    name = node.property.value or node.property.name
+    return kind + "(" + str(node.name) + ")"
+  }
+  if node.type == NODE.Let and node.name {
+    return kind + "(" + str(node.name.name) + ")"
+  }
+  if node.type == NODE.Function and node.name {
+    return kind + "(" + str(node.name.name) + ")"
+  }
+  if node.type == NODE.Dot and node.property {
+    let prop = node.property.value or node.property.name
+    if prop { return kind + "(" + str(prop) + ")" }
+  }
+  if node.type == NODE.Binary or node.type == NODE.Logical or node.type == NODE.Unary {
+    let op = node.operator and node.operator.lexeme
+    if op { return kind + "(" + op + ")" }
+  }
+  if node.type == NODE.Call {
+    let callee = unwrapGroupings(node.callee)
+    if callee and callee.type == NODE.Identifier {
+      return kind + "(" + str(callee.name) + ")"
+    }
+    if callee and callee.type == NODE.Dot and callee.property {
+      let prop = callee.property.value or callee.property.name
+      if prop { return kind + "(." + str(prop) + ")" }
+    }
   }
 
+  kind
+}
+
+fn nodeSummary(checker, node, t) {
+  let label = nodeLabel(node)
   let loc = nil
-  if node.filename and node.line {
+  if node and node.filename and node.line {
     loc = node.filename + ":" + str(node.line) + ":" + str(node.col or 0)
-  } else if node.id {
+  } else if node and node.id {
     loc = "#" + str(node.id)
   } else {
     loc = "?"
   }
 
-  if name { return kind + " " + str(name) + " at " + loc }
-  kind + " at " + loc
+  let typeStr = t and prettyTypeSnapshot(derefAll(checker, t)) or "?"
+  label + " at " + loc + " type " + typeStr
 }
 
 fn collectTypeVarWitnesses(checker, tvId, limit = 3) {
@@ -575,7 +597,7 @@ fn collectTypeVarWitnesses(checker, tvId, limit = 3) {
       let node = nodes[nodeId] or .{ id: nodeId }
       push(out, .{
         nodeId: nodeId,
-        summary: nodeSummary(node),
+        summary: nodeSummary(checker, node, t),
       })
       if len(out) >= limit { break }
     }
@@ -1412,6 +1434,47 @@ fn synthUnary(checker, node) {
   typeAny()
 }
 
+fn stripNilEvidence(checker, t) {
+  t = deref(checker, t)
+  if !t { return t }
+
+  if t.kind == "Nil" { return typeBottom() }
+  if t.kind == "Option" { return t.value }
+
+  if t.kind == "Union" {
+    let nonNil = []
+    for opt in (t.options or []) {
+      let stripped = stripNilEvidence(checker, opt)
+      if stripped and stripped.kind != "Bottom" { push(nonNil, stripped) }
+    }
+    if len(nonNil) == 0 { return typeBottom() }
+    if len(nonNil) == 1 { return nonNil[0] }
+    return typeUnion(nonNil)
+  }
+
+  if t.kind == "TypeVar" {
+    let lbs = t.lowerBounds or []
+    if len(lbs) == 0 {
+      let coalesced = coalesceTypeVar(checker, t)
+      if coalesced and coalesced.kind != "TypeVar" {
+        return stripNilEvidence(checker, coalesced)
+      }
+      return t
+    }
+
+    let nonNilBounds = []
+    for lb in lbs {
+      let stripped = stripNilEvidence(checker, lb)
+      if stripped and stripped.kind != "Bottom" { push(nonNilBounds, stripped) }
+    }
+    if len(nonNilBounds) == 0 { return typeBottom() }
+    if len(nonNilBounds) == 1 { return nonNilBounds[0] }
+    return typeUnion(nonNilBounds)
+  }
+
+  t
+}
+
 // Logical operations (and/or)
 // In lx: `a and b` returns b if a is truthy, else a
 //        `a or b` returns a if a is truthy, else b
@@ -1440,10 +1503,24 @@ fn synthLogical(checker, node) {
       let xType = synthExpr(checker, leftNode.right)  // X
       let yType = synthExpr(checker, node.right)      // Y
 
-      // Result is a join of X and Y
+      let yNode = unwrapGroupings(node.right)
+      let yD = deref(checker, yType)
+      let yLiteralTruthy = yNode and yNode.type == NODE.Bool and yNode.value
+      let yTruthy = yLiteralTruthy or
+        (!typeHasNilEvidence(checker, yType) and yD.kind != "Bool" and yD.kind != "TypeVar" and yD.kind != "Nil")
+
       let resultType = freshTypeVar(checker)
-      constrain(checker, xType, resultType)
-      constrain(checker, yType, resultType)
+      if yTruthy and typeHasNilEvidence(checker, xType) {
+        let nonNilX = stripNilEvidence(checker, xType)
+        if nonNilX and nonNilX.kind != "Bottom" {
+          constrain(checker, nonNilX, resultType)
+        }
+        constrain(checker, yType, resultType)
+      } else {
+        // Result is a join of X and Y
+        constrain(checker, xType, resultType)
+        constrain(checker, yType, resultType)
+      }
 
       checker.types[node.id] = resultType
       return resultType
@@ -1454,6 +1531,7 @@ fn synthLogical(checker, node) {
   // Existing general logic
   // -----------------------
   let leftNode = unwrapGroupings(node.left)
+  let rightNode = unwrapGroupings(node.right)
   let leftLiteralTruthy = false
   let leftLiteralFalsy = false
   if leftNode and leftNode.type == NODE.Nil {
@@ -1467,6 +1545,7 @@ fn synthLogical(checker, node) {
   let rightType = synthExpr(checker, node.right)
 
   let leftD = deref(checker, leftType)
+  let rightD = deref(checker, rightType)
 
   // Check if left is definitely falsy (Nil or literal false)
   let leftFalsy = leftLiteralFalsy or leftD.kind == "Nil"
@@ -1476,6 +1555,11 @@ fn synthLogical(checker, node) {
   let leftTruthy = !leftFalsy and
     (leftLiteralTruthy or
      (!typeHasNilEvidence(checker, leftType) and leftD.kind != "Bool" and leftD.kind != "TypeVar"))
+
+  let rightLiteralTruthy = false
+  if rightNode and rightNode.type == NODE.Bool and rightNode.value { rightLiteralTruthy = true }
+  let rightTruthy = rightLiteralTruthy or
+    (!typeHasNilEvidence(checker, rightType) and rightD.kind != "Bool" and rightD.kind != "TypeVar" and rightD.kind != "Nil")
 
   if op == "and" {
     // `a and b`: if a is falsy, return a; if a is truthy, return b
@@ -1504,6 +1588,18 @@ fn synthLogical(checker, node) {
     if leftFalsy {
       checker.types[node.id] = rightType
       return rightType
+    }
+    if rightTruthy and typeHasNilEvidence(checker, leftType) {
+      let nonNilLeft = stripNilEvidence(checker, leftType)
+      if nonNilLeft and nonNilLeft.kind == "Bottom" {
+        checker.types[node.id] = rightType
+        return rightType
+      }
+      let resultType = freshTypeVar(checker)
+      if nonNilLeft { constrain(checker, nonNilLeft, resultType) }
+      constrain(checker, rightType, resultType)
+      checker.types[node.id] = resultType
+      return resultType
     }
     // Unknown - join both types
     let resultType = freshTypeVar(checker)

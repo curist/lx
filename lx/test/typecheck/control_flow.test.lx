@@ -101,6 +101,19 @@ fn register(test) {
     assert.truthy(yType.kind == "TypeVar" or yType.kind == "Number" or yType.kind == "String")
   })
 
+  test("typecheck - or with optional left and truthy right yields String", fn(assert) {
+    let result = parseAndTypecheck("{
+      let Color = enum { Red, Blue }
+      let label = nameOf(Color, Color.Red) or \"fallback\"
+      label
+    }")
+    assert.truthy(result.success)
+    if !result.success { return }
+
+    let labelType = deref(result, getExprType(result, 1))
+    assert.equal(labelType.kind, "String")
+  })
+
   // Nil guard narrowing tests
   test("typecheck - nil guard does not narrow unknown param", fn(assert) {
     // Without nil evidence, the guard should not narrow x.

@@ -28,6 +28,22 @@ fn register(test) {
     assert.truthy(hasError(result, "Missing field: b"))
   })
 
+  test("typecheck - nil field makes optional field type", fn(assert) {
+    let result = parseAndTypecheck("{ let r = .{ foo: nil }\nr.foo }")
+    let fieldT = deref(result, getExprType(result, 1))
+    assert.equal(fieldT.kind, "Option")
+  })
+
+  test("typecheck - missing optional field allowed in assignment", fn(assert) {
+    let result = parseAndTypecheck("{ let r = .{ foo: nil }\nr = .{} }")
+    assert.truthy(result.success)
+  })
+
+  test("typecheck - missing non-optional field rejects assignment", fn(assert) {
+    let result = parseAndTypecheck("{ let r = .{ foo: 1 }\nr = .{} }")
+    assert.truthy(hasErrorContains(result, "Assignment mismatch"))
+  })
+
   test("typecheck - call propagates record field into function return", fn(assert) {
     let result = parseAndTypecheck("{ fn getName(x) { x.name }\nlet a = .{ name: \"A\" }\ngetName(a) }")
     let fnT = deref(result, getExprType(result, 0))

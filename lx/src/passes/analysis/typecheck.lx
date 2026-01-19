@@ -634,6 +634,12 @@ fn synthHashmap(checker, node) {
     }
 
     let valueType = synthExpr(checker, valueNode)
+    let fieldType = valueType
+    let unwrappedValue = unwrapGroupings(valueNode)
+    if unwrappedValue and unwrappedValue.type == NODE.Nil {
+      let tv = freshTypeVar(checker)
+      fieldType = typeOption(tv)
+    }
     if isLiteralKey and type(fieldKey) == "string" and
        (fieldKey == "tag" or fieldKey == "kind" or fieldKey == "type") {
       let tagType = extractTagType(valueNode)
@@ -646,7 +652,7 @@ fn synthHashmap(checker, node) {
       }
     }
     if fieldKey != nil {
-      fields[fieldKey] = valueType
+      fields[fieldKey] = fieldType
     }
   }
 

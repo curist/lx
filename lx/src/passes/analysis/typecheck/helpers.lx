@@ -613,10 +613,28 @@ fn atomSubtype(checker, lhs, rhs) {
     let rhsFields = rhs.fields or .{}
     for k in keys(rhsFields) {
       let lhsField = lhsFields[k]
-      if !lhsField { return false }
+      if !lhsField {
+        if typeHasNilEvidence(checker, rhsFields[k]) { continue }
+        return false
+      }
       if !isSubtype(checker, lhsField, rhsFields[k]) { return false }
     }
     return true
+  }
+
+  if lhs.kind == "Indexable" and rhs.kind == "Record" {
+    let rhsFields = rhs.fields or .{}
+    for k in keys(rhsFields) {
+      if !typeHasNilEvidence(checker, rhsFields[k]) { return false }
+    }
+    let keyD = deref(checker, lhs.key)
+    let elemD = deref(checker, lhs.elem)
+    if keyD.kind != "TypeVar" or elemD.kind != "TypeVar" { return false }
+    let keyLbs = keyD.lowerBounds or []
+    let keyUbs = keyD.upperBounds or []
+    let elemLbs = elemD.lowerBounds or []
+    let elemUbs = elemD.upperBounds or []
+    return len(keyLbs) == 0 and len(keyUbs) == 0 and len(elemLbs) == 0 and len(elemUbs) == 0
   }
 
   if lhs.kind == "Array" and rhs.kind == "Array" {
@@ -1279,8 +1297,29 @@ fn constrain(checker, lhs, rhs) {
     let rhsFields = rhs.fields or .{}
     for k in keys(rhsFields) {
       let lhsField = lhsFields[k]
-      if !lhsField { return false }
+      if !lhsField {
+        if typeHasNilEvidence(checker, rhsFields[k]) { continue }
+        return false
+      }
       if !constrain(checker, lhsField, rhsFields[k]) { return false }
+    }
+    return true
+  }
+
+  if lhs.kind == "Indexable" and rhs.kind == "Record" {
+    let rhsFields = rhs.fields or .{}
+    for k in keys(rhsFields) {
+      if !typeHasNilEvidence(checker, rhsFields[k]) { return false }
+    }
+    let keyD = deref(checker, lhs.key)
+    let elemD = deref(checker, lhs.elem)
+    if keyD.kind != "TypeVar" or elemD.kind != "TypeVar" { return false }
+    let keyLbs = keyD.lowerBounds or []
+    let keyUbs = keyD.upperBounds or []
+    let elemLbs = elemD.lowerBounds or []
+    let elemUbs = elemD.upperBounds or []
+    if len(keyLbs) > 0 or len(keyUbs) > 0 or len(elemLbs) > 0 or len(elemUbs) > 0 {
+      return false
     }
     return true
   }

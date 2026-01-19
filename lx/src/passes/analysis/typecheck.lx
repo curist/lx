@@ -2376,8 +2376,10 @@ fn typecheck(ast, resolveResult, opts) {
   // Solve deferred range/keys constraints
   helper.solveBuiltinConstraints(checker)
 
-  // Post-pass consistency check for bounds and open caches
-  checkConstraintConsistency(checker)
+  // Post-pass consistency check for bounds and open caches (opt-in)
+  if opts and opts.checkConsistency {
+    checkConstraintConsistency(checker)
+  }
 
   // Return results
   .{

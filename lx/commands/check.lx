@@ -4,17 +4,27 @@ let ModuleResolution = import "src/module_resolution.lx"
 
 fn run(ctx) {
   if len(ctx.argv) < 3 {
-    Lx.stderr.println("Usage: " + ctx.prog + " check <entry>")
+    Lx.stderr.println("Usage: " + ctx.prog + " check [--entry-only] [--check-consistency] <entry>")
     Lx.exit(28)
   }
 
-  let entry = ctx.argv[2]
-  if !entry {
-    Lx.stderr.println("Usage: " + ctx.prog + " check <entry>")
-    Lx.exit(28)
+  let entryOnly = false
+  let checkConsistency = false
+  let entry = nil
+
+  for let i = 2; i < len(ctx.argv); i = i + 1 {
+    let arg = ctx.argv[i]
+    if arg == "--entry-only" { entryOnly = true }
+    else if arg == "--check-consistency" { checkConsistency = true }
+    else if !entry { entry = arg }
+    else {
+      Lx.stderr.println("Usage: " + ctx.prog + " check [--entry-only] [--check-consistency] <entry>")
+      Lx.exit(28)
+    }
   }
-  if ctx.argv[3] {
-    Lx.stderr.println("Usage: " + ctx.prog + " check <entry>")
+
+  if !entry {
+    Lx.stderr.println("Usage: " + ctx.prog + " check [--entry-only] [--check-consistency] <entry>")
     Lx.exit(28)
   }
 
@@ -22,6 +32,7 @@ fn run(ctx) {
   let d = driver.make(.{
     profile: "typecheck",
     withTypecheck: true,
+    typecheckConsistency: checkConsistency,
     loadSource: fn(p) { resolver.slurp(p) },
   }) or {
     Lx.stderr.println("Failed to initialize driver.")
@@ -95,7 +106,7 @@ fn run(ctx) {
 .{
   name: "check",
   aliases: ["lxcheck"],
-  usage: "check <entry>",
+  usage: "check [--entry-only] [--check-consistency] <entry>",
   summary: "Typecheck an entry module (dev)",
   run: run,
 }

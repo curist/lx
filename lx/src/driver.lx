@@ -36,6 +36,7 @@ fn normalizeDriverOpts(opts) {
     profile: nil,
     withLower: nil,
     withTypecheck: nil,
+    typecheckConsistency: nil,
     withAnf: nil,
     withAnfInline: nil,
     withLowerIntrinsics: nil,
@@ -83,6 +84,8 @@ fn make(opts) {
   } else {
     withTypecheck = profileDefaults.withTypecheck
   }
+
+  let typecheckConsistency = opts.typecheckConsistency == true
 
   let withAnf = nil
   let explicitWithAnf = opts.withAnf
@@ -267,6 +270,7 @@ fn make(opts) {
       let tc = typecheck(ast, tcResolve, .{
         enumInfo: enumInfo,
         program: .{ exports: programExports },
+        checkConsistency: typecheckConsistency,
       }) or .{ success: false, errors: ["typecheck returned nil"], types: .{}, typeVarBindings: .{} }
 
       // Attach as a non-fatal pass result for tooling to inspect.

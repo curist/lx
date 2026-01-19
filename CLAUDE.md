@@ -61,34 +61,6 @@ println("success:", result.success)
 
 Without `LX_ROOT`, imports like `"src/passes/parse/parser.lx"` will fail because the eval context doesn't have a `.lxroot` marker to establish the project root.
 
-### Using `lx check` for typechecking
-
-The `check` command runs the typechecker on an entry module and all its dependencies:
-
-```bash
-# Typecheck a file and all its imports
-./out/lx check lx/main.lx
-
-# Show only errors from the entry file (still analyzes all dependencies)
-./out/lx check --entry-only lx/commands/check.lx
-```
-
-**Output:**
-- Summary showing modules analyzed and failure counts
-- Fatal failures (parse/resolve errors) printed first
-- Typecheck failures printed second
-- Exit code 65 if any failures, 0 otherwise
-
-**--entry-only flag:**
-- Performs full module chain analysis for correctness
-- Only prints diagnostics for the entry file
-- Useful for focusing on errors in the file you're editing
-- Summary still shows total modules checked
-
-**Current limitations:**
-- The typechecker may report false positives for hashmap literals vs `Map[String, T]` types
-- Not all type system features are fully implemented yet
-
 ## Type System
 
 ### The `type()` Function

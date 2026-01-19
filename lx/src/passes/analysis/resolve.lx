@@ -578,15 +578,17 @@ fn resolveFunction(resolver, node, context) {
   // Named function expressions bind their name inside their own body
   // (enables recursion without introducing an outer-scope binding).
   if node.name and node.name.type == NODE.Identifier {
-    let local = declareLocal(resolver, node.name.name, "fn", node.id)
-    // Mark initialized immediately so the name is usable within the body.
-    markInitialized(resolver, local)
+    if let local = declareLocal(resolver, node.name.name, "fn", node.id) {
+      // Mark initialized immediately so the name is usable within the body.
+      markInitialized(resolver, local)
+    }
   }
 
   // Declare parameters as locals
   for param in node.params {
-    let local = declareLocal(resolver, param.name, "param", param.id)
-    markInitialized(resolver, local)
+    if let local = declareLocal(resolver, param.name, "param", param.id) {
+      markInitialized(resolver, local)
+    }
   }
 
   // Resolve function body (with inFunctionBody = true)
@@ -620,7 +622,7 @@ fn resolveBlockWithHoisting(resolver, node, context) {
 
       // Mark as initialized immediately (hoisting!)
       // This allows mutual recursion in function bodies
-      markInitialized(resolver, local)
+      if local { markInitialized(resolver, local) }
 
       // Store hoisting metadata
       scope.hoistedFns[fnName] = HoistedFunction(
@@ -682,11 +684,17 @@ let resolveExprHandlers = .{
       resolver.nodes[node.name.id] = node.name
     }
     let name = node.name.name
-    let local = declareLocal(resolver, name, "var", node.name.id)
+    if let local = declareLocal(resolver, name, "var", node.name.id) {
+      if node.init {
+        resolveExpr(resolver, node.init, context)
+      }
+      markInitialized(resolver, local)
+      return
+    }
     if node.init {
       resolveExpr(resolver, node.init, context)
     }
-    markInitialized(resolver, local)
+    return
   },
   [NODE.Block]: fn(resolver, node, context) {
     beginScope(resolver, "block")
@@ -781,12 +789,14 @@ let resolveExprHandlers = .{
     beginScope(resolver, "loop")
     resolveExpr(resolver, node.iterable, context)
     if node.valueBinder and node.valueBinder != "_" {
-      let local = declareLocal(resolver, node.valueBinder, "var", node.id)
-      markInitialized(resolver, local)
+      if let local = declareLocal(resolver, node.valueBinder, "var", node.id) {
+        markInitialized(resolver, local)
+      }
     }
     if node.indexBinder and node.indexBinder != "_" {
-      let local = declareLocal(resolver, node.indexBinder, "var", node.id)
-      markInitialized(resolver, local)
+      if let local = declareLocal(resolver, node.indexBinder, "var", node.id) {
+        markInitialized(resolver, local)
+      }
     }
     resolveExpr(resolver, node.body, context)
     endScope(resolver, node.id)
@@ -795,12 +805,14 @@ let resolveExprHandlers = .{
     beginScope(resolver, "loop")
     resolveExpr(resolver, node.iterable, context)
     if node.valueBinder and node.valueBinder != "_" {
-      let local = declareLocal(resolver, node.valueBinder, "var", node.id)
-      markInitialized(resolver, local)
+      if let local = declareLocal(resolver, node.valueBinder, "var", node.id) {
+        markInitialized(resolver, local)
+      }
     }
     if node.indexBinder and node.indexBinder != "_" {
-      let local = declareLocal(resolver, node.indexBinder, "var", node.id)
-      markInitialized(resolver, local)
+      if let local = declareLocal(resolver, node.indexBinder, "var", node.id) {
+        markInitialized(resolver, local)
+      }
     }
     resolveExpr(resolver, node.body, context)
     endScope(resolver, node.id)

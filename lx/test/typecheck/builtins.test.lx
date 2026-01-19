@@ -226,7 +226,7 @@ fn register(test) {
   test("typecheck - globals.lx prelude builtins", fn(assert) {
     let result = parseAndTypecheck("{
       collect x, i in [1, 2] { x + i }
-      fold([1, 2], 0, fn(acc, x, i, abort) { acc + x + i })
+      fold([1, 2], 0, fn(acc, x, i) { acc + x + i })
       sort([3, 1, 2], fn(a, b) { a < b })
       startsWith(\"abc\", \"a\")
     }")

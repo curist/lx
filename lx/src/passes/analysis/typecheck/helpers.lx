@@ -1815,15 +1815,13 @@ let PARAMETRIC_BUILTIN_TYPES = .{
   // Prelude collection helpers
   each: fn(checker) {
     let t = freshTypeVar(checker)
-    let abort = typeFunction([], typeNil())
-    let cb = typeFunction([t, typeNumber(), typeArray(t), abort], typeAny())
+    let cb = typeFunction([t], typeAny())
     typeFunction([typeArray(t), cb], typeNil())
   },
   fold: fn(checker) {
     let t = freshTypeVar(checker)
     let acc = freshTypeVar(checker)
-    let abort = typeFunction([], typeNil())
-    let cb = typeFunction([acc, t, typeNumber(), abort], acc)
+    let cb = typeFunction([acc, t, typeNumber()], acc)
     typeFunction([typeArray(t), acc, cb], acc)
   },
   take: fn(checker) {

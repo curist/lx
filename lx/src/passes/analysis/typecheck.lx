@@ -245,7 +245,7 @@ fn internIndexElemVar(checker, tvId, keyTag) {
 // Checker State
 // ========================================================
 
-fn makeChecker(resolveResult, opts = .{}) {
+fn makeChecker(resolveResult, opts = .{ enumInfo: nil, program: nil, fiberCtx: nil, checkConsistency: nil }) {
   .{
     // === Data from other passes ===
     resolveResult: resolveResult,
@@ -1546,6 +1546,10 @@ fn synthLogical(checker, node) {
 
   let leftD = deref(checker, leftType)
   let rightD = deref(checker, rightType)
+  let rightCo = rightD
+  if rightD.kind == "TypeVar" {
+    rightCo = coalesceTypeVar(checker, rightD)
+  }
 
   // Check if left is definitely falsy (Nil or literal false)
   let leftFalsy = leftLiteralFalsy or leftD.kind == "Nil"
@@ -1558,8 +1562,9 @@ fn synthLogical(checker, node) {
 
   let rightLiteralTruthy = false
   if rightNode and rightNode.type == NODE.Bool and rightNode.value { rightLiteralTruthy = true }
+  let rightHasNil = typeHasNilEvidence(checker, rightType)
   let rightTruthy = rightLiteralTruthy or
-    (!typeHasNilEvidence(checker, rightType) and rightD.kind != "Bool" and rightD.kind != "TypeVar" and rightD.kind != "Nil")
+    (!rightHasNil and rightCo.kind != "Bool" and rightCo.kind != "TypeVar" and rightCo.kind != "Nil")
 
   if op == "and" {
     // `a and b`: if a is falsy, return a; if a is truthy, return b
@@ -2351,7 +2356,7 @@ fn typecheck(ast, resolveResult, opts) {
     return .{
       success: false,
       types: .{},
-      errors: [.{ message: "Resolve failed", severity: "error" }],
+      errors: [.{ nodeId: 0, message: "Resolve failed", severity: "error" }],
     }
   }
 
@@ -2359,7 +2364,7 @@ fn typecheck(ast, resolveResult, opts) {
     return .{
       success: false,
       types: .{},
-      errors: [.{ message: "Missing AST", severity: "error" }],
+      errors: [.{ nodeId: 0, message: "Missing AST", severity: "error" }],
     }
   }
 

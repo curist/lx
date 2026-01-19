@@ -673,9 +673,22 @@ fn atomSubtype(checker, lhs, rhs) {
 
   if lhs.kind == "Record" and rhs.kind == "Map" {
     let lhsFields = lhs.fields or .{}
-    if len(keys(lhsFields)) == 0 {
-      return true
+    for k in keys(lhsFields) {
+      let keyType = type(k) == "number" and typeNumber() or typeString()
+      if !isSubtype(checker, keyType, rhs.key) { return false }
+      if !isSubtype(checker, lhsFields[k], rhs.elem) { return false }
     }
+    return true
+  }
+
+  if lhs.kind == "Record" and rhs.kind == "Indexable" {
+    let lhsFields = lhs.fields or .{}
+    for k in keys(lhsFields) {
+      let keyType = type(k) == "number" and typeNumber() or typeString()
+      if !isSubtype(checker, keyType, rhs.key) { return false }
+      if !isSubtype(checker, lhsFields[k], rhs.elem) { return false }
+    }
+    return true
   }
 
   if lhs.kind == "Enum" and rhs.kind == "Enum" {
@@ -1381,7 +1394,22 @@ fn constrain(checker, lhs, rhs) {
 
   if lhs.kind == "Record" and rhs.kind == "Map" {
     let lhsFields = lhs.fields or .{}
-    if len(keys(lhsFields)) == 0 { return true }
+    for k in keys(lhsFields) {
+      let keyType = type(k) == "number" and typeNumber() or typeString()
+      if !constrain(checker, keyType, rhs.key) { return false }
+      if !constrain(checker, lhsFields[k], rhs.elem) { return false }
+    }
+    return true
+  }
+
+  if lhs.kind == "Record" and rhs.kind == "Indexable" {
+    let lhsFields = lhs.fields or .{}
+    for k in keys(lhsFields) {
+      let keyType = type(k) == "number" and typeNumber() or typeString()
+      if !constrain(checker, keyType, rhs.key) { return false }
+      if !constrain(checker, lhsFields[k], rhs.elem) { return false }
+    }
+    return true
   }
 
   isSubtype(checker, lhs, rhs)

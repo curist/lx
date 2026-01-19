@@ -10,6 +10,7 @@ fn register(test) {
   let parseAndTypecheck = helpers.parseAndTypecheck
   let getExprType = helpers.getExprType
   let deref = helpers.deref
+  let typecheck = import "src/passes/analysis/typecheck.lx"
 
   test("typecheck - literals and arithmetic", fn(assert) {
     let result = parseAndTypecheck("{ 1 \"s\" 1 + 2 }")
@@ -48,6 +49,12 @@ fn register(test) {
   // - "invalid comparison reports error"
   //
   // These would be re-added when rebuilding a real type checker.
+
+  test("typecheck - precondition errors include nodeId", fn(assert) {
+    let result = typecheck(nil, .{ success: true }, .{})
+    assert.truthy(len(result.errors) > 0)
+    assert.truthy(result.errors[0].nodeId != nil)
+  })
 }
 
 .{ register }

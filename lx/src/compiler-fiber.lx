@@ -93,10 +93,15 @@ fn createCompilerFiber(source, filename, cancelled) {
       return Events.done(.{ success: false, errors: lowerResult.errors })
     }
 
+    let loweredAst = lowerResult.ast
+    if !loweredAst {
+      return Events.done(.{ success: false, errors: ["Lower returned nil ast"] })
+    }
+
     // ANF phase
     Fiber.yield(Events.progress("anf", "start", 0, 1))
     if checkCancel() { return Events.error("Cancelled") }
-    let anfResult = anf(lowerResult.ast, .{ startNodeId: lowerResult.nextNodeId })
+    let anfResult = anf(loweredAst, .{ startNodeId: lowerResult.nextNodeId })
     Fiber.yield(Events.progress("anf", "done", 1, 1))
     if checkCancel() { return Events.error("Cancelled") }
 
@@ -104,10 +109,15 @@ fn createCompilerFiber(source, filename, cancelled) {
       return Events.done(.{ success: false, errors: anfResult.errors })
     }
 
+    let anfAst = anfResult.ast
+    if !anfAst {
+      return Events.done(.{ success: false, errors: ["ANF returned nil ast"] })
+    }
+
     // Resolve phase
     Fiber.yield(Events.progress("resolve", "start", 0, 1))
     if checkCancel() { return Events.error("Cancelled") }
-    let resolveResult = resolve(anfResult.ast, .{})
+    let resolveResult = resolve(anfAst, .{ importCache: .{}, compileModule: nil })
 
     // Yield diagnostics for resolve errors
     for err in resolveResult.errors {
@@ -154,9 +164,10 @@ fn createCompilerFiber(source, filename, cancelled) {
       checkCancel: checkCancel,
     }
 
-    let typecheckResult = typecheck(anfResult.ast, resolveResult, .{
+    let typecheckResult = typecheck(anfAst, resolveResult, .{
       enumInfo: parseResult.enumInfo,
       fiberCtx: typecheckFiberCtx,
+      checkConsistency: false,
     })
 
     // Yield diagnostics for typecheck errors
@@ -187,22 +198,25 @@ fn createCompilerFiber(source, filename, cancelled) {
     // ANF-inline phase
     Fiber.yield(Events.progress("anf-inline", "start", 0, 1))
     if checkCancel() { return Events.error("Cancelled") }
-    anfInline(anfResult.ast, resolveResult)
+    anfInline(anfAst, resolveResult)
     Fiber.yield(Events.progress("anf-inline", "done", 1, 1))
     if checkCancel() { return Events.error("Cancelled") }
 
     // Lower-intrinsics phase
     Fiber.yield(Events.progress("lower-intrinsics", "start", 0, 1))
     if checkCancel() { return Events.error("Cancelled") }
-    lowerIntrinsics(anfResult.ast, resolveResult, nil)
+    lowerIntrinsics(anfAst, resolveResult, nil)
     Fiber.yield(Events.progress("lower-intrinsics", "done", 1, 1))
     if checkCancel() { return Events.error("Cancelled") }
 
     // Codegen phase
     Fiber.yield(Events.progress("codegen", "start", 0, 1))
     if checkCancel() { return Events.error("Cancelled") }
-    let codegenResult = codegen(anfResult.ast, resolveResult, .{
-      enumInfo: parseResult.enumInfo
+    let codegenResult = codegen(anfAst, resolveResult, .{
+      enumInfo: parseResult.enumInfo,
+      dceResult: .{ deadNodes: .{} },
+      codegenModule: nil,
+      fastcheck: nil,
     })
 
     // Yield diagnostics for codegen errors

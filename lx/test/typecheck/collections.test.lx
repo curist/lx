@@ -120,6 +120,13 @@ fn register(test) {
     assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
   })
 
+  test("typecheck - record satisfies map parameter", fn(assert) {
+    let result = parseAndTypecheck("{ fn get(m) { m[\"a\"] }\nget(.{ a: 1, b: 2 }) }")
+    assert.truthy(result.success)
+    if !result.success { return }
+    assert.equal(deref(result, getExprType(result, 1)).kind, "Number")
+  })
+
   test("typecheck - record index supports variable key", fn(assert) {
     let result = parseAndTypecheck("{ let k = \"a\"\nlet r = .{ a: 1 }\nr[k] }")
     assert.truthy(result.success)

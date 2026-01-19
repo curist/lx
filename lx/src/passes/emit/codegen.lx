@@ -1547,7 +1547,7 @@ fn compileExpr(gen, node, mode) {
   }
 }
 
-fn codegen(ast, resolveResult, opts = .{}) {
+fn codegen(ast, resolveResult, opts = .{ enumInfo: nil, dceResult: .{ deadNodes: .{} }, codegenModule: nil, fastcheck: nil }) {
   // Get DCE result if provided
   let dceResult = opts.dceResult
   let deadNodes = dceResult and dceResult.deadNodes or .{}

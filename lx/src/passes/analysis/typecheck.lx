@@ -41,6 +41,7 @@ let typeTag = helper.typeTag
 let freshTypeVar = helper.freshTypeVar
 let deref = helper.deref
 let derefAll = helper.derefAll
+let getTypeVarBinding = helper.getTypeVarBinding
 let constrain = helper.constrain
 let typeEquals = helper.typeEquals
 let prettyType = helper.prettyType
@@ -328,6 +329,311 @@ fn maybeYield(checker) {
   }
 
   false
+}
+
+// ========================================================
+// Constraint Consistency Checks
+// ========================================================
+
+fn collectTypeVarsFromType(checker, t, out, seen) {
+  if !t or !t.kind { return }
+
+  if t.kind == "TypeVar" {
+    if !out[t.id] { out[t.id] = t }
+    if seen[t.id] { return }
+    seen[t.id] = true
+
+    let bound = getTypeVarBinding(checker, t.id)
+    if bound { collectTypeVarsFromType(checker, bound, out, seen) }
+
+    for lb in (t.lowerBounds or []) { collectTypeVarsFromType(checker, lb, out, seen) }
+    for ub in (t.upperBounds or []) { collectTypeVarsFromType(checker, ub, out, seen) }
+
+    if t.narrowedFrom { collectTypeVarsFromType(checker, t.narrowedFrom, out, seen) }
+    if t.narrowedTo {
+      for ntv in t.narrowedTo { collectTypeVarsFromType(checker, ntv, out, seen) }
+    }
+    return
+  }
+
+  if t.kind == "Function" {
+    for param in (t.params or []) { collectTypeVarsFromType(checker, param, out, seen) }
+    collectTypeVarsFromType(checker, t.return, out, seen)
+    return
+  }
+  if t.kind == "Array" {
+    collectTypeVarsFromType(checker, t.elem, out, seen)
+    return
+  }
+  if t.kind == "Map" or t.kind == "Indexable" {
+    collectTypeVarsFromType(checker, t.key, out, seen)
+    collectTypeVarsFromType(checker, t.elem, out, seen)
+    return
+  }
+  if t.kind == "Record" {
+    for k in keys(t.fields or .{}) { collectTypeVarsFromType(checker, t.fields[k], out, seen) }
+    return
+  }
+  if t.kind == "Option" {
+    collectTypeVarsFromType(checker, t.value, out, seen)
+    return
+  }
+  if t.kind == "Union" {
+    for opt in (t.options or []) { collectTypeVarsFromType(checker, opt, out, seen) }
+    return
+  }
+  if t.kind == "Intersect" {
+    for part in (t.parts or []) { collectTypeVarsFromType(checker, part, out, seen) }
+    return
+  }
+  if t.kind == "Not" {
+    collectTypeVarsFromType(checker, t.value, out, seen)
+  }
+}
+
+fn collectAllTypeVars(checker) {
+  let out = .{}
+  let seen = .{}
+
+  for nodeId in keys(checker.types or .{}) {
+    collectTypeVarsFromType(checker, checker.types[nodeId], out, seen)
+  }
+  for declId in keys(checker.env or .{}) {
+    collectTypeVarsFromType(checker, checker.env[declId], out, seen)
+  }
+
+  let openFields = checker.openRecordFields or .{}
+  for objId in keys(openFields) {
+    let fieldMap = openFields[objId] or .{}
+    for fieldName in keys(fieldMap) {
+      collectTypeVarsFromType(checker, fieldMap[fieldName], out, seen)
+    }
+  }
+
+  let openElems = checker.openIndexElems or .{}
+  for objId in keys(openElems) {
+    let elemMap = openElems[objId] or .{}
+    for keyTag in keys(elemMap) {
+      collectTypeVarsFromType(checker, elemMap[keyTag], out, seen)
+    }
+  }
+
+  let bindings = checker.typeVarBindings or .{}
+  for id in keys(bindings) {
+    collectTypeVarsFromType(checker, bindings[id], out, seen)
+  }
+
+  let constraints = checker.builtinConstraints or []
+  for item in constraints {
+    if item.arg { collectTypeVarsFromType(checker, item.arg, out, seen) }
+    if item.elem { collectTypeVarsFromType(checker, item.elem, out, seen) }
+  }
+
+  out
+}
+
+fn containsTypeVar(checker, t) {
+  t = deref(checker, t)
+  if !t { return false }
+  if t.kind == "TypeVar" { return true }
+  if t.kind == "Function" {
+    for param in (t.params or []) {
+      if containsTypeVar(checker, param) { return true }
+    }
+    return containsTypeVar(checker, t.return)
+  }
+  if t.kind == "Array" { return containsTypeVar(checker, t.elem) }
+  if t.kind == "Map" {
+    return containsTypeVar(checker, t.key) or containsTypeVar(checker, t.elem)
+  }
+  if t.kind == "Indexable" {
+    return containsTypeVar(checker, t.key) or containsTypeVar(checker, t.elem)
+  }
+  if t.kind == "Record" {
+    for k in keys(t.fields or .{}) {
+      if containsTypeVar(checker, t.fields[k]) { return true }
+    }
+    return false
+  }
+  if t.kind == "Option" { return containsTypeVar(checker, t.value) }
+  if t.kind == "Union" {
+    for opt in (t.options or []) {
+      if containsTypeVar(checker, opt) { return true }
+    }
+    return false
+  }
+  if t.kind == "Intersect" {
+    for part in (t.parts or []) {
+      if containsTypeVar(checker, part) { return true }
+    }
+    return false
+  }
+  if t.kind == "Not" { return containsTypeVar(checker, t.value) }
+  false
+}
+
+fn snapshotIfConcrete(checker, t) {
+  let snap = derefAll(checker, t)
+  if containsTypeVar(checker, snap) { return nil }
+  snap
+}
+
+fn joinBoundSnapshots(checker, bounds) {
+  if !bounds or len(bounds) == 0 { return "(none)" }
+  let parts = collect b in bounds { prettyTypeSnapshot(derefAll(checker, b)) }
+  join(parts, ", ")
+}
+
+fn reportInconsistentBounds(checker, tvId, lbs, ubs, lbSnap, ubSnap) {
+  let msg =
+    "Internal typecheck error: inconsistent bounds for ?" + str(tvId) +
+    "\n  lower: " + joinBoundSnapshots(checker, lbs) +
+    "\n  upper: " + joinBoundSnapshots(checker, ubs) +
+    "\n  violates: " + prettyTypeSnapshot(lbSnap) + " <: " + prettyTypeSnapshot(ubSnap)
+  addError(checker, nil, msg)
+}
+
+fn reportFieldInvariantConflict(checker, tvId, aSnap, bSnap) {
+  let msg =
+    "Internal typecheck error: incompatible field-invariant bounds for ?" + str(tvId) +
+    "\n  bound A: " + prettyTypeSnapshot(aSnap) +
+    "\n  bound B: " + prettyTypeSnapshot(bSnap)
+  addError(checker, nil, msg)
+}
+
+fn reportOpenFieldMismatch(checker, tvId, fieldName, fieldType, cachedType) {
+  let msg =
+    "Internal typecheck error: open field cache mismatch for ?" + str(tvId) +
+    "\n  field: " + str(fieldName) +
+    "\n  record: " + prettyTypeSnapshot(fieldType) +
+    "\n  cached: " + prettyTypeSnapshot(cachedType)
+  addError(checker, nil, msg)
+}
+
+fn reportOpenFieldMissing(checker, tvId, fieldName, recordType) {
+  let msg =
+    "Internal typecheck error: open field cache missing on record for ?" + str(tvId) +
+    "\n  field: " + str(fieldName) +
+    "\n  record: " + prettyTypeSnapshot(recordType)
+  addError(checker, nil, msg)
+}
+
+fn reportOpenIndexMismatch(checker, tvId, keyTag, objType, elemType, cachedType) {
+  let msg =
+    "Internal typecheck error: open index cache mismatch for ?" + str(tvId) +
+    "\n  key: " + str(keyTag) +
+    "\n  object: " + prettyTypeSnapshot(objType) +
+    "\n  elem: " + prettyTypeSnapshot(elemType) +
+    "\n  cached: " + prettyTypeSnapshot(cachedType)
+  addError(checker, nil, msg)
+}
+
+fn checkConstraintConsistency(checker) {
+  let typeVars = collectAllTypeVars(checker)
+
+  for tvId in keys(typeVars) {
+    let tv = typeVars[tvId]
+    let lbs = tv.lowerBounds or []
+    let ubs = tv.upperBounds or []
+
+    let violated = false
+    for lb in lbs {
+      if violated { break }
+      for ub in ubs {
+        let lbSnap = snapshotIfConcrete(checker, lb)
+        let ubSnap = snapshotIfConcrete(checker, ub)
+        if !lbSnap or !ubSnap { continue }
+        if !isSubtype(checker, lbSnap, ubSnap) {
+          reportInconsistentBounds(checker, tvId, lbs, ubs, lbSnap, ubSnap)
+          violated = true
+          break
+        }
+      }
+    }
+
+    if tv.fieldInvariant and !violated {
+      for let i = 0; i < len(lbs); i = i + 1 {
+        if violated { break }
+        for let j = i + 1; j < len(lbs); j = j + 1 {
+          let aSnap = snapshotIfConcrete(checker, lbs[i])
+          let bSnap = snapshotIfConcrete(checker, lbs[j])
+          if !aSnap or !bSnap { continue }
+          if aSnap.kind == "Nil" or bSnap.kind == "Nil" { continue }
+          if !isSubtype(checker, aSnap, bSnap) and !isSubtype(checker, bSnap, aSnap) {
+            reportFieldInvariantConflict(checker, tvId, aSnap, bSnap)
+            violated = true
+            break
+          }
+        }
+      }
+    }
+  }
+
+  let openFields = checker.openRecordFields or .{}
+  for objId in keys(openFields) {
+    let objTv = typeVars[objId]
+    if !objTv { continue }
+    let objCo = coalesceTypeVar(checker, objTv)
+    if !objCo or objCo.kind != "Record" { continue }
+
+    let fieldMap = openFields[objId] or .{}
+    for fieldName in keys(fieldMap) {
+      let cachedField = fieldMap[fieldName]
+      let recordField = objCo.fields and objCo.fields[fieldName]
+      if !recordField {
+        reportOpenFieldMissing(checker, objId, fieldName, derefAll(checker, objCo))
+        continue
+      }
+      let recordSnap = snapshotIfConcrete(checker, recordField)
+      let cachedSnap = snapshotIfConcrete(checker, cachedField)
+      if !recordSnap or !cachedSnap { continue }
+      if !isSubtype(checker, recordSnap, cachedSnap) {
+        reportOpenFieldMismatch(checker, objId, fieldName, recordSnap, cachedSnap)
+      }
+    }
+  }
+
+  let openElems = checker.openIndexElems or .{}
+  for objId in keys(openElems) {
+    let objTv = typeVars[objId]
+    if !objTv { continue }
+    let objCo = coalesceTypeVar(checker, objTv)
+    if !objCo or objCo.kind == "TypeVar" { continue }
+
+    let elemMap = openElems[objId] or .{}
+    for keyTag in keys(elemMap) {
+      if keyTag == "any" { continue }
+      let expectedKey =
+        keyTag == "string" and typeString() or
+        keyTag == "number" and typeNumber() or
+        nil
+      if !expectedKey { continue }
+
+      let cachedElem = elemMap[keyTag]
+      let cachedSnap = snapshotIfConcrete(checker, cachedElem)
+      if !cachedSnap { continue }
+
+      if objCo.kind == "Array" {
+        if keyTag != "number" { reportOpenIndexMismatch(checker, objId, keyTag, objCo, objCo.elem, cachedSnap) }
+        let elemSnap = snapshotIfConcrete(checker, objCo.elem)
+        if elemSnap and !isSubtype(checker, elemSnap, cachedSnap) {
+          reportOpenIndexMismatch(checker, objId, keyTag, objCo, elemSnap, cachedSnap)
+        }
+        continue
+      }
+
+      if objCo.kind == "Map" or objCo.kind == "Indexable" {
+        let keySnap = snapshotIfConcrete(checker, objCo.key)
+        if keySnap and !isSubtype(checker, keySnap, expectedKey) {
+          reportOpenIndexMismatch(checker, objId, keyTag, objCo, objCo.elem, cachedSnap)
+        }
+        let elemSnap = snapshotIfConcrete(checker, objCo.elem)
+        if elemSnap and !isSubtype(checker, elemSnap, cachedSnap) {
+          reportOpenIndexMismatch(checker, objId, keyTag, objCo, elemSnap, cachedSnap)
+        }
+      }
+    }
+  }
 }
 
 // ========================================================
@@ -1844,6 +2150,9 @@ fn typecheck(ast, resolveResult, opts) {
 
   // Solve deferred range/keys constraints
   helper.solveBuiltinConstraints(checker)
+
+  // Post-pass consistency check for bounds and open caches
+  checkConstraintConsistency(checker)
 
   // Return results
   .{

@@ -32,7 +32,12 @@ let typeRecord = helper.typeRecord
 let typeMap = helper.typeMap
 let typeEnum = helper.typeEnum
 let typeIndexable = helper.typeIndexable
+let typeBottom = helper.typeBottom
+let typeUnion = helper.typeUnion
+let typeIntersect = helper.typeIntersect
+let typeNot = helper.typeNot
 let typeOption = helper.typeOption
+let typeTag = helper.typeTag
 let freshTypeVar = helper.freshTypeVar
 let deref = helper.deref
 let derefAll = helper.derefAll
@@ -40,6 +45,8 @@ let constrain = helper.constrain
 let prettyType = helper.prettyType
 let prettyTypeSnapshot = helper.prettyTypeSnapshot
 let coalesceTypeVar = helper.coalesceTypeVar
+let typeHasNilEvidence = helper.typeHasNilEvidence
+let isSubtype = helper.isSubtype
 
 // Check if a type is "optionalish" (has Nil evidence or might become optional)
 // Narrowing should only happen when the type could be nil
@@ -52,24 +59,7 @@ let coalesceTypeVar = helper.coalesceTypeVar
 fn isOptionalish(checker, t) {
   t = deref(checker, t)
   if !t { return false }
-
-  // Explicit Option type
-  if t.kind == "Option" { return true }
-
-  // TypeVar: allow narrowing if bounds are empty (might get Nil later)
-  // or if Nil is already among the lower bounds
-  if t.kind == "TypeVar" {
-    let lbs = t.lowerBounds or []
-    // Empty bounds: constraints haven't been added yet, might become optional
-    if len(lbs) == 0 { return true }
-    // Has bounds: only narrow if Nil is among them
-    for lb in lbs {
-      let lbD = deref(checker, lb)
-      if lbD and lbD.kind == "Nil" { return true }
-    }
-  }
-
-  false
+  typeHasNilEvidence(checker, t)
 }
 
 // Clone a type tree and freshen TypeVars to avoid cross-module ID collisions.
@@ -86,6 +76,14 @@ fn cloneType(checker, t, memo) {
     fresh.lowerBounds = collect lb in lbs { cloneType(checker, lb, memo) }
     fresh.upperBounds = collect ub in ubs { cloneType(checker, ub, memo) }
     fresh
+  } else if t.kind == "Union" {
+    let options = collect opt in (t.options or []) { cloneType(checker, opt, memo) }
+    typeUnion(options)
+  } else if t.kind == "Intersect" {
+    let parts = collect part in (t.parts or []) { cloneType(checker, part, memo) }
+    typeIntersect(parts)
+  } else if t.kind == "Not" {
+    typeNot(cloneType(checker, t.value, memo))
   } else if t.kind == "Option" {
     typeOption(cloneType(checker, t.value, memo))
   } else if t.kind == "Array" {
@@ -109,7 +107,12 @@ fn cloneType(checker, t, memo) {
   } else if t.kind == "Enum" {
     let fields = .{}
     for k in keys(t.fields or .{}) { fields[k] = t.fields[k] }
-    typeEnum(fields)
+    let out = typeEnum(fields)
+    if t.enumId != nil { out.enumId = t.enumId }
+    if t.enumName != nil { out.enumName = t.enumName }
+    out
+  } else if t.kind == "Tag" {
+    typeTag(t.enumId, t.enumName, t.memberName, t.value)
   } else if t.kind == "Indexable" {
     let out = typeIndexable(
       cloneType(checker, t.elem, memo),
@@ -172,6 +175,7 @@ fn makeChecker(resolveResult, opts = .{}) {
     nextTypeVarId: 1,                            // For generating fresh type vars
     typeVarBindings: .{},                        // For backward compat with deref
     constraintCache: .{},                        // Prevent infinite recursion in constrain
+    subtypeCache: .{},                           // Cache for subtype checks
     derefEpoch: 0,                               // Current epoch for deref cycle detection
     derefSeen: .{},                              // TypeVar ID -> epoch (reused across deref calls)
     constraintRevision: 0,                       // Incremented when bounds are added (for coalesce cache)
@@ -522,6 +526,7 @@ fn synthHashmap(checker, node) {
       enumFields[member.name] = member.value
     }
     let t = helper.typeEnum(enumFields)
+    t.enumId = node.id
     // Store enum info for later use when accessing members
     checker.enumDefs = checker.enumDefs or .{}
     checker.enumDefs[node.id] = enumInfo
@@ -529,9 +534,36 @@ fn synthHashmap(checker, node) {
     return t
   }
 
+  if len(pairs) == 0 {
+    let elemType = freshTypeVar(checker)
+    let keyType = freshTypeVar(checker)
+    let t = typeIndexable(elemType, keyType, node.id)
+    checker.types[node.id] = t
+    return t
+  }
+
   let fields = .{}
   let hasError = false
   let enumKeyOrigins = []
+  let tagInfo = nil
+
+  fn extractTagType(valueNode) {
+    let unwrapped = unwrapGroupings(valueNode)
+    if !unwrapped or unwrapped.type != NODE.Dot { return nil }
+
+    let objType = checker.types[unwrapped.object.id]
+    if !objType { objType = synthExpr(checker, unwrapped.object) }
+    let objD = objType and deref(checker, objType)
+    if !objD or objD.kind != "Enum" { return nil }
+
+    let memberName = unwrapped.property.value or unwrapped.property.name
+    if !memberName { return nil }
+    let memberValue = objD.fields and objD.fields[memberName]
+    if memberValue == nil { return nil }
+
+    let enumName = unwrapped.object and unwrapped.object.name
+    typeTag(objD.enumId, enumName, memberName, memberValue)
+  }
 
   for pair in pairs {
     let keyNode = pair.key
@@ -602,6 +634,17 @@ fn synthHashmap(checker, node) {
     }
 
     let valueType = synthExpr(checker, valueNode)
+    if isLiteralKey and type(fieldKey) == "string" and
+       (fieldKey == "tag" or fieldKey == "kind" or fieldKey == "type") {
+      let tagType = extractTagType(valueNode)
+      if tagType {
+        if tagInfo {
+          addError(checker, valueNode.id, "Multiple tag fields are not allowed.")
+        } else {
+          tagInfo = .{ tagType: tagType }
+        }
+      }
+    }
     if fieldKey != nil {
       fields[fieldKey] = valueType
     }
@@ -613,7 +656,11 @@ fn synthHashmap(checker, node) {
     checker.recordEnumKeyOrigins[node.id] = enumKeyOrigins
   }
 
-  let t = typeRecord(fields)
+  let recordType = typeRecord(fields)
+  let t = recordType
+  if tagInfo and tagInfo.tagType {
+    t = typeIntersect([recordType, tagInfo.tagType])
+  }
   checker.types[node.id] = t
   t
 }
@@ -692,8 +739,7 @@ fn synthIf(checker, node) {
       checker.types[node.id] = typeNil()
       return typeNil()
     }
-    if thenD.kind == "Option" {
-      // Avoid Option[Option[T]]
+    if typeHasNilEvidence(checker, thenType) {
       checker.types[node.id] = thenType
       return thenType
     }
@@ -853,17 +899,29 @@ fn synthLogical(checker, node) {
   // -----------------------
   // Existing general logic
   // -----------------------
+  let leftNode = unwrapGroupings(node.left)
+  let leftLiteralTruthy = false
+  let leftLiteralFalsy = false
+  if leftNode and leftNode.type == NODE.Nil {
+    leftLiteralFalsy = true
+  } else if leftNode and leftNode.type == NODE.Bool {
+    if leftNode.value { leftLiteralTruthy = true }
+    else { leftLiteralFalsy = true }
+  }
+
   let leftType = synthExpr(checker, node.left)
   let rightType = synthExpr(checker, node.right)
 
   let leftD = deref(checker, leftType)
 
-  // Check if left is definitely falsy (Nil or Bool false literal)
-  let leftFalsy = leftD.kind == "Nil"
+  // Check if left is definitely falsy (Nil or literal false)
+  let leftFalsy = leftLiteralFalsy or leftD.kind == "Nil"
 
-  // Check if left is definitely truthy (non-nil, non-bool, or we can't tell)
+  // Check if left is definitely truthy (literal true or non-nil, non-bool, not TypeVar)
   // In lx, only nil and false are falsy
-  let leftTruthy = leftD.kind != "Nil" and leftD.kind != "Bool" and leftD.kind != "TypeVar"
+  let leftTruthy = !leftFalsy and
+    (leftLiteralTruthy or
+     (!typeHasNilEvidence(checker, leftType) and leftD.kind != "Bool" and leftD.kind != "TypeVar"))
 
   if op == "and" {
     // `a and b`: if a is falsy, return a; if a is truthy, return b
@@ -1110,7 +1168,7 @@ fn synthAssignment(checker, node) {
     let fieldName = propNode.value or propNode.name or propNode
 
     // Cannot assign to field on optional value
-    if objD.kind == "Option" {
+    if objD.kind != "TypeVar" and typeHasNilEvidence(checker, objType) {
       addError(checker, node.id, "Cannot assign to field on optional value")
       checker.types[node.id] = valueType
       return valueType
@@ -1140,6 +1198,15 @@ fn synthAssignment(checker, node) {
         addError(checker, dotNode.id, "Missing field: " + fieldName)
         checker.types[node.id] = valueType
         return valueType
+      }
+      if fieldType.kind == "TypeVar" and len(fieldType.lowerBounds or []) > 0 {
+        let existing = typeUnion(fieldType.lowerBounds)
+        if !isSubtype(checker, valueType, existing) {
+          addError(checker, node.id, "Assignment mismatch")
+          checker.types[dotNode.id] = fieldType
+          checker.types[node.id] = valueType
+          return valueType
+        }
       }
       // Constrain value to field type
       if !constrain(checker, valueType, fieldType) {
@@ -1172,7 +1239,7 @@ fn synthAssignment(checker, node) {
     let keyIsTypeVar = indexTypeD.kind == "TypeVar"
 
     // For hashmap/map key type validation
-    if objD.kind == "Record" or objD.kind == "Map" or objD.kind == "TypeVar" {
+    if objD.kind == "Record" or objD.kind == "Map" or objD.kind == "TypeVar" or objD.kind == "Indexable" {
       if !keyIsNumeric and !keyIsString and !keyIsTypeVar {
         addError(checker, node.id, "Hashmap key type must be number or string.")
         checker.types[node.id] = valueType
@@ -1201,41 +1268,16 @@ fn synthAssignment(checker, node) {
       }
     }
 
-    if objD.kind == "Record" {
-      // Check for empty record FIRST - infer as Map (only with String key)
-      if !objD.fields or len(keys(objD.fields)) == 0 {
-        if keyIsString {
-          // Empty record with string key - infer Map type
-          let mapType = helper.typeMap(indexType, valueType)
-          // Update the object's type to Map via environment and types table
-          let objBinding = checker.resolvedNames[indexNode.object.id]
-          if objBinding and objBinding.declaredAt {
-            envBind(checker, objBinding.declaredAt, mapType)
-            checker.types[objBinding.declaredAt] = mapType
-          }
-          checker.types[indexNode.object.id] = mapType
-          checker.types[indexNode.id] = valueType
-          checker.types[node.id] = valueType
-          return valueType
-        } else if keyIsNumeric {
-          // Empty record with numeric key - infer Array type
-          let arrType = typeArray(valueType)
-          let objBinding = checker.resolvedNames[indexNode.object.id]
-          if objBinding and objBinding.declaredAt {
-            envBind(checker, objBinding.declaredAt, arrType)
-            checker.types[objBinding.declaredAt] = arrType
-          }
-          checker.types[indexNode.object.id] = arrType
-          checker.types[indexNode.id] = valueType
-          checker.types[node.id] = valueType
-          return valueType
-        }
-        // TypeVar key - leave as unknown for now
-        checker.types[indexNode.id] = valueType
-        checker.types[node.id] = valueType
-        return valueType
-      }
+    if objD.kind == "Indexable" {
+      constrain(checker, indexType, objD.key)
+      constrain(checker, valueType, objD.elem)
+      if keyIsNumeric { objD.sawNumericIndex = true }
+      checker.types[indexNode.id] = objD.elem
+      checker.types[node.id] = valueType
+      return valueType
+    }
 
+    if objD.kind == "Record" {
       if keyValue != nil {
         // Check if field exists
         let fieldType = objD.fields and objD.fields[keyValue]
@@ -1373,6 +1415,11 @@ fn synthIndex(checker, node) {
     constrain(checker, indexType, typeNumber())
     checker.types[node.id] = typeString()
     return typeString()
+  } else if objD.kind == "Indexable" {
+    constrain(checker, indexType, objD.key)
+    if indexTypeD.kind == "Number" { objD.sawNumericIndex = true }
+    checker.types[node.id] = objD.elem
+    return objD.elem
   } else if objD.kind == "TypeVar" {
     // Unknown object - check if index type has bounds that tell us Array vs Map
     // Look at index TypeVar's lower bounds to see if it's constrained to String or Number

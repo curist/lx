@@ -8,6 +8,7 @@ fn typeNil()     { .{ kind: "Nil" } }
 fn typeNumber()  { .{ kind: "Number" } }
 fn typeBool()    { .{ kind: "Bool" } }
 fn typeString()  { .{ kind: "String" } }
+fn typeBottom()  { .{ kind: "Bottom" } }
 fn typeEnum(fields) { .{ kind: "Enum", fields } }
 
 fn typeVar(id) {
@@ -35,6 +36,46 @@ fn typeMap(key, elem) {
   .{ kind: "Map", key, elem }
 }
 
+fn typeUnion(types) {
+  let out = []
+  let sawAny = false
+  for t in (types or []) {
+    if !t { continue }
+    if t.kind == "Any" { sawAny = true }
+    if t.kind == "Bottom" { continue }
+    if t.kind == "Union" {
+      for opt in (t.options or []) { push(out, opt) }
+    } else {
+      push(out, t)
+    }
+  }
+  if sawAny { return typeAny() }
+  if len(out) == 0 { return typeBottom() }
+  if len(out) == 1 { return out[0] }
+  .{ kind: "Union", options: out }
+}
+
+fn typeIntersect(types) {
+  let out = []
+  for t in (types or []) {
+    if !t { continue }
+    if t.kind == "Bottom" { return typeBottom() }
+    if t.kind == "Any" { continue }
+    if t.kind == "Intersect" {
+      for part in (t.parts or []) { push(out, part) }
+    } else {
+      push(out, t)
+    }
+  }
+  if len(out) == 0 { return typeAny() }
+  if len(out) == 1 { return out[0] }
+  .{ kind: "Intersect", parts: out }
+}
+
+fn typeNot(value) {
+  .{ kind: "Not", value }
+}
+
 fn typeOption(value) {
   // Avoid Option[Option[T]]
   value and value.kind == "Option" and value or .{ kind: "Option", value }
@@ -47,6 +88,16 @@ fn typeIndexable(elem, key, nodeId) {
     key,
     nodeId,
     sawNumericIndex: false,
+  }
+}
+
+fn typeTag(enumId, enumName, memberName, value) {
+  .{
+    kind: "Tag",
+    enumId,
+    enumName,
+    memberName,
+    value,
   }
 }
 
@@ -182,11 +233,44 @@ fn typeEquals(checker, a, b) {
 
     // Fast paths
     if x.kind != y.kind { return false }
-    if x.kind == "Any" or x.kind == "Nil" or x.kind == "Number" or
-       x.kind == "Bool" or x.kind == "String" {
+    if x.kind == "Any" or x.kind == "Bottom" or x.kind == "Nil" or
+       x.kind == "Number" or x.kind == "Bool" or x.kind == "String" {
       return true
     }
     if x.kind == "TypeVar" { return x.id == y.id }
+
+    if x.kind == "Tag" {
+      if x.enumId != nil or y.enumId != nil {
+        return x.enumId == y.enumId and x.memberName == y.memberName
+      }
+      return x.enumName == y.enumName and x.memberName == y.memberName
+    }
+
+    if x.kind == "Union" {
+      let xk = collect t in (x.options or []) { typeKey(t) }
+      let yk = collect t in (y.options or []) { typeKey(t) }
+      if len(xk) != len(yk) { return false }
+      xk = sort(xk, stringLess)
+      yk = sort(yk, stringLess)
+      for let i = 0; i < len(xk); i = i + 1 {
+        if xk[i] != yk[i] { return false }
+      }
+      return true
+    }
+
+    if x.kind == "Intersect" {
+      let xk = collect t in (x.parts or []) { typeKey(t) }
+      let yk = collect t in (y.parts or []) { typeKey(t) }
+      if len(xk) != len(yk) { return false }
+      xk = sort(xk, stringLess)
+      yk = sort(yk, stringLess)
+      for let i = 0; i < len(xk); i = i + 1 {
+        if xk[i] != yk[i] { return false }
+      }
+      return true
+    }
+
+    if x.kind == "Not" { return eq(x.value, y.value, depth + 1) }
 
     if x.kind == "Array" { return eq(x.elem, y.elem, depth + 1) }
     if x.kind == "Map" { return eq(x.key, y.key, depth + 1) and eq(x.elem, y.elem, depth + 1) }
@@ -260,6 +344,22 @@ fn occurs(checker, typeVarId, type) {
     return occurs(checker, typeVarId, type.value)
   }
 
+  if type.kind == "Union" {
+    for t in (type.options or []) {
+      if occurs(checker, typeVarId, t) { return true }
+    }
+  }
+
+  if type.kind == "Intersect" {
+    for t in (type.parts or []) {
+      if occurs(checker, typeVarId, t) { return true }
+    }
+  }
+
+  if type.kind == "Not" {
+    return occurs(checker, typeVarId, type.value)
+  }
+
   if type.kind == "Record" {
     for k in keys(type.fields) {
       if occurs(checker, typeVarId, type.fields[k]) {
@@ -284,6 +384,20 @@ fn derefAll(checker, t) {
     return typeFunction(ps, derefAll(checker, t.return))
   }
 
+  if t.kind == "Union" {
+    let options = collect opt in (t.options or []) { derefAll(checker, opt) }
+    return typeUnion(options)
+  }
+
+  if t.kind == "Intersect" {
+    let parts = collect part in (t.parts or []) { derefAll(checker, part) }
+    return typeIntersect(parts)
+  }
+
+  if t.kind == "Not" {
+    return typeNot(derefAll(checker, t.value))
+  }
+
   if t.kind == "Array" {
     return typeArray(derefAll(checker, t.elem))
   }
@@ -301,8 +415,12 @@ fn derefAll(checker, t) {
   }
 
   if t.kind == "Indexable" {
-    // Should be finalized away; default to Map for a stable printed type.
-    return typeMap(derefAll(checker, t.key), derefAll(checker, t.elem))
+    let keyType = derefAll(checker, t.key)
+    let elemType = derefAll(checker, t.elem)
+    if keyType.kind == "Number" {
+      return typeArray(elemType)
+    }
+    return typeMap(keyType, elemType)
   }
 
   if t.kind == "Record" {
@@ -317,7 +435,7 @@ fn derefAll(checker, t) {
 }
 
 // ========================================================
-// Simple-Sub Constraint Solving
+// Boolean Algebra + Constraint Solving
 // ========================================================
 
 // Check if a type is a primitive (non-composite) type
@@ -331,12 +449,30 @@ fn typeKey(t) {
   if !t { return "nil" }
   if !t.kind { return "?" }  // Unknown type structure
   if t.kind == "TypeVar" { return "v" + str(t.id) }
-  if t.kind == "Nil" or t.kind == "Number" or t.kind == "Bool" or t.kind == "String" or t.kind == "Any" {
+  if t.kind == "Nil" or t.kind == "Number" or t.kind == "Bool" or t.kind == "String" or
+     t.kind == "Any" or t.kind == "Bottom" {
     return t.kind
   }
   if t.kind == "Option" { return "O(" + typeKey(t.value) + ")" }
+  if t.kind == "Union" {
+    let keys = collect opt in (t.options or []) { typeKey(opt) }
+    keys = sort(keys, stringLess)
+    return "U(" + join(keys, ",") + ")"
+  }
+  if t.kind == "Intersect" {
+    let keys = collect part in (t.parts or []) { typeKey(part) }
+    keys = sort(keys, stringLess)
+    return "I(" + join(keys, ",") + ")"
+  }
+  if t.kind == "Not" { return "N(" + typeKey(t.value) + ")" }
+  if t.kind == "Tag" {
+    let id = t.enumId != nil and ("#" + str(t.enumId)) or ""
+    let nm = t.enumName != nil and t.enumName or "?"
+    return "Tag(" + id + nm + "." + (t.memberName or "?") + ")"
+  }
   if t.kind == "Array" { return "A(" + typeKey(t.elem) + ")" }
   if t.kind == "Map" { return "M(" + typeKey(t.key) + "," + typeKey(t.elem) + ")" }
+  if t.kind == "Indexable" { return "Ix(" + typeKey(t.key) + "," + typeKey(t.elem) + ")" }
   if t.kind == "Function" {
     let paramKeys = collect p in (t.params or []) { typeKey(p) }
     return "F(" + join(paramKeys, ",") + ")->" + typeKey(t.return)
@@ -375,192 +511,105 @@ fn typeKey(t) {
   t.kind
 }
 
-// Generate a cache key for a constraint pair
-// Cache all constraint pairs to prevent exponential re-checking
-fn constraintCacheKey(lhs, rhs) {
-  typeKey(lhs) + "<:" + typeKey(rhs)
+fn expandOption(t) {
+  if t and t.kind == "Option" {
+    return typeUnion([t.value, typeNil()])
+  }
+  t
 }
 
-// Core constraint function: enforce lhs <: rhs
-// Returns true if constraint succeeded, false if it failed
-fn constrain(checker, lhs, rhs) {
-  // Dereference both sides (follow TypeVar bindings)
+fn literalKey(lit) {
+  (lit.negated and "~" or "") + typeKey(lit.atom)
+}
+
+fn atomSubtype(checker, lhs, rhs) {
   lhs = deref(checker, lhs)
   rhs = deref(checker, rhs)
-
-  // Identity check
   if lhs == rhs { return true }
 
-  // Check if both are same TypeVar
-  if lhs.kind == "TypeVar" and rhs.kind == "TypeVar" and lhs.id == rhs.id {
-    return true
+  if lhs.kind == "Any" or rhs.kind == "Any" { return true }
+  if lhs.kind == "Bottom" { return true }
+  if lhs.kind == "TypeVar" or rhs.kind == "TypeVar" { return false }
+
+  if lhs.kind == "Option" or rhs.kind == "Option" {
+    return isSubtype(checker, expandOption(lhs), expandOption(rhs))
   }
 
-  // Cache check to prevent infinite recursion and exponential re-checking
-  let cacheKey = constraintCacheKey(lhs, rhs)
-  if checker.constraintCache[cacheKey] { return true }
-  checker.constraintCache[cacheKey] = true
-
-  // Rule: Any <: T and T <: Any always hold
-  // But still add bounds for TypeVars so coalescing works
-  if lhs.kind == "Any" {
-    if rhs.kind == "TypeVar" {
-      push(rhs.lowerBounds, lhs)
-      checker.constraintRevision = checker.constraintRevision + 1
-    }
-    return true
-  }
-  if rhs.kind == "Any" { return true }
-
-  // Rule: T? <: U? => constrain(T, U) - MUST come before general Option rules
-  if lhs.kind == "Option" and rhs.kind == "Option" {
-    return constrain(checker, lhs.value, rhs.value)
-  }
-
-  // Rule: Nil <: T? (Nil is subtype of Option)
-  if lhs.kind == "Nil" and rhs.kind == "Option" { return true }
-
-  // Rule: T <: T? (value is subtype of optional)
-  if rhs.kind == "Option" {
-    // T <: U? allowed if T <: U or T is Nil
-    if lhs.kind == "Nil" { return true }
-    return constrain(checker, lhs, rhs.value)
-  }
-
-  // TypeVar cases - propagate bounds
-  // NOTE: These must come BEFORE "Option <: concrete" check because
-  // Option[T] can be a valid bound for a TypeVar
-  if lhs.kind == "TypeVar" {
-    // Occurs check: lhs cannot appear inside rhs (would create infinite type)
-    if occurs(checker, lhs.id, rhs) {
-      return false
-    }
-    // Add rhs to lhs.upperBounds
-    push(lhs.upperBounds, rhs)
-    checker.constraintRevision = checker.constraintRevision + 1
-    // Propagate: for each lb in lhs.lowerBounds, constrain(lb, rhs)
-    for lb in lhs.lowerBounds {
-      if !constrain(checker, lb, rhs) { return false }
-    }
-    return true
-  }
-
-  if rhs.kind == "TypeVar" {
-    // Occurs check: rhs cannot appear inside lhs (would create infinite type)
-    if occurs(checker, rhs.id, lhs) {
-      return false
-    }
-    // Check for conflicts with existing lower bounds
-    // Two concrete primitives (e.g., Number and String) cannot both be subtypes
-    // EXCEPT: Nil can coexist with any type (will coalesce to Option[T])
-    if isPrimitive(lhs) and lhs.kind != "Nil" {
-      for lb in rhs.lowerBounds {
-        let dlb = deref(checker, lb)
-        // Skip Nil in conflict check - Nil + T → Option[T]
-        if dlb.kind == "Nil" { continue }
-        if isPrimitive(dlb) and dlb.kind != lhs.kind {
-          return false  // Conflict: different concrete primitives
-        }
-      }
-    }
-    // Check for Record field conflicts
-    if lhs.kind == "Record" {
-      for lb in rhs.lowerBounds {
-        let dlb = deref(checker, lb)
-        if dlb.kind == "Record" {
-          // Check overlapping fields for type conflicts
-          let lhsFields = lhs.fields or .{}
-          let lbFields = dlb.fields or .{}
-          for k in keys(lhsFields) {
-            let lbField = lbFields[k]
-            if lbField {
-              let lhsFieldD = deref(checker, lhsFields[k])
-              let lbFieldD = deref(checker, lbField)
-              // If both are concrete primitives and different, conflict
-              if isPrimitive(lhsFieldD) and isPrimitive(lbFieldD) and lhsFieldD.kind != lbFieldD.kind {
-                return false  // Conflict: different field types
-              }
-            }
-          }
-        }
-      }
-    }
-    // Add lhs to rhs.lowerBounds
-    push(rhs.lowerBounds, lhs)
-    checker.constraintRevision = checker.constraintRevision + 1
-    // Propagate: for each ub in rhs.upperBounds, constrain(lhs, ub)
-    for ub in rhs.upperBounds {
-      if !constrain(checker, lhs, ub) { return false }
-    }
-    // Also propagate non-Nil lower bounds to any narrowed TypeVars
-    // This preserves evidence like Bool from f(true) after nil guards
-    if rhs.narrowedTo and lhs.kind != "Nil" {
-      for narrowedTV in rhs.narrowedTo {
-        if !constrain(checker, lhs, narrowedTV) { return false }
-      }
-    }
-    return true
-  }
-
-  // Rule: Option[T] <: concrete non-Option fails (cannot drop optionality)
-  // This must come AFTER TypeVar cases since Option can be a valid TypeVar bound
-  if lhs.kind == "Option" { return false }
-
-  // Primitives: must be same kind
   if isPrimitive(lhs) and isPrimitive(rhs) {
     return lhs.kind == rhs.kind
   }
 
-  // Function: contravariant params, covariant return
+  if lhs.kind == "Tag" {
+    if rhs.kind == "Number" { return true }
+    if rhs.kind == "Tag" {
+      if lhs.enumId != nil or rhs.enumId != nil {
+        return lhs.enumId == rhs.enumId and lhs.memberName == rhs.memberName
+      }
+      return lhs.enumName == rhs.enumName and lhs.memberName == rhs.memberName
+    }
+    return false
+  }
+
   if lhs.kind == "Function" and rhs.kind == "Function" {
     let lhsParams = lhs.params or []
     let rhsParams = rhs.params or []
-
-    // For function subtyping, we need:
-    // - rhs can accept at least as many params as lhs requires
-    // - For shared params, contravariant: rhsParam <: lhsParam
     let lhsLen = len(lhsParams)
     let rhsLen = len(rhsParams)
-    let minLen = lhsLen < rhsLen and lhsLen or rhsLen
-
-    // Contravariant params: constrain(rhsParam, lhsParam)
-    for let i = 0; i < minLen; i = i + 1 {
-      if !constrain(checker, rhsParams[i], lhsParams[i]) { return false }
+    if lhsLen != rhsLen { return false }
+    let lhsMin = lhs.minArity != nil and lhs.minArity or lhsLen
+    let rhsMin = rhs.minArity != nil and rhs.minArity or rhsLen
+    if lhsMin > rhsMin { return false }
+    for let i = 0; i < lhsLen; i = i + 1 {
+      if !isSubtype(checker, rhsParams[i], lhsParams[i]) { return false }
     }
-
-    // Covariant return: constrain(lhsRet, rhsRet)
-    return constrain(checker, lhs.return, rhs.return)
+    return isSubtype(checker, lhs.return, rhs.return)
   }
 
-  // Record: width + depth subtyping
-  // Record(fs0) <: Record(fs1) => for each field in fs1, fs0 must have it with subtype
   if lhs.kind == "Record" and rhs.kind == "Record" {
     let lhsFields = lhs.fields or .{}
     let rhsFields = rhs.fields or .{}
-
-    // For each field in rhs, lhs must have that field with subtype
     for k in keys(rhsFields) {
       let lhsField = lhsFields[k]
-      if !lhsField {
-        return false  // Missing required field
-      }
-      if !constrain(checker, lhsField, rhsFields[k]) { return false }
+      if !lhsField { return false }
+      if !isSubtype(checker, lhsField, rhsFields[k]) { return false }
     }
-    return true  // Extra fields in lhs are OK (width subtyping)
+    return true
   }
 
-  // Array: covariant element type
   if lhs.kind == "Array" and rhs.kind == "Array" {
-    return constrain(checker, lhs.elem, rhs.elem)
+    return isSubtype(checker, lhs.elem, rhs.elem)
   }
 
-  // Map: covariant in both key and elem
   if lhs.kind == "Map" and rhs.kind == "Map" {
-    return constrain(checker, lhs.key, rhs.key) and
-           constrain(checker, lhs.elem, rhs.elem)
+    return isSubtype(checker, lhs.key, rhs.key) and
+           isSubtype(checker, lhs.elem, rhs.elem)
   }
 
-  // Empty Record <: Map (empty record can act as empty map)
+  if lhs.kind == "Indexable" and rhs.kind == "Indexable" {
+    return isSubtype(checker, lhs.key, rhs.key) and
+           isSubtype(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Array" and rhs.kind == "Indexable" {
+    return isSubtype(checker, typeNumber(), rhs.key) and
+           isSubtype(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Map" and rhs.kind == "Indexable" {
+    return isSubtype(checker, lhs.key, rhs.key) and
+           isSubtype(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Indexable" and rhs.kind == "Array" {
+    return isSubtype(checker, lhs.key, typeNumber()) and
+           isSubtype(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Indexable" and rhs.kind == "Map" {
+    return isSubtype(checker, lhs.key, rhs.key) and
+           isSubtype(checker, lhs.elem, rhs.elem)
+  }
+
   if lhs.kind == "Record" and rhs.kind == "Map" {
     let lhsFields = lhs.fields or .{}
     if len(keys(lhsFields)) == 0 {
@@ -568,7 +617,6 @@ fn constrain(checker, lhs, rhs) {
     }
   }
 
-  // Enum: check field compatibility
   if lhs.kind == "Enum" and rhs.kind == "Enum" {
     let lhsFields = lhs.fields or .{}
     let rhsFields = rhs.fields or .{}
@@ -578,158 +626,717 @@ fn constrain(checker, lhs, rhs) {
     return true
   }
 
-  // No rule applies
   false
+}
+
+fn atomsDisjoint(checker, a, b) {
+  a = deref(checker, a)
+  b = deref(checker, b)
+
+  if a.kind == "Bottom" or b.kind == "Bottom" { return true }
+  if a.kind == "Any" or b.kind == "Any" { return false }
+  if a.kind == "TypeVar" or b.kind == "TypeVar" { return false }
+
+  if isPrimitive(a) and isPrimitive(b) and a.kind != b.kind { return true }
+
+  if a.kind == "Tag" and b.kind == "Tag" {
+    if a.enumId != nil or b.enumId != nil {
+      return a.enumId != b.enumId or a.memberName != b.memberName
+    }
+    return a.enumName != b.enumName or a.memberName != b.memberName
+  }
+  if a.kind == "Tag" and b.kind != "Number" and b.kind != "Any" { return true }
+  if b.kind == "Tag" and a.kind != "Number" and a.kind != "Any" { return true }
+
+  if a.kind == "Array" and b.kind != "Array" and b.kind != "Indexable" { return true }
+  if b.kind == "Array" and a.kind != "Array" and a.kind != "Indexable" { return true }
+
+  if a.kind == "Function" and b.kind != "Function" { return true }
+  if b.kind == "Function" and a.kind != "Function" { return true }
+
+  if a.kind == "Enum" and b.kind != "Enum" { return true }
+  if b.kind == "Enum" and a.kind != "Enum" { return true }
+
+  if a.kind == "Record" and b.kind == "Record" {
+    let af = a.fields or .{}
+    let bf = b.fields or .{}
+    for k in keys(af) {
+      if bf[k] {
+        let ad = deref(checker, af[k])
+        let bd = deref(checker, bf[k])
+        if isPrimitive(ad) and isPrimitive(bd) and ad.kind != bd.kind {
+          return true
+        }
+        if ad.kind == "Tag" and bd.kind == "Tag" {
+          if atomsDisjoint(checker, ad, bd) { return true }
+        }
+      }
+    }
+  }
+
+  false
+}
+
+fn simplifyClause(checker, clause) {
+  let positives = []
+  let negatives = []
+  let seen = .{}
+
+  for lit in (clause or []) {
+    let key = literalKey(lit)
+    if seen[key] { continue }
+    seen[key] = true
+    if lit.negated {
+      push(negatives, lit)
+    } else {
+      push(positives, lit)
+    }
+  }
+
+  for p in positives {
+    for n in negatives {
+      if atomSubtype(checker, p.atom, n.atom) { return nil }
+    }
+  }
+
+  for let i = 0; i < len(positives); i = i + 1 {
+    for let j = i + 1; j < len(positives); j = j + 1 {
+      if atomsDisjoint(checker, positives[i].atom, positives[j].atom) { return nil }
+    }
+  }
+
+  let out = []
+  for p in positives { push(out, .{ atom: p.atom, negated: false }) }
+  for n in negatives { push(out, .{ atom: n.atom, negated: true }) }
+  out
+}
+
+fn dnfUnion(a, b) {
+  let out = []
+  for c in (a or []) { push(out, c) }
+  for c in (b or []) { push(out, c) }
+  out
+}
+
+fn dnfIntersect(a, b) {
+  let out = []
+  if type(a) != "array" or type(b) != "array" {
+    Lx.stderr.println("dnfIntersect non-array inputs:", type(a), type(b))
+    return out
+  }
+  for ca in a {
+    for cb in b {
+      if type(ca) != "array" or type(cb) != "array" {
+        Lx.stderr.println("dnfIntersect clause non-array:", type(ca), type(cb))
+        continue
+      }
+      let clause = []
+      for lit in ca { push(clause, lit) }
+      for lit in cb { push(clause, lit) }
+      push(out, clause)
+    }
+  }
+  out
+}
+
+fn toDNF(checker, t) {
+  t = expandOption(t)
+  if !t { return [] }
+  let tType = type(t)
+  if tType != "map" {
+    Lx.stderr.println("toDNF non-map:", tType, str(t))
+    return [ [ .{ atom: typeAny(), negated: false } ] ]
+  }
+  let kind = t.kind
+  if !kind {
+    Lx.stderr.println("toDNF missing kind:", str(t))
+    return [ [ .{ atom: typeAny(), negated: false } ] ]
+  }
+  Lx.stderr.println("toDNF kind:", kind)
+  if kind == "Any" { return [ [] ] }
+  if kind == "Bottom" { return [] }
+
+  if kind != "Union" and kind != "Intersect" and kind != "Not" {
+    return [ [ .{ atom: t, negated: false } ] ]
+  }
+
+  if kind == "Union" {
+    let opts = t.options or []
+    if type(opts) != "array" {
+      Lx.stderr.println("toDNF Union options non-array:", type(opts), str(opts))
+      return [ [ .{ atom: t, negated: false } ] ]
+    }
+    let out = []
+    for opt in opts {
+      out = dnfUnion(out, toDNF(checker, opt))
+    }
+    return out
+  }
+
+  if kind == "Intersect" {
+    let parts = t.parts or []
+    if type(parts) != "array" {
+      Lx.stderr.println("toDNF Intersect parts non-array:", type(parts), str(parts))
+      return [ [ .{ atom: t, negated: false } ] ]
+    }
+    let out = [ [] ]
+    for part in parts {
+      out = dnfIntersect(out, toDNF(checker, part))
+    }
+    return out
+  }
+
+  if kind == "Not" {
+    let v = t.value
+    if type(v) != "map" {
+      Lx.stderr.println("toDNF Not non-map:", type(v), str(v))
+      return [ [ .{ atom: typeAny(), negated: false } ] ]
+    }
+    if !v.kind {
+      Lx.stderr.println("toDNF Not missing kind:", str(v))
+      return [ [ .{ atom: typeAny(), negated: false } ] ]
+    }
+    return toDNFNot(checker, v)
+  }
+
+  [ [ .{ atom: t, negated: false } ] ]
+}
+
+fn toDNFNot(checker, t) {
+  t = expandOption(t)
+  if !t { return [] }
+  let tType = type(t)
+  if tType != "map" {
+    Lx.stderr.println("toDNFNot non-map:", tType, str(t))
+    return []
+  }
+  if !t.kind {
+    Lx.stderr.println("toDNFNot missing kind:", str(t))
+    return []
+  }
+  Lx.stderr.println("toDNFNot kind:", t.kind)
+  if t.kind == "Any" { return [] }
+  if t.kind == "Bottom" { return [ [] ] }
+
+  if t.kind == "Not" { return toDNF(checker, t.value) }
+
+  if t.kind == "Union" or t.kind == "Intersect" {
+    return [ [ .{ atom: t, negated: true } ] ]
+  }
+
+  if t.kind == "Union" {
+    let opts = t.options or []
+    if type(opts) != "array" {
+      Lx.stderr.println("toDNFNot Union options non-array:", type(opts), str(opts))
+      return [ [ .{ atom: t, negated: true } ] ]
+    }
+    for opt in opts {
+      let od = deref(checker, opt)
+      if od and od.kind == "TypeVar" {
+        return [ [ .{ atom: t, negated: true } ] ]
+      }
+    }
+    let out = [ [] ]
+    for opt in opts {
+      Lx.stderr.println("toDNFNot Union opt type:", type(opt))
+      out = dnfIntersect(out, toDNFNot(checker, opt))
+    }
+    return out
+  }
+
+  if t.kind == "Intersect" {
+    let parts = t.parts
+    Lx.stderr.println("toDNFNot Intersect parts type:", type(parts))
+    if !parts { parts = [] }
+    if type(parts) != "array" {
+      Lx.stderr.println("toDNFNot Intersect parts non-array:", type(parts), str(parts))
+      return [ [ .{ atom: t, negated: true } ] ]
+    }
+    let out = []
+    for part in parts {
+      out = dnfUnion(out, toDNFNot(checker, part))
+    }
+    return out
+  }
+
+  [ [ .{ atom: t, negated: true } ] ]
+}
+
+fn normalizeDNF(checker, dnf) {
+  let out = []
+  let seen = .{}
+  for clause in (dnf or []) {
+    let simplified = simplifyClause(checker, clause)
+    if !simplified { continue }
+    if len(simplified) == 0 {
+      return [ [] ]
+    }
+    let keys = collect lit in simplified { literalKey(lit) }
+    keys = sort(keys, stringLess)
+    let key = join(keys, "&")
+    if seen[key] { continue }
+    seen[key] = true
+    push(out, simplified)
+  }
+  out
+}
+
+fn dnfToType(dnf) {
+  if !dnf or len(dnf) == 0 { return typeBottom() }
+  for clause in dnf {
+    if len(clause) == 0 { return typeAny() }
+  }
+  let clauses = []
+  for clause in dnf {
+    let parts = []
+    for lit in clause {
+      if lit.negated {
+        push(parts, typeNot(lit.atom))
+      } else {
+        push(parts, lit.atom)
+      }
+    }
+    push(clauses, typeIntersect(parts))
+  }
+  typeUnion(clauses)
+}
+
+fn normalizeType(checker, t) {
+  t = deref(checker, t)
+  if !t { return t }
+
+  if t.kind == "Option" {
+    let v = normalizeType(checker, t.value)
+    if v and v.kind == "Nil" { return typeNil() }
+    return typeOption(v)
+  }
+
+  if t.kind == "Union" {
+    let opts = collect opt in (t.options or []) { normalizeType(checker, opt) }
+    return typeUnion(opts)
+  }
+
+  if t.kind == "Intersect" {
+    let parts = collect part in (t.parts or []) { normalizeType(checker, part) }
+    return typeIntersect(parts)
+  }
+
+  if t.kind == "Not" {
+    let v = normalizeType(checker, t.value)
+    if v and v.kind == "Any" { return typeBottom() }
+    if v and v.kind == "Bottom" { return typeAny() }
+    return typeNot(v)
+  }
+
+  t
+}
+
+fn subtypeCacheKey(lhs, rhs) {
+  typeKey(lhs) + "<=" + typeKey(rhs)
+}
+
+fn isSubtype(checker, lhs, rhs) {
+  lhs = deref(checker, lhs)
+  rhs = deref(checker, rhs)
+
+  if lhs == rhs { return true }
+  if lhs.kind == "Bottom" { return true }
+  if rhs.kind == "Any" or lhs.kind == "Any" { return true }
+
+  let cacheKey = subtypeCacheKey(lhs, rhs)
+  checker.subtypeCache = checker.subtypeCache or .{}
+  let cached = checker.subtypeCache[cacheKey]
+  if cached != nil {
+    if cached == "visiting" { return true }
+    return cached
+  }
+  checker.subtypeCache[cacheKey] = "visiting"
+
+  if lhs.kind == "Option" or rhs.kind == "Option" {
+    let result = isSubtype(checker, expandOption(lhs), expandOption(rhs))
+    checker.subtypeCache[cacheKey] = result
+    return result
+  }
+
+  if rhs.kind == "Union" {
+    for opt in (rhs.options or []) {
+      if isSubtype(checker, lhs, opt) {
+        checker.subtypeCache[cacheKey] = true
+        return true
+      }
+    }
+    checker.subtypeCache[cacheKey] = false
+    return false
+  }
+
+  if lhs.kind == "Union" {
+    for opt in (lhs.options or []) {
+      if !isSubtype(checker, opt, rhs) {
+        checker.subtypeCache[cacheKey] = false
+        return false
+      }
+    }
+    checker.subtypeCache[cacheKey] = true
+    return true
+  }
+
+  if rhs.kind == "Intersect" {
+    for part in (rhs.parts or []) {
+      if !isSubtype(checker, lhs, part) {
+        checker.subtypeCache[cacheKey] = false
+        return false
+      }
+    }
+    checker.subtypeCache[cacheKey] = true
+    return true
+  }
+
+  if lhs.kind == "Intersect" {
+    for part in (lhs.parts or []) {
+      if !isSubtype(checker, part, rhs) {
+        checker.subtypeCache[cacheKey] = false
+        return false
+      }
+    }
+    checker.subtypeCache[cacheKey] = true
+    return true
+  }
+
+  if lhs.kind == "Not" {
+    if rhs.kind == "Not" and typeEquals(lhs, rhs) {
+      checker.subtypeCache[cacheKey] = true
+      return true
+    }
+    checker.subtypeCache[cacheKey] = false
+    return false
+  }
+
+  if rhs.kind == "Not" {
+    let result = atomsDisjoint(checker, lhs, rhs.value)
+    checker.subtypeCache[cacheKey] = result
+    return result
+  }
+
+  let result = atomSubtype(checker, lhs, rhs)
+  checker.subtypeCache[cacheKey] = result
+  result
+}
+
+fn typeHasNilEvidence(checker, t) {
+  t = deref(checker, t)
+  if !t { return false }
+  if t.kind == "Nil" { return true }
+  if t.kind == "Option" { return true }
+  if t.kind == "TypeVar" {
+    let lbs = t.lowerBounds or []
+    if len(lbs) == 0 { return false }
+    for lb in lbs {
+      if typeHasNilEvidence(checker, lb) { return true }
+    }
+    return false
+  }
+  if t.kind == "Union" {
+    let opts = t.options or []
+    if type(opts) != "array" { return false }
+    for opt in opts {
+      if typeHasNilEvidence(checker, opt) { return true }
+    }
+    return false
+  }
+  if t.kind == "Intersect" {
+    let parts = t.parts or []
+    if type(parts) != "array" { return false }
+    for part in parts {
+      if !typeHasNilEvidence(checker, part) { return false }
+    }
+    return true
+  }
+  if t.kind == "Not" {
+    return false
+  }
+  false
+}
+
+fn typeMayAllowNil(checker, t) {
+  t = deref(checker, t)
+  if !t { return false }
+  if typeHasNilEvidence(checker, t) { return true }
+  if t.kind == "TypeVar" {
+    let lbs = t.lowerBounds or []
+    return len(lbs) == 0
+  }
+  if t.kind == "Union" {
+    let opts = t.options or []
+    if type(opts) != "array" { return false }
+    for opt in opts {
+      if typeMayAllowNil(checker, opt) { return true }
+    }
+    return false
+  }
+  if t.kind == "Intersect" {
+    let parts = t.parts or []
+    if type(parts) != "array" { return false }
+    for part in parts {
+      if !typeMayAllowNil(checker, part) { return false }
+    }
+    return true
+  }
+  false
+}
+
+// Generate a cache key for a constraint pair
+// Cache all constraint pairs to prevent exponential re-checking
+fn constraintCacheKey(lhs, rhs) {
+  typeKey(lhs) + "<:" + typeKey(rhs)
+}
+
+// Core constraint function: enforce lhs <: rhs
+// Returns true if constraint succeeded, false if it failed
+fn constrain(checker, lhs, rhs) {
+  lhs = deref(checker, lhs)
+  rhs = deref(checker, rhs)
+
+  if type(lhs) != "map" {
+    Lx.stderr.println("constrain lhs non-map:", type(lhs), str(lhs))
+    return false
+  }
+  if type(rhs) != "map" {
+    Lx.stderr.println("constrain rhs non-map:", type(rhs), str(rhs))
+    return false
+  }
+
+  if lhs == rhs { return true }
+  if lhs.kind == "TypeVar" and rhs.kind == "TypeVar" and lhs.id == rhs.id {
+    return true
+  }
+
+  let cacheKey = constraintCacheKey(lhs, rhs)
+  if checker.constraintCache[cacheKey] { return true }
+  checker.constraintCache[cacheKey] = true
+
+  if lhs.kind == "Bottom" { return true }
+  if lhs.kind == "Any" {
+    if rhs.kind == "TypeVar" {
+      push(rhs.lowerBounds, lhs)
+      checker.constraintRevision = checker.constraintRevision + 1
+    }
+    return true
+  }
+  if rhs.kind == "Any" { return true }
+
+  // Swapping: T <: U ∪ α  =>  T ∩ ¬U <: α
+  if rhs.kind == "Union" {
+    let rest = []
+    let tv = nil
+    for part in (rhs.options or []) {
+      let pd = deref(checker, part)
+      if !tv and pd.kind == "TypeVar" {
+        tv = pd
+      } else {
+        push(rest, part)
+      }
+    }
+    if tv {
+      if len(rest) == 0 { return constrain(checker, lhs, tv) }
+      let restUnion = typeUnion(rest)
+      return constrain(checker, typeIntersect([lhs, typeNot(restUnion)]), tv)
+    }
+  }
+
+  // Swapping: α ∩ T <: U  =>  α <: U ∪ ¬T
+  if lhs.kind == "Intersect" {
+    let rest = []
+    let tv = nil
+    for part in (lhs.parts or []) {
+      let pd = deref(checker, part)
+      if !tv and pd.kind == "TypeVar" {
+        tv = pd
+      } else {
+        push(rest, part)
+      }
+    }
+    if tv {
+      if len(rest) == 0 { return constrain(checker, tv, rhs) }
+      let restIntersect = typeIntersect(rest)
+      return constrain(checker, tv, typeUnion([rhs, typeNot(restIntersect)]))
+    }
+  }
+
+  if lhs.kind == "TypeVar" {
+    if occurs(checker, lhs.id, rhs) { return false }
+    let bound = normalizeType(checker, rhs)
+    push(lhs.upperBounds, bound)
+    checker.constraintRevision = checker.constraintRevision + 1
+    for lb in lhs.lowerBounds {
+      if !constrain(checker, lb, bound) { return false }
+    }
+    return true
+  }
+
+  if rhs.kind == "TypeVar" {
+    if occurs(checker, rhs.id, lhs) { return false }
+    let bound = normalizeType(checker, lhs)
+    if rhs.fieldInvariant {
+      for lb in (rhs.lowerBounds or []) {
+        let dlb = deref(checker, lb)
+        let dbound = deref(checker, bound)
+        if dlb.kind == "Nil" or dbound.kind == "Nil" { continue }
+        if isSubtype(checker, dbound, dlb) or isSubtype(checker, dlb, dbound) {
+          continue
+        }
+        return false
+      }
+    }
+    push(rhs.lowerBounds, bound)
+    checker.constraintRevision = checker.constraintRevision + 1
+    for ub in rhs.upperBounds {
+      if !constrain(checker, bound, ub) { return false }
+    }
+    if rhs.narrowedTo and lhs.kind != "Nil" {
+      for narrowedTV in rhs.narrowedTo {
+        if !constrain(checker, bound, narrowedTV) { return false }
+      }
+    }
+    return true
+  }
+
+  if lhs.kind == "Option" and rhs.kind == "Option" {
+    return constrain(checker, lhs.value, rhs.value)
+  }
+
+  if lhs.kind == "Function" and rhs.kind == "Function" {
+    let lhsParams = lhs.params or []
+    let rhsParams = rhs.params or []
+    let lhsLen = len(lhsParams)
+    let rhsLen = len(rhsParams)
+    if lhsLen != rhsLen { return false }
+    let lhsMin = lhs.minArity != nil and lhs.minArity or lhsLen
+    let rhsMin = rhs.minArity != nil and rhs.minArity or rhsLen
+    if lhsMin > rhsMin { return false }
+    for let i = 0; i < lhsLen; i = i + 1 {
+      if !constrain(checker, rhsParams[i], lhsParams[i]) { return false }
+    }
+    return constrain(checker, lhs.return, rhs.return)
+  }
+
+  if lhs.kind == "Record" and rhs.kind == "Record" {
+    let lhsFields = lhs.fields or .{}
+    let rhsFields = rhs.fields or .{}
+    for k in keys(rhsFields) {
+      let lhsField = lhsFields[k]
+      if !lhsField { return false }
+      if !constrain(checker, lhsField, rhsFields[k]) { return false }
+    }
+    return true
+  }
+
+  if lhs.kind == "Array" and rhs.kind == "Array" {
+    return constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Map" and rhs.kind == "Map" {
+    return constrain(checker, lhs.key, rhs.key) and
+           constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Indexable" and rhs.kind == "Indexable" {
+    return constrain(checker, lhs.key, rhs.key) and
+           constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Array" and rhs.kind == "Indexable" {
+    return constrain(checker, typeNumber(), rhs.key) and
+           constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Map" and rhs.kind == "Indexable" {
+    return constrain(checker, lhs.key, rhs.key) and
+           constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Indexable" and rhs.kind == "Array" {
+    return constrain(checker, lhs.key, typeNumber()) and
+           constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Indexable" and rhs.kind == "Map" {
+    return constrain(checker, lhs.key, rhs.key) and
+           constrain(checker, lhs.elem, rhs.elem)
+  }
+
+  if lhs.kind == "Record" and rhs.kind == "Map" {
+    let lhsFields = lhs.fields or .{}
+    if len(keys(lhsFields)) == 0 { return true }
+  }
+
+  isSubtype(checker, lhs, rhs)
 }
 
 // Coalesce a TypeVar's bounds into a final type
 // If Nil appears alongside non-nil lower bounds, produce Option[T]
-// When bounds disagree (different concrete types), fall back to Any
 fn coalesceTypeVar(checker, tv) {
   if !tv or tv.kind != "TypeVar" { return tv }
 
-  // Check cache: if constraints haven't changed since last coalesce, return cached result
-  // (only if checker has constraint revision tracking)
-  // DISABLED for now - needs more careful handling of recursive coalescing
-  // let currentRevision = checker.constraintRevision
-  // if currentRevision != nil and tv.coalesceRevision == currentRevision and tv.coalescedCache {
-  //   return tv.coalescedCache
-  // }
-  let currentRevision = checker.constraintRevision
-
   let lbs = tv.lowerBounds or []
+  let ubs = tv.upperBounds or []
 
-  // Check if Nil appears in lower bounds
   let hasNil = false
   let nonNilBounds = []
+
   for lb in lbs {
     let dlb = deref(checker, lb)
+    if dlb.kind == "TypeVar" {
+      dlb = coalesceTypeVar(checker, dlb)
+    }
+    dlb = normalizeType(checker, dlb)
+
     if dlb.kind == "Nil" {
       hasNil = true
-    } else if dlb.kind == "TypeVar" {
-      // Recursively coalesce nested TypeVars
-      let coalesced = coalesceTypeVar(checker, dlb)
-      if coalesced.kind == "Nil" {
-        hasNil = true
-      } else if coalesced.kind == "Option" {
-        hasNil = true
-        push(nonNilBounds, coalesced.value)
-      } else if coalesced.kind != "TypeVar" {
-        push(nonNilBounds, coalesced)
+      continue
+    }
+
+    if dlb.kind == "Union" {
+      let others = []
+      for opt in (dlb.options or []) {
+        let dopt = deref(checker, opt)
+        if dopt.kind == "Nil" {
+          hasNil = true
+        } else {
+          push(others, opt)
+        }
       }
-    } else {
+      if len(others) == 1 {
+        push(nonNilBounds, others[0])
+      } else if len(others) > 1 {
+        push(nonNilBounds, typeUnion(others))
+      }
+      continue
+    }
+
+    if dlb and dlb.kind != "TypeVar" {
       push(nonNilBounds, dlb)
     }
   }
 
-  // Check if all non-nil bounds are compatible
-  // Bounds are compatible if they're all the same primitive kind, or all Records
-  let resultType = nil
   if len(nonNilBounds) > 0 {
-    let firstKind = nonNilBounds[0].kind
-    let allCompatible = true
-
-    for let i = 1; i < len(nonNilBounds); i = i + 1 {
-      let bound = nonNilBounds[i]
-      if bound.kind != firstKind {
-        // Different kinds - check if we can still merge (e.g., Records can merge fields)
-        if firstKind != "Record" or bound.kind != "Record" {
-          allCompatible = false
-          break
-        }
-      }
+    if len(nonNilBounds) == 1 {
+      let lbType = normalizeType(checker, nonNilBounds[0])
+      if hasNil { return typeOption(lbType) }
+      return lbType
     }
-
-    if allCompatible {
-      if firstKind == "Record" and len(nonNilBounds) > 1 {
-        // Merge Record fields from all bounds with conflict detection
-        let mergedFields = .{}
-        let fieldConflict = false
-        for bound in nonNilBounds {
-          let fields = bound.fields or .{}
-          for k in keys(fields) {
-            let newType = fields[k]
-            if !mergedFields[k] {
-              mergedFields[k] = newType
-            } else {
-              // Field already exists - check for conflicts
-              let existingType = mergedFields[k]
-              let existingD = deref(checker, existingType)
-              let newD = deref(checker, newType)
-
-              // Check if types are compatible
-              if existingD.kind and newD.kind {
-                // Both are concrete - check if same kind
-                if isPrimitive(existingD) and isPrimitive(newD) {
-                  if existingD.kind != newD.kind {
-                    // Primitive conflict (e.g., Number vs String)
-                    fieldConflict = true
-                    break
-                  }
-                } else if existingD.kind != newD.kind {
-                  // Different structural kinds (e.g., Record vs Array)
-                  if existingD.kind != "TypeVar" and newD.kind != "TypeVar" {
-                    fieldConflict = true
-                    break
-                  }
-                }
-              }
-              // Keep existing type (first wins for compatible types)
-            }
-          }
-          if fieldConflict { break }
-        }
-        if fieldConflict {
-          resultType = typeAny()
-        } else {
-          resultType = typeRecord(mergedFields)
-        }
-      } else {
-        resultType = nonNilBounds[0]
-      }
-    } else {
-      // Incompatible bounds - fall back to Any
-      resultType = typeAny()
-    }
+    // Keep as TypeVar when multiple non-nil bounds are present.
+    if hasNil { return tv }
+    return tv
   }
 
-  // Determine final result and cache it
-  let finalResult = nil
+  if hasNil { return typeNil() }
 
-  // If we have Nil + other types, coalesce to Option[T]
-  if hasNil and resultType {
-    finalResult = typeOption(resultType)
-  } else if hasNil and !resultType {
-    // If only Nil bounds, return Nil
-    finalResult = typeNil()
-  } else if resultType {
-    // Return the merged result if we have one
-    finalResult = resultType
-  } else {
-    // Check upper bounds for a concrete type
-    let ubs = tv.upperBounds or []
-    for ub in ubs {
-      let dub = deref(checker, ub)
-      if dub.kind != "TypeVar" {
-        finalResult = dub
-        break
-      }
-    }
-
-    // Still a type variable - return the TypeVar itself (not Any)
-    if !finalResult {
-      finalResult = tv
-    }
+  if len(ubs) > 0 {
+    let ubTypes = collect ub in ubs { normalizeType(checker, ub) }
+    return normalizeType(checker, typeIntersect(ubTypes))
   }
 
-  // Cache the result (only if checker has constraint revision tracking)
-  // DISABLED for now - needs more careful handling of recursive coalescing
-  // if currentRevision != nil {
-  //   tv.coalescedCache = finalResult
-  //   tv.coalesceRevision = currentRevision
-  // }
-
-  finalResult
+  tv
 }
 
 // Pretty-print a type for error messages
@@ -748,6 +1355,39 @@ fn prettyTypeWithStack(checker, t, stack) {
     }
     stack[t.id] = nil
     return "?" + str(t.id)
+  }
+
+  if t.kind == "Bottom" { return "Bottom" }
+
+  if t.kind == "Tag" {
+    let enumName = t.enumName or "?"
+    let member = t.memberName or "?"
+    return "tag(" + enumName + "." + member + ")"
+  }
+
+  if t.kind == "Union" {
+    let opts = t.options or []
+    let nonNil = []
+    let sawNil = false
+    for opt in opts {
+      let od = deref(checker, opt)
+      if od.kind == "Nil" { sawNil = true }
+      else { push(nonNil, opt) }
+    }
+    if sawNil and len(nonNil) == 1 {
+      return prettyTypeWithStack(checker, nonNil[0], stack) + "?"
+    }
+    let parts = collect opt in opts { prettyTypeWithStack(checker, opt, stack) }
+    return join(parts, " | ")
+  }
+
+  if t.kind == "Intersect" {
+    let parts = collect part in (t.parts or []) { prettyTypeWithStack(checker, part, stack) }
+    return join(parts, " & ")
+  }
+
+  if t.kind == "Not" {
+    return "~" + prettyTypeWithStack(checker, t.value, stack)
   }
 
   if t.kind == "Option" {
@@ -809,8 +1449,38 @@ fn prettyTypeSnapshotWithStack(t, stack) {
   }
 
   if t.kind == "Any" or t.kind == "Nil" or t.kind == "Number" or
-     t.kind == "Bool" or t.kind == "String" {
+     t.kind == "Bool" or t.kind == "String" or t.kind == "Bottom" {
     return t.kind
+  }
+
+  if t.kind == "Tag" {
+    let enumName = t.enumName or "?"
+    let member = t.memberName or "?"
+    return "tag(" + enumName + "." + member + ")"
+  }
+
+  if t.kind == "Union" {
+    let opts = t.options or []
+    let nonNil = []
+    let sawNil = false
+    for opt in opts {
+      if opt.kind == "Nil" { sawNil = true }
+      else { push(nonNil, opt) }
+    }
+    if sawNil and len(nonNil) == 1 {
+      return prettyTypeSnapshotWithStack(nonNil[0], stack) + "?"
+    }
+    let parts = collect opt in opts { prettyTypeSnapshotWithStack(opt, stack) }
+    return join(parts, " | ")
+  }
+
+  if t.kind == "Intersect" {
+    let parts = collect part in (t.parts or []) { prettyTypeSnapshotWithStack(part, stack) }
+    return join(parts, " & ")
+  }
+
+  if t.kind == "Not" {
+    return "~" + prettyTypeSnapshotWithStack(t.value, stack)
   }
 
   if t.kind == "Option" {
@@ -849,10 +1519,9 @@ fn prettyTypeSnapshotWithStack(t, stack) {
   }
 
   if t.kind == "Indexable" {
-    // Snapshot printer uses Map fallback for stable output
-    return "Map[" +
-      prettyTypeSnapshotWithStack(t.key, stack) + ", " +
-      prettyTypeSnapshotWithStack(t.elem, stack) + "]"
+    let keyT = prettyTypeSnapshotWithStack(t.key, stack)
+    let elemT = prettyTypeSnapshotWithStack(t.elem, stack)
+    return "Indexable[" + keyT + ", " + elemT + "]"
   }
 
   // Fallback
@@ -1145,17 +1814,28 @@ fn recordKeyType(record) {
 
 // Infer element type from a concrete argument type
 fn inferFromConcrete(checker, arg, kind) {
+  if arg.kind == "Union" {
+    let inferred = []
+    for opt in (arg.options or []) {
+      let item = inferFromConcrete(checker, opt, kind)
+      if !item { return nil }
+      push(inferred, item)
+    }
+    return typeUnion(inferred)
+  }
   if kind == "range" {
     if arg.kind == "Number" { return typeNumber() }
     if arg.kind == "Array" { return typeNumber() }
     if arg.kind == "String" { return typeString() }
     if arg.kind == "Map" { return arg.key }
     if arg.kind == "Record" { return recordKeyType(arg) }
+    if arg.kind == "Indexable" { return arg.key }
     if arg.kind == "Enum" { return typeString() }
   }
   if kind == "keys" {
     if arg.kind == "Map" { return arg.key }
     if arg.kind == "Record" { return recordKeyType(arg) }
+    if arg.kind == "Indexable" { return arg.key }
     if arg.kind == "Enum" { return typeString() }
   }
   nil
@@ -1216,14 +1896,19 @@ fn solveBuiltinConstraints(checker) {
   typeNumber,
   typeBool,
   typeString,
+  typeBottom,
   typeEnum,
   typeVar,
   typeFunction,
   typeArray,
   typeRecord,
   typeMap,
+  typeUnion,
+  typeIntersect,
+  typeNot,
   typeOption,
   typeIndexable,
+  typeTag,
 
   // Type variable management
   freshTypeVar,
@@ -1239,10 +1924,13 @@ fn solveBuiltinConstraints(checker) {
 
   // Simple-Sub constraint solving
   isPrimitive,
+  isSubtype,
   constrain,
   coalesceTypeVar,
   prettyType,
   prettyTypeSnapshot,
+  typeHasNilEvidence,
+  typeMayAllowNil,
 
   // Builtin catalog
   builtinTypeByName,

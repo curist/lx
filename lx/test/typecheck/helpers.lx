@@ -19,14 +19,17 @@ fn deref(result, t) {
     let checker = .{ typeVarBindings: result.typeVarBindings or .{} }
     let coalesced = typecheckHelper.coalesceTypeVar(checker, t)
     if coalesced and coalesced.kind != "TypeVar" {
-      return coalesced
+      t = coalesced
+    } else {
+      // Fall back to old bindings approach if available
+      let bindings = result.typeVarBindings or .{}
+      let bound = bindings[t.id]
+      if bound { return deref(result, bound) }
     }
-    // Fall back to old bindings approach if available
-    let bindings = result.typeVarBindings or .{}
-    let bound = bindings[t.id]
-    if bound { return deref(result, bound) }
   }
-  t
+
+  let checker = .{ typeVarBindings: result.typeVarBindings or .{} }
+  typecheckHelper.derefAll(checker, t)
 }
 
 fn hasError(result, needle) {

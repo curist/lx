@@ -93,7 +93,7 @@ fn register(test) {
     assert.truthy(!hasError(result, "Too few arguments"))
   })
 
-  test("typecheck - unknown callee can grow tracked arity", fn(assert) {
+  test("typecheck - unknown callee arity mismatch reports error", fn(assert) {
     let result = parseAndTypecheck("{
       fn g(f) {
         f(1)
@@ -101,15 +101,8 @@ fn register(test) {
       }
       g(fn(a, b) { a })
     }")
-    assert.truthy(result.success)
-    if !result.success { return }
-    assert.truthy(!hasError(result, "Too few arguments: expected at least 2, got 1"))
-
-    let gt = deref(result, getExprType(result, 0))
-    assert.equal(gt.kind, "Function")
-    let ft = deref(result, gt.params[0])
-    assert.equal(ft.kind, "Function")
-    assert.equal(len(ft.params), 2)
+    assert.truthy(!result.success)
+    assert.truthy(len(result.errors) > 0)
   })
 
   test("typecheck - recursive function does not hang", fn(assert) {

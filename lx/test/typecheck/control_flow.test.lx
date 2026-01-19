@@ -102,9 +102,9 @@ fn register(test) {
   })
 
   // Nil guard narrowing tests
-  test("typecheck - nil guard narrows Option to value type", fn(assert) {
-    // f(nil) constrains x to Option[Number], the guard should narrow x to Number
-    // so x + 1 typechecks. Return type is Option[Number] due to early return nil.
+  test("typecheck - nil guard does not narrow unknown param", fn(assert) {
+    // Without nil evidence, the guard should not narrow x.
+    // This keeps unknown params from being treated as optional by default.
     let result = parseAndTypecheck("{
       fn f(x) {
         if !x { return }
@@ -112,18 +112,11 @@ fn register(test) {
       }
       f(nil)
     }")
-    assert.truthy(result.success)
-    if !result.success { return }
-    let ft = deref(result, getExprType(result, 0))
-    assert.equal(ft.kind, "Function")
-    // Return type is Option[Number] because function can return nil or Number
-    let retT = deref(result, ft.return)
-    assert.equal(retT.kind, "Option")
-    assert.equal(deref(result, retT.value).kind, "Number")
+    assert.truthy(!result.success)
   })
 
-  test("typecheck - nil guard with grouped condition", fn(assert) {
-    // Groupings like ((!x)) should still trigger narrowing
+  test("typecheck - nil guard with grouped condition does not narrow unknown", fn(assert) {
+    // Groupings like ((!x)) should not change the evidence rule
     let result = parseAndTypecheck("{
       fn f(x) {
         if ((!x)) { return }
@@ -131,13 +124,7 @@ fn register(test) {
       }
       f(nil)
     }")
-    assert.truthy(result.success)
-    if !result.success { return }
-    let ft = deref(result, getExprType(result, 0))
-    assert.equal(ft.kind, "Function")
-    let retT = deref(result, ft.return)
-    assert.equal(retT.kind, "Option")
-    assert.equal(deref(result, retT.value).kind, "Number")
+    assert.truthy(!result.success)
   })
 
   test("typecheck - nil guard only narrows in same block", fn(assert) {
@@ -157,8 +144,8 @@ fn register(test) {
     assert.truthy(!result.success)
   })
 
-  test("typecheck - nil guard with block body that returns", fn(assert) {
-    // Block body { return } should also trigger narrowing
+  test("typecheck - nil guard with block body does not narrow unknown", fn(assert) {
+    // Block body { return } should not change the evidence rule
     let result = parseAndTypecheck("{
       fn f(x) {
         if !x { { return } }
@@ -166,13 +153,7 @@ fn register(test) {
       }
       f(nil)
     }")
-    assert.truthy(result.success)
-    if !result.success { return }
-    let ft = deref(result, getExprType(result, 0))
-    // Return type is Option[Number] because function can return nil or Number
-    let retT = deref(result, ft.return)
-    assert.equal(retT.kind, "Option")
-    assert.equal(deref(result, retT.value).kind, "Number")
+    assert.truthy(!result.success)
   })
 
   test("typecheck - no narrowing when guard has else branch", fn(assert) {
@@ -202,9 +183,8 @@ fn register(test) {
     assert.truthy(!result.success)
   })
 
-  test("typecheck - constraints between guard and closure persist", fn(assert) {
-    // x + 1 before the closure constrains x to Number
-    // After the closure, x should still be Number
+  test("typecheck - guard without evidence does not narrow across closures", fn(assert) {
+    // Without nil evidence, the guard should not allow x + 1 after the return.
     let result = parseAndTypecheck("{
       fn f(x) {
         if !x { return 0 }
@@ -214,11 +194,7 @@ fn register(test) {
       }
       f(nil)
     }")
-    assert.truthy(result.success)
-    if !result.success { return }
-    let ft = deref(result, getExprType(result, 0))
-    let retT = deref(result, ft.return)
-    assert.equal(retT.kind, "Number")
+    assert.truthy(!result.success)
   })
 
   test("typecheck - narrowing only when x has Nil bound", fn(assert) {

@@ -225,6 +225,21 @@ fn recordFromKeysCall(checker, callNode) {
   argType
 }
 
+fn internIndexElemVar(checker, tvId, keyTag) {
+  checker.openIndexElems = checker.openIndexElems or .{}
+  let elemMap = checker.openIndexElems[tvId]
+  if !elemMap {
+    elemMap = .{}
+    checker.openIndexElems[tvId] = elemMap
+  }
+  let elemVar = elemMap[keyTag]
+  if !elemVar {
+    elemVar = freshTypeVar(checker)
+    elemMap[keyTag] = elemVar
+  }
+  elemVar
+}
+
 // ========================================================
 // Checker State
 // ========================================================
@@ -257,6 +272,8 @@ fn makeChecker(resolveResult, opts = .{}) {
     // === Environment ===
     env: .{},                                    // declNodeId -> type (for locals/upvalues)
     currentReturn: nil,                          // Current function's return type var
+    openRecordFields: .{},                       // TypeVar ID -> { fieldName: Type }
+    openIndexElems: .{},                         // TypeVar ID -> { keyTag: Type }
 
     // === Fiber context (for incremental/cancellable typecheck) ===
     fiberCtx: opts.fiberCtx or nil,              // Optional fiber context for yielding
@@ -1473,29 +1490,41 @@ fn synthAssignment(checker, node) {
       // Unknown object - infer based on key type
       if keyIsNumeric {
         // Numeric key - infer Array
-        let arrType = typeArray(valueType)
+        let elemVar = internIndexElemVar(checker, objD.id, "number")
+        let arrType = typeArray(elemVar)
         constrain(checker, objType, arrType)
         let objBinding = checker.resolvedNames[indexNode.object.id]
         if objBinding and objBinding.declaredAt {
           envBind(checker, objBinding.declaredAt, arrType)
         }
-        checker.types[indexNode.id] = valueType
+        if !constrain(checker, valueType, elemVar) {
+          addError(checker, node.id, "Assignment mismatch")
+        }
+        checker.types[indexNode.id] = elemVar
         checker.types[node.id] = valueType
         return valueType
       } else if keyIsString {
         // String key - infer Map
-        let mapType = helper.typeMap(indexType, valueType)
+        let elemVar = internIndexElemVar(checker, objD.id, "string")
+        let mapType = helper.typeMap(indexType, elemVar)
         constrain(checker, objType, mapType)
         let objBinding = checker.resolvedNames[indexNode.object.id]
         if objBinding and objBinding.declaredAt {
           envBind(checker, objBinding.declaredAt, mapType)
         }
-        checker.types[indexNode.id] = valueType
+        if !constrain(checker, valueType, elemVar) {
+          addError(checker, node.id, "Assignment mismatch")
+        }
+        checker.types[indexNode.id] = elemVar
         checker.types[node.id] = valueType
         return valueType
       }
-      // TypeVar key - leave as unknown, constrain to Indexable later if needed
-      checker.types[indexNode.id] = valueType
+      // TypeVar key - keep element type stable without narrowing to Nil
+      let elemVar = internIndexElemVar(checker, objD.id, "any")
+      if !constrain(checker, valueType, elemVar) {
+        addError(checker, node.id, "Assignment mismatch")
+      }
+      checker.types[indexNode.id] = elemVar
       checker.types[node.id] = valueType
       return valueType
     }
@@ -1611,28 +1640,41 @@ fn synthIndex(checker, node) {
         let dlb = deref(checker, lb)
         if dlb.kind == "String" {
           // Index is constrained to String - infer Map
-          let mapType = helper.typeMap(typeString(), resultType)
+          let elemVar = internIndexElemVar(checker, objD.id, "string")
+          let mapType = helper.typeMap(typeString(), elemVar)
           constrain(checker, objType, mapType)
-          checker.types[node.id] = resultType
-          return resultType
+          checker.types[node.id] = elemVar
+          return elemVar
         } else if dlb.kind == "Number" {
           // Index is constrained to Number - infer Array
-          let arrType = typeArray(resultType)
+          let elemVar = internIndexElemVar(checker, objD.id, "number")
+          let arrType = typeArray(elemVar)
           constrain(checker, objType, arrType)
-          checker.types[node.id] = resultType
-          return resultType
+          checker.types[node.id] = elemVar
+          return elemVar
         }
       }
+      let elemVar = internIndexElemVar(checker, objD.id, "any")
+      checker.types[node.id] = elemVar
+      return elemVar
     } else if indexTypeD.kind == "String" {
       // Concrete String index - infer Map
-      let mapType = helper.typeMap(typeString(), resultType)
+      let elemVar = internIndexElemVar(checker, objD.id, "string")
+      let mapType = helper.typeMap(typeString(), elemVar)
       constrain(checker, objType, mapType)
+      checker.types[node.id] = elemVar
+      return elemVar
     } else if indexTypeD.kind == "Number" {
       // Concrete Number index - infer Array
-      let arrType = typeArray(resultType)
+      let elemVar = internIndexElemVar(checker, objD.id, "number")
+      let arrType = typeArray(elemVar)
       constrain(checker, objType, arrType)
+      checker.types[node.id] = elemVar
+      return elemVar
     }
-    // Otherwise leave as fresh for later resolution
+    let elemVar = internIndexElemVar(checker, objD.id, "any")
+    checker.types[node.id] = elemVar
+    return elemVar
   }
 
   checker.types[node.id] = resultType

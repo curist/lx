@@ -140,7 +140,7 @@ fn dotRuleMapIndexable(checker, node, objType, objD, fieldName, addError) {
   .{ type: objD.elem, handled: true }
 }
 
-// Rule: TypeVar.field -> fresh TypeVar with constraint
+// Rule: TypeVar.field -> interned TypeVar with constraint
 fn dotRuleTypeVar(checker, node, objType, objD, fieldName, addError) {
   if objD.kind != "TypeVar" { return nil }
 
@@ -150,9 +150,21 @@ fn dotRuleTypeVar(checker, node, objType, objD, fieldName, addError) {
     return .{ type: typeAny(), handled: true }
   }
 
+  checker.openRecordFields = checker.openRecordFields or .{}
+  let fieldMap = checker.openRecordFields[objD.id]
+  if !fieldMap {
+    fieldMap = .{}
+    checker.openRecordFields[objD.id] = fieldMap
+  }
+
+  let resultType = fieldMap[fieldName]
+  if !resultType {
+    resultType = freshTypeVar(checker)
+    resultType.fieldInvariant = true
+    fieldMap[fieldName] = resultType
+  }
+
   // Constrain: objType <: Record({ fieldName: resultType })
-  let resultType = freshTypeVar(checker)
-  resultType.fieldInvariant = true
   let requiredRecord = typeRecord(.{ [fieldName]: resultType })
   constrain(checker, objType, requiredRecord)
 

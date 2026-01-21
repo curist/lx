@@ -206,4 +206,112 @@ test("query - goto destructured import binding jumps to export field", fn(assert
   assert.equal(gotoResult.target.line, 2, "Should jump to add function definition line")
 })
 
+// ========================================
+// Control Flow Goto Definition Tests
+// ========================================
+
+test("query - goto continue jumps to loop start", fn(assert) {
+  let source = "for let i = 0; i < 10; i = i + 1 {\n  if i == 5 {\n    continue\n  }\n  println(i)\n}"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'continue' (line 3, col 4)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 3, 4)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.kind, "goto", "Should be goto result")
+  assert.truthy(gotoResult.target, "Should have target")
+  assert.equal(gotoResult.target.line, 1, "Should jump to for keyword")
+  assert.equal(gotoResult.target.col, 0, "Should jump to start of for")
+})
+
+test("query - goto break jumps to loop end", fn(assert) {
+  let source = "for let i = 0; i < 10; i = i + 1 {\n  if i == 5 {\n    break\n  }\n  println(i)\n}"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'break' (line 3, col 4)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 3, 4)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.kind, "goto", "Should be goto result")
+  assert.truthy(gotoResult.target, "Should have target")
+  assert.equal(gotoResult.target.line, 6, "Should jump to closing brace")
+  assert.equal(gotoResult.target.col, 0, "Should jump to closing brace col")
+})
+
+test("query - goto continue in for-in loop", fn(assert) {
+  let source = "for item in [1, 2, 3] {\n  if item == 2 {\n    continue\n  }\n  println(item)\n}"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'continue' (line 3, col 4)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 3, 4)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.line, 1, "Should jump to for keyword")
+  assert.equal(gotoResult.target.col, 0, "Should jump to start of for")
+})
+
+test("query - goto break in for-in loop", fn(assert) {
+  let source = "for item in [1, 2, 3] {\n  if item == 2 {\n    break\n  }\n  println(item)\n}"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'break' (line 3, col 4)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 3, 4)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.line, 6, "Should jump to closing brace")
+})
+
+test("query - goto continue in collect expression", fn(assert) {
+  let source = "let results = collect i in [1, 2, 3] {\n  if i == 2 {\n    continue\n  }\n  i * 2\n}"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'continue' (line 3, col 4)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 3, 4)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.line, 1, "Should jump to collect keyword")
+  assert.equal(gotoResult.target.col, 14, "Should jump to start of collect")
+})
+
+test("query - goto break in collect expression", fn(assert) {
+  let source = "let results = collect i in [1, 2, 3] {\n  if i == 2 {\n    break\n  }\n  i * 2\n}"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'break' (line 3, col 4)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 3, 4)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.line, 6, "Should jump to closing brace")
+})
+
+test("query - goto continue in nested loops jumps to innermost", fn(assert) {
+  let source = "for let i = 0; i < 3; i = i + 1 {\n  for let j = 0; j < 3; j = j + 1 {\n    continue\n  }\n}"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'continue' in inner loop (line 3, col 4)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 3, 4)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.line, 2, "Should jump to inner for keyword")
+})
+
+test("query - goto break in nested loops jumps to innermost", fn(assert) {
+  let source = "for let i = 0; i < 3; i = i + 1 {\n  for let j = 0; j < 3; j = j + 1 {\n    break\n  }\n}"
+  let result = compileAndQuery(source, "test.lx")
+  assert.truthy(result.success, "Should compile successfully")
+
+  // Goto on 'break' in inner loop (line 3, col 4)
+  let gotoResult = query.queryGotoDefinition(result.ctx, "test.lx", 3, 4)
+
+  assert.truthy(gotoResult.success, "Goto should succeed")
+  assert.equal(gotoResult.target.line, 4, "Should jump to inner loop closing brace")
+})
+
 suite.run()

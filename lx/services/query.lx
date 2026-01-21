@@ -1229,12 +1229,83 @@ fn queryHover(ctx, filename, line, col) {
   }
 }
 
+// Find the innermost loop enclosing a position
+fn findEnclosingLoop(ctx, filename, line, col) {
+  if !ctx or !ctx.fileNodeIds or !ctx.fileNodeIds[filename] {
+    return nil
+  }
+
+  let ids = ctx.fileNodeIds[filename]
+  let bestLoop = nil
+  let bestScore = nil
+
+  for let i = 0; i < len(ids); i = i + 1 {
+    let candidate = ctx.nodes[ids[i]]
+    if !candidate { continue }
+
+    // Check if it's a loop node (For or Collect)
+    if candidate.type != NODE.For and candidate.type != NODE.Collect {
+      continue
+    }
+
+    // Check if the position is within this loop's span
+    if !spanContains(candidate, line, col) {
+      continue
+    }
+
+    // Prefer the smallest (innermost) loop
+    let score = spanScore(candidate)
+    if !bestLoop or score < bestScore {
+      bestLoop = candidate
+      bestScore = score
+    }
+  }
+
+  bestLoop
+}
+
 fn queryGotoDefinition(ctx, filename, line, col) {
   validateCtxOnce(ctx)
   let sel = nodeAtPosWithTies(ctx, filename, line, col)
   let n = sel.node
   if !n {
     return .{ success: false, kind: "goto", message: "No node at position: " + posLabel(filename, line, col) }
+  }
+
+  // Handle continue: jump to loop start
+  if n.type == NODE.Continue {
+    let loop = findEnclosingLoop(ctx, filename, line, col)
+    if loop {
+      return .{
+        success: true,
+        kind: "goto",
+        target: rangeOf(loop),
+        candidates: candidatesForNodes(sel.ties),
+      }
+    }
+    return .{ success: false, kind: "goto", message: "No enclosing loop found for continue" }
+  }
+
+  // Handle break: jump to loop end (closing brace)
+  if n.type == NODE.Break {
+    let loop = findEnclosingLoop(ctx, filename, line, col)
+    if loop and loop.body {
+      let body = loop.body
+      // Jump to the closing brace of the loop body
+      return .{
+        success: true,
+        kind: "goto",
+        target: .{
+          filename: body.filename,
+          line: body.endLine,
+          col: body.endCol - 1,
+          endLine: body.endLine,
+          endCol: body.endCol,
+        },
+        candidates: candidatesForNodes(sel.ties),
+      }
+    }
+    return .{ success: false, kind: "goto", message: "No enclosing loop found for break" }
   }
 
   if n.type == NODE.String {

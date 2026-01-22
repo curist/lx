@@ -364,6 +364,36 @@ static bool sqrtNative(int argCount, Value *args) {
   return true;
 }
 
+static bool sinNative(int argCount, Value *args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a number.");
+    return false;
+  }
+  Value arg = args[0];
+  if (!IS_NUMBER(arg)) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a number.");
+    return false;
+  }
+  double num = sin(AS_NUMBER(arg));
+  args[-1] = NUMBER_VAL(num);
+  return true;
+}
+
+static bool cosNative(int argCount, Value *args) {
+  if (argCount < 1) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a number.");
+    return false;
+  }
+  Value arg = args[0];
+  if (!IS_NUMBER(arg)) {
+    args[-1] = CSTRING_VAL("Error: Arg must be a number.");
+    return false;
+  }
+  double num = cos(AS_NUMBER(arg));
+  args[-1] = NUMBER_VAL(num);
+  return true;
+}
+
 static bool keysNative(int argCount, Value *args) {
   if (argCount < 1) {
     args[-1] = CSTRING_VAL("Error: keys takes 1 arg.");
@@ -2607,6 +2637,8 @@ static void defineMathNatives() {
 
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "floor", mathFloorNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "sqrt", sqrtNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "sin", sinNative);
+  defineTableFunction(&AS_HASHMAP(vm.stack[1]), "cos", cosNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "random", randomNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "max", mathMaxNative);
   defineTableFunction(&AS_HASHMAP(vm.stack[1]), "min", mathMinNative);
